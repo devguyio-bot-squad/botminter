@@ -1,5 +1,37 @@
 /* ── Landing page styles for botminter ───────────────────────────── */
 
+/* ── Header nav links (home page only) ────────────────────────── */
+
+.bm-header-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-left: 1rem;
+}
+
+.bm-header-nav__link {
+  color: currentColor;
+  opacity: 0.85;
+  font-size: 0.7rem;
+  font-weight: 500;
+  padding: 0.4rem 0.75rem;
+  border-radius: 0.25rem;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: opacity 0.2s, background 0.2s;
+}
+
+.bm-header-nav__link:hover {
+  opacity: 1;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+@media (max-width: 76.25em) {
+  .bm-header-nav {
+    display: none;
+  }
+}
+
 /* ── Hero ──────────────────────────────────────────────────────── */
 
 .bm-hero {

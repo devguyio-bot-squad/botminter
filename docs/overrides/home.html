@@ -8,6 +8,57 @@
   </style>
 {% endblock %}
 
+{% block header %}
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="{{ lang.t('header') }}">
+    <a href="{{ config.extra.homepage | d(nav.homepage.url, true) | url }}" title="{{ config.site_name | e }}" class="md-header__button md-logo" aria-label="{{ config.site_name }}" data-md-component="logo">
+      {% include "partials/logo.html" %}
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      {% set icon = config.theme.icon.menu or "material/menu" %}
+      {% include ".icons/" ~ icon ~ ".svg" %}
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            {{ config.site_name }}
+          </span>
+        </div>
+      </div>
+    </div>
+    <nav class="bm-header-nav">
+      <a href="{{ 'getting-started/' | url }}" class="bm-header-nav__link">Getting Started</a>
+      <a href="{{ 'workflow/' | url }}" class="bm-header-nav__link">How it works</a>
+      <a href="{{ 'concepts/architecture/' | url }}" class="bm-header-nav__link">Docs</a>
+    </nav>
+    {% if config.theme.palette %}
+      {% if not config.theme.palette is mapping %}
+        {% include "partials/palette.html" %}
+      {% endif %}
+    {% endif %}
+    {% if not config.theme.palette is mapping %}
+      {% include "partials/javascripts/palette.html" %}
+    {% endif %}
+    {% if "search" in config.plugins %}
+      {% set search = config.plugins["search"] | attr("config") %}
+      {% if search.enabled %}
+        <label class="md-header__button md-icon" for="__search">
+          {% set icon = config.theme.icon.search or "material/magnify" %}
+          {% include ".icons/" ~ icon ~ ".svg" %}
+        </label>
+        {% include "partials/search.html" %}
+      {% endif %}
+    {% endif %}
+    <div class="md-header__source">
+      {% if config.repo_url %}
+        {% include "partials/source.html" %}
+      {% endif %}
+    </div>
+  </nav>
+</header>
+{% endblock %}
+
 {% block tabs %}
   {{ super() }}
 
@@ -27,7 +78,7 @@
         <a href="getting-started/" class="md-button md-button--primary bm-btn">
           Get Started
         </a>
-        <a href="concepts/architecture/" class="md-button bm-btn bm-btn--outline">
+        <a href="workflow/" class="md-button bm-btn bm-btn--outline">
           How it works
         </a>
       </div>

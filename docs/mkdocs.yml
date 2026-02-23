@@ -1,5 +1,6 @@
 site_name: botminter
 site_description: CLI for managing GitOps-style agentic teams
+repo_url: https://github.com/botminter/botminter
 docs_dir: content
 site_dir: site
 
