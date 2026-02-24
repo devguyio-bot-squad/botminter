@@ -8,6 +8,7 @@ use serde::Deserialize;
 use crate::commands::daemon;
 use crate::commands::start::{resolve_member_status, MemberStatus};
 use crate::config;
+use crate::profile;
 use crate::state;
 use crate::topology;
 
@@ -34,6 +35,21 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
         println!("Formation: {}", t.formation);
     }
     println!("Profile: {}", team.profile);
+    if !team.github_repo.is_empty() {
+        println!("GitHub: {}", team.github_repo);
+    }
+
+    // Show projects from botminter.yml
+    let manifest_path = team_repo.join("botminter.yml");
+    if let Ok(contents) = fs::read_to_string(&manifest_path) {
+        if let Ok(manifest) = serde_yml::from_str::<profile::ProfileManifest>(&contents) {
+            if !manifest.projects.is_empty() {
+                let names: Vec<&str> =
+                    manifest.projects.iter().map(|p| p.name.as_str()).collect();
+                println!("Projects: {}", names.join(", "));
+            }
+        }
+    }
 
     // Show daemon status if running
     if let Ok(pid_file) = daemon::pid_path(team_name) {

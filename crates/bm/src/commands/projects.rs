@@ -1,11 +1,128 @@
 use std::fs;
 
 use anyhow::{bail, Context, Result};
+use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
 
 use crate::config;
 use crate::profile;
 
 use super::init::{derive_project_name, find_project_number, run_git, sync_project_status_field};
+
+/// Handles `bm projects list [-t team]`.
+pub fn list(team_flag: Option<&str>) -> Result<()> {
+    let cfg = config::load()?;
+    let team = config::resolve_team(&cfg, team_flag)?;
+    let team_repo = team.path.join("team");
+
+    let manifest_path = team_repo.join("botminter.yml");
+    let manifest: profile::ProfileManifest = {
+        let contents = fs::read_to_string(&manifest_path)
+            .context("Failed to read team repo's botminter.yml")?;
+        serde_yml::from_str(&contents).context("Failed to parse botminter.yml")?
+    };
+
+    if manifest.projects.is_empty() {
+        println!("No projects configured. Run `bm projects add <url>` to add one.");
+        return Ok(());
+    }
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL_CONDENSED)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_header(vec!["Project", "Fork URL"]);
+
+    for proj in &manifest.projects {
+        table.add_row(vec![proj.name.as_str(), proj.fork_url.as_str()]);
+    }
+
+    println!("{table}");
+    Ok(())
+}
+
+/// Handles `bm projects show <project> [-t team]`.
+pub fn show(project: &str, team_flag: Option<&str>) -> Result<()> {
+    let cfg = config::load()?;
+    let team = config::resolve_team(&cfg, team_flag)?;
+    let team_repo = team.path.join("team");
+
+    let manifest_path = team_repo.join("botminter.yml");
+    let manifest: profile::ProfileManifest = {
+        let contents = fs::read_to_string(&manifest_path)
+            .context("Failed to read team repo's botminter.yml")?;
+        serde_yml::from_str(&contents).context("Failed to parse botminter.yml")?
+    };
+
+    let proj = manifest
+        .projects
+        .iter()
+        .find(|p| p.name == project)
+        .with_context(|| {
+            let available: Vec<&str> = manifest.projects.iter().map(|p| p.name.as_str()).collect();
+            if available.is_empty() {
+                format!(
+                    "Project '{}' not found. No projects configured — run `bm projects add <url>`.",
+                    project
+                )
+            } else {
+                format!(
+                    "Project '{}' not found. Available projects: {}",
+                    project,
+                    available.join(", ")
+                )
+            }
+        })?;
+
+    println!("Project: {}", proj.name);
+    println!("Fork URL: {}", proj.fork_url);
+
+    // Knowledge files
+    let proj_dir = team_repo.join("projects").join(&proj.name);
+    let knowledge_dir = proj_dir.join("knowledge");
+    let knowledge_files = list_files_in_dir(&knowledge_dir);
+    println!();
+    if knowledge_files.is_empty() {
+        println!("Knowledge: none");
+    } else {
+        println!("Knowledge:");
+        for f in &knowledge_files {
+            println!("  {}", f);
+        }
+    }
+
+    // Invariant files
+    let invariants_dir = proj_dir.join("invariants");
+    let invariant_files = list_files_in_dir(&invariants_dir);
+    if invariant_files.is_empty() {
+        println!("Invariants: none");
+    } else {
+        println!("Invariants:");
+        for f in &invariant_files {
+            println!("  {}", f);
+        }
+    }
+
+    Ok(())
+}
+
+/// Lists non-hidden files in a directory, returning their names sorted.
+fn list_files_in_dir(dir: &std::path::Path) -> Vec<String> {
+    if !dir.is_dir() {
+        return Vec::new();
+    }
+    let mut files: Vec<String> = fs::read_dir(dir)
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter(|e| {
+            e.file_type().map(|ft| ft.is_file()).unwrap_or(false)
+                && !e.file_name().to_string_lossy().starts_with('.')
+        })
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .collect();
+    files.sort();
+    files
+}
 
 /// Handles `bm projects add <url> [-t team]`.
 pub fn add(url: &str, team_flag: Option<&str>) -> Result<()> {

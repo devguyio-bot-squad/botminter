@@ -395,3 +395,138 @@ fn daemon_status_flags_parsed() {
         "daemon status -t should parse"
     );
 }
+
+// ── Show/describe subcommand parsing (6 tests) ───────────────────────
+
+#[test]
+fn teams_show_help_works() {
+    let output = bm().args(["teams", "show", "--help"]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "bm teams show --help should exit 0"
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Show") || stdout.contains("show") || stdout.contains("team"),
+        "help should describe the show command, stdout:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn teams_show_with_name_parses() {
+    let output = bm().args(["teams", "show", "my-team"]).output().unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm teams show my-team` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn teams_show_with_team_flag_parses() {
+    let output = bm()
+        .args(["teams", "show", "-t", "my-team"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm teams show -t my-team` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn members_show_requires_member_arg() {
+    let output = bm().args(["members", "show"]).output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(CLAP_PARSE_ERROR_CODE),
+        "bm members show (no member) should exit with clap error code 2"
+    );
+}
+
+#[test]
+fn members_show_with_member_parses() {
+    let output = bm()
+        .args(["members", "show", "architect-01"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm members show architect-01` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn projects_list_help_works() {
+    let output = bm().args(["projects", "list", "--help"]).output().unwrap();
+    assert!(
+        output.status.success(),
+        "bm projects list --help should exit 0"
+    );
+}
+
+#[test]
+fn projects_show_requires_project_arg() {
+    let output = bm().args(["projects", "show"]).output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(CLAP_PARSE_ERROR_CODE),
+        "bm projects show (no project) should exit with clap error code 2"
+    );
+}
+
+#[test]
+fn projects_show_with_project_parses() {
+    let output = bm()
+        .args(["projects", "show", "my-app"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm projects show my-app` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn subcommand_help_shows_new_commands() {
+    // Teams help should show show, list, sync
+    let output = bm().args(["teams", "--help"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("show"),
+        "bm teams --help should list 'show' subcommand, output:\n{}",
+        stdout
+    );
+
+    // Members help should show show and list
+    let output = bm().args(["members", "--help"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("show"),
+        "bm members --help should list 'show' subcommand, output:\n{}",
+        stdout
+    );
+
+    // Projects help should show list, show, add, sync
+    let output = bm().args(["projects", "--help"]).output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("list"),
+        "bm projects --help should list 'list' subcommand, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("show"),
+        "bm projects --help should list 'show' subcommand, output:\n{}",
+        stdout
+    );
+}

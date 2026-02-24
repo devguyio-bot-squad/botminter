@@ -1989,3 +1989,283 @@ fn profile_views_parse_correctly() {
         filter
     );
 }
+
+// ── Teams list enrichment tests ──────────────────────────────────────
+
+#[test]
+fn teams_list_shows_member_and_project_counts() {
+    let _lock = ENV_MUTEX.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let _team_repo = setup_team(tmp.path(), "count-team", "scrum");
+
+    let roles = profile::list_roles("scrum").unwrap();
+    let role = &roles[0];
+
+    // Hire two members
+    bm::commands::hire::run(role, Some("alice"), None).unwrap();
+    bm::commands::hire::run(role, Some("bob"), None).unwrap();
+
+    // Add a project
+    let fork = create_fake_fork(tmp.path(), "test-proj");
+    bm::commands::projects::add(&fork.to_string_lossy(), None).unwrap();
+
+    // Verify teams list via subprocess (avoids capturing stdout directly)
+    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
+        .args(["teams", "list"])
+        .env("HOME", tmp.path())
+        .output()
+        .expect("failed to run bm teams list");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Table should have Members and Projects columns
+    assert!(
+        stdout.contains("Members"),
+        "teams list should have Members column, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Projects"),
+        "teams list should have Projects column, output:\n{}",
+        stdout
+    );
+    // Should show count 2 for members and 1 for project
+    assert!(
+        stdout.contains("2"),
+        "should show 2 members, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("1"),
+        "should show 1 project, output:\n{}",
+        stdout
+    );
+}
+
+// ── Teams show tests ─────────────────────────────────────────────────
+
+#[test]
+fn teams_show_displays_full_details() {
+    let _lock = ENV_MUTEX.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let _team_repo = setup_team(tmp.path(), "show-team", "scrum");
+
+    let roles = profile::list_roles("scrum").unwrap();
+    let role = &roles[0];
+
+    bm::commands::hire::run(role, Some("alice"), None).unwrap();
+
+    let fork = create_fake_fork(tmp.path(), "my-project");
+    bm::commands::projects::add(&fork.to_string_lossy(), None).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
+        .args(["teams", "show", "-t", "show-team"])
+        .env("HOME", tmp.path())
+        .output()
+        .expect("failed to run bm teams show");
+
+    assert!(
+        output.status.success(),
+        "teams show failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("show-team"),
+        "should show team name, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("scrum"),
+        "should show profile, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Members"),
+        "should have Members section, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains(&format!("{}-alice", role)),
+        "should show member, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("my-project"),
+        "should show project, output:\n{}",
+        stdout
+    );
+}
+
+// ── Members show tests ───────────────────────────────────────────────
+
+#[test]
+fn members_show_displays_details() {
+    let _lock = ENV_MUTEX.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let _team_repo = setup_team(tmp.path(), "mshow-team", "scrum");
+
+    let roles = profile::list_roles("scrum").unwrap();
+    let role = &roles[0];
+
+    bm::commands::hire::run(role, Some("alice"), None).unwrap();
+
+    let member_name = format!("{}-alice", role);
+    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
+        .args(["members", "show", &member_name, "-t", "mshow-team"])
+        .env("HOME", tmp.path())
+        .output()
+        .expect("failed to run bm members show");
+
+    assert!(
+        output.status.success(),
+        "members show failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains(&member_name),
+        "should show member name, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains(role),
+        "should show role, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("stopped"),
+        "should show stopped status, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn members_show_nonexistent_errors() {
+    let _lock = ENV_MUTEX.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    setup_team(tmp.path(), "mshow-err-team", "scrum");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
+        .args(["members", "show", "nonexistent-member", "-t", "mshow-err-team"])
+        .env("HOME", tmp.path())
+        .output()
+        .expect("failed to run bm members show");
+
+    assert!(
+        !output.status.success(),
+        "members show should fail for nonexistent member"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found"),
+        "should say not found, stderr:\n{}",
+        stderr
+    );
+}
+
+// ── Projects list tests ──────────────────────────────────────────────
+
+#[test]
+fn projects_list_displays_table() {
+    let _lock = ENV_MUTEX.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let _team_repo = setup_team(tmp.path(), "plist-team", "scrum");
+
+    let fork = create_fake_fork(tmp.path(), "my-app");
+    bm::commands::projects::add(&fork.to_string_lossy(), None).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
+        .args(["projects", "list", "-t", "plist-team"])
+        .env("HOME", tmp.path())
+        .output()
+        .expect("failed to run bm projects list");
+
+    assert!(
+        output.status.success(),
+        "projects list failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("my-app"),
+        "should show project name, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Fork URL"),
+        "should have Fork URL column, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn projects_list_empty_shows_guidance() {
+    let _lock = ENV_MUTEX.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    setup_team(tmp.path(), "plist-empty-team", "scrum");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
+        .args(["projects", "list", "-t", "plist-empty-team"])
+        .env("HOME", tmp.path())
+        .output()
+        .expect("failed to run bm projects list");
+
+    assert!(output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("No projects configured"),
+        "should show guidance message, output:\n{}",
+        stdout
+    );
+}
+
+// ── Projects show tests ─────────────────────────────────────────────
+
+#[test]
+fn projects_show_displays_details() {
+    let _lock = ENV_MUTEX.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let _team_repo = setup_team(tmp.path(), "pshow-team", "scrum");
+
+    let fork = create_fake_fork(tmp.path(), "my-lib");
+    bm::commands::projects::add(&fork.to_string_lossy(), None).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
+        .args(["projects", "show", "my-lib", "-t", "pshow-team"])
+        .env("HOME", tmp.path())
+        .output()
+        .expect("failed to run bm projects show");
+
+    assert!(
+        output.status.success(),
+        "projects show failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("my-lib"),
+        "should show project name, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Fork URL"),
+        "should show fork URL label, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Knowledge"),
+        "should show knowledge section, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Invariants"),
+        "should show invariants section, output:\n{}",
+        stdout
+    );
+}

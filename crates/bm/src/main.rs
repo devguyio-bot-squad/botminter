@@ -20,6 +20,9 @@ fn main() -> Result<()> {
 
         Command::Teams { command } => match command {
             TeamsCommand::List => commands::teams::list()?,
+            TeamsCommand::Show { name, team } => {
+                commands::teams::show(name.as_deref(), team.as_deref())?;
+            }
             TeamsCommand::Sync { push, team } => {
                 commands::teams::sync(push, team.as_deref())?;
             }
@@ -33,6 +36,9 @@ fn main() -> Result<()> {
             MembersCommand::List { team } => {
                 commands::members::list(team.as_deref())?;
             }
+            MembersCommand::Show { member, team } => {
+                commands::members::show(&member, team.as_deref())?;
+            }
         },
 
         Command::Roles { command } => match command {
@@ -42,6 +48,12 @@ fn main() -> Result<()> {
         },
 
         Command::Projects { command } => match command {
+            ProjectsCommand::List { team } => {
+                commands::projects::list(team.as_deref())?;
+            }
+            ProjectsCommand::Show { project, team } => {
+                commands::projects::show(&project, team.as_deref())?;
+            }
             ProjectsCommand::Add { url, team } => {
                 commands::projects::add(&url, team.as_deref())?;
             }

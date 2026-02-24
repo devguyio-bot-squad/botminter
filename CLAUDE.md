@@ -16,12 +16,16 @@ The project has completed Milestone 3 (bm CLI). See `specs/master-plan/summary.m
 bm init                              # Interactive wizard — create a new team
 bm hire <role> [--name <n>] [-t team] # Hire a member into a role
 bm projects add <url> [-t team]       # Add a project to the team
+bm projects list [-t team]            # List configured projects
+bm projects show <project> [-t team]  # Show project details
 bm teams list                         # List registered teams
+bm teams show [<name>] [-t team]      # Show detailed team info
 bm teams sync [--push] [-t team]      # Provision and reconcile workspaces
 bm start [-t team]                    # Launch all members (alias: bm up)
 bm stop [-t team] [--force]           # Stop all members
 bm status [-t team] [-v]              # Status dashboard
 bm members list [-t team]             # List hired members
+bm members show <member> [-t team]    # Show member details
 bm roles list [-t team]               # List available roles from profile
 bm profiles list                      # List embedded profiles
 bm profiles describe <profile>        # Show detailed profile information

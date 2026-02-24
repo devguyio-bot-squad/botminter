@@ -159,6 +159,16 @@ pub enum TeamsCommand {
     /// List all registered teams
     List,
 
+    /// Show detailed information about a team
+    Show {
+        /// Team name (uses default team if omitted)
+        name: Option<String>,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
     /// Reconcile workspaces with team repo state
     Sync {
         /// Push team repo to GitHub before syncing
@@ -175,6 +185,16 @@ pub enum TeamsCommand {
 pub enum MembersCommand {
     /// List hired members for a team
     List {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Show detailed information about a member
+    Show {
+        /// Member name (e.g., architect-01)
+        member: String,
+
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,
@@ -205,6 +225,23 @@ pub enum ProfilesCommand {
 
 #[derive(Subcommand)]
 pub enum ProjectsCommand {
+    /// List projects configured for the team
+    List {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Show detailed information about a project
+    Show {
+        /// Project name
+        project: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
     /// Add a project to the team
     Add {
         /// Git URL of the project fork

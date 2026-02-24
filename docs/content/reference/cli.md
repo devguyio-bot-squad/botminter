@@ -65,6 +65,25 @@ bm members list [-t <team>]
 - Displays Member, Role, and Status columns
 - Status reflects running/crashed/stopped from runtime state
 
+### `bm members show`
+
+Show detailed information about a member.
+
+```bash
+bm members show <member> [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<member>` | Yes | Member name (e.g., `architect-01`) |
+| `-t <team>` | No | Team to operate on |
+
+**Behavior:**
+
+- Displays member name, role, and runtime status (running/crashed/stopped)
+- Shows PID, start time, and workspace path if running
+- Lists knowledge and invariant files for the member
+
 ### `bm roles list`
 
 List available roles from the team's profile.
@@ -74,6 +93,37 @@ bm roles list [-t <team>]
 ```
 
 ## Project management
+
+### `bm projects list`
+
+List projects configured for the team.
+
+```bash
+bm projects list [-t <team>]
+```
+
+**Behavior:**
+
+- Reads `botminter.yml` and displays a table of Project and Fork URL columns
+- If no projects are configured, prints guidance to use `bm projects add`
+
+### `bm projects show`
+
+Show detailed information about a project.
+
+```bash
+bm projects show <project> [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<project>` | Yes | Project name |
+| `-t <team>` | No | Team to operate on |
+
+**Behavior:**
+
+- Displays project name and fork URL
+- Lists knowledge and invariant files under `projects/{name}/`
 
 ### `bm projects add`
 
@@ -128,7 +178,27 @@ bm teams list
 **Behavior:**
 
 - Reads `~/.botminter/config.yml`
-- Displays Team, Profile, GitHub, and Default columns
+- Displays Team, Profile, GitHub, Members, Projects, and Default columns
+- Member and project counts are derived from the team repo on disk
+
+### `bm teams show`
+
+Show detailed information about a team.
+
+```bash
+bm teams show [<name>] [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<name>` | No | Team name (uses default team if omitted) |
+| `-t <team>` | No | Team to operate on |
+
+**Behavior:**
+
+- Displays team name, profile, GitHub repo, path, and default status
+- Lists hired members with their roles
+- Lists configured projects with their fork URLs
 
 ### `bm teams sync`
 
@@ -216,6 +286,7 @@ bm status [-t <team>] [-v]
 
 **Behavior:**
 
+- Header shows team name, profile, GitHub repo, and configured projects
 - Displays Member, Role, Status, Started, PID table
 - Shows daemon status if a daemon is running
 - Checks PID liveness via `kill(pid, 0)`
