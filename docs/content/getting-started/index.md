@@ -2,6 +2,9 @@
 
 This guide walks you through creating your first agentic team, hiring a member, and launching it. Familiarity with Git, GitHub, and command-line tools is assumed.
 
+!!! warning "Pre-Alpha"
+    botminter is under active development. Commands, configuration format, and behavior may change without notice between releases. See the [Roadmap](../roadmap.md) for current status.
+
 !!! note
     This guide uses the `scrum` profile as an example. The commands and workflow are the same for any profile — only the profile name and available roles differ. See [Profiles](../concepts/profiles.md) for available profiles.
 
@@ -103,6 +106,14 @@ Check status:
 
 ```bash
 bm status
+```
+
+Inspect the team, its members, or configured projects:
+
+```bash
+bm teams show               # Full team details: members, projects, config
+bm members show human-assistant  # Member details: role, status, knowledge files
+bm projects list             # List configured projects with fork URLs
 ```
 
 The workspace layout after sync and start:
