@@ -223,6 +223,7 @@ pub fn sync(push: bool, team_flag: Option<&str>) -> Result<()> {
     let projects = &manifest.projects;
     let mut created = 0u32;
     let mut updated = 0u32;
+    let mut failures: Vec<String> = Vec::new();
 
     for member_dir_name in &members {
         if projects.is_empty() {
@@ -251,14 +252,25 @@ pub fn sync(push: bool, team_flag: Option<&str>) -> Result<()> {
                     )?;
                     updated += 1;
                 } else {
-                    workspace::create_workspace(
+                    match workspace::create_workspace(
                         &team_repo,
                         &team.path,
                         member_dir_name,
                         Some((&proj.name, &proj.fork_url)),
                         gh,
-                    )?;
-                    created += 1;
+                    ) {
+                        Ok(()) => created += 1,
+                        Err(e) => {
+                            eprintln!(
+                                "Error: {}/{}: {}",
+                                member_dir_name, proj.name, e
+                            );
+                            failures.push(format!(
+                                "{}/{} ({})",
+                                member_dir_name, proj.name, proj.fork_url
+                            ));
+                        }
+                    }
                 }
             }
         }
@@ -272,6 +284,14 @@ pub fn sync(push: bool, team_flag: Option<&str>) -> Result<()> {
         created,
         updated,
     );
+
+    if !failures.is_empty() {
+        anyhow::bail!(
+            "{} workspace(s) failed to sync:\n  {}",
+            failures.len(),
+            failures.join("\n  ")
+        );
+    }
 
     Ok(())
 }

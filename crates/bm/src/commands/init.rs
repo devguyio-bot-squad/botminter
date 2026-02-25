@@ -482,6 +482,48 @@ pub fn derive_project_name(url: &str) -> String {
     basename.trim_end_matches(".git").to_string()
 }
 
+/// Verifies that a fork URL is reachable before adding it.
+///
+/// For local paths: checks the path exists and is a git repository.
+/// For HTTPS URLs: runs `gh repo view` to verify the repo exists and is accessible.
+pub(crate) fn verify_fork_url(url: &str, gh_token: Option<&str>) -> Result<()> {
+    if url.starts_with("https://") || url.starts_with("git@") {
+        // Remote URL — verify via gh CLI
+        let mut cmd = Command::new("gh");
+        cmd.args(["repo", "view", url, "--json", "name"]);
+        if let Some(token) = gh_token {
+            cmd.env("GH_TOKEN", token);
+        }
+        let output = cmd.output().context("Failed to run `gh repo view`")?;
+        if !output.status.success() {
+            bail!(
+                "Repository '{}' not found or not accessible.\n\
+                 Check the URL and ensure your token has access.\n\
+                 To verify manually:  gh repo view {}",
+                url, url
+            );
+        }
+    } else {
+        // Local path — check it exists and is a git repo
+        let path = Path::new(url);
+        if !path.exists() {
+            bail!(
+                "Repository path '{}' not found or not accessible.\n\
+                 The path does not exist.",
+                url
+            );
+        }
+        if !path.join(".git").is_dir() {
+            bail!(
+                "Repository path '{}' not found or not accessible.\n\
+                 The path exists but is not a git repository.",
+                url
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Augments the botminter.yml in the team repo with a projects section.
 fn augment_manifest_with_projects(
     team_repo: &Path,

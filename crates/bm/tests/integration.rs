@@ -262,7 +262,9 @@ fn projects_add_creates_dirs_and_updates_manifest() {
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
-    bm::commands::projects::add("git@github.com:org/my-repo.git", None).unwrap();
+    let fork = create_fake_fork(tmp.path(), "my-repo");
+    let fork_url = fork.to_string_lossy().to_string();
+    bm::commands::projects::add(&fork_url, None).unwrap();
 
     // Verify project dirs created
     let proj_dir = team_repo.join("projects/my-repo");
@@ -272,7 +274,7 @@ fn projects_add_creates_dirs_and_updates_manifest() {
     // Verify botminter.yml updated with project
     let manifest_content = fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
     assert!(manifest_content.contains("my-repo"));
-    assert!(manifest_content.contains("git@github.com:org/my-repo.git"));
+    assert!(manifest_content.contains(&fork_url));
 }
 
 #[test]
@@ -281,11 +283,135 @@ fn projects_add_duplicate_errors() {
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "test-team", "scrum");
 
-    bm::commands::projects::add("git@github.com:org/my-repo.git", None).unwrap();
-    let result = bm::commands::projects::add("git@github.com:org/my-repo.git", None);
+    let fork = create_fake_fork(tmp.path(), "my-repo");
+    let fork_url = fork.to_string_lossy().to_string();
+    bm::commands::projects::add(&fork_url, None).unwrap();
+    let result = bm::commands::projects::add(&fork_url, None);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("already exists"));
+}
+
+#[test]
+fn projects_add_nonexistent_url_errors() {
+    let _lock = ENV_MUTEX.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let team_repo = setup_team(tmp.path(), "test-team", "scrum");
+
+    // Snapshot manifest before the add attempt
+    let manifest_before =
+        fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
+
+    let bad_path = tmp.path().join("does-not-exist-repo");
+    let result = bm::commands::projects::add(&bad_path.to_string_lossy(), None);
+    assert!(result.is_err(), "adding a non-existent repo should fail");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains("not found") || err.contains("not accessible"),
+        "error should mention not found/accessible: {}",
+        err
+    );
+
+    // Manifest should be unchanged — no partial write
+    let manifest_after =
+        fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
+    assert_eq!(manifest_before, manifest_after, "manifest should not change on failed add");
+}
+
+#[test]
+fn sync_with_nonexistent_fork_url_gives_actionable_error() {
+    let _lock = ENV_MUTEX.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    setup_team(tmp.path(), "bad-fork-team", "scrum");
+
+    bm::commands::hire::run("architect", Some("alice"), None).unwrap();
+
+    // Manually inject a project with a non-existent fork URL into botminter.yml
+    // (bypasses validation that projects::add will have)
+    let team_repo = tmp.path().join("workspaces/bad-fork-team/team");
+    let manifest_path = team_repo.join("botminter.yml");
+    let mut manifest: bm::profile::ProfileManifest = {
+        let contents = fs::read_to_string(&manifest_path).unwrap();
+        serde_yml::from_str(&contents).unwrap()
+    };
+    let bad_url = tmp.path().join("does-not-exist-repo");
+    manifest.projects.push(bm::profile::ProjectDef {
+        name: "ghost-project".to_string(),
+        fork_url: bad_url.to_string_lossy().to_string(),
+    });
+    let contents = serde_yml::to_string(&manifest).unwrap();
+    fs::write(&manifest_path, contents).unwrap();
+    git(&team_repo, &["add", "botminter.yml"]);
+    git(&team_repo, &["commit", "-m", "add bad project"]);
+
+    let result = bm::commands::teams::sync(false, None);
+    assert!(result.is_err(), "sync should fail with non-existent fork");
+    let err = result.unwrap_err().to_string();
+    assert!(
+        err.contains(&bad_url.to_string_lossy().to_string()),
+        "error should contain the fork URL: {}",
+        err
+    );
+}
+
+#[test]
+fn sync_continues_past_failed_clone() {
+    let _lock = ENV_MUTEX.lock().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let team_repo = setup_team(tmp.path(), "mixed-team", "scrum");
+
+    // Create a valid fake fork
+    let good_fork = tmp.path().join("good-fork");
+    fs::create_dir_all(&good_fork).unwrap();
+    git(&good_fork, &["init", "-b", "main"]);
+    git(&good_fork, &["config", "user.email", "test@botminter.test"]);
+    git(&good_fork, &["config", "user.name", "BM Test"]);
+    fs::write(good_fork.join("README.md"), "# Good fork").unwrap();
+    git(&good_fork, &["add", "-A"]);
+    git(&good_fork, &["commit", "-m", "init"]);
+
+    bm::commands::hire::run("architect", Some("alice"), None).unwrap();
+
+    // Manually inject two projects: one good, one bad
+    let manifest_path = team_repo.join("botminter.yml");
+    let mut manifest: bm::profile::ProfileManifest = {
+        let contents = fs::read_to_string(&manifest_path).unwrap();
+        serde_yml::from_str(&contents).unwrap()
+    };
+    // Bad project FIRST — with current fail-fast, sync would abort
+    // before reaching the good one. After fix, it should continue.
+    let bad_url = tmp.path().join("bad-fork-nonexistent");
+    manifest.projects.push(bm::profile::ProjectDef {
+        name: "bad-fork".to_string(),
+        fork_url: bad_url.to_string_lossy().to_string(),
+    });
+    manifest.projects.push(bm::profile::ProjectDef {
+        name: "good-fork".to_string(),
+        fork_url: good_fork.to_string_lossy().to_string(),
+    });
+    let contents = serde_yml::to_string(&manifest).unwrap();
+    fs::write(&manifest_path, contents).unwrap();
+    git(&team_repo, &["add", "botminter.yml"]);
+    git(&team_repo, &["commit", "-m", "add projects"]);
+
+    let result = bm::commands::teams::sync(false, None);
+    assert!(result.is_err(), "sync should report failure");
+    let err = result.unwrap_err().to_string();
+
+    // The bad project should be mentioned in the error
+    assert!(
+        err.contains("bad-fork"),
+        "error should mention the bad project: {}",
+        err
+    );
+
+    // The good project's workspace should have been created despite the bad one
+    let team_dir = team_repo.parent().unwrap();
+    let good_ws = team_dir.join("architect-alice").join("good-fork");
+    assert!(
+        good_ws.join(".botminter").is_dir(),
+        "good fork workspace should be created despite bad fork failure"
+    );
 }
 
 // ── Schema version guard ─────────────────────────────────────────────

@@ -45,7 +45,13 @@ pub fn create_workspace(
                 &member_ws,
                 &["clone", fork_url, &project_ws.to_string_lossy()],
             )
-            .with_context(|| format!("Failed to clone fork {}", fork_url))?;
+            .with_context(|| format!(
+                "Failed to clone fork {}\n\n\
+                 The repository may not exist, or your token may lack access.\n\
+                 To verify:  gh repo view {}\n\
+                 To remove:  edit botminter.yml in the team repo and remove this project entry.",
+                fork_url, fork_url
+            ))?;
 
             // Checkout member branch (create if it doesn't exist remotely)
             if git_cmd(&project_ws, &["checkout", member_dir_name]).is_err() {

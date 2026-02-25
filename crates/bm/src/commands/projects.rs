@@ -6,7 +6,7 @@ use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, T
 use crate::config;
 use crate::profile;
 
-use super::init::{derive_project_name, find_project_number, run_git, sync_project_status_field};
+use super::init::{derive_project_name, find_project_number, run_git, sync_project_status_field, verify_fork_url};
 
 /// Handles `bm projects list [-t team]`.
 pub fn list(team_flag: Option<&str>) -> Result<()> {
@@ -145,6 +145,9 @@ pub fn add(url: &str, team_flag: Option<&str>) -> Result<()> {
     if manifest.projects.iter().any(|p| p.name == name) {
         bail!("Project '{}' already exists in this team.", name);
     }
+
+    // Verify the fork URL is reachable
+    verify_fork_url(url, team.credentials.gh_token.as_deref())?;
 
     // Add project to manifest
     manifest.projects.push(profile::ProjectDef {
