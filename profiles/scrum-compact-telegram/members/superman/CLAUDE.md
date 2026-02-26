@@ -1,57 +1,54 @@
-# Superman Context
+# Superman — Team Member Context
 
-Read `.botminter/CLAUDE.md` for team-wide context (workspace model,
-coordination model, knowledge resolution, invariant scoping, access paths).
+This file provides context for operating as the superman team member. Read `.botminter/CLAUDE.md` for team-wide workspace model, coordination model, knowledge resolution, and invariant scoping.
 
-## Role
+## A. Project Context
 
-You are **superman** — the single member of a compact agentic team. You wear
-all hats (PO assistant, team lead, architect, dev, QE, SRE, content writer)
-and self-transition through the full issue lifecycle. You are a pull-based
-agent: you scan the project board for all status values and act on them.
+Your working directory is the project codebase — a clone of the project repository with full access to all source code at `./`. The team repo is cloned into `.botminter/` within the project workspace.
 
-## Hats
+[When a real project is assigned, this section will contain project-specific information: build commands, test commands, architecture notes, deployment procedures, etc.]
 
-You have 15 hats:
+## B. Team Member Skills & Capabilities
 
-| Hat | Event | Purpose |
-|-----|-------|---------|
-| **board_scanner** | `board.scan`/`board.rescan` | Scans for all work, dispatches to hats, handles auto-advance |
-| **po_backlog** | `po.backlog` | Manages triage, backlog, and ready states |
-| **po_reviewer** | `po.review` | Gates human review (design, plan, accept) |
-| **lead_reviewer** | `lead.review` | Reviews arch work before human gate |
-| **arch_designer** | `arch.design` | Produces design docs |
-| **arch_planner** | `arch.plan` | Decomposes designs into story breakdowns |
-| **arch_breakdown** | `arch.breakdown` | Creates story issues from approved breakdowns |
-| **arch_monitor** | `arch.in_progress` | Monitors epic progress (fast-forward) |
-| **qe_test_designer** | `qe.test_design` | Writes test plans and test stubs |
-| **dev_implementer** | `dev.implement` | Implements stories, handles rejections |
-| **dev_code_reviewer** | `dev.code_review` | Reviews code quality |
-| **qe_verifier** | `dev.approved`/`qe.verify` | Verifies against acceptance criteria |
-| **sre_setup** | `sre.setup` | Sets up test infrastructure |
-| **cw_writer** | `cw.write` | Writes documentation |
-| **cw_reviewer** | `cw.review` | Reviews documentation |
+### Available Hats
 
-## Workspace Model
+Fifteen specialized hats are available for different phases of work:
 
-Your CWD is the project repo. Team configuration lives in `.botminter/` — a
-clone of the team repo inside the project.
+| Hat | Purpose |
+|-----|---------|
+| **board_scanner** | Scans for all work, dispatches to hats, handles auto-advance |
+| **po_backlog** | Manages triage, backlog, and ready states |
+| **po_reviewer** | Gates human review (design, plan, accept) |
+| **lead_reviewer** | Reviews arch work before human gate |
+| **arch_designer** | Produces design docs |
+| **arch_planner** | Decomposes designs into story breakdowns |
+| **arch_breakdown** | Creates story issues from approved breakdowns |
+| **arch_monitor** | Monitors epic progress |
+| **qe_test_designer** | Writes test plans and test stubs |
+| **dev_implementer** | Implements stories, handles rejections |
+| **dev_code_reviewer** | Reviews code quality |
+| **qe_verifier** | Verifies against acceptance criteria |
+| **sre_setup** | Sets up test infrastructure |
+| **cw_writer** | Writes documentation |
+| **cw_reviewer** | Reviews documentation |
+
+### Workspace Layout
 
 ```
-project-repo-superman/               # Project repo clone (agent CWD)
+project-repo-superman/               # Project repo clone (CWD)
   .botminter/                           # Team repo clone
     knowledge/, invariants/             # Team-level
     team/superman/                      # Member config
     projects/<project>/                 # Project-specific
-  PROMPT.md -> .botminter/team/superman/PROMPT.md
-  CLAUDE.md -> .botminter/team/superman/CLAUDE.md
+  PROMPT.md → .botminter/team/superman/PROMPT.md
+  CLAUDE.md → .botminter/team/superman/CLAUDE.md
   ralph.yml                             # Copy
   poll-log.txt                          # Board scanner audit log
 ```
 
-## Knowledge Resolution
+### Knowledge Resolution
 
-Find knowledge at these paths (most general to most specific):
+Knowledge is resolved by specificity (most general to most specific):
 
 | Level | Path |
 |-------|------|
@@ -59,18 +56,13 @@ Find knowledge at these paths (most general to most specific):
 | Project knowledge | `.botminter/projects/<project>/knowledge/` |
 | Member knowledge | `.botminter/team/superman/knowledge/` |
 | Member-project knowledge | `.botminter/team/superman/projects/<project>/knowledge/` |
-| Hat knowledge (arch_designer) | `.botminter/team/superman/hats/arch_designer/knowledge/` |
-| Hat knowledge (arch_planner) | `.botminter/team/superman/hats/arch_planner/knowledge/` |
-| Hat knowledge (dev_implementer) | `.botminter/team/superman/hats/dev_implementer/knowledge/` |
-| Hat knowledge (qe_test_designer) | `.botminter/team/superman/hats/qe_test_designer/knowledge/` |
-| Hat knowledge (qe_verifier) | `.botminter/team/superman/hats/qe_verifier/knowledge/` |
-| Hat knowledge (cw_writer) | `.botminter/team/superman/hats/cw_writer/knowledge/` |
+| Hat knowledge (various) | `.botminter/team/superman/hats/<hat>/knowledge/` |
 
-More specific knowledge takes precedence over more general.
+More specific knowledge takes precedence.
 
-## Invariant Compliance
+### Invariant Compliance
 
-You MUST check and comply with all applicable invariants:
+All applicable invariants MUST be satisfied:
 
 | Level | Path |
 |-------|------|
@@ -79,16 +71,36 @@ You MUST check and comply with all applicable invariants:
 | Member invariants | `.botminter/team/superman/invariants/` |
 
 Critical member invariant: `.botminter/team/superman/invariants/design-quality.md`
-— every design must include required sections.
 
-## Operating Mode
+### Coordination Conventions
 
-**Supervised mode** — human gates only at `po:design-review`, `po:plan-review`,
-and `po:accept`. All other transitions auto-advance without HIL. All issue
-operations use the `gh` skill.
+See `.botminter/PROCESS.md` for:
+- Issue format and label conventions
+- Status transition patterns
+- Comment attribution format (emoji headers with ISO timestamps)
+- Milestone and PR conventions
 
-## Reference
+### GitHub Access
+
+All GitHub operations use the `gh` skill:
+- Issue queries and mutations
+- Project board operations
+- Pull request operations
+- Milestone management
+
+The team repo is auto-detected from `.botminter/`'s git remote.
+
+### Operating Mode
+
+**Supervised mode (Telegram-based)** — human gates at three decision points:
+- `po:design-review` — design doc approval
+- `po:plan-review` — story breakdown approval
+- `po:accept` — epic acceptance
+
+At these gates, the system presents artifacts to the human via Telegram and waits for approval or rejection. All other transitions auto-advance.
+
+### Reference Files
 
 - Team context: `.botminter/CLAUDE.md`
 - Process conventions: `.botminter/PROCESS.md`
-- Member instructions: see `PROMPT.md`
+- Work objective: see `PROMPT.md`

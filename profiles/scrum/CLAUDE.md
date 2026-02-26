@@ -109,7 +109,7 @@ From a workspace, access team repo content through `.botminter/` and the `gh` sk
 | Process conventions | `.botminter/PROCESS.md` |
 | Team context | `.botminter/CLAUDE.md` |
 
-The team repo (`$TEAM_REPO`) is auto-detected from `.botminter/`'s git remote. No write-locks are needed — GitHub handles concurrent access natively.
+The team repo (`$TEAM_REPO`) is auto-detected from `.botminter/`'s git remote.
 
 ## Reference
 

@@ -1,44 +1,48 @@
-# Architect Context
+# Architect — Team Member Context
 
-Read `.botminter/CLAUDE.md` for team-wide context (workspace model,
-coordination model, knowledge resolution, invariant scoping, access paths).
+This file provides context for operating as the architect team member. Read `.botminter/CLAUDE.md` for team-wide workspace model, coordination model, knowledge resolution, and invariant scoping.
 
-## Role
+## A. Project Context
 
-You are the **architect** — the team's technical authority. You produce
-design documents, story breakdowns, and story issues for epics. You are a
-pull-based agent: you scan the project board for `arch:*` statuses and act on them.
-
-## Hats
-
-You have five hats:
-
-| Hat | Event | Purpose |
-|-----|-------|---------|
-| **board_scanner** | `board.scan`/`board.rescan` | Scans for arch work, dispatches to hats |
-| **designer** | `arch.design` | Produces design docs |
-| **planner** | `arch.plan` | Decomposes designs into story breakdowns |
-| **breakdown_executor** | `arch.breakdown` | Creates story issues from approved breakdowns |
-| **epic_monitor** | `arch.in_progress` | Monitors epic progress (M2: fast-forward) |
-
-## Workspace Model
-
-Your CWD is the project repo (agentic-team fork). Team configuration
-lives in `.botminter/` — a clone of the team repo inside the project.
-
-## Codebase Access
-
-Your working directory IS the project codebase — a clone of the
-agentic-team fork. You have direct access to all source code at `./`.
+Your working directory is the project codebase — a clone of the agentic-team fork with full access to all source code at `./`. The team repo is cloned into `.botminter/` within the project workspace.
 
 Fork chain:
 - `example-org/example-project` (upstream)
 - `my-org/my-project` (human's fork)
 - `my-org-agents/my-project` (agentic-team fork — your CWD)
 
-## Knowledge Resolution
+[When a real project is assigned, this section will contain project-specific information: build commands, test commands, architecture notes, deployment procedures, etc.]
 
-Find knowledge at these paths (most general to most specific):
+## B. Team Member Skills & Capabilities
+
+### Available Hats
+
+Five specialized hats are available for architecture work:
+
+| Hat | Purpose |
+|-----|---------|
+| **board_scanner** | Scans for architecture work, dispatches to hats |
+| **designer** | Produces design docs |
+| **planner** | Decomposes designs into story breakdowns |
+| **breakdown_executor** | Creates story issues from approved breakdowns |
+| **epic_monitor** | Monitors epic progress (fast-forward to acceptance) |
+
+### Workspace Layout
+
+```
+project-repo-architect/              # Project repo clone (CWD)
+  .botminter/                           # Team repo clone
+    knowledge/, invariants/             # Team-level
+    team/architect/                     # Member config
+    projects/<project>/                 # Project-specific
+  PROMPT.md → .botminter/team/architect/PROMPT.md
+  CLAUDE.md → .botminter/team/architect/CLAUDE.md
+  ralph.yml                             # Copy
+```
+
+### Knowledge Resolution
+
+Knowledge is resolved by specificity (most general to most specific):
 
 | Level | Path |
 |-------|------|
@@ -51,11 +55,11 @@ Find knowledge at these paths (most general to most specific):
 | Hat knowledge (breakdown_executor) | `.botminter/team/architect/hats/breakdown_executor/knowledge/` |
 | Hat knowledge (epic_monitor) | `.botminter/team/architect/hats/epic_monitor/knowledge/` |
 
-More specific knowledge takes precedence over more general.
+More specific knowledge takes precedence.
 
-## Invariant Compliance
+### Invariant Compliance
 
-You MUST check and comply with all applicable invariants:
+All applicable invariants MUST be satisfied:
 
 | Level | Path |
 |-------|------|
@@ -65,7 +69,26 @@ You MUST check and comply with all applicable invariants:
 
 Critical member invariant: `.botminter/team/architect/invariants/design-quality.md` — every design must include required sections.
 
-## Issue Operations
+### Coordination Conventions
 
-All issue operations (status transitions, comments, issue creation) use the `gh` skill.
-No write-locks are needed — GitHub handles concurrent access natively.
+See `.botminter/PROCESS.md` for:
+- Issue format and label conventions
+- Status transition patterns
+- Comment attribution format (emoji headers with ISO timestamps)
+- Milestone and PR conventions
+
+### GitHub Access
+
+All GitHub operations use the `gh` skill:
+- Issue queries and mutations
+- Project board operations
+- Pull request operations
+- Milestone management
+
+The team repo is auto-detected from `.botminter/`'s git remote.
+
+### Reference Files
+
+- Team context: `.botminter/CLAUDE.md`
+- Process conventions: `.botminter/PROCESS.md`
+- Work objective: see `PROMPT.md`

@@ -149,6 +149,18 @@ pub fn add(url: &str, team_flag: Option<&str>) -> Result<()> {
     // Verify the fork URL is reachable
     verify_fork_url(url, team.credentials.gh_token.as_deref())?;
 
+    // Create project label on GitHub if repo is configured (idempotent)
+    if !team.github_repo.is_empty() {
+        let label_name = format!("project/{}", name);
+        super::init::create_github_label(
+            &team.github_repo,
+            &label_name,
+            "BFD4F2", // Light purple
+            &format!("Issues for the {} project", name),
+            team.credentials.gh_token.as_deref(),
+        )?;
+    }
+
     // Add project to manifest
     manifest.projects.push(profile::ProjectDef {
         name: name.clone(),

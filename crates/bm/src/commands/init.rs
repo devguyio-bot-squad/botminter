@@ -1000,6 +1000,48 @@ fn bootstrap_labels(
     Ok(())
 }
 
+/// Creates a single label on a GitHub repo. Idempotent (uses --force).
+pub fn create_github_label(
+    repo: &str,
+    name: &str,
+    color: &str,
+    description: &str,
+    gh_token: Option<&str>,
+) -> Result<()> {
+    let mut cmd = Command::new("gh");
+    cmd.args([
+        "label",
+        "create",
+        name,
+        "--color",
+        color,
+        "--description",
+        description,
+        "--force",
+        "--repo",
+        repo,
+    ]);
+
+    if let Some(token) = gh_token {
+        cmd.env("GH_TOKEN", token);
+    }
+
+    let output = cmd.output().with_context(|| {
+        format!("Failed to create label '{}'", name)
+    })?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "Failed to create label '{}': {}",
+            name,
+            stderr.trim(),
+        );
+    }
+
+    Ok(())
+}
+
 /// Creates a GitHub Project (v2), syncs the Status field options, and returns the project number.
 /// Uses the `updateProjectV2Field` GraphQL mutation to replace the built-in
 /// Status field's default options with the profile's status definitions.

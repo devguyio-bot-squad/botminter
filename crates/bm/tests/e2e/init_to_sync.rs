@@ -201,8 +201,7 @@ fn create_fake_fork(tmp: &Path, name: &str) -> PathBuf {
 fn e2e_init_hire_sync_lifecycle() {
     require_gh_auth!();
 
-    let repo = super::github::TempRepo::new_in_org("bm-e2e-lifecycle", E2E_ORG)
-        .expect("Failed to create temp GitHub repo under devguyio-bot-squad");
+    super::github::clean_persistent_repo();
     let tmp = tempfile::tempdir().unwrap();
 
     // Find a profile with at least 2 roles (profile-agnostic)
@@ -212,8 +211,8 @@ fn e2e_init_hire_sync_lifecycle() {
     let team_name = "e2e-lifecycle";
 
     // Programmatic team setup with GitHub remote
-    setup_team_with_github(tmp.path(), team_name, &profile_name, &repo.full_name);
-    bootstrap_labels(&repo.full_name, &profile_name);
+    setup_team_with_github(tmp.path(), team_name, &profile_name, super::github::PERSISTENT_REPO);
+    bootstrap_labels(super::github::PERSISTENT_REPO, &profile_name);
 
     // Create fake fork for project
     let fork = create_fake_fork(tmp.path(), "test-project");
@@ -320,21 +319,20 @@ fn e2e_init_hire_sync_lifecycle() {
 fn e2e_labels_bootstrapped_on_github() {
     require_gh_auth!();
 
-    let repo = super::github::TempRepo::new_in_org("bm-e2e-labels", E2E_ORG)
-        .expect("Failed to create temp GitHub repo");
+    super::github::clean_persistent_repo();
     let tmp = tempfile::tempdir().unwrap();
 
     let (profile_name, _) = find_profile_with_roles(1);
     let team_name = "e2e-labels";
 
-    setup_team_with_github(tmp.path(), team_name, &profile_name, &repo.full_name);
-    bootstrap_labels(&repo.full_name, &profile_name);
+    setup_team_with_github(tmp.path(), team_name, &profile_name, super::github::PERSISTENT_REPO);
+    bootstrap_labels(super::github::PERSISTENT_REPO, &profile_name);
 
     // Read expected labels from profile manifest
     let manifest = profile::read_manifest(&profile_name).unwrap();
 
     // Query actual labels on GitHub
-    let gh_labels = super::github::list_labels_json(&repo.full_name);
+    let gh_labels = super::github::list_labels_json(&super::github::PERSISTENT_REPO);
 
     // Verify every expected label exists with correct color
     for expected in &manifest.labels {
@@ -388,15 +386,14 @@ fn e2e_labels_bootstrapped_on_github() {
 fn e2e_sync_idempotent_with_github() {
     require_gh_auth!();
 
-    let repo = super::github::TempRepo::new_in_org("bm-e2e-idem", E2E_ORG)
-        .expect("Failed to create temp GitHub repo");
+    super::github::clean_persistent_repo();
     let tmp = tempfile::tempdir().unwrap();
 
     let (profile_name, roles) = find_profile_with_roles(1);
     let role = &roles[0];
     let team_name = "e2e-idem";
 
-    setup_team_with_github(tmp.path(), team_name, &profile_name, &repo.full_name);
+    setup_team_with_github(tmp.path(), team_name, &profile_name, super::github::PERSISTENT_REPO);
 
     // Hire one member
     let mut cmd = bm_cmd();
@@ -451,8 +448,7 @@ fn e2e_sync_idempotent_with_github() {
 fn e2e_members_list_after_full_setup() {
     require_gh_auth!();
 
-    let repo = super::github::TempRepo::new_in_org("bm-e2e-members", E2E_ORG)
-        .expect("Failed to create temp GitHub repo");
+    super::github::clean_persistent_repo();
     let tmp = tempfile::tempdir().unwrap();
 
     let (profile_name, roles) = find_profile_with_roles(2);
@@ -460,7 +456,7 @@ fn e2e_members_list_after_full_setup() {
     let role_2 = &roles[1];
     let team_name = "e2e-members";
 
-    setup_team_with_github(tmp.path(), team_name, &profile_name, &repo.full_name);
+    setup_team_with_github(tmp.path(), team_name, &profile_name, &super::github::PERSISTENT_REPO);
 
     // Hire two members
     let mut cmd = bm_cmd();
@@ -522,14 +518,13 @@ fn e2e_members_list_after_full_setup() {
 fn e2e_teams_list_shows_github_repo() {
     require_gh_auth!();
 
-    let repo = super::github::TempRepo::new_in_org("bm-e2e-teams", E2E_ORG)
-        .expect("Failed to create temp GitHub repo");
+    super::github::clean_persistent_repo();
     let tmp = tempfile::tempdir().unwrap();
 
     let (profile_name, _) = find_profile_with_roles(1);
     let team_name = "e2e-teams";
 
-    setup_team_with_github(tmp.path(), team_name, &profile_name, &repo.full_name);
+    setup_team_with_github(tmp.path(), team_name, &profile_name, super::github::PERSISTENT_REPO);
 
     // Run teams list
     let mut cmd = bm_cmd();
@@ -538,9 +533,9 @@ fn e2e_teams_list_shows_github_repo() {
 
     // Verify output includes the GitHub repo full name
     assert!(
-        stdout.contains(&repo.full_name),
+        stdout.contains(&super::github::PERSISTENT_REPO),
         "teams list should show GitHub repo '{}', output:\n{}",
-        repo.full_name,
+        super::github::PERSISTENT_REPO,
         stdout
     );
 }
@@ -673,8 +668,7 @@ fn e2e_projects_sync_status_and_views() {
 fn e2e_clone_existing_repo() {
     require_gh_auth!();
 
-    let repo = super::github::TempRepo::new_in_org("bm-e2e-clone", E2E_ORG)
-        .expect("Failed to create temp GitHub repo");
+    super::github::clean_persistent_repo();
     let tmp = tempfile::tempdir().unwrap();
 
     let (profile_name, _) = find_profile_with_roles(1);
@@ -698,7 +692,7 @@ fn e2e_clone_existing_repo() {
     git(&staging_repo, &["add", "-A"]);
     git(&staging_repo, &["commit", "-m", "feat: init"]);
 
-    let remote_url = format!("https://github.com/{}.git", repo.full_name);
+    let remote_url = format!("https://github.com/{}.git", super::github::PERSISTENT_REPO);
     git(&staging_repo, &["remote", "add", "origin", &remote_url]);
     git_push(&staging_repo);
 
@@ -706,7 +700,7 @@ fn e2e_clone_existing_repo() {
     let clone_dir = tmp.path().join("cloned");
     fs::create_dir_all(&clone_dir).unwrap();
 
-    bm::commands::init::clone_existing_repo(&clone_dir, &repo.full_name, None)
+    bm::commands::init::clone_existing_repo(&clone_dir, &super::github::PERSISTENT_REPO, None)
         .expect("clone_existing_repo should succeed");
 
     // Verify the clone landed in {clone_dir}/team/
@@ -835,4 +829,64 @@ fn e2e_sync_status_on_existing_project() {
     );
 
     // TempProject drops here → deletes the project
+}
+
+#[test]
+fn e2e_projects_add_creates_label_on_github() {
+    require_gh_auth!();
+
+    super::github::clean_persistent_repo();
+    let tmp = tempfile::tempdir().unwrap();
+
+    let (profile_name, _) = find_profile_with_roles(1);
+    let team_name = "e2e-project-labels";
+
+    setup_team_with_github(tmp.path(), team_name, &profile_name, super::github::PERSISTENT_REPO);
+
+    // Create a fake fork
+    let fork = create_fake_fork(tmp.path(), "test-project");
+    let fork_url = fork.to_string_lossy().to_string();
+
+    // Verify label doesn't exist yet
+    let labels_before = super::github::list_labels(super::github::PERSISTENT_REPO);
+    assert!(
+        !labels_before.contains(&"project/test-project".to_string()),
+        "Label should not exist before bm projects add"
+    );
+
+    // Run bm projects add
+    let mut cmd = bm_cmd();
+    cmd.args(["projects", "add", &fork_url, "-t", team_name])
+        .env("HOME", tmp.path());
+    let output = assert_cmd_success(&mut cmd);
+    eprintln!("projects add output: {}", output.trim());
+
+    // Verify label was created on GitHub
+    let labels_after = super::github::list_labels(super::github::PERSISTENT_REPO);
+    assert!(
+        labels_after.contains(&"project/test-project".to_string()),
+        "Label 'project/test-project' should exist after bm projects add. Found labels: {:?}",
+        labels_after
+    );
+
+    // Test idempotency - add a second project
+    let fork2 = create_fake_fork(tmp.path(), "another-project");
+    let fork2_url = fork2.to_string_lossy().to_string();
+
+    let mut cmd = bm_cmd();
+    cmd.args(["projects", "add", &fork2_url, "-t", team_name])
+        .env("HOME", tmp.path());
+    assert_cmd_success(&mut cmd);
+
+    // Verify second label was also created
+    let labels_final = super::github::list_labels(super::github::PERSISTENT_REPO);
+    assert!(
+        labels_final.contains(&"project/test-project".to_string()),
+        "First label should still exist"
+    );
+    assert!(
+        labels_final.contains(&"project/another-project".to_string()),
+        "Second label 'project/another-project' should exist. Found labels: {:?}",
+        labels_final
+    );
 }

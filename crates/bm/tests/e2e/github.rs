@@ -296,3 +296,154 @@ pub fn list_issues(repo: &str) -> Vec<String> {
         .map(|l| l.to_string())
         .collect()
 }
+
+// ── Persistent Test Repo Helpers ────────────────────────────────────
+
+/// The persistent test repository used for all E2E tests.
+pub const PERSISTENT_REPO: &str = "devguyio-bot-squad/test-team-repo";
+
+/// GitHub default labels that should never be deleted.
+const GITHUB_DEFAULT_LABELS: &[&str] = &[
+    "bug",
+    "documentation",
+    "duplicate",
+    "enhancement",
+    "good first issue",
+    "help wanted",
+    "invalid",
+    "question",
+    "wontfix",
+];
+
+/// Ensures the persistent test repo exists, creating it if necessary.
+/// Returns the repo name.
+pub fn ensure_persistent_repo() -> Result<String, String> {
+    // Check if repo exists
+    let output = Command::new("gh")
+        .args(["repo", "view", PERSISTENT_REPO, "--json", "name"])
+        .output()
+        .map_err(|e| format!("failed to check if repo exists: {}", e))?;
+
+    if output.status.success() {
+        eprintln!("Persistent repo exists: {}", PERSISTENT_REPO);
+        return Ok(PERSISTENT_REPO.to_string());
+    }
+
+    // Repo doesn't exist, create it
+    eprintln!("Creating persistent repo: {}", PERSISTENT_REPO);
+    let output = Command::new("gh")
+        .args(["repo", "create", PERSISTENT_REPO, "--private"])
+        .output()
+        .map_err(|e| format!("failed to create persistent repo: {}", e))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "gh repo create '{}' failed: {}",
+            PERSISTENT_REPO,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    eprintln!("Created persistent repo: {}", PERSISTENT_REPO);
+    Ok(PERSISTENT_REPO.to_string())
+}
+
+/// Cleans the persistent test repo to a pristine state:
+/// - Deletes all custom labels (keeps GitHub defaults)
+/// - Closes and deletes all issues
+/// - Deletes all projects
+///
+/// Call this at the start of each E2E test that uses the persistent repo.
+pub fn clean_persistent_repo() {
+    eprintln!("Cleaning persistent repo: {}", PERSISTENT_REPO);
+
+    // Delete all custom labels (keep GitHub defaults)
+    let labels = list_labels(PERSISTENT_REPO);
+    for label in labels {
+        if !GITHUB_DEFAULT_LABELS.contains(&label.as_str()) {
+            eprintln!("  Deleting label: {}", label);
+            let _ = Command::new("gh")
+                .args(["label", "delete", &label, "-R", PERSISTENT_REPO, "--yes"])
+                .output();
+        }
+    }
+
+    // Close and delete all issues
+    let output = Command::new("gh")
+        .args([
+            "issue",
+            "list",
+            "-R",
+            PERSISTENT_REPO,
+            "--json",
+            "number",
+            "--jq",
+            ".[].number",
+            "--limit",
+            "100",
+            "--state",
+            "all",
+        ])
+        .output()
+        .expect("failed to list issues");
+
+    if output.status.success() {
+        let issue_numbers: Vec<String> = String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|l| !l.is_empty())
+            .map(|l| l.to_string())
+            .collect();
+
+        for number in issue_numbers {
+            eprintln!("  Deleting issue #{}", number);
+            // Close first, then delete
+            let _ = Command::new("gh")
+                .args(["issue", "close", &number, "-R", PERSISTENT_REPO])
+                .output();
+            let _ = Command::new("gh")
+                .args(["issue", "delete", &number, "-R", PERSISTENT_REPO, "--yes"])
+                .output();
+        }
+    }
+
+    // Delete all projects
+    let output = Command::new("gh")
+        .args([
+            "project",
+            "list",
+            "--owner",
+            "devguyio-bot-squad",
+            "--format",
+            "json",
+            "--limit",
+            "100",
+        ])
+        .output()
+        .expect("failed to list projects");
+
+    if output.status.success() {
+        let json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).unwrap_or(serde_json::Value::Null);
+
+        if let Some(projects) = json["projects"].as_array() {
+            for project in projects {
+                if let Some(number) = project["number"].as_u64() {
+                    eprintln!("  Deleting project #{}", number);
+                    let _ = Command::new("gh")
+                        .args([
+                            "project",
+                            "delete",
+                            "--owner",
+                            "devguyio-bot-squad",
+                            &number.to_string(),
+                            "--format",
+                            "json",
+                        ])
+                        .output();
+                }
+            }
+        }
+    }
+
+    eprintln!("Persistent repo cleaned: {}", PERSISTENT_REPO);
+}

@@ -8,7 +8,7 @@ The team repo is NOT a code repo. It defines the team's structure, process, know
 
 ## Single-Member Model
 
-The compact profile has one member — `superman` — who wears all hats (PO, team lead, architect, dev, QE, SRE, content writer). The agent self-transitions through the entire issue lifecycle by switching hats. No write-locks are needed since there is no concurrent access.
+The compact profile has one member — `superman` — who wears all hats (PO, team lead, architect, dev, QE, SRE, content writer). The agent self-transitions through the entire issue lifecycle by switching hats.
 
 ## Workspace Model
 

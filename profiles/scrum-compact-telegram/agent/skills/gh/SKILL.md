@@ -474,7 +474,6 @@ See [Troubleshooting Guide](references/troubleshooting.md) for complete error re
 ## Notes
 
 - **Token scope:** The `project` scope is required for all project operations. Verified at start of every script.
-- **No write-locks:** GitHub handles concurrent access natively. Multiple agents can safely operate simultaneously.
 - **Idempotent:** All operations are safe to retry. Re-setting same status, re-assigning same user is safe.
 - **Rate limits:** The gh CLI respects GitHub's rate limits. For bulk operations, add delays between calls.
 - **Error handling:** v3.0.0 includes comprehensive validation and verification. All failures are caught and reported with detailed context.
