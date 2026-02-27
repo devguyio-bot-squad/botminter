@@ -6,26 +6,15 @@ Lead your own Claude Code agents. Define a process, hire agents into roles, and 
 > **Pre-Alpha** — botminter is under active development and not yet ready for production use. Commands, configuration format, and behavior may change without notice between releases. See the [Roadmap](docs/content/roadmap.md) for current status.
 
 ```mermaid
-flowchart LR
-    Human((You))
-
-    Human <-->|"GitHub comments"| Agent(superman)
-    Agent <-->|"status transitions"| board
-
-    subgraph repo["Team Repo (Control Plane)"]
-        board["GitHub Issues\n+ Project Board"]
-        docs["PROCESS.md\nknowledge/\ninvariants/"]
-    end
-
-    docs -.->|"shared context"| Agent
-
-    subgraph workspace["Agent Workspace"]
-        Agent
-        fork["Project Fork"]
-    end
+flowchart TD
+    you["👤 You"] -->|"create issues · review · approve/reject"| board["📋 GitHub Project Board"]
+    board --> po["📝 PO Agent<br/><small>Triage · Review · Accept</small>"]
+    board --> arch["🏗️ Architect Agent<br/><small>Design · Breakdown</small>"]
+    board --> dev["🤖 Dev Agent<br/><small>Write Tests · Implement</small>"]
+    board --> sre["🚀 SRE Agent<br/><small>Deploy</small>"]
 ```
 
-> The diagram shows the `scrum-compact` profile — a single agent wearing all hats. The `scrum` profile distributes roles across multiple agents.
+> You create issues and review at gates. Agents pick up work from the board, process it, and hand off by updating the status. With the `scrum-compact` profile, a single agent wears all these hats.
 
 ## Quick Start
 
