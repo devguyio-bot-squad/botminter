@@ -45,7 +45,7 @@ just clippy   # cargo clippy -p bm -- -D warnings
 
 Milestone planning uses reusable prompts in `specs/prompts/`. Feed them to Claude Code via PROMPT.md or direct paste:
 
-- `planning-new.md` — Start planning the next unplanned milestone. Detects which milestone, creates `specs/milestone-*/` with requirements.md and research/.
+- `planning-new.md` — Start planning the next unplanned milestone. Detects which milestone, creates `specs/milestones/<name>/` with requirements.md and research/.
 - `planning-resume.md` — Resume an in-progress milestone's planning session.
 - `planning-revisit.md` — Revisit and refine an existing milestone's artifacts.
 
@@ -117,7 +117,8 @@ Issues, milestones, and PRs live on the team repo's GitHub. Status transitions u
 | `profiles/scrum/` | Scrum profile (PROCESS.md, member skeletons, knowledge, invariants) |
 | `profiles/scrum-compact/` | Compact solo profile (single "superman" role) |
 | `specs/master-plan/` | Design docs: rough-idea, requirements (26 Q&A), design, plan, research/ |
-| `specs/milestone-*/` | Per-milestone specs, requirements, and design docs |
+| `specs/milestones/` | Per-milestone planning artifacts (completed/, active at root, future/) |
+| `specs/tasks/` | Standalone task batches (completed/ and active) |
 | `specs/prompts/` | Reusable planning prompts (planning-new, planning-resume, planning-revisit) |
 
 ## Development Patterns

@@ -1,10 +1,10 @@
 target/
-specs/
 
 # Ralph orchestrator runtime & dev config
 .ralph/
 ralph.yml
 PROMPT.md
+!specs/**/PROMPT.md
 
 # Personal/internal
 TESTING-NOTES.md
