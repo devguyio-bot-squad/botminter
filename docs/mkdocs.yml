@@ -1,5 +1,5 @@
 site_name: botminter
-site_description: CLI for managing GitOps-style agentic teams
+site_description: Lead your own Claude Code agents
 repo_url: https://github.com/botminter/botminter
 docs_dir: content
 site_dir: site
@@ -7,7 +7,9 @@ site_dir: site
 nav:
   - Home: index.md
   - Getting Started:
+    - Prerequisites: getting-started/prerequisites.md
     - getting-started/index.md
+    - Your First Journey: getting-started/first-journey.md
   - The Agentic Workflow: workflow.md
   - Concepts:
     - Architecture: concepts/architecture.md
@@ -28,6 +30,7 @@ nav:
     - Member Roles: reference/member-roles.md
     - Design Principles: reference/design-principles.md
   - Roadmap: roadmap.md
+  - FAQ: faq.md
 theme:
   name: material
   custom_dir: overrides

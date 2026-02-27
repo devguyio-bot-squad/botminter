@@ -72,12 +72,15 @@
       <div class="bm-hero__badge">Open Source</div>
       <h1 class="bm-hero__title">
         Mint your<br>
-        <span class="bm-hero__accent">AI engineering team.</span>
+        <span class="bm-hero__accent">Claude Code agents.</span>
       </h1>
       <p class="bm-hero__subtitle">
-        Your own AI team that works like any other team &mdash; picking up issues,
-        opening PRs, following your process.<br><br>
-        You design the value stream. You control the context.
+        Work with Claude Code agents the way you work with any engineering team &mdash;
+        they pick up issues, open PRs, and follow your process.<br><br>
+        You design the workflow. You control the context.
+      </p>
+      <p class="bm-hero__note">
+        Conventions that scale seamlessly from solo to org-wide.
       </p>
       <div class="bm-hero__actions">
         <a href="getting-started/" class="md-button md-button--primary bm-btn">
@@ -184,7 +187,7 @@
 
   <section class="bm-features">
     <div class="bm-features__inner">
-      <h2 class="bm-section__title">Everything you need for agentic teams</h2>
+      <h2 class="bm-section__title">Everything you need to lead Claude Code agents</h2>
       <p class="bm-section__subtitle">
         Three commands. Fully configured. Version-controlled.
       </p>
@@ -300,11 +303,53 @@
     </div>
   </section>
 
+  <section class="bm-faq">
+    <div class="bm-faq__inner">
+      <h2 class="bm-section__title">Frequently asked questions</h2>
+      <p class="bm-section__subtitle">
+        Common questions about botminter.
+      </p>
+      <div class="bm-faq__grid">
+
+        <div class="bm-faq__item">
+          <h3 class="bm-faq__question">Does botminter only work with Claude Code?</h3>
+          <p class="bm-faq__answer">
+            Claude Code is the primary supported runtime today. Under the hood, botminter uses a pluggable
+            runtime layer &mdash; currently powered by
+            <a href="https://github.com/mikeyobrien/ralph-orchestrator">Ralph orchestrator</a>.
+            We&rsquo;re working on making it easy to plug in custom runtimes as well.
+          </p>
+        </div>
+
+        <div class="bm-faq__item">
+          <h3 class="bm-faq__question">Do I need multiple agents running in parallel?</h3>
+          <p class="bm-faq__answer">
+            Not at all. It depends on the profile you choose. The <code>scrum-compact</code> profile runs
+            a single agent that wears multiple hats &mdash; planner, implementer, reviewer &mdash; all in one.
+            Other profiles like <code>scrum</code> distribute those hats across specialized agents.
+            You pick the formation that fits your workflow.
+          </p>
+        </div>
+
+        <div class="bm-faq__item">
+          <h3 class="bm-faq__question">Is this only for Scrum teams?</h3>
+          <p class="bm-faq__answer">
+            No. botminter focuses on <strong>conventions</strong>, not a specific methodology.
+            It ships with opinionated defaults (like the Scrum profile), but profiles are fully customizable.
+            Think of it like Rails for web or Spring for enterprise &mdash; baked-in conventions
+            that you can tweak to fit your process. You can fork an existing profile or create one from scratch.
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
   <section class="bm-cta">
     <div class="bm-cta__inner">
-      <h2 class="bm-cta__title">Ready to build your agentic team?</h2>
+      <h2 class="bm-cta__title">Ready to lead your own Claude Code agents?</h2>
       <p class="bm-cta__text">
-        Get started with botminter in minutes. All you need is the <code>bm</code> CLI and a GitHub repo.
+        Get started in minutes. All you need is the <code>bm</code> CLI and a GitHub repo.
       </p>
       <a href="getting-started/" class="md-button md-button--primary bm-btn">
         Get Started

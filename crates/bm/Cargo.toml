@@ -2,7 +2,7 @@
 name = "bm"
 version = "0.1.0"
 edition = "2021"
-description = "CLI for managing GitOps-style agentic teams"
+description = "Lead your own Claude Code agents"
 license = "Apache-2.0"
 repository = "https://github.com/devguyio/botminter"
 

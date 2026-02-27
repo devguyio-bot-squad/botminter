@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 
-/// botminter — manage agentic teams
+/// botminter — lead your own Claude Code agents
 #[derive(Parser)]
 #[command(name = "bm", version, about)]
 pub struct Cli {

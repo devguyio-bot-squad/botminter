@@ -34,6 +34,10 @@ Each member has a **board scanner** hat that runs at the start of every loop cyc
 
 Board scanning uses the `gh` skill, which wraps the `gh` CLI. The team repo is auto-detected from `.botminter/`'s Git remote.
 
+### Project labels
+
+Issues on the team repo are tagged with a `project/<name>` label (e.g., `project/my-app`) to associate them with a specific project codebase. This label is created automatically by `bm projects add`. When creating issues — whether manually or through the agent's architect hat — make sure the `project/<name>` label is applied so agents know which codebase the work relates to.
+
 ## Handoff mechanism
 
 Work transitions between members through status label updates:

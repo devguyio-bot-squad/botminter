@@ -12,7 +12,7 @@ botminter takes a different approach: let agents do the building, but give yours
 
 Most agentic tools put you inside the AI's workflow. You sit in a terminal, watch an agent run sub-agents, and hope it gets things right. The AI is in control. You're the observer.
 
-botminter flips this. You build a personal agentic team — a team of specialized agents that you work with the same way you work with any engineering team. You don't sit inside their tool. You coordinate through GitHub issues. You define the process, the workflow, and the constraints.
+botminter flips this. You build your own team of Claude Code agents that you work with the same way you work with any engineering team. You don't sit inside their tool. You coordinate through GitHub issues. You define the process, the workflow, and the constraints.
 
 ```mermaid
 flowchart TD

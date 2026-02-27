@@ -105,6 +105,24 @@
   margin: 0 auto 2rem;
 }
 
+.bm-hero__note {
+  font-size: 0.85rem;
+  line-height: 1.6;
+  color: var(--md-default-fg-color--light);
+  max-width: 36rem;
+  margin: 0 auto 2rem;
+  opacity: 0.7;
+}
+
+.bm-hero__note a {
+  color: var(--md-default-fg-color--light);
+  text-decoration: underline;
+}
+
+.bm-hero__note a:hover {
+  color: var(--md-primary-fg-color);
+}
+
 .bm-hero__actions {
   display: flex;
   gap: 0.75rem;
@@ -536,6 +554,56 @@
   .bm-how__arrow {
     display: none;
   }
+}
+
+/* ── FAQ ───────────────────────────────────────────────────────── */
+
+.bm-faq {
+  padding: 4rem 1rem;
+  background: var(--md-default-bg-color);
+}
+
+.bm-faq__inner {
+  max-width: 56rem;
+  margin: 0 auto;
+}
+
+.bm-faq__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 1.25rem;
+}
+
+.bm-faq__item {
+  padding: 1.5rem 1.75rem;
+  border-radius: 0.75rem;
+  border: 1px solid var(--md-default-fg-color--lightest);
+  transition: border-color 0.2s;
+}
+
+.bm-faq__item:hover {
+  border-color: var(--md-primary-fg-color);
+}
+
+.bm-faq__question {
+  font-size: 1.05rem;
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+  color: var(--md-typeset-color);
+}
+
+.bm-faq__answer {
+  font-size: 0.88rem;
+  line-height: 1.7;
+  color: var(--md-typeset-color--light);
+  margin: 0;
+}
+
+.bm-faq__answer code {
+  padding: 0.1rem 0.35rem;
+  border-radius: 0.25rem;
+  background: var(--md-code-bg-color);
+  font-size: 0.82rem;
 }
 
 /* ── CTA ───────────────────────────────────────────────────────── */

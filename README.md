@@ -1,6 +1,6 @@
 # BotMinter
 
-A CLI for managing GitOps-style agentic teams. Each team member is an independent [Ralph](https://github.com/mikeyobrien/ralph-orchestrator) orchestrator instance running in its own workspace. Members coordinate through GitHub issues on a shared team repo via the `gh` CLI — no central orchestrator.
+Lead your own Claude Code agents. Each team member is an independent [Ralph](https://github.com/mikeyobrien/ralph-orchestrator) orchestrator instance running in its own workspace. Members coordinate through GitHub issues on a shared team repo via the `gh` CLI — no central orchestrator.
 
 > [!WARNING]
 > **Pre-Alpha** — botminter is under active development and not yet ready for production use. Commands, configuration format, and behavior may change without notice between releases. See the [Roadmap](docs/content/roadmap.md) for current status.
