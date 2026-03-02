@@ -5,6 +5,7 @@ target/
 ralph.yml
 PROMPT.md
 !specs/**/PROMPT.md
+.obsidian/
 
 # Personal/internal
 TESTING-NOTES.md

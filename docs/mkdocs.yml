@@ -1,5 +1,5 @@
 site_name: BotMinter
-site_description: Lead your own Claude Code agents
+site_description: Conventions for your Claude Code agents
 repo_url: https://github.com/botminter/botminter
 docs_dir: content
 site_dir: site
@@ -7,7 +7,8 @@ site_dir: site
 nav:
   - Home: index.md
   - Getting Started:
-    - Prerequisites: getting-started/index.md
+    - Overview: getting-started/index.md
+    - Prerequisites: getting-started/prerequisites.md
     - Bootstrap Your Team: getting-started/bootstrap-your-team.md
     - Your First Journey: getting-started/first-journey.md
   - The Agentic Workflow: workflow.md
@@ -37,15 +38,15 @@ theme:
   palette:
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
-      accent: indigo
+      primary: custom
+      accent: custom
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode

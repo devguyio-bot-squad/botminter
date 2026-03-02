@@ -1,13 +1,13 @@
 {% extends "main.html" %}
 
 {% block htmltitle %}
-  <title>BotMinter — Lead your own Claude Code agents</title>
+  <title>BotMinter - Bring order to your Claude Code agents</title>
 {% endblock %}
 
 {% block extrahead %}
   {{ super() }}
   <meta property="og:title" content="BotMinter">
-  <meta property="og:description" content="Lead your own Claude Code agents">
+  <meta property="og:description" content="Conventions for your Claude Code agents">
   <meta property="og:image" content="https://www.botminter.ai/assets/og-preview.png">
   <meta property="og:type" content="website">
   <meta name="twitter:card" content="summary_large_image">
@@ -89,24 +89,18 @@
         </div>
         <div class="bm-hero__content">
           <h1 class="bm-hero__title">
-            Mint your<br>
+            Bring order to your<br>
             <span class="bm-hero__accent">Claude Code agents.</span>
           </h1>
           <p class="bm-hero__subtitle">
-            Work with Claude Code agents the way you work with any engineering team.
+            A batteries-included CLI that brings conventions to your coding agent workflow.
           </p>
           <p class="bm-hero__subtitle">
-            They pick up issues, open PRs, and follow your process.
-          </p>
-          <p class="bm-hero__subtitle">
-            You design the workflow. You control the context.
+            Your process, knowledge, and constraints live in a Git repo. Every agent picks them up automatically.
           </p>
           <div class="bm-hero__actions">
-            <a href="getting-started/" class="md-button md-button--primary bm-btn">
+            <a href="getting-started/" class="md-button bm-btn bm-btn--outline">
               Get Started
-            </a>
-            <a href="workflow/" class="md-button bm-btn bm-btn--outline">
-              How it works
             </a>
           </div>
         </div>
@@ -208,10 +202,7 @@
 
   <section class="bm-features">
     <div class="bm-features__inner">
-      <h2 class="bm-section__title">Everything you need to lead Claude Code agents</h2>
-      <p class="bm-section__subtitle">
-        Three commands. Fully configured. Version-controlled.
-      </p>
+      <h2 class="bm-section__title">Batteries included. Conventions built in.</h2>
       <div class="bm-features__grid">
 
         <div class="bm-feature">
@@ -220,10 +211,10 @@
               {% include ".icons/material/account-group.svg" %}
             </span>
           </div>
-          <h3 class="bm-feature__title">Works like a real team</h3>
+          <h3 class="bm-feature__title">Layered knowledge scoping</h3>
           <p class="bm-feature__text">
-            They pick up issues, open PRs, follow your conventions.
-            Just like human teammates.
+            Push a file at the team, project, or member level.
+            Every relevant agent picks it up. No copy-pasting.
           </p>
         </div>
 
@@ -233,10 +224,10 @@
               {% include ".icons/material/cog.svg" %}
             </span>
           </div>
-          <h3 class="bm-feature__title">You design the process</h3>
+          <h3 class="bm-feature__title">Convention-based profiles</h3>
           <p class="bm-feature__text">
-            Define roles, workflows, and status gates.
-            Your team runs your playbook.
+            Pick a profile. It stamps out your process, roles,
+            knowledge structure, and defaults. Customize from there.
           </p>
         </div>
 
@@ -248,8 +239,8 @@
           </div>
           <h3 class="bm-feature__title">You control the context</h3>
           <p class="bm-feature__text">
-            Layer knowledge at team, project, and member level.
-            Every agent knows exactly what it needs.
+            Scope knowledge and constraints at four levels - team,
+            project, member, and member+project. The right agent sees the right context.
           </p>
         </div>
 
@@ -298,26 +289,26 @@
 
   <section class="bm-how">
     <div class="bm-how__inner">
-      <h2 class="bm-section__title">Three layers, one command</h2>
+      <h2 class="bm-section__title">Three steps to a working team</h2>
       <p class="bm-section__subtitle">
-        BotMinter separates concerns into generator, profile, and instance.
+        Pick a profile, hire agents, launch.
       </p>
       <div class="bm-how__grid">
         <div class="bm-how__step">
           <div class="bm-how__number">1</div>
-          <h3>Mint your team</h3>
+          <h3>Set up</h3>
           <p><code>bm init</code></p>
         </div>
         <div class="bm-how__arrow">&rarr;</div>
         <div class="bm-how__step">
           <div class="bm-how__number">2</div>
-          <h3>Hire your members</h3>
-          <p><code>bm hire</code></p>
+          <h3>Provision</h3>
+          <p><code>bm teams sync</code></p>
         </div>
         <div class="bm-how__arrow">&rarr;</div>
         <div class="bm-how__step">
           <div class="bm-how__number">3</div>
-          <h3>Bring them to life</h3>
+          <h3>Launch</h3>
           <p><code>bm start</code></p>
         </div>
       </div>
@@ -335,10 +326,11 @@
         <div class="bm-faq__item">
           <h3 class="bm-faq__question">Does BotMinter only work with Claude Code?</h3>
           <p class="bm-faq__answer">
-            Claude Code is the primary supported runtime today. Under the hood, BotMinter uses a pluggable
-            runtime layer &mdash; currently powered by
-            <a href="https://github.com/mikeyobrien/ralph-orchestrator">Ralph orchestrator</a>.
-            We&rsquo;re working on making it easy to plug in custom runtimes as well.
+            Claude Code is the recommended backend and all shipped profiles are built for it today.
+            Under the hood, BotMinter uses
+            <a href="https://github.com/mikeyobrien/ralph-orchestrator">Ralph orchestrator</a>,
+            which also supports Gemini CLI, Codex, Kiro, Amp, Copilot CLI, and OpenCode.
+            Profiles for these backends are planned.
           </p>
         </div>
 
@@ -368,7 +360,7 @@
 
   <section class="bm-cta">
     <div class="bm-cta__inner">
-      <h2 class="bm-cta__title">Ready to lead your own Claude Code agents?</h2>
+      <h2 class="bm-cta__title">Ready to bring order to your Claude Code agents?</h2>
       <p class="bm-cta__text">
         Get started in minutes. All you need is the <code>bm</code> CLI and a GitHub repo.
       </p>

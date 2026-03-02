@@ -1,5 +1,29 @@
 /* ── Landing page styles for botminter ───────────────────────────── */
 
+/* ── Brand colors ────────────────────────────────────────────── */
+
+[data-md-color-scheme="default"],
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color:             #1a78d0;
+  --md-primary-fg-color--light:      #4a9be0;
+  --md-primary-fg-color--dark:       #125a9e;
+  --md-primary-bg-color:             #fff;
+  --md-primary-bg-color--light:      #ffffffb3;
+  --md-accent-fg-color:              #fe6b05;
+  --md-accent-fg-color--transparent: #fe6b0510;
+  --md-accent-bg-color:              #fff;
+  --md-accent-bg-color--light:       #ffffffb3;
+}
+
+[data-md-color-scheme="slate"] .md-nav__link--active,
+[data-md-color-scheme="slate"] .md-nav__link--active:is(.md-nav__link) {
+  color: var(--md-accent-fg-color);
+}
+
+[data-md-color-scheme="slate"] .md-nav__link:hover {
+  color: var(--md-primary-fg-color);
+}
+
 /* ── Dark theme ──────────────────────────────────────────────── */
 
 [data-md-color-scheme="slate"] {
@@ -11,6 +35,40 @@
 }
 
 /* ── Header branding ─────────────────────────────────────────── */
+
+.md-header {
+  background-color: var(--md-default-bg-color);
+}
+
+[data-md-color-scheme="default"] .md-header {
+  background-color: #fff;
+  color: var(--md-default-fg-color);
+  box-shadow: 0 0 0.2rem rgba(0, 0, 0, 0.1), 0 0.2rem 0.4rem rgba(0, 0, 0, 0.2);
+}
+
+[data-md-color-scheme="default"] .md-header__topic,
+[data-md-color-scheme="default"] .md-header__title,
+[data-md-color-scheme="default"] .md-header .md-icon,
+[data-md-color-scheme="default"] .md-header .md-source,
+[data-md-color-scheme="default"] .md-header .bm-header-nav__link {
+  color: var(--md-default-fg-color);
+}
+
+[data-md-color-scheme="default"] .md-search__form {
+  background-color: rgba(0, 0, 0, 0.07);
+}
+
+[data-md-color-scheme="default"] .md-search__input {
+  color: var(--md-default-fg-color);
+}
+
+[data-md-color-scheme="default"] .md-search__input::placeholder {
+  color: var(--md-default-fg-color--light);
+}
+
+[data-md-color-scheme="default"] .md-search__input + .md-search__icon {
+  color: var(--md-default-fg-color--light);
+}
 
 .md-header__button.md-logo img {
   width: auto;
@@ -66,7 +124,7 @@
 /* ── Hero ──────────────────────────────────────────────────────── */
 
 .bm-hero {
-  padding: 4rem 1rem 2rem;
+  padding: 2.5rem 1rem 1.5rem;
   text-align: center;
   background: var(--md-default-bg-color);
   position: relative;
@@ -83,9 +141,9 @@
 .bm-hero__top {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 3rem;
+  gap: 2rem;
   align-items: center;
-  margin-bottom: 3rem;
+  margin-bottom: 2rem;
 }
 
 .bm-hero__logo-col {
@@ -98,7 +156,7 @@
 
 .bm-hero__logo {
   display: block;
-  width: 600px;
+  width: 380px;
   height: auto;
 }
 
@@ -109,29 +167,26 @@
 
 
 .bm-hero__title {
-  font-size: clamp(2rem, 5vw, 3.5rem);
+  font-size: clamp(1.5rem, 3.5vw, 2.25rem);
   font-weight: 800;
-  line-height: 1.15;
-  margin: 0 0 1.25rem;
+  line-height: 1.2;
+  margin: 0 0 1rem;
   color: var(--md-typeset-color);
 }
 
 .bm-hero__accent {
-  background: linear-gradient(
-    135deg,
-    var(--md-primary-fg-color),
-    var(--md-accent-fg-color)
-  );
-  -webkit-background-clip: text;
-  background-clip: text;
-  -webkit-text-fill-color: transparent;
+  color: var(--md-primary-fg-color);
+}
+
+[data-md-color-scheme="slate"] .bm-hero__accent {
+  color: var(--md-accent-fg-color);
 }
 
 .bm-hero__subtitle {
-  font-size: 1.15rem;
-  line-height: 1.7;
+  font-size: 0.95rem;
+  line-height: 1.6;
   color: var(--md-typeset-color--light);
-  margin: 0 0 1rem;
+  margin: 0 0 0.75rem;
 }
 
 
@@ -151,6 +206,7 @@
   font-size: 0.9rem !important;
 }
 
+
 .bm-btn--outline {
   border: 1px solid var(--md-default-fg-color--lighter) !important;
   color: var(--md-typeset-color) !important;
@@ -159,6 +215,11 @@
 .bm-btn--outline:hover {
   border-color: var(--md-primary-fg-color) !important;
   color: var(--md-primary-fg-color) !important;
+}
+
+[data-md-color-scheme="slate"] .bm-hero__actions .bm-btn--outline:hover {
+  border-color: var(--md-accent-fg-color) !important;
+  color: var(--md-accent-fg-color) !important;
 }
 
 /* ── GitHub timeline mock ─────────────────────────────────────── */
@@ -419,7 +480,7 @@
 /* ── Features ──────────────────────────────────────────────────── */
 
 .bm-features {
-  padding: 4rem 1rem;
+  padding: 3rem 1rem;
   background: var(--md-default-bg-color);
 }
 
@@ -430,7 +491,7 @@
 
 .bm-section__title {
   text-align: center;
-  font-size: clamp(1.4rem, 4vw, 2rem);
+  font-size: clamp(1.2rem, 3.5vw, 1.6rem);
   font-weight: 700;
   margin: 0 0 0.5rem;
   color: var(--md-typeset-color);
@@ -483,6 +544,10 @@
   fill: var(--md-primary-fg-color);
 }
 
+[data-md-color-scheme="slate"] .bm-feature__icon .twemoji svg {
+  fill: var(--md-accent-fg-color);
+}
+
 .bm-feature__title {
   font-size: 1.05rem;
   font-weight: 700;
@@ -500,7 +565,7 @@
 /* ── How it works ──────────────────────────────────────────────── */
 
 .bm-how {
-  padding: 4rem 1rem;
+  padding: 3rem 1rem;
   background: var(--md-code-bg-color);
 }
 
@@ -539,6 +604,10 @@
   margin-bottom: 1rem;
 }
 
+[data-md-color-scheme="slate"] .bm-how__number {
+  background: var(--md-accent-fg-color);
+}
+
 .bm-how__step h3 {
   font-size: 1.1rem;
   font-weight: 700;
@@ -570,7 +639,7 @@
 /* ── FAQ ───────────────────────────────────────────────────────── */
 
 .bm-faq {
-  padding: 4rem 1rem;
+  padding: 3rem 1rem;
   background: var(--md-default-bg-color);
 }
 
@@ -620,7 +689,7 @@
 /* ── CTA ───────────────────────────────────────────────────────── */
 
 .bm-cta {
-  padding: 4rem 1rem;
+  padding: 3rem 1rem;
   text-align: center;
   background: var(--md-default-bg-color);
 }

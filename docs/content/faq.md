@@ -2,7 +2,7 @@
 
 ## Does BotMinter only work with Claude Code?
 
-Claude Code is the primary supported runtime today. Under the hood, BotMinter uses a pluggable runtime layer — currently powered by [Ralph orchestrator](https://github.com/mikeyobrien/ralph-orchestrator). We're working on making it easy to plug in custom runtimes as well.
+Claude Code is the recommended backend and all shipped profiles are built for it today. Under the hood, BotMinter uses [Ralph orchestrator](https://github.com/mikeyobrien/ralph-orchestrator), which also supports Gemini CLI, Codex, Kiro, Amp, Copilot CLI, and OpenCode. Profiles for these backends are planned.
 
 ## Do I need multiple agents running in parallel?
 
