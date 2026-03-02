@@ -77,9 +77,11 @@ release version notes_file:
     sed -i 's/^version = ".*"/version = "'"$VERSION"'"/' crates/bm/Cargo.toml
     # Update Cargo.lock
     cargo generate-lockfile
-    # Commit and tag
+    # Commit version bump if there are changes
     git add crates/bm/Cargo.toml Cargo.lock
-    git commit -s -S -m "chore(release): bump version to ${VERSION}"
+    if ! git diff --cached --quiet; then
+        git commit -s -S -m "chore(release): bump version to ${VERSION}"
+    fi
     git tag -s -a "$TAG" -m "Release ${TAG}"
     git push origin HEAD "$TAG"
     # Create GitHub release with notes from file
