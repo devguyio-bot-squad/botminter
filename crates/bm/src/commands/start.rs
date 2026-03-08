@@ -62,7 +62,7 @@ pub fn run(team_flag: Option<&str>, formation_flag: Option<&str>) -> Result<()> 
     let telegram_token = team.credentials.telegram_bot_token.as_deref();
 
     // Discover members
-    let members_dir = team_repo.join("team");
+    let members_dir = team_repo.join("members");
     if !members_dir.is_dir() {
         bail!("No members hired. Run `bm hire <role>` first.");
     }
@@ -187,7 +187,7 @@ fn require_gh_token(team: &TeamEntry) -> Result<String> {
         })
 }
 
-/// Lists member directory names under `team/`.
+/// Lists member directory names under `members/`.
 fn list_member_dirs(team_dir: &std::path::Path) -> Result<Vec<String>> {
     let mut dirs = Vec::new();
     for entry in fs::read_dir(team_dir)? {
@@ -206,8 +206,9 @@ fn list_member_dirs(team_dir: &std::path::Path) -> Result<Vec<String>> {
 }
 
 /// Finds the workspace path for a member.
-/// Looks for `{team_ws_base}/{member_dir}/{project}/` first (with-project mode),
-/// falls back to `{team_ws_base}/{member_dir}/` (no-project mode).
+///
+/// Uses the `.botminter.workspace` marker file to identify valid workspaces.
+/// In the submodule model, the workspace is at `{team_ws_base}/{member_dir}/`.
 fn find_workspace(
     team_ws_base: &std::path::Path,
     member_dir_name: &str,
@@ -217,21 +218,7 @@ fn find_workspace(
         return None;
     }
 
-    // Check for project subdirectories (workspace with project)
-    if let Ok(entries) = fs::read_dir(&member_ws) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if !name.starts_with('.') && path.join(".botminter").is_dir() {
-                    return Some(path);
-                }
-            }
-        }
-    }
-
-    // No-project mode: member_ws itself is the workspace
-    if member_ws.join(".botminter").is_dir() {
+    if member_ws.join(".botminter.workspace").exists() {
         return Some(member_ws);
     }
 
@@ -453,27 +440,27 @@ mod tests {
     // ── find_workspace ────────────────────────────────────────────
 
     #[test]
-    fn find_workspace_project_mode() {
+    fn find_workspace_with_marker() {
         let tmp = tempfile::tempdir().unwrap();
         let team_ws_base = tmp.path();
-        // Create: team_ws_base/member/project/.botminter/
-        let project_dir = team_ws_base.join("member").join("my-project");
-        fs::create_dir_all(project_dir.join(".botminter")).unwrap();
+        let member_dir = team_ws_base.join("member");
+        fs::create_dir_all(&member_dir).unwrap();
+        fs::write(member_dir.join(".botminter.workspace"), "member: member\n").unwrap();
 
         let result = find_workspace(team_ws_base, "member");
-        assert_eq!(result, Some(project_dir));
+        assert_eq!(result, Some(member_dir));
     }
 
     #[test]
-    fn find_workspace_no_project_mode() {
+    fn find_workspace_old_botminter_dir_not_recognized() {
         let tmp = tempfile::tempdir().unwrap();
         let team_ws_base = tmp.path();
-        // Create: team_ws_base/member/.botminter/ (no project subdir)
+        // Old model: .botminter/ dir without marker file
         let member_dir = team_ws_base.join("member");
         fs::create_dir_all(member_dir.join(".botminter")).unwrap();
 
         let result = find_workspace(team_ws_base, "member");
-        assert_eq!(result, Some(member_dir));
+        assert_eq!(result, None);
     }
 
     #[test]
@@ -484,9 +471,9 @@ mod tests {
     }
 
     #[test]
-    fn find_workspace_no_botminter_marker() {
+    fn find_workspace_no_marker() {
         let tmp = tempfile::tempdir().unwrap();
-        // Create member dir without .botminter/
+        // Create member dir without any marker
         fs::create_dir_all(tmp.path().join("member")).unwrap();
 
         let result = find_workspace(tmp.path(), "member");
@@ -558,6 +545,8 @@ mod tests {
                 telegram_bot_token: None,
                 webhook_secret: None,
             },
+            coding_agent: None,
+            project_number: None,
         };
         let token = require_gh_token(&team).unwrap();
         assert_eq!(token, "ghp_test123");
@@ -575,6 +564,8 @@ mod tests {
                 telegram_bot_token: None,
                 webhook_secret: None,
             },
+            coding_agent: None,
+            project_number: None,
         };
         let err = require_gh_token(&team).unwrap_err();
         let msg = format!("{}", err);

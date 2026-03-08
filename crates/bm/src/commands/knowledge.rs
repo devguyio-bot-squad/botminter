@@ -47,7 +47,7 @@ pub fn list(team_flag: Option<&str>, scope_filter: Option<&str>) -> Result<()> {
 
     // Member scope
     if show_scope("member") {
-        let members_dir = team_repo.join("team");
+        let members_dir = team_repo.join("members");
         if members_dir.is_dir() {
             let members = list_subdirs(&members_dir);
             for member in &members {
@@ -62,7 +62,7 @@ pub fn list(team_flag: Option<&str>, scope_filter: Option<&str>) -> Result<()> {
 
     // Member+Project scope
     if show_scope("member-project") {
-        let members_dir = team_repo.join("team");
+        let members_dir = team_repo.join("members");
         if members_dir.is_dir() {
             let members = list_subdirs(&members_dir);
             for member in &members {
@@ -167,9 +167,9 @@ fn validate_knowledge_path(path: &str) -> Result<()> {
     // invariants/...
     // projects/<project>/knowledge/...
     // projects/<project>/invariants/...
-    // team/<member>/knowledge/...
-    // team/<member>/invariants/...
-    // team/<member>/projects/<project>/knowledge/...
+    // members/<member>/knowledge/...
+    // members/<member>/invariants/...
+    // members/<member>/projects/<project>/knowledge/...
     let parts: Vec<&str> = path.split('/').collect();
 
     let is_knowledge_or_invariant = |segment: &str| -> bool {
@@ -182,9 +182,9 @@ fn validate_knowledge_path(path: &str) -> Result<()> {
             // projects/<name>/knowledge/... or projects/<name>/invariants/...
             parts.len() >= 3 && is_knowledge_or_invariant(parts[2])
         }
-        Some(&"team") => {
-            // team/<member>/knowledge/... or team/<member>/invariants/...
-            // or team/<member>/projects/<project>/knowledge/...
+        Some(&"members") => {
+            // members/<member>/knowledge/... or members/<member>/invariants/...
+            // or members/<member>/projects/<project>/knowledge/...
             (parts.len() >= 3 && is_knowledge_or_invariant(parts[2]))
                 || (parts.len() >= 5
                     && parts[2] == "projects"
@@ -295,18 +295,18 @@ mod tests {
 
     #[test]
     fn valid_member_knowledge_path() {
-        assert!(validate_knowledge_path("team/architect-alice/knowledge/patterns.md").is_ok());
+        assert!(validate_knowledge_path("members/architect-alice/knowledge/patterns.md").is_ok());
     }
 
     #[test]
     fn valid_member_invariant_path() {
-        assert!(validate_knowledge_path("team/architect-alice/invariants/quality.md").is_ok());
+        assert!(validate_knowledge_path("members/architect-alice/invariants/quality.md").is_ok());
     }
 
     #[test]
     fn valid_member_project_knowledge_path() {
         assert!(validate_knowledge_path(
-            "team/architect-alice/projects/my-project/knowledge/notes.md"
+            "members/architect-alice/projects/my-project/knowledge/notes.md"
         )
         .is_ok());
     }
@@ -327,7 +327,7 @@ mod tests {
 
     #[test]
     fn invalid_path_member_no_scope() {
-        let result = validate_knowledge_path("team/architect-alice/PROMPT.md");
+        let result = validate_knowledge_path("members/architect-alice/PROMPT.md");
         assert!(result.is_err());
     }
 

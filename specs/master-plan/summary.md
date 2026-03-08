@@ -84,8 +84,12 @@ In addition to milestones, focused task batches were executed:
 
 ### Planned Milestones
 
-- **Full Team + First Story** — adds dev, QE, reviewer members; full story kanban TDD flow. Now unblocked by `bm` CLI completion. `specs/milestones/full-team-first-story/`
-- **Eval/Confidence System** — distributed eval framework, scored confidence, HIL graduation. Deferred pending practical multi-member experience. `specs/milestones/eval-confidence-system/`
+- **Minty and Friends [RAPID]** — UX enhancements: coding-agent-agnostic cleanup, profile externalization, workspace repository model, Team Manager role (role-as-skill pattern), and Minty (BotMinter interactive assistant persona with skill-driven architecture). `specs/milestones/minty-and-friends-rapid/`
+
+### Future Milestones
+
+- **Full Team + First Story** — adds dev, QE, reviewer members; full story kanban TDD flow. Deferred pending operator experience improvements. `specs/milestones/future/full-team-first-story/`
+- **Eval/Confidence System** — distributed eval framework, scored confidence, HIL graduation. Deferred pending practical multi-member experience. `specs/milestones/future/eval-confidence-system/`
 
 ---
 
@@ -106,8 +110,9 @@ In addition to milestones, focused task batches were executed:
 
 ## Suggested Next Steps
 
-1. **Plan and implement Full Team + First Story** — add dev, QE, reviewer members; full story kanban TDD flow
-2. After multi-member experience, plan **Eval/Confidence System**
+1. **Plan and implement Minty and Friends** — Team Manager role, profile externalization, Minty assistant
+2. **Full Team + First Story** — add dev, QE, reviewer members; full story kanban TDD flow
+3. After multi-member experience, plan **Eval/Confidence System**
 
 ---
 

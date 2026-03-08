@@ -1,0 +1,11 @@
+# Minty configuration
+#
+# This file configures the Minty interactive assistant.
+# It is extracted alongside profiles by `bm profiles init`
+# and lives at ~/.config/botminter/minty/config.yml.
+
+# Persona prompt file (relative to this config)
+prompt: prompt.md
+
+# Skills directory (relative to this config)
+skills_dir: .claude/skills

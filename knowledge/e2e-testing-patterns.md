@@ -281,4 +281,4 @@ Add an E2E test when:
 - You're changing how labels, issues, or projects are created/modified
 - You're adding a new GitHub API interaction
 
-See `invariants/e2e-testing.md` for the full invariant.
+See `invariants/gh-api-e2e.md` for the full invariant.

@@ -6,7 +6,9 @@ use serde::Deserialize;
 
 use crate::commands::start::{resolve_member_status, MemberStatus};
 use crate::config;
+use crate::profile;
 use crate::state;
+use crate::workspace;
 
 /// Minimal member manifest — only the fields we need for listing.
 #[derive(Debug, Deserialize)]
@@ -20,7 +22,7 @@ pub fn list(team_flag: Option<&str>) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
     let team_repo = team.path.join("team");
-    let team_members_dir = team_repo.join("team");
+    let team_members_dir = team_repo.join("members");
 
     if !team_members_dir.is_dir() {
         println!("No members hired yet. Run `bm hire <role>` to hire a member.");
@@ -86,7 +88,7 @@ pub fn show(member: &str, team_flag: Option<&str>) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
     let team_repo = team.path.join("team");
-    let team_members_dir = team_repo.join("team");
+    let team_members_dir = team_repo.join("members");
     let member_dir = team_members_dir.join(member);
 
     if !member_dir.is_dir() {
@@ -133,10 +135,46 @@ pub fn show(member: &str, team_flag: Option<&str>) -> Result<()> {
         }
     }
 
-    // Workspace path from runtime state
-    let state_key = format!("{}/{}", team.name, member);
-    if let Some(rt) = runtime_state.members.get(&state_key) {
-        println!("Workspace: {}", rt.workspace.display());
+    // Workspace details
+    let ws_path = team.path.join(member);
+    if ws_path.join(".botminter.workspace").exists() {
+        println!();
+        println!("Workspace: {}", ws_path.display());
+
+        // Workspace repo URL
+        if let Some(url) = workspace::workspace_remote_url(&ws_path) {
+            println!("Workspace Repo: {}", url);
+        }
+
+        // Branch
+        let branch = workspace::workspace_git_branch(&ws_path);
+        println!("Branch: {}", branch);
+
+        // Submodule status
+        let submodules = workspace::workspace_submodule_status(&ws_path);
+        if !submodules.is_empty() {
+            println!("Submodules:");
+            for sub in &submodules {
+                println!("  {}: {}", sub.name, sub.status.label());
+            }
+        }
+    } else {
+        // Fall back to runtime state workspace path
+        let state_key = format!("{}/{}", team.name, member);
+        if let Some(rt) = runtime_state.members.get(&state_key) {
+            println!("Workspace: {}", rt.workspace.display());
+        }
+    }
+
+    // Resolved coding agent
+    let team_repo = team.path.join("team");
+    let manifest_path = team_repo.join("botminter.yml");
+    if let Ok(contents) = fs::read_to_string(&manifest_path) {
+        if let Ok(manifest) = serde_yml::from_str::<profile::ProfileManifest>(&contents) {
+            if let Ok(agent) = profile::resolve_coding_agent(team, &manifest) {
+                println!("Coding Agent: {}", agent.display_name);
+            }
+        }
     }
 
     // Knowledge files

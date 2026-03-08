@@ -14,8 +14,9 @@ BotMinter is developed through incremental milestones. Each milestone builds on 
 | Architect + First Epic | **Complete** | Second member, epic lifecycle, two-member coordination |
 | GitHub Integration | **Complete** | Replaced file-based coordination with real GitHub via `gh` CLI |
 | `bm` CLI | **Complete** | Rust CLI, single operator interface, workzone model |
-| Full Team + First Story | Planned | Dev, QE, reviewer members, full story kanban, TDD flow |
-| Eval/Confidence System | Planned | Formalized eval framework, scored confidence, HIL graduation |
+| Minty and Friends | Planned | Team Manager role, profile externalization, Minty assistant |
+| Full Team + First Story | Future | Dev, QE, reviewer members, full story kanban, TDD flow |
+| Eval/Confidence System | Future | Formalized eval framework, scored confidence, HIL graduation |
 
 ---
 
@@ -82,6 +83,20 @@ Replaced Justfile-based tooling with a Rust CLI binary (`bm`):
 
 ## Planned
 
+### Minty and Friends [RAPID]
+
+Multiple UX enhancements to improve the operator experience at both the BotMinter and team layers:
+
+- **Team Manager role** — a new team-scoped role for process improvement tasks, operating independently from dev workflow. First experiment with the role-as-skill pattern (invokable from Claude Code or via GitHub issues).
+- **Profile externalization** — extract baked-in profiles to disk on first use. All subsequent operations use disk-stored profiles, making them editable and customizable without rebuilding the binary.
+- **Workspace repository model** — replace embedded `.botminter/` workspace with a dedicated git repo per agent, using submodules for team repo and project forks. Enables multi-project agents and eliminates nested-repo confusion.
+- **Minty** — BotMinter's interactive assistant persona. A coding agent session injected with a system prompt and loaded with composable skills that provide all BotMinter knowledge and capabilities.
+- **Coding-agent-agnostic cleanup** — audit and abstract hard-coded Claude Code-specific assumptions. Profiles, team repos, and CLI output should not couple to a single coding agent product.
+
+**Proves**: Role-as-skill pattern works. Skill-driven architecture is viable for both team-level and BotMinter-level interactions. Disk-based profiles enable operator customization. Stack is coding-agent-agnostic end-to-end.
+
+## Future
+
 ### Full Team + First Story
 
 Adds dev, QE, and reviewer as team members:
@@ -91,8 +106,6 @@ Adds dev, QE, and reviewer as team members:
 - TDD flow: QE writes tests, dev implements, QE verifies, reviewer reviews, architect signs off, PO merges
 - Codebase access model (project fork, agent-cloned)
 - First real knowledge accumulation
-
-**Proves**: Pull-based coordination across all five members. TDD flow end-to-end. Knowledge accumulates and flows to the right scope.
 
 ### Eval/Confidence System
 

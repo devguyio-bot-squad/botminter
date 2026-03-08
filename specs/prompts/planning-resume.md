@@ -33,8 +33,9 @@ Then orient yourself:
   - Only `requirements.md` with Q&A entries → mid-requirements or ready for research
   - `research/` has topic files → mid-research or ready for design
   - `design.md` exists → mid-design review or ready for plan
-  - `plan.md` exists → mid-plan review or ready for summary
-  - `summary.md` exists → nearly done, may need PROMPT.md
+  - `plan.md` exists but no `sprint-N/` directories → mid-plan review or ready for sprint decomposition
+  - `sprint-N/` directories exist with `plan.md` and `PROMPT.md` → mid-sprint decomposition or ready for summary
+  - `summary.md` exists → done
 
 Present your assessment of the current state to the user and ask where they want to pick up.
 
@@ -50,6 +51,6 @@ Present your assessment of the current state to the user and ask where they want
 2. Research — document in research/ as separate topic files
 3. Iteration checkpoint — summarize state, user decides next phase
 4. Design — write standalone design.md
-5. Implementation plan — write plan.md with incremental steps
-6. Summary — write summary.md
-7. PROMPT.md — optional, for autonomous implementation
+5. Implementation plan — write plan.md as sprint index (checklist + summaries + links)
+6. Sprint decomposition — break into `sprint-N/` subdirectories, each with plan.md (detailed steps) and PROMPT.md (per `specs/design-principles.md` Section 11). Reference `specs/milestones/completed/architect-first-epic/` as format example.
+7. Summary — write summary.md

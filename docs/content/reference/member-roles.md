@@ -10,9 +10,10 @@ The human's proxy on the agentic scrum team. Manages the backlog, gates reviews,
 
 | Hat | Triggers | Responsibility |
 |-----|----------|----------------|
-| `board_scanner` | `board.scan`, `board.rescan` | Scan for `status/po:*` issues, dispatch to appropriate hat |
 | `backlog_manager` | `po.backlog` | Handle `po:triage`, `po:backlog`, `po:ready` — present to human via HIL |
 | `review_gater` | `po.review` | Handle `po:design-review`, `po:plan-review`, `po:accept` — gate reviews |
+
+Board scanning is handled by the **board-scanner skill** (auto-injected into the coordinator via `skills.overrides`). The coordinator scans for `status/po:*` issues and dispatches to the appropriate work hat.
 
 ### Event dispatch
 
@@ -25,7 +26,7 @@ The human's proxy on the agentic scrum team. Manages the backlog, gates reviews,
 | `status/po:backlog` | `po.backlog` | backlog_manager | 5 |
 | `status/po:ready` | `po.backlog` | backlog_manager | 6 (lowest) |
 
-When no `status/po:*` issues are found, the board scanner publishes `LOOP_COMPLETE` (idle).
+When no `status/po:*` issues are found, the coordinator publishes `LOOP_COMPLETE` (idle).
 
 ### HIL interaction
 
@@ -59,11 +60,12 @@ The team's technical authority. Produces design documents, story breakdowns, and
 
 | Hat | Triggers | Responsibility | Transitions to |
 |-----|----------|----------------|---------------|
-| `board_scanner` | `board.scan`, `board.rescan` | Scan for `status/arch:*` issues, dispatch | (publishes `arch.*` events) |
 | `designer` | `arch.design` | Produce design doc for epic | `status/po:design-review` |
 | `planner` | `arch.plan` | Decompose design into story breakdown | `status/po:plan-review` |
 | `breakdown_executor` | `arch.breakdown` | Create story issues from approved breakdown | `status/po:ready` |
 | `epic_monitor` | `arch.in_progress` | Monitor epic progress (M2: fast-forward) | `status/po:accept` |
+
+Board scanning is handled by the **board-scanner skill** (auto-injected into the coordinator via `skills.overrides`). The coordinator scans for `status/arch:*` issues and dispatches to the appropriate work hat.
 
 ### Event dispatch
 
@@ -98,7 +100,46 @@ Before transitioning to `status/po:ready`:
 
 ### Constraints
 
-- Always sync `.botminter/` before scanning
+- Always update `team/` submodule before scanning
+- Always follow knowledge and invariant scoping defined in hat instructions
+
+---
+
+## team-manager
+
+Process improvement and team coordination. The team-manager handles operational tasks — process audits, retrospective actions, tooling improvements, and ad-hoc coordination work. It operates as a persistent Ralph loop with a single work hat.
+
+### Hat model
+
+| Hat | Triggers | Responsibility | Transitions to |
+|-----|----------|----------------|---------------|
+| `executor` | `mgr.work` | Pick up `mgr:todo` tasks, execute them, report results | `mgr:done` |
+
+Board scanning is handled by the **board-scanner skill** (auto-injected into the coordinator via `skills.overrides`). The coordinator scans for `status/mgr:*` issues and dispatches to the executor hat.
+
+### Event dispatch
+
+| Status label | Event | Hat activated |
+|-------------|-------|--------------|
+| `status/mgr:todo` | `mgr.work` | executor |
+
+**Priority**: Only one status triggers work (`mgr:todo`). The executor transitions through `mgr:in-progress` while working and to `mgr:done` on completion.
+
+One issue is processed per scan cycle.
+
+### Interactive sessions
+
+The team-manager is the first role designed with the **role-as-skill pattern** in mind. In addition to running autonomously in a Ralph loop, any hired team-manager member can be invoked interactively via [`bm chat`](cli.md#bm-chat):
+
+- `bm chat <member>` — hatless mode: agent has awareness of all hats, human drives the workflow
+- `bm chat <member> --hat executor` — hat-specific mode: agent is in character as the executor hat
+
+See [Coordination Model — Role-as-skill](../concepts/coordination-model.md#role-as-skill-pattern) for the concept.
+
+### Constraints
+
+- Always update `team/` submodule before scanning
+- Always use PROCESS.md comment format: `### 📋 team-manager — <ISO-timestamp>`
 - Always follow knowledge and invariant scoping defined in hat instructions
 
 ---

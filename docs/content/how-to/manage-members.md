@@ -16,7 +16,7 @@ Example:
 bm hire human-assistant
 ```
 
-This extracts the member skeleton from the embedded profile into `team/<role>/`, including all configuration files, and creates a Git commit.
+This extracts the member skeleton from the profile on disk into `members/<role>/`, including all configuration files, and creates a Git commit.
 
 You can optionally provide a name and target a specific team:
 
@@ -45,10 +45,10 @@ If you specify a role that doesn't exist, the command lists all available roles.
 
 ## Member directory structure
 
-After hiring a member, the `team/<role>/` directory contains the following structure. The specific files (invariants, hats, etc.) depend on the profile and role. This example shows the `human-assistant` role from the `scrum` profile:
+After hiring a member, the `members/<role>/` directory contains the following structure. The specific files (invariants, hats, etc.) depend on the profile and role. This example shows the `human-assistant` role from the `scrum` profile:
 
 ```
-team/human-assistant/
+members/human-assistant/
 ├── PROMPT.md              # Role identity and behavioral rules
 ├── CLAUDE.md              # Role context (workspace model, knowledge paths)
 ├── ralph.yml              # Ralph orchestrator configuration
@@ -59,7 +59,7 @@ team/human-assistant/
 ├── hats/                  # Hat-specific directories (if applicable)
 │   └── <hat-name>/
 │       └── knowledge/     # Hat-specific knowledge
-├── agent/
+├── coding-agent/
 │   ├── skills/            # Role-specific skills
 │   └── agents/            # Role-specific sub-agents
 └── projects/              # Per-project role config
@@ -73,36 +73,36 @@ After hiring a member, you can customize its configuration:
 
 ### Modify prompts
 
-Edit `team/<role>/PROMPT.md` to change role identity and behavioral rules. Edit `team/<role>/CLAUDE.md` to update role context.
+Edit `members/<role>/PROMPT.md` to change role identity and behavioral rules. Edit `members/<role>/CLAUDE.md` to update role context.
 
 !!! note
-    In workspaces, `PROMPT.md` and `CLAUDE.md` are symlinks into `.botminter/`. Changes to the source files in the team repo propagate automatically when agents pull `.botminter/`.
+    In workspaces, `PROMPT.md` and `CLAUDE.md` are copies from the `team/` submodule. Changes to the source files in the team repo propagate when agents run `bm teams sync` to re-copy from the updated submodule.
 
 ### Add role-specific knowledge
 
-Place knowledge files in `team/<role>/knowledge/`:
+Place knowledge files in `members/<role>/knowledge/`:
 
 ```bash
 echo "# Debug Guide\n\nAlways check pod logs first." \
-  > team/architect/knowledge/debug-guide.md
-git add team/architect/knowledge/debug-guide.md
+  > members/architect/knowledge/debug-guide.md
+git add members/architect/knowledge/debug-guide.md
 git commit -m "docs: add architect debug guide"
 ```
 
 ### Add role-specific invariants
 
-Place invariant files in `team/<role>/invariants/`:
+Place invariant files in `members/<role>/invariants/`:
 
 ```bash
 echo "# Design Quality\n\nEvery design must include security considerations." \
-  > team/architect/invariants/design-quality.md
-git add team/architect/invariants/design-quality.md
+  > members/architect/invariants/design-quality.md
+git add members/architect/invariants/design-quality.md
 git commit -m "chore: add architect design quality invariant"
 ```
 
 ### Modify Ralph configuration
 
-Edit `team/<role>/ralph.yml` to change hat definitions, event routing, or persistence settings.
+Edit `members/<role>/ralph.yml` to change hat definitions, event routing, or persistence settings.
 
 !!! warning
     `ralph.yml` is copied (not symlinked) to workspaces. After editing it, run `bm teams sync` and restart the agent.
@@ -112,7 +112,7 @@ Edit `team/<role>/ralph.yml` to change hat definitions, event routing, or persis
 Delete the member directory and commit:
 
 ```bash
-rm -rf team/human-assistant
+rm -rf members/human-assistant
 git add -A
 git commit -m "chore: remove human-assistant member"
 ```

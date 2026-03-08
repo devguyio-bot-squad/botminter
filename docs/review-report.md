@@ -56,7 +56,7 @@ All checks passed:
 | ID | Issue | Resolution |
 |----|-------|------------|
 | D5.3 | Docs say `starting_event` must not be set; both ralph.yml files set it | Removed `starting_event` from both ralph.yml files |
-| D5.4 | Docs say `LOOP_COMPLETE` must not be in `publishes`; both ralph.yml files include it | Removed from `publishes` and `default_publishes` in both board_scanner hats |
+| D5.4 | Docs say `LOOP_COMPLETE` must not be in `publishes`; both ralph.yml files include it | Removed from `publishes` and `default_publishes` in both board_scanner hats (board_scanner later migrated from hat to auto-injected coordinator skill) |
 
 ## Post-M3 Refresh (2026-02-21)
 

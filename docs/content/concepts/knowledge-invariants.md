@@ -19,11 +19,11 @@ Knowledge resolves from most general to most specific. All levels are additive:
 
 | Level | Path | Scope |
 |-------|------|-------|
-| Team | `.botminter/knowledge/` | Applies to all members |
-| Project | `.botminter/projects/<project>/knowledge/` | Project-specific |
-| Member | `.botminter/team/<member>/knowledge/` | Role-specific |
-| Member+project | `.botminter/team/<member>/projects/<project>/knowledge/` | Role + project specific |
-| Hat | `.botminter/team/<member>/hats/<hat>/knowledge/` | Hat-specific |
+| Team | `team/knowledge/` | Applies to all members |
+| Project | `team/projects/<project>/knowledge/` | Project-specific |
+| Member | `team/members/<member>/knowledge/` | Role-specific |
+| Member+project | `team/members/<member>/projects/<project>/knowledge/` | Role + project specific |
+| Hat | `team/members/<member>/hats/<hat>/knowledge/` | Hat-specific |
 
 More specific knowledge takes precedence when there are conflicts, but all applicable knowledge is available to the agent.
 
@@ -35,9 +35,9 @@ While knowledge provides advisory context, invariants enforce **mandatory constr
 
 | Level | Path | Example |
 |-------|------|---------|
-| Team | `.botminter/invariants/` | Code review required, test coverage |
-| Project | `.botminter/projects/<project>/invariants/` | Project-specific quality rules |
-| Member | `.botminter/team/<member>/invariants/` | Role-specific constraints |
+| Team | `team/invariants/` | Code review required, test coverage |
+| Project | `team/projects/<project>/invariants/` | Project-specific quality rules |
+| Member | `team/members/<member>/invariants/` | Role-specific constraints |
 
 Declare invariants in the member's `CLAUDE.md` under an `# INVARIANTS` section. Claude Code injects `CLAUDE.md` natively into every hat, so invariants apply universally within a member.
 

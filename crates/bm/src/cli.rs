@@ -11,7 +11,39 @@ pub struct Cli {
 #[derive(Subcommand)]
 pub enum Command {
     /// Interactive wizard — create a new team
-    Init,
+    Init {
+        /// Run without interactive prompts (requires --profile, --team-name, --org, --repo)
+        #[arg(long)]
+        non_interactive: bool,
+
+        /// Profile to use (required with --non-interactive)
+        #[arg(long)]
+        profile: Option<String>,
+
+        /// Team name (required with --non-interactive)
+        #[arg(long)]
+        team_name: Option<String>,
+
+        /// GitHub org or user (required with --non-interactive)
+        #[arg(long)]
+        org: Option<String>,
+
+        /// GitHub repo name (required with --non-interactive)
+        #[arg(long)]
+        repo: Option<String>,
+
+        /// Project fork URL to add (optional)
+        #[arg(long)]
+        project: Option<String>,
+
+        /// Skip GitHub API calls (for testing)
+        #[arg(long, hide = true)]
+        skip_github: bool,
+
+        /// Override workzone directory
+        #[arg(long)]
+        workzone: Option<String>,
+    },
 
     /// Hire a member into a role
     Hire {
@@ -77,6 +109,31 @@ pub enum Command {
     Roles {
         #[command(subcommand)]
         command: RolesCommand,
+    },
+
+    /// Interactive chat session with a team member
+    Chat {
+        /// Member name (e.g., architect-01)
+        member: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+
+        /// Restrict to a specific hat (e.g., executor, designer)
+        #[arg(long)]
+        hat: Option<String>,
+
+        /// Print the generated system prompt and exit (no chat session)
+        #[arg(long)]
+        render_system_prompt: bool,
+    },
+
+    /// Launch Minty, the BotMinter interactive assistant
+    Minty {
+        /// Team to operate on (gives Minty team-specific context)
+        #[arg(short, long)]
+        team: Option<String>,
     },
 
     /// Profile management commands
@@ -181,6 +238,10 @@ pub enum TeamsCommand {
         #[arg(long)]
         push: bool,
 
+        /// Show detailed sync status per workspace
+        #[arg(short, long)]
+        verbose: bool,
+
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,
@@ -226,6 +287,17 @@ pub enum ProfilesCommand {
     Describe {
         /// Profile name to describe
         profile: String,
+
+        /// Show which files contain agent-specific tags and which agents they reference
+        #[arg(long)]
+        show_tags: bool,
+    },
+
+    /// Extract embedded profiles to ~/.config/botminter/profiles/
+    Init {
+        /// Overwrite existing profiles without prompting
+        #[arg(long)]
+        force: bool,
     },
 }
 

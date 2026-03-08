@@ -4,7 +4,11 @@ team:
   invariants: "invariants"
   projects: "projects"
   members: "team"
+  coding_agent: "coding-agent"
+  context: "context.md"
 member:
   knowledge: "knowledge"
   invariants: "invariants"
   projects: "projects"
+  coding_agent: "coding-agent"
+  context: "context.md"

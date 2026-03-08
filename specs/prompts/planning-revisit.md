@@ -29,7 +29,7 @@ Before doing anything, orient yourself and detect which milestone the user likel
 Present your detection to the user: state which milestone you think they want to revisit and why. Ask if that's correct, and what the reason for revisiting is (e.g., "learnings from implementation changed assumptions", "need to add a step", "acceptance criteria need updating").
 
 Then orient further:
-- Read all artifacts in the milestone's planning directory (design.md, plan.md, PROMPT.md, etc.).
+- Read all artifacts in the milestone's planning directory (design.md, plan.md, sprint-N/ subdirectories, etc.).
 - Read `specs/master-plan/summary.md` for cross-milestone context.
 - If the user mentions learnings from a later milestone, read that milestone's artifacts too.
 
@@ -39,5 +39,6 @@ Present a summary of the existing plan and what you think needs to change based 
 
 - **User-driven:** Never modify files without explicit user confirmation.
 - **Surgical changes:** Prefer targeted edits over rewriting entire documents.
-- **Trace impact:** If a change affects downstream milestones, flag it.
+- **Trace impact:** If a change affects downstream artifacts, flag it. Changes to design.md may require updates to sprint-level plan.md and PROMPT.md files. Changes to plan.md (sprint index) may require updating individual sprint subdirectories.
+- **Sprint artifacts:** If the milestone has `sprint-N/` subdirectories, changes to the design or plan may require updating individual sprint `plan.md` and `PROMPT.md` files. Sprint PROMPTs follow `specs/design-principles.md` Section 11.
 - **Planning only:** No implementation, no running code.

@@ -16,21 +16,23 @@ Your workzone should look like this:
 workzone/
   my-team/
     team/                            # Team repo (control plane)
-      team/superman-01/              # Member config
+      members/superman-01/            # Member config
       projects/my-project/           # Project-specific dirs
-    superman-01/                     # Member directory
-      my-project/                    # Project fork clone (agent CWD)
-        .botminter/                  # Team repo clone
-        PROMPT.md → .botminter/...
-        CLAUDE.md → .botminter/...
-        ralph.yml
-        src/                         # Your project's source code
-          main.py
-          config.py
-        tests/
-          test_main.py
-        README.md
-        pyproject.toml
+    superman-01/                     # Workspace repo (agent CWD)
+      team/                          # Submodule → team repo
+      projects/
+        my-project/                  # Submodule → project fork
+          src/                       # Your project's source code
+            main.py
+            config.py
+          tests/
+            test_main.py
+          README.md
+          pyproject.toml
+      PROMPT.md                      # Copied from team/members/superman-01/
+      CLAUDE.md                      # Copied from team/members/superman-01/
+      ralph.yml                      # Copied from team/members/superman-01/
+      .botminter.workspace           # Workspace marker file
 ```
 
 Run a quick check:

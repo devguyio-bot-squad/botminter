@@ -26,6 +26,12 @@ pub struct TeamEntry {
     pub profile: String,
     pub github_repo: String,
     pub credentials: Credentials,
+    /// Override the profile's default coding agent (e.g., "gemini-cli").
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub coding_agent: Option<String>,
+    /// GitHub Project board number (stored during init).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_number: Option<u64>,
 }
 
 /// Stored credentials for a team (tokens).
@@ -170,6 +176,8 @@ mod tests {
                     telegram_bot_token: None,
                     webhook_secret: None,
                 },
+                coding_agent: None,
+                project_number: None,
             }],
         };
 
@@ -227,6 +235,8 @@ mod tests {
                     profile: "scrum-compact".to_string(),
                     github_repo: "".to_string(),
                     credentials: Credentials::default(),
+                    coding_agent: None,
+                    project_number: None,
                 },
                 TeamEntry {
                     name: "other".to_string(),
@@ -234,6 +244,8 @@ mod tests {
                     profile: "scrum".to_string(),
                     github_repo: "".to_string(),
                     credentials: Credentials::default(),
+                    coding_agent: None,
+                    project_number: None,
                 },
             ],
         };
@@ -255,6 +267,8 @@ mod tests {
                 profile: "scrum".to_string(),
                 github_repo: "".to_string(),
                 credentials: Credentials::default(),
+                coding_agent: None,
+                project_number: None,
             }],
         };
 
@@ -287,6 +301,8 @@ mod tests {
                 profile: "scrum-compact".to_string(),
                 github_repo: "".to_string(),
                 credentials: Credentials::default(),
+                coding_agent: None,
+                project_number: None,
             }],
         };
 

@@ -24,15 +24,15 @@ Status labels follow the pattern `status/<role>:<phase>`:
 
 ## Board scanning
 
-Each member has a **board scanner** hat that runs at the start of every loop cycle:
+Each member has a **board-scanner skill** (auto-injected into the coordinator) that runs at the start of every loop cycle:
 
-1. Sync the workspace (pull `.botminter/` and project repos)
+1. Sync the workspace (update `team/` and `projects/` submodules)
 2. Clear the scratchpad and tasks (prevent context pollution between issues)
 3. Query GitHub issues for status labels matching the member's role
 4. Dispatch to the appropriate work hat based on the highest-priority match
 5. If no work is found, publish `LOOP_COMPLETE` (idle)
 
-Board scanning uses the `gh` skill, which wraps the `gh` CLI. The team repo is auto-detected from `.botminter/`'s Git remote.
+Board scanning uses the `gh` skill, which wraps the `gh` CLI. The team repo is auto-detected from the `team/` submodule's Git remote.
 
 ### Project labels
 
@@ -72,7 +72,7 @@ No direct communication occurs between members. The board (GitHub issues) is the
 
 ## Priority dispatch
 
-When multiple issues match a member's role, the board scanner processes them by priority. Priority orderings are defined per role in the profile's member skeletons.
+When multiple issues match a member's role, the coordinator processes them by priority via the board-scanner skill. Priority orderings are defined per role in the profile's member skeletons.
 
 One issue is processed per scan cycle. After processing, the board rescans.
 
@@ -82,6 +82,20 @@ One issue is processed per scan cycle. After processing, the board rescans.
 
     **human-assistant priority** (highest to lowest):
     `po:triage` > `po:design-review` > `po:plan-review` > `po:accept` > `po:backlog` > `po:ready`
+
+    **team-manager**: Single status — `mgr:todo` dispatches to the executor hat.
+
+## Role-as-skill pattern
+
+The **role-as-skill pattern** allows any hired member to be invoked interactively via `bm chat`, in addition to running autonomously in a Ralph loop. The member's knowledge, guardrails, and hat instructions are repackaged into a meta-prompt so the human operator can talk directly to the member — same capabilities, different interaction mode.
+
+This pattern is useful when:
+
+- The operator wants to direct a member's work interactively rather than through GitHub issues
+- A quick task doesn't warrant the full issue lifecycle
+- The operator wants to use a member's specialized knowledge in a conversation
+
+The team-manager role is the first role designed with this pattern in mind, but `bm chat` works with any hired member. See [CLI Reference — `bm chat`](../reference/cli.md#bm-chat) for usage.
 
 ## Rejection loops
 

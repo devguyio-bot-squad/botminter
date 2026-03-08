@@ -12,18 +12,40 @@ pub fn interactive_claude_session(
     skill_path: &Path,
     env_vars: &[(String, String)],
 ) -> Result<()> {
-    // Verify claude binary exists
-    if which::which("claude").is_err() {
+    interactive_claude_session_with_check(working_dir, skill_path, env_vars, |name| {
+        which::which(name).map(|_| ())
+    })
+}
+
+/// Internal helper that accepts a binary-check closure for testability.
+fn interactive_claude_session_with_check<F>(
+    working_dir: &Path,
+    skill_path: &Path,
+    env_vars: &[(String, String)],
+    check_binary: F,
+) -> Result<()>
+where
+    F: FnOnce(&str) -> Result<(), which::Error>,
+{
+    if check_binary("claude").is_err() {
         bail!("'claude' not found in PATH. Install Claude Code first.");
     }
 
-    // Read skill content for prompt injection
+    // Read skill content and write to a temp file for --append-system-prompt-file
     let skill_content = std::fs::read_to_string(skill_path)
         .with_context(|| format!("Failed to read skill at {}", skill_path.display()))?;
 
+    let mut tmp_file = tempfile::Builder::new()
+        .prefix("bm-session-")
+        .suffix(".md")
+        .tempfile()
+        .context("Failed to create temp file for session prompt")?;
+    std::io::Write::write_all(&mut tmp_file, skill_content.as_bytes())
+        .context("Failed to write session prompt to temp file")?;
+
     let mut cmd = Command::new("claude");
-    cmd.arg("--print")
-        .arg(&skill_content)
+    cmd.arg("--append-system-prompt-file")
+        .arg(tmp_file.path())
         .current_dir(working_dir);
 
     // Pass environment variables
@@ -54,8 +76,23 @@ pub fn oneshot_ralph_session(
     _ralph_yml_path: &Path,
     env_vars: &[(String, String)],
 ) -> Result<ExitStatus> {
-    // Verify ralph binary exists
-    if which::which("ralph").is_err() {
+    oneshot_ralph_session_with_check(working_dir, prompt_path, _ralph_yml_path, env_vars, |name| {
+        which::which(name).map(|_| ())
+    })
+}
+
+/// Internal helper that accepts a binary-check closure for testability.
+fn oneshot_ralph_session_with_check<F>(
+    working_dir: &Path,
+    prompt_path: &Path,
+    _ralph_yml_path: &Path,
+    env_vars: &[(String, String)],
+    check_binary: F,
+) -> Result<ExitStatus>
+where
+    F: FnOnce(&str) -> Result<(), which::Error>,
+{
+    if check_binary("ralph").is_err() {
         bail!("'ralph' not found in PATH. Install ralph-orchestrator first.");
     }
 
@@ -88,26 +125,29 @@ pub fn oneshot_ralph_session(
 mod tests {
     use super::*;
 
+    fn binary_not_found(_name: &str) -> Result<(), which::Error> {
+        Err(which::Error::CannotFindBinaryPath)
+    }
+
     #[test]
     fn interactive_session_missing_claude_errors() {
-        // In test environment, 'claude' is unlikely to be in PATH
-        // But if it is, this test is still valid — it will try to run
-        // We just verify the function handles the binary check
         let tmp = tempfile::tempdir().unwrap();
         let skill_path = tmp.path().join("SKILL.md");
         std::fs::write(&skill_path, "# Test skill").unwrap();
 
-        let result = interactive_claude_session(tmp.path(), &skill_path, &[]);
-        // Either 'claude not found' or it runs — both are valid
-        if let Err(e) = result {
-            let msg = e.to_string();
-            // Should be a clear error, not a panic
-            assert!(
-                msg.contains("claude") || msg.contains("Claude"),
-                "Error should mention claude: {}",
-                msg
-            );
-        }
+        let err = interactive_claude_session_with_check(
+            tmp.path(),
+            &skill_path,
+            &[],
+            binary_not_found,
+        )
+        .expect_err("should error when claude binary not found");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("claude") || msg.contains("Claude"),
+            "Error should mention claude: {msg}",
+        );
     }
 
     #[test]
@@ -118,15 +158,19 @@ mod tests {
         std::fs::write(&prompt, "# Test").unwrap();
         std::fs::write(&ralph_yml, "model: sonnet").unwrap();
 
-        // ralph might be in PATH in the test environment
-        let result = oneshot_ralph_session(tmp.path(), &prompt, &ralph_yml, &[]);
-        if let Err(e) = result {
-            let msg = e.to_string();
-            assert!(
-                msg.contains("ralph") || msg.contains("Ralph"),
-                "Error should mention ralph: {}",
-                msg
-            );
-        }
+        let err = oneshot_ralph_session_with_check(
+            tmp.path(),
+            &prompt,
+            &ralph_yml,
+            &[],
+            binary_not_found,
+        )
+        .expect_err("should error when ralph binary not found");
+
+        let msg = err.to_string();
+        assert!(
+            msg.contains("ralph") || msg.contains("Ralph"),
+            "Error should mention ralph: {msg}",
+        );
     }
 }

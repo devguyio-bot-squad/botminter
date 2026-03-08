@@ -5,299 +5,527 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-/// BM files that should be hidden from git in the workspace.
-const BM_GITIGNORE_ENTRIES: &[&str] = &[
+use crate::profile::CodingAgentDef;
+
+/// BM files that should always be hidden from git in the workspace.
+/// Agent-specific entries (context file, agent dir) are added dynamically.
+const BM_GITIGNORE_STATIC: &[&str] = &[
     ".botminter/",
     "PROMPT.md",
-    "CLAUDE.md",
     "ralph.yml",
-    ".claude/",
     ".ralph/",
     "poll-log.txt",
     ".gitignore",
 ];
 
-/// Creates a workspace for a member, optionally with a target project.
-///
-/// With project:
-///   `{workspace_base}/{member_dir}/{project}/` — fork clone at member branch
-///   plus `.botminter/` clone and surfaced files.
-///
-/// Without project (no-project mode):
-///   `{workspace_base}/{member_dir}/` — git init + `.botminter/` + surfaced files.
-pub fn create_workspace(
-    team_repo_path: &Path,
-    workspace_base: &Path,
-    member_dir_name: &str,
-    project: Option<(&str, &str)>, // (project_name, fork_url)
-    github_repo: Option<&str>,
-) -> Result<()> {
-    let member_ws = workspace_base.join(member_dir_name);
-    fs::create_dir_all(&member_ws)
-        .with_context(|| format!("Failed to create workspace dir {}", member_ws.display()))?;
+/// Builds the full list of gitignore entries including agent-specific paths.
+fn bm_gitignore_entries(context_file: &str, agent_dir: &str) -> Vec<String> {
+    let mut entries: Vec<String> = BM_GITIGNORE_STATIC.iter().map(|s| s.to_string()).collect();
+    entries.push(context_file.to_string());
+    entries.push(format!("{}/", agent_dir.trim_end_matches('/')));
+    entries
+}
 
-    let ws_root = match project {
-        Some((project_name, fork_url)) => {
-            let project_ws = member_ws.join(project_name);
+/// Parameters for creating a workspace repo with submodules.
+pub struct WorkspaceRepoParams<'a> {
+    pub team_repo_path: &'a Path,
+    pub workspace_base: &'a Path,
+    pub member_dir_name: &'a str,
+    pub team_name: &'a str,
+    pub projects: &'a [(&'a str, &'a str)], // [(project_name, fork_url)]
+    pub github_repo: Option<&'a str>,
+    pub push: bool,
+    pub gh_token: Option<&'a str>,
+    pub coding_agent: &'a CodingAgentDef,
+}
 
-            // Clone the fork into the project workspace
-            git_cmd(
-                &member_ws,
-                &["clone", fork_url, &project_ws.to_string_lossy()],
+/// Creates a workspace repo for a member using the submodule model.
+///
+/// This replaces the old `.botminter/` clone model. The workspace is a git repo
+/// containing submodules: `team/` points to the team repo, and `projects/<name>/`
+/// points to project forks. Member branches are checked out in all submodules.
+///
+/// When `push` is true, a GitHub repo is created via `gh repo create`.
+/// When `push` is false, the workspace is initialized locally with `git init`.
+pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
+    let member_ws = params.workspace_base.join(params.member_dir_name);
+
+    if params.push {
+        // Extract org from github_repo (e.g., "myorg/my-team" → "myorg")
+        let org = params
+            .github_repo
+            .and_then(|r| r.split('/').next())
+            .unwrap_or("");
+        if org.is_empty() {
+            bail!(
+                "Cannot create workspace repo: no GitHub org found.\n\
+                 The team must have a github_repo configured (e.g., 'myorg/my-team')."
+            );
+        }
+
+        let ws_repo_name = format!("{}/{}-{}", org, params.team_name, params.member_dir_name);
+
+        // Create GitHub repo
+        let mut cmd = Command::new("gh");
+        cmd.args(["repo", "create", &ws_repo_name, "--private"]);
+        if let Some(token) = params.gh_token {
+            cmd.env("GH_TOKEN", token);
+        }
+        let output = cmd.output().context("Failed to run `gh repo create`")?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "Failed to create workspace repo '{}'.\n{}\n\n\
+                 If the repo already exists:\n  \
+                 gh repo delete {} --yes\n\
+                 Then re-run `bm teams sync --push`.",
+                ws_repo_name,
+                stderr.trim(),
+                ws_repo_name,
+            );
+        }
+
+        // Clone the newly created repo
+        let clone_url = format!("https://github.com/{}.git", ws_repo_name);
+        git_cmd(
+            params.workspace_base,
+            &["clone", &clone_url, &member_ws.to_string_lossy()],
+        )
+        .with_context(|| {
+            format!(
+                "Failed to clone workspace repo {}\n\n\
+                 To verify: gh repo view {}",
+                ws_repo_name, ws_repo_name
             )
-            .with_context(|| format!(
-                "Failed to clone fork {}\n\n\
-                 The repository may not exist, or your token may lack access.\n\
-                 To verify:  gh repo view {}\n\
-                 To remove:  edit botminter.yml in the team repo and remove this project entry.",
-                fork_url, fork_url
-            ))?;
+        })?;
+    } else {
+        // Local-only mode: git init
+        fs::create_dir_all(&member_ws)
+            .with_context(|| format!("Failed to create workspace dir {}", member_ws.display()))?;
+        git_cmd(&member_ws, &["init", "-b", "main"])?;
+    }
 
-            // Checkout member branch (create if it doesn't exist remotely)
-            if git_cmd(&project_ws, &["checkout", member_dir_name]).is_err() {
-                git_cmd(&project_ws, &["checkout", "-b", member_dir_name])?;
-            }
+    // Configure git user for the workspace repo
+    git_cmd(&member_ws, &["config", "user.email", "botminter@local"])?;
+    git_cmd(&member_ws, &["config", "user.name", "BotMinter"])?;
 
-            project_ws
-        }
-        None => {
-            // No-project mode: init a git repo so .git/info/exclude works
-            git_cmd(&member_ws, &["init", "-b", "main"])?;
-            member_ws.clone()
-        }
+    // Add team repo as submodule at `team/`
+    let team_repo_url = if params.push {
+        // Use the GitHub URL for the team repo
+        params
+            .github_repo
+            .map(|r| format!("https://github.com/{}.git", r))
+            .unwrap_or_else(|| {
+                fs::canonicalize(params.team_repo_path)
+                    .unwrap_or_else(|_| params.team_repo_path.to_path_buf())
+                    .to_string_lossy()
+                    .to_string()
+            })
+    } else {
+        // Use local path for the team repo
+        fs::canonicalize(params.team_repo_path)
+            .unwrap_or_else(|_| params.team_repo_path.to_path_buf())
+            .to_string_lossy()
+            .to_string()
     };
 
-    // Clone team repo into .botminter/
-    let team_repo_abs = fs::canonicalize(team_repo_path)
-        .with_context(|| format!("Failed to resolve team repo {}", team_repo_path.display()))?;
-    git_cmd(
-        &ws_root,
-        &["clone", &team_repo_abs.to_string_lossy(), ".botminter"],
-    )
-    .context("Failed to clone team repo into .botminter/")?;
+    git_submodule_add(&member_ws, &team_repo_url, "team")
+        .with_context(|| {
+            format!(
+                "Failed to add team repo submodule.\n\n\
+                 To verify the team repo: git ls-remote {}",
+                team_repo_url
+            )
+        })?;
 
-    // Override .botminter/ remote to point to GitHub (instead of local path)
-    if let Some(repo) = github_repo {
-        let github_url = format!("https://github.com/{}.git", repo);
-        let bm_dir = ws_root.join(".botminter");
-        git_cmd(&bm_dir, &["remote", "set-url", "origin", &github_url])?;
+    // Checkout member branch in team submodule
+    let team_sub = member_ws.join("team");
+    if git_cmd(&team_sub, &["checkout", params.member_dir_name]).is_err() {
+        git_cmd(&team_sub, &["checkout", "-b", params.member_dir_name])?;
     }
 
-    // Surface files (symlinks + copy)
-    surface_files(&ws_root, member_dir_name)?;
+    // Add project submodules
+    if !params.projects.is_empty() {
+        let projects_dir = member_ws.join("projects");
+        fs::create_dir_all(&projects_dir)
+            .with_context(|| format!("Failed to create projects dir {}", projects_dir.display()))?;
 
-    // Assemble .claude/ directory
-    assemble_claude_dir(&ws_root, member_dir_name, project.map(|(name, _)| name))?;
+        for &(project_name, fork_url) in params.projects {
+            let submodule_path = format!("projects/{}", project_name);
+            git_submodule_add(&member_ws, fork_url, &submodule_path)
+                .with_context(|| {
+                    format!(
+                        "Failed to add project submodule '{}' from {}\n\n\
+                         To verify the fork: gh repo view {}",
+                        project_name, fork_url, fork_url
+                    )
+                })?;
 
-    // Write .gitignore
-    write_gitignore(&ws_root)?;
-
-    // Write .git/info/exclude and hide tracked BM files
-    write_git_exclude(&ws_root)?;
-    hide_tracked_bm_files(&ws_root)?;
-
-    Ok(())
-}
-
-/// Syncs an existing workspace by pulling changes and re-assembling surfaced files.
-pub fn sync_workspace(
-    ws_root: &Path,
-    member_dir_name: &str,
-    project_name: Option<&str>,
-    has_project: bool,
-    github_repo: Option<&str>,
-) -> Result<()> {
-    let bm_dir = ws_root.join(".botminter");
-
-    // Fix .botminter/ remote URL if it's a local path but GitHub URL is known
-    if let Some(repo) = github_repo {
-        if bm_dir.is_dir() {
-            if let Ok(current_url) =
-                git_cmd_output(&bm_dir, &["remote", "get-url", "origin"])
-            {
-                if !current_url.trim().contains("github.com") {
-                    let github_url = format!("https://github.com/{}.git", repo);
-                    git_cmd(&bm_dir, &["remote", "set-url", "origin", &github_url])?;
-                }
+            // Checkout member branch in project submodule
+            let proj_sub = member_ws.join("projects").join(project_name);
+            if git_cmd(&proj_sub, &["checkout", params.member_dir_name]).is_err() {
+                git_cmd(&proj_sub, &["checkout", "-b", params.member_dir_name])?;
             }
         }
     }
 
-    // Pull .botminter/ (non-fatal — may not have a remote)
-    if bm_dir.is_dir() {
-        git_cmd(&bm_dir, &["pull"]).ok();
+    // Assemble context files, agent dir, gitignore, and marker
+    let project_names: Vec<&str> = params.projects.iter().map(|(name, _)| *name).collect();
+    assemble_workspace_repo_context(
+        &member_ws,
+        params.member_dir_name,
+        &project_names,
+        params.coding_agent,
+    )?;
+
+    // Commit all workspace files
+    git_cmd(&member_ws, &["add", "-A"])?;
+    git_cmd(
+        &member_ws,
+        &["commit", "-m", "Initial workspace setup"],
+    )?;
+
+    // Push if remote is configured
+    if params.push {
+        git_cmd(&member_ws, &["push", "-u", "origin", "main"])?;
     }
-
-    // Pull target project if it has a remote
-    if has_project {
-        let has_remote = git_cmd_output(ws_root, &["remote"])
-            .map(|o| !o.trim().is_empty())
-            .unwrap_or(false);
-        if has_remote {
-            git_cmd(ws_root, &["pull"]).ok();
-        }
-    }
-
-    // Re-copy ralph.yml if source is newer
-    copy_if_newer(
-        &bm_dir.join("team").join(member_dir_name).join("ralph.yml"),
-        &ws_root.join("ralph.yml"),
-    )?;
-
-    // Re-copy settings.local.json if source is newer
-    copy_if_newer(
-        &bm_dir
-            .join("team")
-            .join(member_dir_name)
-            .join("agent")
-            .join("settings.local.json"),
-        &ws_root.join(".claude").join("settings.local.json"),
-    )?;
-
-    // Re-assemble .claude/agents/ symlinks (idempotent)
-    assemble_claude_dir(ws_root, member_dir_name, project_name)?;
-
-    // Verify PROMPT.md and CLAUDE.md symlinks
-    verify_symlink(
-        &ws_root.join("PROMPT.md"),
-        &bm_dir.join("team").join(member_dir_name).join("PROMPT.md"),
-    )?;
-    verify_symlink(
-        &ws_root.join("CLAUDE.md"),
-        &bm_dir.join("team").join(member_dir_name).join("CLAUDE.md"),
-    )?;
-
-    // Ensure .git/info/exclude is up to date and hide tracked BM files
-    write_git_exclude(ws_root)?;
-    hide_tracked_bm_files(ws_root)?;
 
     Ok(())
 }
 
-/// Assembles the `.claude/` directory from three scopes:
+/// Assembles workspace context files, agent dir, gitignore, and marker for the
+/// submodule-based workspace model.
 ///
-/// 1. Team-level: `.botminter/agent/agents/*.md`
-/// 2. Project-level: `.botminter/projects/{project}/agent/agents/*.md`
-/// 3. Member-level: `.botminter/team/{member_dir}/agent/agents/*.md`
-///
-/// Also copies `settings.local.json` from the member's agent dir if present.
-pub fn assemble_claude_dir(
+/// Context files (context_file, PROMPT.md, ralph.yml) are **copied** from the
+/// team submodule — they're tracked first-class citizens in the workspace repo.
+/// Agent dir entries are **symlinked** into the team submodule paths.
+pub fn assemble_workspace_repo_context(
     ws_root: &Path,
     member_dir_name: &str,
-    project_name: Option<&str>,
+    project_names: &[&str],
+    coding_agent: &CodingAgentDef,
 ) -> Result<()> {
-    let claude_agents = ws_root.join(".claude").join("agents");
+    let team_sub = ws_root.join("team");
+    let member_src = team_sub.join("members").join(member_dir_name);
+
+    // Copy context files from team/members/<member>/ to workspace root
+    let context_src = member_src.join(&coding_agent.context_file);
+    if context_src.exists() {
+        fs::copy(&context_src, ws_root.join(&coding_agent.context_file))
+            .with_context(|| format!("Failed to copy {}", coding_agent.context_file))?;
+    }
+
+    let prompt_src = member_src.join("PROMPT.md");
+    if prompt_src.exists() {
+        fs::copy(&prompt_src, ws_root.join("PROMPT.md"))
+            .context("Failed to copy PROMPT.md")?;
+    }
+
+    let ralph_src = member_src.join("ralph.yml");
+    if ralph_src.exists() {
+        fs::copy(&ralph_src, ws_root.join("ralph.yml"))
+            .context("Failed to copy ralph.yml")?;
+    }
+
+    // Assemble agent dir with symlinks into team/ submodule
+    assemble_agent_dir_submodule(ws_root, member_dir_name, project_names, coding_agent)?;
+
+    // Write .gitignore
+    write_gitignore(ws_root, &coding_agent.context_file, &coding_agent.agent_dir)?;
+
+    // Write .botminter.workspace marker
+    write_workspace_marker(ws_root, member_dir_name)?;
+
+    Ok(())
+}
+
+/// Assembles the agent directory from three scopes using `team/` submodule paths.
+///
+/// 1. Team-level: `team/coding-agent/agents/*.md`
+/// 2. Project-level: `team/projects/{project}/coding-agent/agents/*.md`
+/// 3. Member-level: `team/members/{member}/coding-agent/agents/*.md`
+///
+/// Also copies `settings.local.json` from the member's coding-agent dir if present.
+fn assemble_agent_dir_submodule(
+    ws_root: &Path,
+    member_dir_name: &str,
+    project_names: &[&str],
+    coding_agent: &CodingAgentDef,
+) -> Result<()> {
+    let agents_subdir = ws_root.join(&coding_agent.agent_dir).join("agents");
 
     // Remove and recreate for idempotency
-    if claude_agents.exists() {
-        fs::remove_dir_all(&claude_agents).ok();
+    if agents_subdir.exists() {
+        fs::remove_dir_all(&agents_subdir).ok();
     }
-    fs::create_dir_all(&claude_agents).context("Failed to create .claude/agents/")?;
+    fs::create_dir_all(&agents_subdir)
+        .with_context(|| format!("Failed to create {}/agents/", coding_agent.agent_dir))?;
 
-    let bm_dir = ws_root.join(".botminter");
+    let team_sub = ws_root.join("team");
 
     // 1. Team-level agents
-    symlink_md_files(&bm_dir.join("agent").join("agents"), &claude_agents)?;
+    symlink_md_files(&team_sub.join("coding-agent").join("agents"), &agents_subdir)?;
 
-    // 2. Project-level agents
-    if let Some(proj) = project_name {
+    // 2. Project-level agents (all assigned projects)
+    for project in project_names {
         symlink_md_files(
-            &bm_dir
+            &team_sub
                 .join("projects")
-                .join(proj)
-                .join("agent")
+                .join(project)
+                .join("coding-agent")
                 .join("agents"),
-            &claude_agents,
+            &agents_subdir,
         )?;
     }
 
     // 3. Member-level agents
     symlink_md_files(
-        &bm_dir
-            .join("team")
+        &team_sub
+            .join("members")
             .join(member_dir_name)
-            .join("agent")
+            .join("coding-agent")
             .join("agents"),
-        &claude_agents,
+        &agents_subdir,
     )?;
 
     // 4. Copy settings.local.json if present
-    let src = bm_dir
-        .join("team")
+    let settings_src = team_sub
+        .join("members")
         .join(member_dir_name)
-        .join("agent")
+        .join("coding-agent")
         .join("settings.local.json");
-    if src.exists() {
-        let dst = ws_root.join(".claude").join("settings.local.json");
-        fs::copy(&src, &dst).context("Failed to copy settings.local.json")?;
+    if settings_src.exists() {
+        let dst = ws_root
+            .join(&coding_agent.agent_dir)
+            .join("settings.local.json");
+        fs::copy(&settings_src, &dst).context("Failed to copy settings.local.json")?;
     }
 
     Ok(())
 }
 
-/// Creates PROMPT.md and CLAUDE.md as relative symlinks and copies ralph.yml.
-pub fn surface_files(ws_root: &Path, member_dir_name: &str) -> Result<()> {
-    let member_bm = ws_root
-        .join(".botminter")
-        .join("team")
-        .join(member_dir_name);
+/// Writes the `.botminter.workspace` marker file with workspace metadata.
+fn write_workspace_marker(ws_root: &Path, member_dir_name: &str) -> Result<()> {
+    let content = format!(
+        "# BotMinter workspace marker — do not delete\nmember: {}\n",
+        member_dir_name,
+    );
+    fs::write(ws_root.join(".botminter.workspace"), content)
+        .context("Failed to write .botminter.workspace marker")
+}
 
-    let canonical = fs::canonicalize(&member_bm)
-        .with_context(|| format!("Failed to canonicalize {}", member_bm.display()))?;
+/// Syncs an existing workspace by updating submodules, re-copying context files,
+/// re-assembling agent directory, and committing+pushing any changes.
+///
+/// Uses the `team/` submodule model. Updates submodules to latest remote content,
+/// checks out member branches, re-copies context files when newer, and rebuilds
+/// agent dir symlinks idempotently.
+pub fn sync_workspace(
+    ws_root: &Path,
+    member_dir_name: &str,
+    coding_agent: &CodingAgentDef,
+    verbose: bool,
+    push: bool,
+) -> Result<()> {
+    let team_dir = ws_root.join("team");
 
-    // Symlink PROMPT.md and CLAUDE.md (relative)
-    let canonical_ws = fs::canonicalize(ws_root)
-        .with_context(|| format!("Failed to canonicalize {}", ws_root.display()))?;
-    let rel = relative_path(&canonical_ws, &canonical);
+    // Update submodules to latest remote content
+    if team_dir.is_dir() {
+        if verbose {
+            println!("  Updating team/ submodule...");
+        }
+        // Fetch and update to latest remote tracking branch
+        git_cmd(ws_root, &[
+            "-c", "protocol.file.allow=always",
+            "submodule", "update", "--remote", "--merge", "team",
+        ]).ok();
 
-    create_symlink(&rel.join("PROMPT.md"), &ws_root.join("PROMPT.md"))?;
-    create_symlink(&rel.join("CLAUDE.md"), &ws_root.join("CLAUDE.md"))?;
-
-    // Copy ralph.yml (not symlink — may be modified per-run)
-    let ralph_src = canonical.join("ralph.yml");
-    if ralph_src.exists() {
-        fs::copy(&ralph_src, ws_root.join("ralph.yml")).context("Failed to copy ralph.yml")?;
+        // Checkout member branch (avoid detached HEAD)
+        checkout_member_branch(&team_dir, member_dir_name, verbose)?;
     }
 
+    // Update project submodules
+    let projects_dir = ws_root.join("projects");
+    if projects_dir.is_dir() {
+        if let Ok(entries) = fs::read_dir(&projects_dir) {
+            for entry in entries.flatten() {
+                if entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                    let project_name = entry.file_name().to_string_lossy().to_string();
+                    let project_path = format!("projects/{}", project_name);
+                    if verbose {
+                        println!("  Updating {} submodule...", project_path);
+                    }
+                    git_cmd(ws_root, &[
+                        "-c", "protocol.file.allow=always",
+                        "submodule", "update", "--remote", "--merge", &project_path,
+                    ]).ok();
+
+                    // Checkout member branch in project submodule
+                    checkout_member_branch(&entry.path(), member_dir_name, verbose)?;
+                }
+            }
+        }
+    }
+
+    // Re-copy context files from team/members/<member>/
+    let member_src = team_dir.join("members").join(member_dir_name);
+    let files_to_sync = [
+        (member_src.join("ralph.yml"), ws_root.join("ralph.yml"), "ralph.yml"),
+        (
+            member_src.join(&coding_agent.context_file),
+            ws_root.join(&coding_agent.context_file),
+            coding_agent.context_file.as_str(),
+        ),
+        (member_src.join("PROMPT.md"), ws_root.join("PROMPT.md"), "PROMPT.md"),
+    ];
+
+    for (src, dst, name) in &files_to_sync {
+        let copied = copy_if_newer_verbose(src, dst)?;
+        if verbose {
+            if copied {
+                println!("  Copied {} (newer)", name);
+            } else if src.exists() {
+                println!("  Skipped {} (up-to-date)", name);
+            }
+        }
+    }
+
+    // Re-copy settings.local.json if source is newer
+    let settings_src = member_src
+        .join("coding-agent")
+        .join("settings.local.json");
+    let settings_dst = ws_root
+        .join(&coding_agent.agent_dir)
+        .join("settings.local.json");
+    let settings_copied = copy_if_newer_verbose(&settings_src, &settings_dst)?;
+    if verbose && settings_src.exists() {
+        if settings_copied {
+            println!("  Copied settings.local.json (newer)");
+        } else {
+            println!("  Skipped settings.local.json (up-to-date)");
+        }
+    }
+
+    // Discover project names from projects/ submodules
+    let project_names: Vec<String> = if projects_dir.is_dir() {
+        fs::read_dir(&projects_dir)
+            .ok()
+            .map(|entries| {
+                entries
+                    .flatten()
+                    .filter(|e| e.file_type().map(|ft| ft.is_dir()).unwrap_or(false))
+                    .map(|e| e.file_name().to_string_lossy().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+    let project_name_refs: Vec<&str> = project_names.iter().map(|s| s.as_str()).collect();
+
+    // Re-assemble agent dir from team/ submodule paths (idempotent)
+    assemble_agent_dir_submodule(ws_root, member_dir_name, &project_name_refs, coding_agent)?;
+    if verbose {
+        println!("  Rebuilt agent dir symlinks");
+    }
+
+    // Commit changes if any, then push
+    git_cmd(ws_root, &["add", "-A"])?;
+    let has_changes = git_cmd(ws_root, &["diff", "--cached", "--quiet"]).is_err();
+    if has_changes {
+        git_cmd(ws_root, &["commit", "-m", "Sync workspace with team repo"])?;
+        if verbose {
+            println!("  Committed workspace changes");
+        }
+        if push {
+            git_cmd(ws_root, &["push"]).with_context(|| {
+                "Failed to push workspace changes. \
+                 Ensure the workspace repo has a remote configured."
+            })?;
+            if verbose {
+                println!("  Pushed to remote");
+            }
+        }
+    } else if verbose {
+        println!("  No changes to commit");
+    }
+
+    Ok(())
+}
+
+/// Checks out the member branch in a submodule, creating it if needed.
+/// Avoids leaving the submodule in detached HEAD state.
+fn checkout_member_branch(sub_dir: &Path, member_dir_name: &str, verbose: bool) -> Result<()> {
+    // Check current branch
+    let current = git_cmd_output(sub_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .unwrap_or_default();
+    let current = current.trim();
+
+    if current == member_dir_name {
+        if verbose {
+            println!("    Branch: {} (already on it)", member_dir_name);
+        }
+        return Ok(());
+    }
+
+    // Try checkout existing, fall back to creating
+    if git_cmd(sub_dir, &["checkout", member_dir_name]).is_ok() {
+        if verbose {
+            println!("    Branch: {} (checked out)", member_dir_name);
+        }
+    } else {
+        git_cmd(sub_dir, &["checkout", "-b", member_dir_name])?;
+        if verbose {
+            println!("    Branch: {} (created)", member_dir_name);
+        }
+    }
     Ok(())
 }
 
 /// Writes `.gitignore` in the workspace to hide BM files.
-pub fn write_gitignore(ws_root: &Path) -> Result<()> {
-    fs::write(ws_root.join(".gitignore"), gitignore_content())
+pub fn write_gitignore(ws_root: &Path, context_file: &str, agent_dir: &str) -> Result<()> {
+    fs::write(ws_root.join(".gitignore"), gitignore_content(context_file, agent_dir))
         .context("Failed to write .gitignore")
 }
 
 /// Returns the gitignore content for a workspace.
-pub fn gitignore_content() -> String {
+pub fn gitignore_content(context_file: &str, agent_dir: &str) -> String {
+    let entries = bm_gitignore_entries(context_file, agent_dir);
     let mut lines: Vec<&str> = vec!["# botminter — managed workspace files"];
-    lines.extend_from_slice(BM_GITIGNORE_ENTRIES);
+    lines.extend(entries.iter().map(|s| s.as_str()));
     lines.push(""); // trailing newline
     lines.join("\n")
 }
 
 /// Writes `.git/info/exclude` with BM patterns.
-pub fn write_git_exclude(ws_root: &Path) -> Result<()> {
+pub fn write_git_exclude(ws_root: &Path, context_file: &str, agent_dir: &str) -> Result<()> {
     let git_dir = ws_root.join(".git");
     if !git_dir.is_dir() {
         return Ok(()); // No .git dir — skip
     }
     let exclude_dir = git_dir.join("info");
     fs::create_dir_all(&exclude_dir).context("Failed to create .git/info/")?;
-    fs::write(exclude_dir.join("exclude"), gitignore_content())
-        .context("Failed to write .git/info/exclude")
+    fs::write(
+        exclude_dir.join("exclude"),
+        gitignore_content(context_file, agent_dir),
+    )
+    .context("Failed to write .git/info/exclude")
 }
 
 /// Hides botminter-managed files from git status when they are already tracked
 /// by the project repo. Uses `git update-index --skip-worktree` for modified files
 /// and `--assume-unchanged` for deleted files.
-pub fn hide_tracked_bm_files(ws_root: &Path) -> Result<()> {
+pub fn hide_tracked_bm_files(
+    ws_root: &Path,
+    context_file: &str,
+    agent_dir: &str,
+) -> Result<()> {
     let git_dir = ws_root.join(".git");
     if !git_dir.is_dir() {
         return Ok(());
     }
 
-    // Collect all files under BM_GITIGNORE_ENTRIES that git currently tracks
+    // Collect all files under gitignore entries that git currently tracks
     let output = Command::new("git")
         .args(["ls-files", "--full-name"])
         .current_dir(ws_root)
@@ -307,11 +535,12 @@ pub fn hide_tracked_bm_files(ws_root: &Path) -> Result<()> {
         return Ok(()); // Not a git repo or other issue — skip silently
     }
 
+    let entries = bm_gitignore_entries(context_file, agent_dir);
     let tracked = String::from_utf8_lossy(&output.stdout);
     let bm_tracked: Vec<&str> = tracked
         .lines()
         .filter(|f| {
-            BM_GITIGNORE_ENTRIES.iter().any(|pattern| {
+            entries.iter().any(|pattern| {
                 let pat = pattern.trim_end_matches('/');
                 f.starts_with(pat) || *f == pat
             })
@@ -408,6 +637,7 @@ fn relative_path(from_dir: &Path, to_path: &Path) -> PathBuf {
 /// Creates a symlink: `link_path` → `target`.
 /// Target can be relative or absolute. Removes existing link/file at `link_path` first.
 /// Skips if `target` doesn't exist (resolved relative to link's parent for relative targets).
+#[cfg(test)]
 fn create_symlink(target: &Path, link_path: &Path) -> Result<()> {
     // For relative targets, resolve against the link's parent to check existence
     let check_path = if target.is_relative() {
@@ -434,9 +664,17 @@ fn create_symlink(target: &Path, link_path: &Path) -> Result<()> {
 }
 
 /// Copies `src` to `dst` only if `src` exists and is newer than `dst`.
+#[cfg(test)]
 fn copy_if_newer(src: &Path, dst: &Path) -> Result<()> {
+    copy_if_newer_verbose(src, dst)?;
+    Ok(())
+}
+
+/// Copies `src` to `dst` only if `src` exists and is newer than `dst`.
+/// Returns `true` if a copy was made, `false` if skipped.
+fn copy_if_newer_verbose(src: &Path, dst: &Path) -> Result<bool> {
     if !src.exists() {
-        return Ok(());
+        return Ok(false);
     }
     let should_copy = if dst.exists() {
         let src_mod = fs::metadata(src)?.modified()?;
@@ -453,10 +691,11 @@ fn copy_if_newer(src: &Path, dst: &Path) -> Result<()> {
             format!("Failed to copy {} → {}", src.display(), dst.display())
         })?;
     }
-    Ok(())
+    Ok(should_copy)
 }
 
 /// Verifies a symlink points to the expected target. Re-creates as relative if wrong or broken.
+#[cfg(test)]
 fn verify_symlink(link: &Path, expected_target: &Path) -> Result<()> {
     if !expected_target.exists() {
         return Ok(());
@@ -495,6 +734,116 @@ fn verify_symlink(link: &Path, expected_target: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Adds a git submodule, allowing the file protocol for local paths.
+///
+/// Git 2.38.1+ blocks `file://` transport in submodule adds by default
+/// (CVE-2022-39253). We allow it since local clones are intentional here
+/// (during `bm teams sync` without `--push`). For `--push` mode, URLs are
+/// HTTPS and this config has no effect.
+fn git_submodule_add(dir: &Path, url: &str, path: &str) -> Result<()> {
+    let output = Command::new("git")
+        .args([
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            url,
+            path,
+        ])
+        .current_dir(dir)
+        .output()
+        .with_context(|| format!("Failed to run git submodule add {} {}", url, path))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!(
+            "git submodule add {} {} failed: {}",
+            url,
+            path,
+            stderr.trim()
+        );
+    }
+    Ok(())
+}
+
+/// Returns the current git branch name for a workspace, or "unknown" on failure.
+pub fn workspace_git_branch(ws_root: &Path) -> String {
+    git_cmd_output(ws_root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|_| "unknown".to_string())
+}
+
+/// Describes the status of a single git submodule.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubmoduleStatus {
+    pub name: String,
+    pub status: SubmoduleState,
+}
+
+/// Whether a submodule is up-to-date or has new commits available.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SubmoduleState {
+    UpToDate,
+    Behind,
+    Modified,
+    Uninitialized,
+}
+
+impl SubmoduleState {
+    pub fn label(&self) -> &'static str {
+        match self {
+            SubmoduleState::UpToDate => "up-to-date",
+            SubmoduleState::Behind => "behind",
+            SubmoduleState::Modified => "modified",
+            SubmoduleState::Uninitialized => "uninitialized",
+        }
+    }
+}
+
+/// Returns submodule status for all submodules in a workspace.
+///
+/// Uses `git submodule status` which prefixes each line with:
+/// - ' ' (space) = up-to-date
+/// - '+' = checked out to different commit than recorded
+/// - '-' = not initialized
+/// - 'U' = merge conflict
+pub fn workspace_submodule_status(ws_root: &Path) -> Vec<SubmoduleStatus> {
+    let output = match git_cmd_output(ws_root, &["submodule", "status"]) {
+        Ok(o) => o,
+        Err(_) => return Vec::new(),
+    };
+
+    output
+        .lines()
+        .filter(|line| !line.is_empty())
+        .filter_map(|line| {
+            // Format: " <hash> <path> (<desc>)" or "+<hash> <path> (<desc>)"
+            let first_char = line.chars().next()?;
+            let state = match first_char {
+                ' ' => SubmoduleState::UpToDate,
+                '+' => SubmoduleState::Modified,
+                '-' => SubmoduleState::Uninitialized,
+                _ => SubmoduleState::Behind,
+            };
+            // Extract the path (second whitespace-delimited field after the hash)
+            let rest = line[1..].trim();
+            let path = rest.split_whitespace().nth(1)?;
+            Some(SubmoduleStatus {
+                name: path.to_string(),
+                status: state,
+            })
+        })
+        .collect()
+}
+
+/// Returns the remote URL for a workspace repo, or None if not available.
+pub fn workspace_remote_url(ws_root: &Path) -> Option<String> {
+    git_cmd_output(ws_root, &["remote", "get-url", "origin"])
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+
 /// Runs a git command in the given directory. Returns `Ok(())` on success.
 fn git_cmd(dir: &Path, args: &[&str]) -> Result<()> {
     let output = Command::new("git")
@@ -529,290 +878,32 @@ fn git_cmd_output(dir: &Path, args: &[&str]) -> Result<String> {
 mod tests {
     use super::*;
 
+    /// Returns a `CodingAgentDef` for Claude Code, used by most tests.
+    fn claude_code_agent() -> CodingAgentDef {
+        CodingAgentDef {
+            name: "claude-code".into(),
+            display_name: "Claude Code".into(),
+            context_file: "CLAUDE.md".into(),
+            agent_dir: ".claude".into(),
+            binary: "claude".into(),
+        }
+    }
+
     #[test]
     fn gitignore_content_has_all_bm_entries() {
-        let content = gitignore_content();
-        for entry in BM_GITIGNORE_ENTRIES {
+        let content = gitignore_content("CLAUDE.md", ".claude");
+        for entry in BM_GITIGNORE_STATIC {
             assert!(
                 content.contains(entry),
                 ".gitignore should contain '{}'",
                 entry
             );
         }
-    }
-
-    #[test]
-    fn claude_dir_assembly_creates_symlinks() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("workspace");
-        fs::create_dir_all(&ws).unwrap();
-
-        // Set up .botminter/ with agent md files at team and member levels
-        let team_agents = ws.join(".botminter/agent/agents");
-        fs::create_dir_all(&team_agents).unwrap();
-        fs::write(team_agents.join("team-agent.md"), "# Team").unwrap();
-
-        let member_agents = ws.join(".botminter/team/arch-01/agent/agents");
-        fs::create_dir_all(&member_agents).unwrap();
-        fs::write(member_agents.join("member-agent.md"), "# Member").unwrap();
-
-        assemble_claude_dir(&ws, "arch-01", None).unwrap();
-
-        let agents = ws.join(".claude/agents");
-        assert!(agents.exists());
-
-        let team_link = agents.join("team-agent.md");
-        assert!(
-            team_link.symlink_metadata().unwrap().file_type().is_symlink(),
-            "team-agent.md should be a symlink"
-        );
-
-        let member_link = agents.join("member-agent.md");
-        assert!(
-            member_link
-                .symlink_metadata()
-                .unwrap()
-                .file_type()
-                .is_symlink(),
-            "member-agent.md should be a symlink"
-        );
-    }
-
-    #[test]
-    fn surface_files_creates_symlinks() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("workspace");
-        fs::create_dir_all(&ws).unwrap();
-
-        let member = ws.join(".botminter/team/arch-01");
-        fs::create_dir_all(&member).unwrap();
-        fs::write(member.join("PROMPT.md"), "# Prompt").unwrap();
-        fs::write(member.join("CLAUDE.md"), "# Claude").unwrap();
-        fs::write(member.join("ralph.yml"), "version: 1").unwrap();
-
-        surface_files(&ws, "arch-01").unwrap();
-
-        // PROMPT.md and CLAUDE.md should be symlinks
-        assert!(ws
-            .join("PROMPT.md")
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert_eq!(fs::read_to_string(ws.join("PROMPT.md")).unwrap(), "# Prompt");
-
-        assert!(ws
-            .join("CLAUDE.md")
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert_eq!(fs::read_to_string(ws.join("CLAUDE.md")).unwrap(), "# Claude");
-
-        // ralph.yml should be a copy (not symlink)
-        assert!(!ws
-            .join("ralph.yml")
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert_eq!(
-            fs::read_to_string(ws.join("ralph.yml")).unwrap(),
-            "version: 1"
-        );
-    }
-
-    #[test]
-    fn no_project_creates_simple_workspace() {
-        let tmp = tempfile::tempdir().unwrap();
-        let workspace_base = tmp.path().join("workzone/team");
-        fs::create_dir_all(&workspace_base).unwrap();
-
-        // Create a minimal team repo with git
-        let team_repo = tmp.path().join("team_repo");
-        let member_cfg = team_repo.join("team/arch-01");
-        fs::create_dir_all(&member_cfg).unwrap();
-        fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
-        fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
-        fs::write(member_cfg.join("ralph.yml"), "v: 1").unwrap();
-        fs::create_dir_all(member_cfg.join("agent/agents")).unwrap();
-        fs::create_dir_all(team_repo.join("agent/agents")).unwrap();
-
-        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
-        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
-        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
-
-        create_workspace(&team_repo, &workspace_base, "arch-01", None, None).unwrap();
-
-        let ws = workspace_base.join("arch-01");
-        assert!(ws.join(".botminter").is_dir());
-        assert!(ws
-            .join("PROMPT.md")
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert!(ws
-            .join("CLAUDE.md")
-            .symlink_metadata()
-            .unwrap()
-            .file_type()
-            .is_symlink());
-        assert!(ws.join("ralph.yml").exists());
-        assert!(ws.join(".gitignore").exists());
-        assert!(ws.join(".claude").is_dir());
-    }
-
-    // ── GitHub remote URL ───────────────────────────────────────────
-
-    #[test]
-    fn create_workspace_sets_github_remote() {
-        let tmp = tempfile::tempdir().unwrap();
-        let workspace_base = tmp.path().join("workzone/team");
-        fs::create_dir_all(&workspace_base).unwrap();
-
-        // Create a minimal team repo with git
-        let team_repo = tmp.path().join("team_repo");
-        let member_cfg = team_repo.join("team/arch-01");
-        fs::create_dir_all(&member_cfg).unwrap();
-        fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
-        fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
-        fs::write(member_cfg.join("ralph.yml"), "v: 1").unwrap();
-        fs::create_dir_all(member_cfg.join("agent/agents")).unwrap();
-        fs::create_dir_all(team_repo.join("agent/agents")).unwrap();
-
-        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
-        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
-        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
-
-        create_workspace(
-            &team_repo,
-            &workspace_base,
-            "arch-01",
-            None,
-            Some("myorg/my-team"),
-        )
-        .unwrap();
-
-        let ws = workspace_base.join("arch-01");
-        let bm_dir = ws.join(".botminter");
-        let remote_url =
-            git_cmd_output(&bm_dir, &["remote", "get-url", "origin"]).unwrap();
-        assert_eq!(
-            remote_url.trim(),
-            "https://github.com/myorg/my-team.git",
-            ".botminter/ remote should point to GitHub"
-        );
-    }
-
-    #[test]
-    fn create_workspace_without_github_keeps_local_remote() {
-        let tmp = tempfile::tempdir().unwrap();
-        let workspace_base = tmp.path().join("workzone/team");
-        fs::create_dir_all(&workspace_base).unwrap();
-
-        let team_repo = tmp.path().join("team_repo");
-        let member_cfg = team_repo.join("team/arch-01");
-        fs::create_dir_all(&member_cfg).unwrap();
-        fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
-        fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
-        fs::write(member_cfg.join("ralph.yml"), "v: 1").unwrap();
-        fs::create_dir_all(member_cfg.join("agent/agents")).unwrap();
-        fs::create_dir_all(team_repo.join("agent/agents")).unwrap();
-
-        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
-        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
-        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
-
-        create_workspace(&team_repo, &workspace_base, "arch-01", None, None).unwrap();
-
-        let ws = workspace_base.join("arch-01");
-        let bm_dir = ws.join(".botminter");
-        let remote_url =
-            git_cmd_output(&bm_dir, &["remote", "get-url", "origin"]).unwrap();
-        // Without github_repo, the remote should remain a local path
-        assert!(
-            !remote_url.contains("github.com"),
-            "Without github_repo, remote should be local path, got: {}",
-            remote_url.trim()
-        );
-    }
-
-    #[test]
-    fn sync_workspace_fixes_stale_local_remote() {
-        let tmp = tempfile::tempdir().unwrap();
-        let (ws, member) = setup_syncable_workspace(tmp.path());
-
-        let bm_dir = ws.join(".botminter");
-
-        // Verify remote is initially a local path
-        let initial_url =
-            git_cmd_output(&bm_dir, &["remote", "get-url", "origin"]).unwrap();
-        assert!(
-            !initial_url.contains("github.com"),
-            "Initial remote should be local"
-        );
-
-        // Sync with github_repo — should fix the remote
-        sync_workspace(&ws, &member, None, false, Some("myorg/my-team")).unwrap();
-
-        let fixed_url =
-            git_cmd_output(&bm_dir, &["remote", "get-url", "origin"]).unwrap();
-        assert_eq!(
-            fixed_url.trim(),
-            "https://github.com/myorg/my-team.git",
-            "Sync should fix stale local remote to GitHub URL"
-        );
+        assert!(content.contains("CLAUDE.md"), ".gitignore should contain context file");
+        assert!(content.contains(".claude/"), ".gitignore should contain agent dir");
     }
 
     // ── Symlink edge cases ──────────────────────────────────────────
-
-    #[test]
-    fn surface_files_idempotent() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("workspace");
-        let member = ws.join(".botminter/team/dev-01");
-        fs::create_dir_all(&member).unwrap();
-        fs::write(member.join("PROMPT.md"), "# Prompt").unwrap();
-        fs::write(member.join("CLAUDE.md"), "# Claude").unwrap();
-        fs::write(member.join("ralph.yml"), "v: 1").unwrap();
-
-        // First call
-        surface_files(&ws, "dev-01").unwrap();
-        let target_1 = fs::read_link(ws.join("PROMPT.md")).unwrap();
-
-        // Second call — should succeed without error
-        surface_files(&ws, "dev-01").unwrap();
-        let target_2 = fs::read_link(ws.join("PROMPT.md")).unwrap();
-
-        assert_eq!(target_1, target_2, "Symlink target unchanged after re-surface");
-        assert_eq!(fs::read_to_string(ws.join("PROMPT.md")).unwrap(), "# Prompt");
-        assert_eq!(fs::read_to_string(ws.join("CLAUDE.md")).unwrap(), "# Claude");
-    }
-
-    #[test]
-    fn surface_files_updates_wrong_target() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("workspace");
-        let member = ws.join(".botminter/team/dev-01");
-        fs::create_dir_all(&member).unwrap();
-        fs::write(member.join("PROMPT.md"), "# Correct").unwrap();
-        fs::write(member.join("CLAUDE.md"), "# C").unwrap();
-
-        // Create a wrong symlink manually
-        let wrong_target = tmp.path().join("wrong.md");
-        fs::write(&wrong_target, "# Wrong").unwrap();
-        unix_fs::symlink(&wrong_target, ws.join("PROMPT.md")).unwrap();
-
-        // surface_files should replace the wrong symlink
-        surface_files(&ws, "dev-01").unwrap();
-
-        assert_eq!(
-            fs::read_to_string(ws.join("PROMPT.md")).unwrap(),
-            "# Correct",
-            "Symlink should now point to the correct target"
-        );
-    }
 
     #[test]
     fn create_symlink_replaces_regular_file() {
@@ -880,49 +971,38 @@ mod tests {
         );
     }
 
-    // ── Sync behavior ───────────────────────────────────────────────
+    // ── Sync behavior (submodule model) ─────────────────────────────
 
-    /// Helper: create a minimal workspace with .botminter/ as a git repo
-    /// so sync_workspace can operate without external deps.
-    fn setup_syncable_workspace(tmp: &Path) -> (std::path::PathBuf, String) {
-        let member = "dev-01";
-        let team_repo = tmp.join("team_repo");
-        let member_cfg = team_repo.join("team").join(member);
-        fs::create_dir_all(&member_cfg).unwrap();
-        fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
-        fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
-        fs::write(member_cfg.join("ralph.yml"), "original: true").unwrap();
-        fs::create_dir_all(member_cfg.join("agent/agents")).unwrap();
-        fs::create_dir_all(team_repo.join("agent/agents")).unwrap();
-
-        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
-        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
-        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
-
+    /// Helper: create a workspace using the submodule model for sync tests.
+    fn setup_syncable_workspace(tmp: &Path) -> (std::path::PathBuf, String, CodingAgentDef) {
+        let member = "arch-01"; // Must match setup_team_repo_for_ws member
+        let team_repo = setup_team_repo_for_ws(tmp);
         let workspace_base = tmp.join("workzone");
         fs::create_dir_all(&workspace_base).unwrap();
-        create_workspace(&team_repo, &workspace_base, member, None, None).unwrap();
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, member, &[], &agent);
+        create_workspace_repo(&params).unwrap();
 
         let ws = workspace_base.join(member);
-        (ws, member.to_string())
+        (ws, member.to_string(), agent)
     }
 
     #[test]
     fn sync_recopies_changed_ralph_yml() {
         let tmp = tempfile::tempdir().unwrap();
-        let (ws, member) = setup_syncable_workspace(tmp.path());
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Verify initial content
         assert_eq!(
             fs::read_to_string(ws.join("ralph.yml")).unwrap(),
-            "original: true"
+            "v: 1"
         );
 
-        // Modify ralph.yml in .botminter/ (simulating upstream change)
-        let source = ws.join(".botminter/team").join(&member).join("ralph.yml");
+        // Modify ralph.yml in team/ submodule (simulating upstream change)
+        let source = ws.join("team/members").join(&member).join("ralph.yml");
         fs::write(&source, "updated: true").unwrap();
 
-        // Ensure source is newer (touch with small delay)
+        // Ensure source is newer
         let now = filetime::FileTime::from_unix_time(
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
@@ -933,7 +1013,7 @@ mod tests {
         );
         filetime::set_file_mtime(&source, now).unwrap();
 
-        sync_workspace(&ws, &member, None, false, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
 
         assert_eq!(
             fs::read_to_string(ws.join("ralph.yml")).unwrap(),
@@ -943,26 +1023,25 @@ mod tests {
     }
 
     #[test]
-    fn sync_reassembles_claude_dir() {
+    fn sync_reassembles_agent_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let (ws, member) = setup_syncable_workspace(tmp.path());
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
-        // Initially no member-level agents
         let agents_dir = ws.join(".claude/agents");
         let initial_count = fs::read_dir(&agents_dir)
             .unwrap()
             .filter_map(|e| e.ok())
             .count();
 
-        // Add a new agent file in .botminter/
+        // Add a new agent file in team/ submodule
         let member_agents = ws
-            .join(".botminter/team")
+            .join("team/members")
             .join(&member)
-            .join("agent/agents");
+            .join("coding-agent/agents");
         fs::create_dir_all(&member_agents).unwrap();
         fs::write(member_agents.join("new-agent.md"), "# New Agent").unwrap();
 
-        sync_workspace(&ws, &member, None, false, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
 
         let new_count = fs::read_dir(&agents_dir)
             .unwrap()
@@ -983,11 +1062,11 @@ mod tests {
     #[test]
     fn sync_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
-        let (ws, member) = setup_syncable_workspace(tmp.path());
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Run sync twice
-        sync_workspace(&ws, &member, None, false, None).unwrap();
-        sync_workspace(&ws, &member, None, false, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
 
         // Verify workspace is still correct
         assert!(ws.join("PROMPT.md").exists());
@@ -995,6 +1074,104 @@ mod tests {
         assert!(ws.join("ralph.yml").exists());
         assert!(ws.join(".claude/agents").is_dir());
         assert_eq!(fs::read_to_string(ws.join("PROMPT.md")).unwrap(), "# P");
+    }
+
+    #[test]
+    fn sync_commits_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Modify a context file in the team submodule and commit it
+        // (simulating an upstream change that arrives via submodule update)
+        let team_sub = ws.join("team");
+        let source = team_sub.join("members").join(&member).join("ralph.yml");
+        fs::write(&source, "updated: true").unwrap();
+        git_cmd(&team_sub, &["add", "-A"]).unwrap();
+        git_cmd(&team_sub, &["commit", "-m", "upstream change"]).unwrap();
+
+        // Ensure source is newer than workspace copy
+        let now = filetime::FileTime::from_unix_time(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64
+                + 2,
+            0,
+        );
+        filetime::set_file_mtime(&source, now).unwrap();
+
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+
+        // The workspace ralph.yml should have the updated content
+        assert_eq!(
+            fs::read_to_string(ws.join("ralph.yml")).unwrap(),
+            "updated: true",
+            "Sync should re-copy the updated ralph.yml"
+        );
+
+        // Working tree should be clean after sync (changes committed)
+        let status = git_cmd_output(&ws, &["status", "--porcelain"]).unwrap();
+        assert!(
+            status.trim().is_empty(),
+            "Working tree should be clean after sync, got: {}",
+            status
+        );
+    }
+
+    #[test]
+    fn sync_skips_unchanged_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Sync once — no changes expected
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+
+        // Count commits before and after a second sync
+        let log_before = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
+
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+
+        let log_after = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
+        assert_eq!(
+            log_before.trim(),
+            log_after.trim(),
+            "No new commits should be created when nothing changed"
+        );
+    }
+
+    #[test]
+    fn sync_member_branch_in_team_submodule() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // After initial create, team/ submodule should be on member branch
+        let team_sub = ws.join("team");
+        let branch = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(branch.trim(), member, "team/ should be on member branch");
+
+        // Sync and verify branch is still correct (not detached HEAD)
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+
+        let branch = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch.trim(),
+            member,
+            "team/ should remain on member branch after sync (not detached HEAD)"
+        );
+    }
+
+    #[test]
+    fn sync_verbose_runs_without_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Verbose mode should complete without error
+        sync_workspace(&ws, &member, &agent, true, false).unwrap();
+
+        // Workspace should still be valid
+        assert!(ws.join("PROMPT.md").exists());
+        assert!(ws.join("CLAUDE.md").exists());
+        assert!(ws.join("ralph.yml").exists());
     }
 
     // ── copy_if_newer ───────────────────────────────────────────────
@@ -1078,103 +1255,6 @@ mod tests {
         );
     }
 
-    // ── assemble_claude_dir multi-scope ─────────────────────────────
-
-    #[test]
-    fn assemble_claude_dir_three_scopes() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("workspace");
-        fs::create_dir_all(&ws).unwrap();
-        let bm = ws.join(".botminter");
-
-        // Team-level agent
-        let team_agents = bm.join("agent/agents");
-        fs::create_dir_all(&team_agents).unwrap();
-        fs::write(team_agents.join("team-wide.md"), "# Team").unwrap();
-
-        // Project-level agent
-        let proj_agents = bm.join("projects/myproj/agent/agents");
-        fs::create_dir_all(&proj_agents).unwrap();
-        fs::write(proj_agents.join("project-specific.md"), "# Project").unwrap();
-
-        // Member-level agent
-        let member_agents = bm.join("team/arch-01/agent/agents");
-        fs::create_dir_all(&member_agents).unwrap();
-        fs::write(member_agents.join("member-only.md"), "# Member").unwrap();
-
-        assemble_claude_dir(&ws, "arch-01", Some("myproj")).unwrap();
-
-        let agents = ws.join(".claude/agents");
-        assert!(agents.join("team-wide.md").exists(), "Team agent missing");
-        assert!(
-            agents.join("project-specific.md").exists(),
-            "Project agent missing"
-        );
-        assert!(agents.join("member-only.md").exists(), "Member agent missing");
-
-        // All should be symlinks
-        for name in &["team-wide.md", "project-specific.md", "member-only.md"] {
-            assert!(
-                agents
-                    .join(name)
-                    .symlink_metadata()
-                    .unwrap()
-                    .file_type()
-                    .is_symlink(),
-                "{} should be a symlink",
-                name
-            );
-        }
-    }
-
-    #[test]
-    fn assemble_claude_dir_settings_local_json() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("workspace");
-        fs::create_dir_all(&ws).unwrap();
-
-        // Create settings.local.json in member agent dir
-        let agent_dir = ws.join(".botminter/team/dev-01/agent");
-        fs::create_dir_all(agent_dir.join("agents")).unwrap();
-        fs::write(
-            agent_dir.join("settings.local.json"),
-            r#"{"key": "value"}"#,
-        )
-        .unwrap();
-
-        assemble_claude_dir(&ws, "dev-01", None).unwrap();
-
-        let dst = ws.join(".claude/settings.local.json");
-        assert!(dst.exists(), "settings.local.json should be copied");
-        assert_eq!(
-            fs::read_to_string(&dst).unwrap(),
-            r#"{"key": "value"}"#
-        );
-        // Should be a copy, not a symlink
-        assert!(
-            !dst.symlink_metadata().unwrap().file_type().is_symlink(),
-            "settings.local.json should be a copy, not a symlink"
-        );
-    }
-
-    #[test]
-    fn assemble_claude_dir_empty_creates_dir() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("workspace");
-        fs::create_dir_all(&ws).unwrap();
-
-        // No .botminter/ agent dirs at all
-        assemble_claude_dir(&ws, "dev-01", None).unwrap();
-
-        let agents = ws.join(".claude/agents");
-        assert!(agents.is_dir(), ".claude/agents/ should exist even with no agents");
-        let count = fs::read_dir(&agents)
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .count();
-        assert_eq!(count, 0, "Should be empty when no agent sources exist");
-    }
-
     // ── Gitignore / git exclude ─────────────────────────────────────
 
     #[test]
@@ -1183,19 +1263,21 @@ mod tests {
         let ws = tmp.path().join("workspace");
         fs::create_dir_all(ws.join(".git")).unwrap();
 
-        write_git_exclude(&ws).unwrap();
+        write_git_exclude(&ws, "CLAUDE.md", ".claude").unwrap();
 
         let exclude = ws.join(".git/info/exclude");
         assert!(exclude.exists(), ".git/info/exclude should be created");
 
         let content = fs::read_to_string(&exclude).unwrap();
-        for entry in BM_GITIGNORE_ENTRIES {
+        for entry in BM_GITIGNORE_STATIC {
             assert!(
                 content.contains(entry),
                 ".git/info/exclude should contain '{}'",
                 entry
             );
         }
+        assert!(content.contains("CLAUDE.md"), "should contain context file");
+        assert!(content.contains(".claude/"), "should contain agent dir");
     }
 
     #[test]
@@ -1206,9 +1288,625 @@ mod tests {
         // No .git/ directory
 
         // Should return Ok without error
-        write_git_exclude(&ws).unwrap();
+        write_git_exclude(&ws, "CLAUDE.md", ".claude").unwrap();
 
         // No .git/info/exclude should have been created
         assert!(!ws.join(".git").exists());
+    }
+
+    // ── Workspace repo (submodule model) ──────────────────────────────
+
+    /// Helper: creates a minimal team repo with git, member config, and optional projects.
+    fn setup_team_repo_for_ws(tmp: &Path) -> PathBuf {
+        let team_repo = tmp.join("team_repo");
+        let member_cfg = team_repo.join("members/arch-01");
+        fs::create_dir_all(&member_cfg).unwrap();
+        fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
+        fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
+        fs::write(member_cfg.join("ralph.yml"), "v: 1").unwrap();
+        fs::create_dir_all(member_cfg.join("coding-agent/agents")).unwrap();
+        fs::create_dir_all(team_repo.join("coding-agent/agents")).unwrap();
+
+        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.email", "test@test"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
+        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
+
+        team_repo
+    }
+
+    /// Helper: creates a fake fork repo for submodule tests.
+    fn setup_fork_repo(tmp: &Path, name: &str) -> PathBuf {
+        let fork = tmp.join(name);
+        fs::create_dir_all(&fork).unwrap();
+        git_cmd(&fork, &["init", "-b", "main"]).unwrap();
+        git_cmd(&fork, &["config", "user.email", "test@test"]).unwrap();
+        git_cmd(&fork, &["config", "user.name", "Test"]).unwrap();
+        fs::write(fork.join("README.md"), format!("# {}", name)).unwrap();
+        git_cmd(&fork, &["add", "-A"]).unwrap();
+        git_cmd(&fork, &["commit", "-m", "init fork"]).unwrap();
+        fork
+    }
+
+    /// Helper: creates workspace repo params for tests (local-only mode).
+    fn test_ws_params<'a>(
+        team_repo: &'a Path,
+        workspace_base: &'a Path,
+        member: &'a str,
+        projects: &'a [(&'a str, &'a str)],
+        coding_agent: &'a CodingAgentDef,
+    ) -> WorkspaceRepoParams<'a> {
+        WorkspaceRepoParams {
+            team_repo_path: team_repo,
+            workspace_base,
+            member_dir_name: member,
+            team_name: "my-team",
+            projects,
+            github_repo: None,
+            push: false,
+            gh_token: None,
+            coding_agent,
+        }
+    }
+
+    #[test]
+    fn workspace_repo_creates_git_repo_with_team_submodule() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+
+        // Workspace should be a git repo
+        assert!(ws.join(".git").exists(), "workspace should be a git repo");
+
+        // team/ should be a submodule
+        assert!(ws.join("team").is_dir(), "team/ submodule should exist");
+        assert!(ws.join(".gitmodules").exists(), ".gitmodules should exist");
+
+        // .gitmodules should reference the team submodule
+        let gitmodules = fs::read_to_string(ws.join(".gitmodules")).unwrap();
+        assert!(
+            gitmodules.contains("[submodule \"team\"]"),
+            ".gitmodules should contain team submodule entry"
+        );
+    }
+
+    #[test]
+    fn workspace_repo_member_branch_in_team_submodule() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let team_sub = workspace_base.join("arch-01/team");
+        let branch = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch.trim(),
+            "arch-01",
+            "team submodule should be on the member branch"
+        );
+    }
+
+    #[test]
+    fn workspace_repo_with_projects_creates_submodules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let fork_a = setup_fork_repo(tmp.path(), "project-a");
+        let fork_b = setup_fork_repo(tmp.path(), "project-b");
+
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let fork_a_url = fork_a.to_string_lossy().to_string();
+        let fork_b_url = fork_b.to_string_lossy().to_string();
+        let projects: Vec<(&str, &str)> = vec![
+            ("project-a", &fork_a_url),
+            ("project-b", &fork_b_url),
+        ];
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &projects, &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+
+        // Project submodules should exist
+        assert!(
+            ws.join("projects/project-a").is_dir(),
+            "projects/project-a/ should exist"
+        );
+        assert!(
+            ws.join("projects/project-b").is_dir(),
+            "projects/project-b/ should exist"
+        );
+
+        // .gitmodules should reference all submodules
+        let gitmodules = fs::read_to_string(ws.join(".gitmodules")).unwrap();
+        assert!(
+            gitmodules.contains("projects/project-a"),
+            ".gitmodules should contain project-a"
+        );
+        assert!(
+            gitmodules.contains("projects/project-b"),
+            ".gitmodules should contain project-b"
+        );
+
+        // Project submodules should contain the fork content
+        assert!(
+            ws.join("projects/project-a/README.md").exists(),
+            "project-a should have README.md from fork"
+        );
+        assert!(
+            ws.join("projects/project-b/README.md").exists(),
+            "project-b should have README.md from fork"
+        );
+    }
+
+    #[test]
+    fn workspace_repo_member_branch_in_project_submodules() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let fork = setup_fork_repo(tmp.path(), "my-project");
+
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let fork_url = fork.to_string_lossy().to_string();
+        let projects: Vec<(&str, &str)> = vec![("my-project", &fork_url)];
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &projects, &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let proj_sub = workspace_base.join("arch-01/projects/my-project");
+        let branch =
+            git_cmd_output(&proj_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch.trim(),
+            "arch-01",
+            "project submodule should be on the member branch"
+        );
+    }
+
+    #[test]
+    fn workspace_repo_no_projects_has_no_projects_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+        assert!(
+            !ws.join("projects").exists(),
+            "projects/ should not exist when no projects are configured"
+        );
+    }
+
+    #[test]
+    fn workspace_repo_team_submodule_has_member_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+
+        // The team submodule should contain the team repo content
+        assert!(
+            ws.join("team/members/arch-01/PROMPT.md").exists(),
+            "team submodule should have member PROMPT.md"
+        );
+        assert!(
+            ws.join("team/members/arch-01/CLAUDE.md").exists(),
+            "team submodule should have member CLAUDE.md"
+        );
+        assert!(
+            ws.join("team/members/arch-01/ralph.yml").exists(),
+            "team submodule should have member ralph.yml"
+        );
+    }
+
+    // ── Context assembly (submodule model) ────────────────────────────
+
+    #[test]
+    fn workspace_repo_copies_context_files_to_root() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+
+        // Context files should exist at workspace root as copies (not symlinks)
+        assert!(ws.join("CLAUDE.md").exists(), "CLAUDE.md at workspace root");
+        assert!(ws.join("PROMPT.md").exists(), "PROMPT.md at workspace root");
+        assert!(ws.join("ralph.yml").exists(), "ralph.yml at workspace root");
+
+        // Verify they are regular files, not symlinks
+        assert!(
+            !ws.join("CLAUDE.md").symlink_metadata().unwrap().file_type().is_symlink(),
+            "CLAUDE.md should be a copy, not a symlink"
+        );
+        assert!(
+            !ws.join("PROMPT.md").symlink_metadata().unwrap().file_type().is_symlink(),
+            "PROMPT.md should be a copy, not a symlink"
+        );
+
+        // Verify content matches source
+        assert_eq!(fs::read_to_string(ws.join("CLAUDE.md")).unwrap(), "# C");
+        assert_eq!(fs::read_to_string(ws.join("PROMPT.md")).unwrap(), "# P");
+        assert_eq!(fs::read_to_string(ws.join("ralph.yml")).unwrap(), "v: 1");
+    }
+
+    #[test]
+    fn workspace_repo_assembles_agent_dir_from_team_submodule() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create a team repo with agent files at team and member levels
+        let team_repo = tmp.path().join("team_repo");
+        let member_cfg = team_repo.join("members/arch-01");
+        fs::create_dir_all(&member_cfg).unwrap();
+        fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
+        fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
+        fs::write(member_cfg.join("ralph.yml"), "v: 1").unwrap();
+
+        // Team-level agent
+        let team_agents = team_repo.join("coding-agent/agents");
+        fs::create_dir_all(&team_agents).unwrap();
+        fs::write(team_agents.join("team-agent.md"), "# Team Agent").unwrap();
+
+        // Member-level agent
+        let member_agents = member_cfg.join("coding-agent/agents");
+        fs::create_dir_all(&member_agents).unwrap();
+        fs::write(member_agents.join("member-agent.md"), "# Member Agent").unwrap();
+
+        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.email", "test@test"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
+        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
+
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+        let agents_dir = ws.join(".claude/agents");
+
+        // Agent dir should exist
+        assert!(agents_dir.is_dir(), ".claude/agents/ should exist");
+
+        // Team-level and member-level agents should be symlinked
+        assert!(agents_dir.join("team-agent.md").exists(), "team-agent.md should exist");
+        assert!(agents_dir.join("member-agent.md").exists(), "member-agent.md should exist");
+
+        // They should be symlinks
+        assert!(
+            agents_dir.join("team-agent.md").symlink_metadata().unwrap().file_type().is_symlink(),
+            "team-agent.md should be a symlink"
+        );
+        assert!(
+            agents_dir.join("member-agent.md").symlink_metadata().unwrap().file_type().is_symlink(),
+            "member-agent.md should be a symlink"
+        );
+
+        // Symlinks should resolve to content in team/ submodule
+        assert_eq!(
+            fs::read_to_string(agents_dir.join("team-agent.md")).unwrap(),
+            "# Team Agent"
+        );
+        assert_eq!(
+            fs::read_to_string(agents_dir.join("member-agent.md")).unwrap(),
+            "# Member Agent"
+        );
+    }
+
+    #[test]
+    fn workspace_repo_agent_dir_three_scopes() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create team repo with agent files at all three scopes
+        let team_repo = tmp.path().join("team_repo");
+        let member_cfg = team_repo.join("members/arch-01");
+        fs::create_dir_all(&member_cfg).unwrap();
+        fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
+        fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
+        fs::write(member_cfg.join("ralph.yml"), "v: 1").unwrap();
+
+        // Team-level
+        let team_agents = team_repo.join("coding-agent/agents");
+        fs::create_dir_all(&team_agents).unwrap();
+        fs::write(team_agents.join("team-wide.md"), "# Team").unwrap();
+
+        // Project-level
+        let proj_agents = team_repo.join("projects/myproj/coding-agent/agents");
+        fs::create_dir_all(&proj_agents).unwrap();
+        fs::write(proj_agents.join("project-specific.md"), "# Project").unwrap();
+
+        // Member-level
+        let member_agents = member_cfg.join("coding-agent/agents");
+        fs::create_dir_all(&member_agents).unwrap();
+        fs::write(member_agents.join("member-only.md"), "# Member").unwrap();
+
+        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.email", "test@test"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
+        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
+
+        // Create a fake project fork
+        let fork = setup_fork_repo(tmp.path(), "myproj");
+        let fork_url = fork.to_string_lossy().to_string();
+        let projects: Vec<(&str, &str)> = vec![("myproj", &fork_url)];
+
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &projects, &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+        let agents_dir = ws.join(".claude/agents");
+
+        // All three scopes should be present
+        assert!(agents_dir.join("team-wide.md").exists(), "Team agent missing");
+        assert!(agents_dir.join("project-specific.md").exists(), "Project agent missing");
+        assert!(agents_dir.join("member-only.md").exists(), "Member agent missing");
+
+        // All should be symlinks
+        for name in &["team-wide.md", "project-specific.md", "member-only.md"] {
+            assert!(
+                agents_dir.join(name).symlink_metadata().unwrap().file_type().is_symlink(),
+                "{} should be a symlink",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn workspace_repo_writes_gitignore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+        let gitignore = fs::read_to_string(ws.join(".gitignore")).unwrap();
+
+        assert!(gitignore.contains(".ralph/"), ".gitignore should contain .ralph/");
+        assert!(gitignore.contains(".claude/"), ".gitignore should contain agent dir");
+        assert!(gitignore.contains("CLAUDE.md"), ".gitignore should contain context file");
+    }
+
+    #[test]
+    fn workspace_repo_writes_marker_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+        assert!(ws.join(".botminter.workspace").exists(), ".botminter.workspace marker should exist");
+
+        let marker = fs::read_to_string(ws.join(".botminter.workspace")).unwrap();
+        assert!(marker.contains("member: arch-01"), "marker should contain member name");
+    }
+
+    #[test]
+    fn workspace_repo_commits_all_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+
+        // Check that there's a commit
+        let log = git_cmd_output(&ws, &["log", "--oneline", "-1"]).unwrap();
+        assert!(
+            log.contains("Initial workspace setup"),
+            "should have initial commit, got: {}",
+            log.trim()
+        );
+
+        // Working tree should be clean (all files committed)
+        let status = git_cmd_output(&ws, &["status", "--porcelain"]).unwrap();
+        assert!(
+            status.trim().is_empty(),
+            "working tree should be clean after commit, got: {}",
+            status.trim()
+        );
+    }
+
+    #[test]
+    fn workspace_repo_symlinks_resolve_into_team_submodule() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create team repo with a team-level agent
+        let team_repo = tmp.path().join("team_repo");
+        let member_cfg = team_repo.join("members/arch-01");
+        fs::create_dir_all(&member_cfg).unwrap();
+        fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
+        fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
+        fs::write(member_cfg.join("ralph.yml"), "v: 1").unwrap();
+        fs::create_dir_all(member_cfg.join("coding-agent/agents")).unwrap();
+
+        let team_agents = team_repo.join("coding-agent/agents");
+        fs::create_dir_all(&team_agents).unwrap();
+        fs::write(team_agents.join("checker.md"), "# Check").unwrap();
+
+        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.email", "test@test"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
+        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
+
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+        let link = ws.join(".claude/agents/checker.md");
+
+        // The symlink target should contain "team/" (pointing into the submodule)
+        let target = fs::read_link(&link).unwrap();
+        let target_str = target.to_string_lossy();
+        assert!(
+            target_str.contains("team/"),
+            "symlink should point into team/ submodule, got: {}",
+            target_str
+        );
+    }
+
+    // ── workspace_git_branch ──────────────────────────────────────
+
+    #[test]
+    fn workspace_git_branch_returns_branch_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        git_cmd(ws, &["init", "-b", "my-feature"]).unwrap();
+        git_cmd(ws, &["config", "user.email", "test@test.com"]).unwrap();
+        git_cmd(ws, &["config", "user.name", "Test"]).unwrap();
+        fs::write(ws.join("README.md"), "hello").unwrap();
+        git_cmd(ws, &["add", "."]).unwrap();
+        git_cmd(ws, &["commit", "-m", "init"]).unwrap();
+
+        let branch = workspace_git_branch(ws);
+        assert_eq!(branch, "my-feature");
+    }
+
+    #[test]
+    fn workspace_git_branch_returns_unknown_for_non_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let branch = workspace_git_branch(tmp.path());
+        assert_eq!(branch, "unknown");
+    }
+
+    // ── workspace_submodule_status ────────────────────────────────
+
+    #[test]
+    fn workspace_submodule_status_with_submodule() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create a "remote" repo to use as a submodule
+        let remote = tmp.path().join("remote");
+        fs::create_dir_all(&remote).unwrap();
+        git_cmd(&remote, &["init", "-b", "main"]).unwrap();
+        git_cmd(&remote, &["config", "user.email", "test@test.com"]).unwrap();
+        git_cmd(&remote, &["config", "user.name", "Test"]).unwrap();
+        fs::write(remote.join("file.txt"), "hello").unwrap();
+        git_cmd(&remote, &["add", "."]).unwrap();
+        git_cmd(&remote, &["commit", "-m", "init"]).unwrap();
+
+        // Create workspace repo with a submodule
+        let ws = tmp.path().join("ws");
+        fs::create_dir_all(&ws).unwrap();
+        git_cmd(&ws, &["init", "-b", "main"]).unwrap();
+        git_cmd(&ws, &["config", "user.email", "test@test.com"]).unwrap();
+        git_cmd(&ws, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(
+            &ws,
+            &[
+                "-c", "protocol.file.allow=always",
+                "submodule", "add", remote.to_str().unwrap(), "team",
+            ],
+        )
+        .unwrap();
+        git_cmd(&ws, &["commit", "-m", "add submodule"]).unwrap();
+
+        let subs = workspace_submodule_status(&ws);
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].name, "team");
+        assert_eq!(subs[0].status, SubmoduleState::UpToDate);
+    }
+
+    #[test]
+    fn workspace_submodule_status_empty_for_non_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let subs = workspace_submodule_status(tmp.path());
+        assert!(subs.is_empty());
+    }
+
+    // ── workspace_remote_url ──────────────────────────────────────
+
+    #[test]
+    fn workspace_remote_url_returns_none_without_remote() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        git_cmd(ws, &["init", "-b", "main"]).unwrap();
+        git_cmd(ws, &["config", "user.email", "test@test.com"]).unwrap();
+        git_cmd(ws, &["config", "user.name", "Test"]).unwrap();
+
+        let url = workspace_remote_url(ws);
+        assert!(url.is_none());
+    }
+
+    #[test]
+    fn workspace_remote_url_returns_url_with_remote() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path();
+        git_cmd(ws, &["init", "-b", "main"]).unwrap();
+        git_cmd(ws, &["config", "user.email", "test@test.com"]).unwrap();
+        git_cmd(ws, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(
+            ws,
+            &["remote", "add", "origin", "https://github.com/org/repo.git"],
+        )
+        .unwrap();
+
+        let url = workspace_remote_url(ws);
+        assert_eq!(url, Some("https://github.com/org/repo.git".to_string()));
+    }
+
+    // ── SubmoduleState ────────────────────────────────────────────
+
+    #[test]
+    fn submodule_state_labels() {
+        assert_eq!(SubmoduleState::UpToDate.label(), "up-to-date");
+        assert_eq!(SubmoduleState::Behind.label(), "behind");
+        assert_eq!(SubmoduleState::Modified.label(), "modified");
+        assert_eq!(SubmoduleState::Uninitialized.label(), "uninitialized");
     }
 }

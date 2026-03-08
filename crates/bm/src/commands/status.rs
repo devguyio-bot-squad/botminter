@@ -11,6 +11,7 @@ use crate::config;
 use crate::profile;
 use crate::state;
 use crate::topology;
+use crate::workspace;
 
 /// Minimal member manifest for reading role.
 #[derive(Debug, Deserialize)]
@@ -84,7 +85,7 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
     println!();
 
     // Read members
-    let members_dir = team_repo.join("team");
+    let members_dir = team_repo.join("members");
     if !members_dir.is_dir() {
         println!("No members hired yet.");
         return Ok(());
@@ -115,13 +116,21 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
     table
         .load_preset(UTF8_FULL_CONDENSED)
         .apply_modifier(UTF8_ROUND_CORNERS)
-        .set_header(vec!["Member", "Role", "Status", "Started", "PID"]);
+        .set_header(vec!["Member", "Role", "Status", "Branch", "Started", "PID"]);
 
     let mut crashed_keys: Vec<String> = Vec::new();
 
     for member_dir_name in &member_dirs {
         let role = read_member_role(&members_dir, member_dir_name);
         let status = resolve_member_status(&runtime_state, team_name, member_dir_name);
+
+        // Query workspace branch if workspace exists
+        let ws_path = team.path.join(member_dir_name);
+        let branch = if ws_path.join(".botminter.workspace").exists() {
+            workspace::workspace_git_branch(&ws_path)
+        } else {
+            "—".to_string()
+        };
 
         let (status_label, started, pid_str) = match &status {
             MemberStatus::Running { pid, started_at } => {
@@ -138,6 +147,7 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
             member_dir_name.as_str(),
             &role,
             status_label,
+            &branch,
             &started,
             &pid_str,
         ]);
@@ -153,8 +163,26 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
         state::save(&runtime_state)?;
     }
 
-    // Verbose mode: show Ralph runtime details for running members
+    // Verbose mode: show workspace and Ralph runtime details
     if verbose {
+        // Show submodule status for all workspace-enabled members
+        for member_dir_name in &member_dirs {
+            let ws_path = team.path.join(member_dir_name);
+            if !ws_path.join(".botminter.workspace").exists() {
+                continue;
+            }
+
+            let submodules = workspace::workspace_submodule_status(&ws_path);
+            if !submodules.is_empty() {
+                println!("\n── {} workspace ──", member_dir_name);
+                println!("  Submodules:");
+                for sub in &submodules {
+                    println!("    {}: {}", sub.name, sub.status.label());
+                }
+            }
+        }
+
+        // Show Ralph runtime details for running members
         let runtime_state = state::load()?; // reload after cleanup
         let team_prefix = format!("{}/", team_name);
 

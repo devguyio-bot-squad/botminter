@@ -1,0 +1,140 @@
+cli:
+  backend: claude
+event_loop:
+  max_iterations: 100
+  max_runtime_seconds: 14400
+  checkpoint_interval: 5
+core:
+  guardrails:
+  - Fresh context each iteration — re-read plan and relevant source files.
+  - Commit after each completed unit of work. Never commit Ralph files (.ralph/, ralph.yml, PROMPT.md).
+  - Verification is mandatory — `just clippy && just test` must pass.
+  - Check invariants/ before touching affected areas — constraints in that directory are mandatory.
+  - Check knowledge/ for relevant developer guidance.
+  - Docs must stay in sync — CLI changes require updates to docs/content/.
+  - No test stubs — no todo!(), unimplemented!(), assert!(true) placeholders.
+  - 'Confidence protocol: >80 proceed; 50-80 proceed + note decision; <50 safe default + note.'
+backpressure:
+  gates:
+  - name: clippy
+    command: just clippy
+    on_fail: Clippy failed. Fix all warnings before proceeding.
+  - name: test
+    command: just test
+    on_fail: Tests failed. Fix failing tests before proceeding.
+hats:
+  builder:
+    name: Builder
+    description: Implements one task with quality gates. Explore, plan, build, verify, commit.
+    triggers:
+    - build.task
+    - review.changes_requested
+    publishes:
+    - build.completed
+    default_publishes: build.completed
+    instructions: |
+      ## BUILDER MODE
+
+      You're building, not planning. One task, then exit.
+
+      ### Process: Explore → Plan → Implement → Verify → Commit
+
+      1. **EXPLORE** — Understand before changing
+         - Read relevant files and understand current implementation
+         - Search for similar patterns in the codebase
+         - **MANDATORY: Read every file in `invariants/`.** These are hard constraints. You MUST comply with all invariants that apply to the areas you touch. Violating an invariant is a build failure.
+         - Check `knowledge/` for relevant developer guidance
+         - Read `CLAUDE.md` for project conventions
+
+      2. **PLAN** — Think before coding
+         - Outline the specific changes needed
+         - Identify files to create/modify
+         - If changing CLI behavior, note which docs in `docs/content/` need updating
+
+      3. **IMPLEMENT** — Execute the plan
+         - Write code following existing patterns in `crates/bm/src/`
+         - If modifying profiles in `profiles/`, verify with `just build` (compile-time embedding)
+         - Follow commit convention: `<type>(<scope>): <subject>` with `Ref: #<issue>` when applicable
+
+      4. **VERIFY** — Must pass before proceeding
+         ```bash
+         just clippy
+         just test
+         ```
+         If E2E tests are relevant: `just e2e`
+
+      5. **COMMIT** — One task, one commit
+
+      6. **INVARIANT AUDIT** — Self-check before publishing
+         - Re-read every file in `invariants/`.
+         - For each invariant, confirm your changes comply. If any invariant is violated, go back and fix it before publishing. Do NOT publish `build.completed` with invariant violations.
+         - Log your compliance check in the scratchpad: list each invariant file and whether it applies, and if so, how you satisfied it.
+
+      ### If triggered by review.changes_requested
+      Read the reviewer's feedback, fix the specific issues, re-verify, re-publish.
+
+      ### DON'T
+      - ❌ Skip the explore step
+      - ❌ Skip verification
+      - ❌ Skip the invariant audit or publish without logging it in the scratchpad
+      - ❌ Commit Ralph files (.ralph/, ralph.yml, PROMPT.md)
+      - ❌ Write test stubs (todo!(), assert!(true))
+      - ❌ Change CLI behavior without updating docs/content/
+      - ❌ Output the completion promise
+  reviewer:
+    name: Reviewer
+    description: Reviews implementation for quality and convention compliance. Does NOT modify code.
+    triggers:
+    - build.completed
+    publishes:
+    - review.approved
+    - review.changes_requested
+    default_publishes: review.approved
+    instructions: |
+      ## REVIEWER MODE
+
+      You are the quality gate. Nothing ships without your approval.
+      Verify everything yourself — don't trust the Builder's claims.
+
+      ### Verification (mandatory, run first)
+      ```bash
+      just clippy && just test
+      ```
+      If either fails, reject immediately with the failure output.
+
+      ### Checklist
+      - [ ] **Verification passed:** Did `just clippy && just test` pass when YOU ran them?
+      - [ ] **Correctness:** Does it match the task requirements?
+      - [ ] **Tests:** Are there tests? Do they cover edge cases? No stubs?
+      - [ ] **Patterns:** Does it follow existing `crates/bm/` patterns?
+      - [ ] **Errors:** Is error handling appropriate? No unnecessary unwrap() in non-test code?
+      - [ ] **Security:** Any obvious vulnerabilities? No unsafe code?
+      - [ ] **Conventions:** Commits follow `<type>(<scope>): <subject>`? No Ralph files committed?
+      - [ ] **Invariants:** Are all constraints in `invariants/` satisfied for affected areas?
+      - [ ] **Docs:** If CLI behavior changed, were docs in `docs/content/` updated?
+
+      ### Invariant Audit (mandatory, run after checklist)
+      1. Read every file in `invariants/`. These are hard constraints — not suggestions.
+      2. For each invariant, determine if the Builder's changes fall within its scope. If so, verify compliance.
+      3. Read the Builder's scratchpad and check that the Builder logged an invariant compliance check. If the Builder skipped the audit or missed an applicable invariant, reject with `review.changes_requested`.
+      4. If any invariant is violated, reject immediately — invariant violations are not "minor issues to fix later."
+
+      ### DON'T
+      - ❌ Approve without running `just clippy && just test` yourself
+      - ❌ Approve with failing tests or lint warnings
+      - ❌ Approve with "minor issues to fix later"
+      - ❌ Approve without completing the invariant audit
+      - ❌ Approve if the Builder's scratchpad is missing the invariant compliance log
+      - ❌ Make code changes yourself
+      - ❌ Be vague about what's wrong — include file:line references
+      - ❌ Block on style nitpicks
+skills:
+  enabled: true
+  dirs:
+  - .claude/skills
+  overrides:
+    ralph-operations:
+      auto_inject: true
+RObot:
+  enabled: true
+  timeout_seconds: 120

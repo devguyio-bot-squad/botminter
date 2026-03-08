@@ -15,11 +15,37 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Command::Init => commands::init::run()?,
+        Command::Init {
+            non_interactive,
+            profile,
+            team_name,
+            org,
+            repo,
+            project,
+            skip_github,
+            workzone,
+        } => {
+            if non_interactive {
+                commands::init::run_non_interactive(
+                    profile,
+                    team_name,
+                    org,
+                    repo,
+                    project,
+                    skip_github,
+                    workzone,
+                )?;
+            } else {
+                commands::init::run()?;
+            }
+        }
 
         Command::Profiles { command } => match command {
             ProfilesCommand::List => commands::profiles::list()?,
-            ProfilesCommand::Describe { profile } => commands::profiles::describe(&profile)?,
+            ProfilesCommand::Describe { profile, show_tags } => {
+                commands::profiles::describe(&profile, show_tags)?
+            }
+            ProfilesCommand::Init { force } => commands::profiles_init::run(force)?,
         },
 
         Command::Teams { command } => match command {
@@ -27,8 +53,8 @@ fn main() -> Result<()> {
             TeamsCommand::Show { name, team } => {
                 commands::teams::show(name.as_deref(), team.as_deref())?;
             }
-            TeamsCommand::Sync { push, team } => {
-                commands::teams::sync(push, team.as_deref())?;
+            TeamsCommand::Sync { push, verbose, team } => {
+                commands::teams::sync(push, verbose, team.as_deref())?;
             }
         },
 
@@ -109,6 +135,24 @@ fn main() -> Result<()> {
             interval,
         } => {
             commands::daemon::run_daemon(&team, &mode, port, interval)?;
+        }
+
+        Command::Chat {
+            member,
+            team,
+            hat,
+            render_system_prompt,
+        } => {
+            commands::chat::run(
+                &member,
+                team.as_deref(),
+                hat.as_deref(),
+                render_system_prompt,
+            )?;
+        }
+
+        Command::Minty { team } => {
+            commands::minty::run(team.as_deref())?;
         }
 
         Command::Start { team, formation } => {

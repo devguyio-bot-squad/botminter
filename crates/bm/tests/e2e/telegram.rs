@@ -1,22 +1,14 @@
-//! Telegram mock helpers — TgMock lifecycle via podman, control API wrappers.
+//! Telegram mock helpers -- TgMock lifecycle via podman, control API wrappers.
 //!
 //! Uses `ghcr.io/watzon/tg-mock` as a drop-in Telegram Bot API mock.
-//!
-//! # Actual control API surface (discovered via testing)
-//!
-//! - `POST /__control/updates` — inject an update (global, not per-token)
-//! - `GET /__control/updates` — list pending injected updates
-//! - `DELETE /__control/updates` — clear all pending updates
-//!
-//! The per-token injection (`/__control/tokens/<TOKEN>/updates`) and
-//! request inspector (`/__control/requests`) endpoints described in the
-//! research doc are not available in the current image version.
 
 use std::net::TcpListener;
 use std::process::Command;
 use std::time::Duration;
 
-use super::helpers::wait_for_port;
+use libtest_mimic::Trial;
+
+use super::helpers::{wait_for_port, E2eConfig};
 
 const TG_MOCK_IMAGE: &str = "ghcr.io/watzon/tg-mock:latest";
 
@@ -28,8 +20,6 @@ pub struct TgMock {
 
 impl TgMock {
     /// Starts a tg-mock container on a random free port.
-    ///
-    /// Blocks until the mock's HTTP server is accepting connections.
     pub fn start() -> Self {
         let port = find_free_port();
         let container_name = format!("bm-tg-mock-{}", port);
@@ -66,7 +56,6 @@ impl TgMock {
             port
         );
 
-        // Wait for the HTTP server to accept connections
         wait_for_port(port, Duration::from_secs(15));
 
         TgMock { container_id, port }
@@ -78,10 +67,6 @@ impl TgMock {
     }
 
     /// Injects a fake user message into the mock via the global control API.
-    ///
-    /// The injected update is available to any bot via `getUpdates`.
-    /// The `token` parameter is accepted for API compatibility with the spec
-    /// but is not used — tg-mock only supports global injection.
     pub fn inject_message(&self, _token: &str, text: &str, chat_id: i64) {
         let url = format!("{}/__control/updates", self.api_url());
         let body = serde_json::json!({
@@ -109,11 +94,6 @@ impl TgMock {
     }
 
     /// Queries pending injected updates from the mock's control API.
-    ///
-    /// Returns the `updates` array from `GET /__control/updates`.
-    /// The `token` and `method` parameters are accepted for API compatibility
-    /// with the spec but are not used — tg-mock's `/__control/requests`
-    /// endpoint is not available in the current version.
     pub fn get_requests(&self, _token: &str, _method: &str) -> Vec<serde_json::Value> {
         let url = format!("{}/__control/updates", self.api_url());
 
@@ -129,7 +109,6 @@ impl TgMock {
             resp.status()
         );
 
-        // Response format: {"pending": N, "updates": [...]}
         let value: serde_json::Value = resp.json().unwrap_or_default();
         value
             .get("updates")
@@ -145,11 +124,9 @@ impl Drop for TgMock {
             "TgMock dropping: container={}",
             &self.container_id[..12.min(self.container_id.len())]
         );
-        // Stop the container (ignore errors — may already be stopped)
         let _ = Command::new("podman")
             .args(["stop", "-t", "2", &self.container_id])
             .output();
-        // Remove the container
         let _ = Command::new("podman")
             .args(["rm", "-f", &self.container_id])
             .output();
@@ -172,4 +149,12 @@ fn find_free_port() -> u16 {
         .local_addr()
         .expect("failed to get local address")
         .port()
+}
+
+// ── Test registration ────────────────────────────────────────────────
+
+pub fn tests(_config: &E2eConfig) -> Vec<Trial> {
+    // Telegram tests are registered in start_to_stop module (e2e_tg_mock_receives_bot_messages).
+    // This module provides infrastructure only.
+    vec![]
 }

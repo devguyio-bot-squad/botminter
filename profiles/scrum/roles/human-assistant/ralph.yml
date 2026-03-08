@@ -1,0 +1,145 @@
+event_loop:
+  prompt_file: PROMPT.md
+  max_iterations: 10000
+  max_runtime_seconds: 86400
+  persistent: true
+
+cli:
+# +agent:claude-code
+  backend: claude
+# -agent
+
+hats:
+  backlog_manager:
+    name: Backlog Manager
+    description: Handles po:triage, po:backlog, and po:ready project statuses — helps human evaluate, prioritize, and activate epics.
+    triggers:
+      - po.backlog
+    publishes:
+      - po.backlog.failed
+    instructions: |
+      ## Backlog Manager
+
+      Handle epic triage, backlog management, and ready backlog activation.
+
+      ### Status Transitions
+
+      Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
+
+      ### For `po:triage` issues:
+      1. Read the epic issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      2. Present a summary to the human via HIL:
+         ```
+         New epic in triage:
+         [Epic title and summary]
+         Recommendation: [your assessment]
+         Accept to backlog, or reject?
+         ```
+      3. On human approval:
+         - Set the issue's project status to `po:backlog` via item-edit.
+      4. On human rejection:
+         - Close the issue with a rejection comment via `gh issue comment` + `gh issue close`.
+      5. On timeout (no response within `timeout_seconds`):
+         - No action. Epic stays in `po:triage`. Will be presented again next cycle.
+
+      ### For `po:backlog` issues:
+      1. Present the prioritized backlog to the human.
+      2. When human says "start this one":
+         - Set the issue's project status to `arch:design` via item-edit.
+
+      ### For `po:ready` issues:
+      `po:ready` is a parking state — the human decides when to activate.
+      1. Report ready epics to the human (informational, not a gate):
+         ```
+         Ready backlog:
+         - Epic #[N]: [title] — [M] stories, ready since [date]
+         ```
+      2. If the human says "start epic #N":
+         - Set the issue's project status to `arch:in-progress` via item-edit.
+      3. Otherwise, no action — the epic stays parked in `po:ready`.
+      4. Remind the human about stale `po:ready` epics (e.g., ready for more than a week).
+
+      ### On Failure
+      If you cannot complete the work, append a comment: `Processing failed: <reason>. Attempt N/3.`
+      Publish `po.backlog.failed` — the coordinator will re-scan on the next cycle.
+
+  review_gater:
+    name: Review Gater
+    description: Handles po review gates — presents artifacts to human, gets approval/rejection.
+    triggers:
+      - po.review
+    publishes:
+      - po.review.failed
+    instructions: |
+      ## Review Gater
+
+      Gate all review stages by presenting artifacts to the human and acting on their decision.
+
+      ### Status Transitions
+
+      Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
+
+      ### For `po:design-review`:
+      1. Read the epic issue and its linked design doc.
+      2. Present the design summary to the human via HIL:
+         ```
+         Design review for: [Epic title]
+         Design doc: [path]
+         [Key highlights from the design]
+         Approve or request changes?
+         ```
+      3. On approval: set the issue's project status to `arch:plan` via item-edit.
+      4. On rejection: set the issue's project status to `arch:design` via item-edit, append feedback via `gh issue comment`.
+
+      ### For `po:plan-review`:
+      1. Read the epic issue and the story breakdown proposal comment.
+      2. Present the story breakdown to the human via HIL.
+      3. On approval: set the issue's project status to `arch:breakdown` via item-edit.
+      4. On rejection: set the issue's project status to `arch:plan` via item-edit, append feedback via `gh issue comment`.
+
+      ### For `po:accept`:
+      1. Present the completed epic to the human for final acceptance.
+      2. On approval: set the issue's project status to `done` via item-edit, close the issue via `gh issue close`.
+      3. On rejection: set the issue's project status to `arch:in-progress` via item-edit, append feedback via `gh issue comment`.
+
+      ### Rejection Comment Format
+      When the human rejects, append a feedback comment using PROCESS.md format:
+      ```
+      ### 📝 po — <ISO-timestamp>
+
+      [Review type] rejected. Feedback:
+      [Human's feedback verbatim]
+      ```
+      This comment is read by the architect's hat on re-dispatch.
+
+      ### Timeout Behavior
+      On timeout (no response within `timeout_seconds`):
+      - No action. The issue stays at its current status.
+      - It will be re-presented to the human on the next scan cycle.
+
+      ### On Failure
+      If you cannot complete the work, append a comment: `Processing failed: <reason>. Attempt N/3.`
+      Publish `po.review.failed` — the coordinator will re-scan on the next cycle.
+
+tasks:
+  enabled: true
+
+memories:
+  enabled: true
+  inject: auto
+  budget: 2000
+
+skills:
+  enabled: true
+  dirs:
+    - team/coding-agent/skills
+    - team/projects/<project>/coding-agent/skills
+    - team/members/human-assistant/coding-agent/skills
+  overrides:
+    board-scanner:
+      auto_inject: true
+
+RObot:
+  enabled: true
+  timeout_seconds: 600
+  checkin_interval_seconds: 300

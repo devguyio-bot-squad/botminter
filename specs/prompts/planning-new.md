@@ -26,7 +26,7 @@ specs/
 
 **Rules:**
 - Milestones use descriptive kebab-case names — NO numbered prefixes (e.g., `bm-cli/`, not `milestone-3-bm-cli/`).
-- A **milestone** has full PDD artifacts: requirements.md, research/, design.md, plan.md, summary.md. It may also contain a `tasks/` subdir if the plan is broken into code-tasks.
+- A **milestone** has full PDD artifacts: requirements.md, research/, design.md, plan.md, summary.md. Milestones are broken into `sprint-N/` subdirectories, each with its own plan.md and PROMPT.md (see `specs/design-principles.md` Section 11). It may also contain a `tasks/` subdir if the plan is broken into code-tasks.
 - A **task batch** has PROMPT.md + `tasks/*.code-task.md`. Use for focused work that doesn't warrant full PDD.
 - Completed work moves to `{milestones,tasks}/completed/<name>/` when shipped.
 - Actively planned milestones live at `specs/milestones/<name>/` (root level).
@@ -121,27 +121,58 @@ The design must be standalone — understandable without reading other files. Co
 
 ### 5. Develop Implementation Plan
 
-Create `plan.md` in the milestone directory — a numbered series of incremental implementation steps.
+Create `plan.md` in the milestone directory — a sprint index organizing the work into sequential sprints.
 
-Guiding principle: Each step builds on previous steps, results in working demoable functionality, and follows TDD practices. No orphaned code — every step ends with integration. Core end-to-end functionality should be available as early as possible.
+Guiding principle: Each sprint builds on the previous, delivers a demoable vertical slice, and follows TDD practices. No orphaned code — every sprint ends with integration. Core end-to-end functionality should be available as early as possible.
 
-- Include a checklist at the top tracking each step.
-- Format as "Step N:" with: objective, implementation guidance, test requirements, integration notes, and demo description.
-- Ensure the plan covers all aspects of the design without duplicating design details.
+- Include a checklist at the top tracking each sprint.
+- For each sprint: one-paragraph summary describing the vertical slice, what it proves/delivers, and a demo description.
+- Link to the sprint's subdirectory: `sprint-N/plan.md` and `sprint-N/PROMPT.md` (created in Step 6).
+- Group related implementation steps into sprints — each sprint should be a coherent unit of work.
 
-### 6. Summarize and Present Results
+Reference the completed `specs/milestones/completed/architect-first-epic/plan.md` as a format example.
 
-Create `summary.md` in the milestone directory listing all artifacts, a brief overview, and suggested next steps.
+### 6. Sprint Decomposition
 
-### 7. Create PROMPT.md
+Break each sprint from `plan.md` into its own subdirectory with detailed artifacts:
 
-Ask: "Would you like me to create a PROMPT.md for autonomous implementation of this milestone?"
+```
+<milestone>/
+  sprint-1/
+    plan.md       # Detailed implementation steps for this sprint
+    PROMPT.md     # Autonomous implementation prompt (Section 11 format)
+  sprint-2/
+    plan.md
+    PROMPT.md
+  ...
+```
 
-If yes, create a concise PROMPT.md (under 100 lines) with:
-- Objective statement
-- Key requirements
-- Acceptance criteria (Given-When-Then)
-- Reference to the milestone's planning directory
+**`sprint-N/plan.md`** — detailed implementation steps for the sprint:
+- Checklist of steps at the top.
+- Each step has: objective, implementation guidance, test requirements, integration notes, and demo description.
+- Sprint deviations table (if the sprint intentionally defers aspects of the design).
+
+**`sprint-N/PROMPT.md`** — autonomous implementation prompt following `specs/design-principles.md` Section 11:
+- Objective (1-2 sentences — what, not how)
+- Prerequisites (what the prior sprint delivered)
+- Deviations from design (what's intentionally out of scope, with rationale and which sprint picks it up)
+- Key references (pointers to design.md, sprint plan, research)
+- Requirements (numbered list — WHAT changes + reference WHERE in design.md, never HOW)
+- Acceptance criteria (Given-When-Then, observable and verifiable)
+
+**Rules for PROMPT.md (from design-principles.md Section 11):**
+- Requirements MUST say WHAT and reference WHERE. MUST NOT duplicate design content.
+- MUST NOT prescribe implementation steps — state outcomes, let the sprint plan handle ordering.
+- MUST use RFC 2119 language (MUST/SHOULD/MAY).
+- Deviations from design MUST be explicit with rationale and resolution sprint.
+- Sprints MUST chain via prerequisites.
+- Regression criteria MUST be labeled with "(Regression)" prefix.
+
+Reference the completed `specs/milestones/completed/architect-first-epic/sprint-1/` as a format example.
+
+### 7. Summarize and Present Results
+
+Create `summary.md` in the milestone directory listing all artifacts (including sprint subdirectories), a brief overview, and suggested next steps.
 
 ## Troubleshooting
 

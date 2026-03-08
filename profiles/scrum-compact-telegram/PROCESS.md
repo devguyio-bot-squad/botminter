@@ -8,7 +8,7 @@ The compact profile has a single member ("superman") — the agent self-transiti
 
 ## Issue Format
 
-Issues are GitHub issues on the **team repo** (not the project repo). The `gh` skill auto-detects the team repo from `.botminter/`'s git remote.
+Issues are GitHub issues on the **team repo** (not the project repo). The `gh` skill auto-detects the team repo from `team/`'s git remote.
 
 ### Fields
 

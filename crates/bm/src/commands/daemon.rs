@@ -608,7 +608,7 @@ fn launch_members_oneshot(team_name: &str, shutdown: &Arc<AtomicBool>) -> Result
     let team_repo = team.path.join("team");
 
     // Discover members
-    let members_dir = team_repo.join("team");
+    let members_dir = team_repo.join("members");
     if !members_dir.is_dir() {
         daemon_log(team_name, "WARN", "No members directory found");
         return Ok(0);
@@ -691,7 +691,7 @@ fn launch_members_oneshot(team_name: &str, shutdown: &Arc<AtomicBool>) -> Result
     Ok(launched)
 }
 
-/// Lists member directory names under `team/team/`.
+/// Lists member directory names under `team/members/`.
 fn list_member_dirs(team_dir: &Path) -> Result<Vec<String>> {
     let mut dirs = Vec::new();
     for entry in fs::read_dir(team_dir)? {

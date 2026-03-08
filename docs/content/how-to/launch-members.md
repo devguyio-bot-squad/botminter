@@ -10,21 +10,31 @@ Before launching members, provision their workspaces:
 bm teams sync
 ```
 
-This performs the following steps for each hired member × configured project:
+This creates or updates **workspace repos** for each hired member. Each workspace repo is a dedicated git repository containing submodules for the team repo and project forks.
 
-1. Clones the project repo into a workspace directory (e.g., `workzone/my-team/human-assistant/`)
-2. Clones the team repo into `.botminter/` inside the workspace
-3. Writes a `.botminter/.member` marker file
-4. Creates symlinks for `PROMPT.md` and `CLAUDE.md`
-5. Copies `ralph.yml` and `settings.local.json`
-6. Assembles `.claude/agents/` from all agent layers (team, project, member)
-7. Sets up `.git/info/exclude` and `.gitignore` to exclude workspace files
-
-Use `--push` to push the team repo before syncing:
+**New workspaces** (use `--push` to create GitHub repos):
 
 ```bash
 bm teams sync --push
 ```
+
+1. Creates a GitHub repo (`org/<team>-<member>`) for each member
+2. Clones locally into `workzone/<team>/<member>/`
+3. Adds the team repo as `team/` submodule
+4. Adds each assigned project as `projects/<project>/` submodule
+5. Checks out member branches in all submodules
+6. Copies context files (CLAUDE.md, PROMPT.md, ralph.yml) from `team/members/<member>/`
+7. Assembles `.claude/agents/` with symlinks into `team/` submodule paths
+8. Writes `.botminter.workspace` marker and `.gitignore`
+9. Commits and pushes
+
+**Existing workspaces** (without `--push`):
+
+```bash
+bm teams sync
+```
+
+Updates submodules to latest, re-copies context files if team submodule versions are newer, and re-assembles agent dir symlinks.
 
 ## Launch all members
 
@@ -32,7 +42,7 @@ bm teams sync --push
 bm start
 ```
 
-This discovers all member workspaces, maps credentials from the config, and launches `ralph run -p PROMPT.md` as a background process per member. A `.topology` file is written to the team directory tracking member endpoints.
+This discovers all member workspaces (via `.botminter.workspace` marker files), maps credentials from the config, and launches `ralph run -p PROMPT.md` as a background process per member. A `.topology` file is written to the team directory tracking member endpoints.
 
 The `bm up` alias also works:
 
@@ -57,9 +67,9 @@ Non-local formations (e.g., `k8s`) require a configured formation manager in the
 bm status
 ```
 
-This shows the member table (name, role, status, PID), the formation type from the topology file, and daemon status if a daemon is running.
+This shows the member table (name, role, status, branch, PID), the formation type from the topology file, and daemon status if a daemon is running.
 
-Add `-v` for verbose Ralph runtime details:
+Add `-v` for verbose output including per-member submodule status and Ralph runtime details:
 
 ```bash
 bm status -v
@@ -110,13 +120,11 @@ bm teams sync
 ??? note "What sync updates"
     | What | How |
     |------|-----|
-    | Team repo (`.botminter/`) | `git pull` |
-    | Project repo | `git pull` |
-    | `ralph.yml` | Re-copy if source is newer |
-    | `settings.local.json` | Re-copy if source is newer |
-    | `.claude/agents/` | Re-assemble symlinks |
-    | `PROMPT.md`, `CLAUDE.md` | Verify and repair symlinks |
-    | `.git/info/exclude` | Verify and add missing patterns |
+    | Submodules (`team/`, `projects/`) | `git submodule update --remote` |
+    | `CLAUDE.md`, `PROMPT.md` | Re-copy if team submodule version is newer |
+    | `ralph.yml` | Re-copy if team submodule version is newer |
+    | `settings.local.json` | Re-copy if present |
+    | `.claude/agents/` | Re-assemble symlinks into `team/` submodule paths |
 
 After syncing, restart agents for `ralph.yml` changes to take effect:
 

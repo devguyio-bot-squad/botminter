@@ -1,17 +1,13 @@
 target/
+#
 
-# Ralph orchestrator runtime & dev config
+# Ralph orchestrator runtime
 .ralph/
-ralph.yml
-PROMPT.md
-!specs/**/PROMPT.md
 .obsidian/
 
-# Personal/internal
-TESTING-NOTES.md
-tmp-prompt-experiment/
 
 # Secrets
 *.token
 *.pat
 .claude/
+.envrc

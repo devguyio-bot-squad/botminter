@@ -7,7 +7,7 @@ Validated rules for building member skeletons (`ralph.yml`, `PROMPT.md`, `CLAUDE
 | Layer | Purpose | Examples |
 |-------|---------|---------|
 | **PROMPT.md** | Role identity + cross-hat behavioral rules | "You are the architect", training mode declaration, sync-before-scan |
-| **CLAUDE.md** | Role context — workspace model, references, invariant locations | Fork chain, CWD (Current Working Directory) model, pointers to `.botminter/CLAUDE.md` and `PROCESS.md` |
+| **CLAUDE.md** | Role context — workspace model, references, invariant locations | Workspace repo model, pointers to `team/CLAUDE.md` and `PROCESS.md` |
 | **Hat instructions** (`ralph.yml`) | Operational details for each hat | Event publishing, poll-log, knowledge paths, backpressure gates |
 | **`core.guardrails`** (`ralph.yml`) | Universal behavioral rules (numbered 999+) | Lock discipline, invariant compliance |
 
@@ -26,12 +26,12 @@ These behaviors were validated in the M1.5 spike:
 
 | Rule | Rationale |
 |------|-----------|
-| Do not set `starting_event` | All routing must go through an orchestrator hat (board scanner). Without it, rejection loops and priority dispatch break. |
+| Do not set `starting_event` | All routing must go through the coordinator (via the board-scanner skill). Without it, rejection loops and priority dispatch break. |
 | Set `persistent: true` | Keeps the agent alive. `LOOP_COMPLETE` is suppressed; `task.resume` restarts the loop. |
 | `task.resume` is reserved | Must not appear in hat triggers. The coordinator handles it. |
-| Board scanner publishes `LOOP_COMPLETE` when idle | Signals no work found. |
+| Coordinator publishes `LOOP_COMPLETE` when idle | Signals no work found (board-scanner skill returns no matches). |
 | Work hats have `default_publishes` | Prevents fallback exhaustion for non-orchestrator hats. |
-| Board scanner clears scratchpad and tasks at cycle start | Prevents context pollution between issues. |
+| Coordinator clears scratchpad and tasks at cycle start | Prevents context pollution between issues (done via the board-scanner skill). |
 | Idempotent dispatch | Verify issue is not already at target status before dispatching. |
 | One event per hat trigger list | Duplicate events across hats cause ambiguous routing. |
 | Do not set `cooldown_delay_seconds` | Agent processing time provides natural throttling. |
@@ -40,7 +40,7 @@ These behaviors were validated in the M1.5 spike:
 
 - Must not appear in a hat's `publishes` list in ralph.yml
 - Must only be referenced in the hat's `instructions` block
-- Work hats use `default_publishes: LOOP_COMPLETE` as a safety net; the board scanner does not need it since it explicitly publishes `LOOP_COMPLETE` in its instructions when idle
+- Work hats use `default_publishes: LOOP_COMPLETE` as a safety net; the coordinator does not need it since it explicitly publishes `LOOP_COMPLETE` via the board-scanner skill when idle
 
 ### Two execution models
 
@@ -48,12 +48,12 @@ Members support two execution models controlled by the `event_loop.persistent` f
 
 | Model | `persistent` | Entry point | Exit condition | Restart responsibility |
 |-------|-------------|-------------|---------------|----------------------|
-| **Poll-based** | `true` | Board scanner on `board.scan` | Never (`LOOP_COMPLETE` → `task.resume` → `board.scan`) | Self (Ralph runtime) |
-| **Event-triggered** | `false` | Board scanner on `board.scan` | `LOOP_COMPLETE` after no work found | External (daemon) |
+| **Poll-based** | `true` | Coordinator scans via board-scanner skill | Never (`LOOP_COMPLETE` → `task.resume` → re-scan) | Self (Ralph runtime) |
+| **Event-triggered** | `false` | Coordinator scans via board-scanner skill | `LOOP_COMPLETE` after no work found | External (daemon) |
 
-**Poll-based (default):** The board scanner runs in a loop. On `LOOP_COMPLETE`, Ralph injects `task.resume` which routes back to `board.scan`. The member stays alive indefinitely.
+**Poll-based (default):** The coordinator scans the board via the board-scanner skill in a loop. On `LOOP_COMPLETE`, Ralph injects `task.resume` which triggers a re-scan. The member stays alive indefinitely.
 
-**Event-triggered:** The board scanner runs once (or until no work remains). It scans all matching issues — not just the first one. When no work is found, it publishes `LOOP_COMPLETE` and Ralph exits. The [daemon](../reference/cli.md#daemon) handles the next restart.
+**Event-triggered:** The coordinator scans once (or until no work remains) via the board-scanner skill. It scans all matching issues — not just the first one. When no work is found, it publishes `LOOP_COMPLETE` and Ralph exits. The [daemon](../reference/cli.md#daemon) handles the next restart.
 
 ```yaml
 event_loop:
@@ -61,7 +61,7 @@ event_loop:
   max_iterations: 200            # safety limit per invocation
 ```
 
-The board scanner must process all matching work items in priority order before publishing `LOOP_COMPLETE`. The key invariant: **the board scanner is always the universal entry point, regardless of execution model.**
+The coordinator must process all matching work items in priority order (via the board-scanner skill) before publishing `LOOP_COMPLETE`. The key invariant: **the coordinator's board-scanner skill is always the universal entry point, regardless of execution model.**
 
 ### Rejection routing
 
@@ -87,14 +87,13 @@ Work hats must not subscribe to rejection events when multiple work hats share t
 
 | Rule | Detail |
 |------|--------|
-| Agent CWD is the project repo | Team repo cloned into `.botminter/` inside it. |
+| Agent CWD is the workspace repo root | Team repo is the `team/` submodule; projects are under `projects/`. |
 | All roles use the same workspace model | Including non-code-working roles. |
-| `.botminter/.member` marker required | Read by `bm teams sync` to identify the workspace member. |
-| PROMPT.md and CLAUDE.md are symlinks | Auto-update on pull. |
-| ralph.yml and settings.local.json are copies | Require `bm teams sync` + restart. |
+| `.botminter.workspace` marker required | Read by `bm start` to discover workspaces. |
+| PROMPT.md, CLAUDE.md, and ralph.yml are copies | Require `bm teams sync` to update. |
 | Skills read directly via `skills.dirs` | No assembly needed. |
-| Agents symlinked into `.claude/agents/` | From all `agent/agents/` layers. |
-| `.botminter/` excluded via `.git/info/exclude` and `.gitignore` | `bm teams sync` verifies and repairs. |
+| Agents symlinked into `.claude/agents/` | From `team/` submodule paths. |
+| `.ralph/` excluded via `.gitignore` | Runtime state is gitignored in the workspace repo. |
 
 ## 6. Knowledge, invariants, and backpressure
 

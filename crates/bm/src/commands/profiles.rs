@@ -5,7 +5,8 @@ use crate::profile;
 
 /// Handles `bm profiles list` — displays a table of all embedded profiles.
 pub fn list() -> Result<()> {
-    let names = profile::list_profiles();
+    profile::ensure_profiles_initialized()?;
+    let names = profile::list_profiles()?;
 
     let mut table = Table::new();
     table
@@ -28,7 +29,9 @@ pub fn list() -> Result<()> {
 }
 
 /// Handles `bm profiles describe <profile>` — shows full profile details.
-pub fn describe(name: &str) -> Result<()> {
+/// When `show_tags` is true, appends a summary of agent-tagged files.
+pub fn describe(name: &str, show_tags: bool) -> Result<()> {
+    profile::ensure_profiles_initialized()?;
     let manifest = profile::read_manifest(name)?;
 
     println!("Profile: {}", manifest.name);
@@ -58,6 +61,38 @@ pub fn describe(name: &str) -> Result<()> {
     println!("Labels ({}):", manifest.labels.len());
     for label in &manifest.labels {
         println!("  {:<30} {}", label.name, label.description);
+    }
+
+    if !manifest.coding_agents.is_empty() {
+        println!();
+        println!("Coding Agents ({}):", manifest.coding_agents.len());
+        let mut agent_keys: Vec<&String> = manifest.coding_agents.keys().collect();
+        agent_keys.sort();
+        for key in agent_keys {
+            let agent = &manifest.coding_agents[key];
+            let default_marker = if key == &manifest.default_coding_agent {
+                " (default)"
+            } else {
+                ""
+            };
+            println!(
+                "  {}{:<14} {} — context: {}, dir: {}, binary: {}",
+                key, default_marker, agent.display_name, agent.context_file, agent.agent_dir, agent.binary
+            );
+        }
+    }
+
+    if show_tags {
+        let tagged_files = profile::scan_agent_tags(name)?;
+        println!();
+        if tagged_files.is_empty() {
+            println!("Coding-Agent Dependent Files: none");
+        } else {
+            println!("Coding-Agent Dependent Files ({} files):", tagged_files.len());
+            for (path, agents) in &tagged_files {
+                println!("  {} ({})", path, agents.join(", "));
+            }
+        }
     }
 
     Ok(())

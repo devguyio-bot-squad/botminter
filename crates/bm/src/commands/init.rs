@@ -4,6 +4,7 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
+use crate::commands::teams;
 use crate::config::{self, BotminterConfig, Credentials, TeamEntry};
 use crate::profile;
 
@@ -13,8 +14,254 @@ enum ProjectChoice {
     UseExisting(u64),
 }
 
+/// Formats the "next steps" message shown after `bm init` completes.
+fn next_steps_message(team_name: &str, team_dir: &Path, team_repo: &Path) -> String {
+    format!(
+        "Team '{}' created at {}\n\
+         {}\n\
+         Next steps:\n  \
+         1. bm teams sync --push   Push team repo and provision workspaces\n  \
+         2. bm projects sync       Sync project repos into workspaces",
+        team_name,
+        team_dir.display(),
+        teams::format_team_summary(team_repo),
+    )
+}
+
+/// Runs `bm init` in non-interactive mode with pre-supplied arguments.
+///
+/// Skips all interactive prompts. When `skip_github` is true, also skips
+/// GitHub API calls (token validation, label bootstrap, project board creation),
+/// making it suitable for automated testing without network access.
+pub fn run_non_interactive(
+    profile: Option<String>,
+    team_name: Option<String>,
+    org: Option<String>,
+    repo: Option<String>,
+    project: Option<String>,
+    skip_github: bool,
+    workzone_override: Option<String>,
+) -> Result<()> {
+    let selected_profile =
+        profile.ok_or_else(|| anyhow::anyhow!("--profile is required with --non-interactive"))?;
+    let team_name =
+        team_name.ok_or_else(|| anyhow::anyhow!("--team-name is required with --non-interactive"))?;
+    let github_org =
+        org.ok_or_else(|| anyhow::anyhow!("--org is required with --non-interactive"))?;
+    let repo_name =
+        repo.ok_or_else(|| anyhow::anyhow!("--repo is required with --non-interactive"))?;
+
+    // Validate team name
+    if team_name.is_empty() {
+        bail!("Team name cannot be empty");
+    }
+    if team_name.contains('/') || team_name.contains(' ') {
+        bail!("Team name cannot contain '/' or spaces");
+    }
+
+    // Ensure profiles are on disk (first-run auto-init)
+    profile::ensure_profiles_initialized()?;
+
+    // Prerequisite checks (git, gh)
+    if !skip_github {
+        check_prerequisites()?;
+    } else {
+        // Only require git when skipping GitHub
+        if which::which("git").is_err() {
+            bail!("Missing required tool: git — https://git-scm.com/");
+        }
+    }
+
+    let workzone = if let Some(wz) = workzone_override {
+        expand_tilde(&wz)
+    } else {
+        default_workzone_path()
+    };
+
+    let team_dir = workzone.join(&team_name);
+    if team_dir.exists() {
+        bail!(
+            "Directory '{}' already exists. Choose a different team name.",
+            team_dir.display()
+        );
+    }
+
+    let github_repo = format!("{}/{}", github_org, repo_name);
+
+    // Validate profile exists
+    let profiles = profile::list_profiles()?;
+    if !profiles.contains(&selected_profile) {
+        bail!(
+            "Profile '{}' not found. Available profiles: {}",
+            selected_profile,
+            profiles.join(", ")
+        );
+    }
+
+    let manifest = profile::read_manifest(&selected_profile)?;
+
+    // GitHub token handling
+    let gh_token = if skip_github {
+        None
+    } else {
+        let token = detect_gh_token_non_interactive()?;
+        validate_gh_token(&token)?;
+        Some(token)
+    };
+
+    eprintln!(
+        "Creating team '{}' with profile '{}' at {}",
+        team_name,
+        selected_profile,
+        team_dir.display()
+    );
+
+    // Create workzone + team dirs
+    fs::create_dir_all(&workzone)
+        .with_context(|| format!("Failed to create workzone at {}", workzone.display()))?;
+    fs::create_dir_all(&team_dir)
+        .with_context(|| format!("Failed to create team directory at {}", team_dir.display()))?;
+
+    // Set up team repo (always new in non-interactive mode)
+    let team_repo = team_dir.join("team");
+    fs::create_dir_all(&team_repo).context("Failed to create team repo directory")?;
+
+    run_git(&team_repo, &["init", "-b", "main"])?;
+
+    let coding_agent = manifest
+        .coding_agents
+        .get(&manifest.default_coding_agent)
+        .with_context(|| {
+            format!(
+                "Profile '{}' default coding agent '{}' not found in coding_agents map",
+                selected_profile, manifest.default_coding_agent
+            )
+        })?;
+    profile::extract_profile_to(&selected_profile, &team_repo, coding_agent)?;
+
+    // Handle optional project
+    let projects_to_add: Vec<(String, String)> = if let Some(ref proj_url) = project {
+        let name = derive_project_name(proj_url);
+        vec![(name, proj_url.clone())]
+    } else {
+        Vec::new()
+    };
+
+    if !projects_to_add.is_empty() {
+        augment_manifest_with_projects(&team_repo, &projects_to_add)?;
+    }
+
+    fs::create_dir_all(team_repo.join("members")).context("Failed to create members/ dir")?;
+    fs::create_dir_all(team_repo.join("projects")).context("Failed to create projects/ dir")?;
+    fs::write(team_repo.join("members/.gitkeep"), "").ok();
+    fs::write(team_repo.join("projects/.gitkeep"), "").ok();
+
+    for (proj_name, _url) in &projects_to_add {
+        let proj_dir = team_repo.join("projects").join(proj_name);
+        fs::create_dir_all(proj_dir.join("knowledge"))
+            .with_context(|| format!("Failed to create projects/{}/knowledge/", proj_name))?;
+        fs::create_dir_all(proj_dir.join("invariants"))
+            .with_context(|| format!("Failed to create projects/{}/invariants/", proj_name))?;
+        fs::write(proj_dir.join("knowledge/.gitkeep"), "").ok();
+        fs::write(proj_dir.join("invariants/.gitkeep"), "").ok();
+    }
+
+    // Initial commit
+    run_git(&team_repo, &["add", "-A"])?;
+    let commit_msg = format!("feat: initialize team repo ({} profile)", selected_profile);
+    run_git(&team_repo, &["commit", "-m", &commit_msg])?;
+
+    if !skip_github {
+        create_github_repo(&team_repo, &github_repo, gh_token.as_deref())?;
+    }
+
+    // Register in config
+    let mut cfg = load_or_default_config();
+
+    let team_entry = TeamEntry {
+        name: team_name.clone(),
+        path: team_dir.clone(),
+        profile: selected_profile.clone(),
+        github_repo: github_repo.clone(),
+        credentials: Credentials {
+            gh_token: gh_token.clone(),
+            telegram_bot_token: None,
+            webhook_secret: None,
+        },
+        coding_agent: None,
+        project_number: None,
+    };
+    cfg.teams.push(team_entry);
+
+    if cfg.teams.len() == 1 {
+        cfg.default_team = Some(team_name.clone());
+    }
+    cfg.workzone = workzone.clone();
+
+    config::save(&cfg)?;
+
+    if !skip_github {
+        // Bootstrap labels
+        if let Err(e) = bootstrap_labels(&github_repo, &manifest.labels, gh_token.as_deref()) {
+            bail!(
+                "Failed to bootstrap labels: {}. Run `bm init` interactively for recovery steps.",
+                e
+            );
+        }
+
+        // Create GitHub Project board
+        let owner = github_repo.split('/').next().unwrap_or(&github_org);
+        match create_github_project(owner, &team_name, &manifest.statuses, gh_token.as_deref()) {
+            Ok(project_number) => {
+                let mut cfg = config::load()?;
+                if let Some(entry) = cfg.teams.iter_mut().find(|t| t.name == team_name) {
+                    entry.project_number = Some(project_number);
+                }
+                config::save(&cfg)?;
+            }
+            Err(e) => {
+                bail!(
+                    "Failed to create GitHub Project: {}. Run `bm projects sync` to retry.",
+                    e
+                );
+            }
+        }
+    }
+
+    eprintln!("{}", next_steps_message(&team_name, &team_dir, &team_repo));
+
+    Ok(())
+}
+
+/// Detects GH_TOKEN from environment or `gh auth token` (no interactive prompt).
+fn detect_gh_token_non_interactive() -> Result<String> {
+    if let Ok(token) = std::env::var("GH_TOKEN") {
+        if !token.is_empty() {
+            return Ok(token);
+        }
+    }
+
+    let output = Command::new("gh")
+        .args(["auth", "token"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|t| !t.is_empty());
+
+    match output {
+        Some(token) => Ok(token),
+        None => bail!(
+            "No GitHub token found. Set GH_TOKEN or run `gh auth login` before using --non-interactive."
+        ),
+    }
+}
+
 /// Runs the `bm init` interactive wizard.
 pub fn run() -> Result<()> {
+    // Ensure profiles are on disk (first-run auto-init)
+    profile::ensure_profiles_initialized()?;
+
     // Prerequisite checks
     check_prerequisites()?;
 
@@ -53,7 +300,7 @@ pub fn run() -> Result<()> {
     }
 
     // Select profile
-    let profiles = profile::list_profiles();
+    let profiles = profile::list_profiles()?;
     let profile_options: Vec<(String, String, String)> = profiles
         .iter()
         .map(|name| {
@@ -171,23 +418,33 @@ pub fn run() -> Result<()> {
         run_git(&team_repo, &["init", "-b", "main"])?;
 
         spinner.start("Extracting profile content...");
-        profile::extract_profile_to(&selected_profile, &team_repo)?;
+        let manifest = profile::read_manifest(&selected_profile)?;
+        let coding_agent = manifest
+            .coding_agents
+            .get(&manifest.default_coding_agent)
+            .with_context(|| {
+                format!(
+                    "Profile '{}' default coding agent '{}' not found in coding_agents map",
+                    selected_profile, manifest.default_coding_agent
+                )
+            })?;
+        profile::extract_profile_to(&selected_profile, &team_repo, coding_agent)?;
 
         if !projects_to_add.is_empty() {
             augment_manifest_with_projects(&team_repo, &projects_to_add)?;
         }
 
-        fs::create_dir_all(team_repo.join("team")).context("Failed to create team/ dir")?;
+        fs::create_dir_all(team_repo.join("members")).context("Failed to create members/ dir")?;
         fs::create_dir_all(team_repo.join("projects")).context("Failed to create projects/ dir")?;
-        fs::write(team_repo.join("team/.gitkeep"), "").ok();
+        fs::write(team_repo.join("members/.gitkeep"), "").ok();
         fs::write(team_repo.join("projects/.gitkeep"), "").ok();
 
         for (role, name) in &members_to_hire {
             let member_dir_name = format!("{}-{}", role, name);
-            let member_dir = team_repo.join("team").join(&member_dir_name);
+            let member_dir = team_repo.join("members").join(&member_dir_name);
             fs::create_dir_all(&member_dir)
                 .with_context(|| format!("Failed to create member dir {}", member_dir.display()))?;
-            profile::extract_member_to(&selected_profile, role, &member_dir)?;
+            profile::extract_member_to(&selected_profile, role, &member_dir, coding_agent)?;
             finalize_member_manifest(&member_dir, name)?;
         }
 
@@ -228,6 +485,8 @@ pub fn run() -> Result<()> {
             telegram_bot_token: telegram_bot_token.clone(),
             webhook_secret: None,
         },
+        coding_agent: None,
+        project_number: None,
     };
     cfg.teams.push(team_entry);
 
@@ -294,25 +553,27 @@ pub fn run() -> Result<()> {
         }
     };
 
+    // Save project number to config
+    {
+        let mut cfg = config::load()?;
+        if let Some(entry) = cfg.teams.iter_mut().find(|t| t.name == team_name) {
+            entry.project_number = Some(project_number);
+        }
+        config::save(&cfg)?;
+    }
+
     // Print view setup instructions if the profile defines views
     if !manifest.views.is_empty() {
         let project_url = format!(
             "https://github.com/orgs/{}/projects/{}",
             owner, project_number
         );
-        cliclack::log::info(format!(
-            "Set up role-based views at: {}\n\
-             Run `bm projects sync` anytime to see view instructions.",
-            project_url,
-        ))?;
+        cliclack::log::info(format!("Board: {}", project_url))?;
     }
 
     spinner.stop("Done!");
-    cliclack::outro(format!(
-        "Team '{}' created at {}",
-        team_name,
-        team_dir.display()
-    ))?;
+    cliclack::log::info(next_steps_message(&team_name, &team_dir, &team_repo))?;
+    cliclack::outro("Ready to go!")?;
 
     Ok(())
 }
@@ -1182,6 +1443,7 @@ fn color_for_status(name: &str) -> &'static str {
         "lead" => "ORANGE",
         "sre" => "GRAY",
         "cw" => "ORANGE",
+        "mgr" => "PURPLE",
         "error" => "RED",
         "done" => "GREEN",
         _ => "GRAY",

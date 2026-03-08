@@ -282,6 +282,21 @@ The one-word differences (`build.complete` vs `build.done`, `verify.pass` vs `ve
 
 If the agent forgets to emit any event (no pending events after an iteration), Ralph injects a `task.resume` fallback to keep the loop alive. This gives the agent another chance to figure out what to do. After 3 consecutive fallback attempts with no progress, the loop terminates.
 
+## Configuration Defaults
+
+Ralph applies serde defaults for omitted `event_loop` fields. These are hardcoded in `ralph-core/src/config.rs`:
+
+| Field | Default | Notes |
+|-------|---------|-------|
+| `prompt_file` | `"PROMPT.md"` | `default_prompt_file()` |
+| `completion_promise` | `"LOOP_COMPLETE"` | `default_completion_promise()` — the string the agent must output to end the loop |
+| `starting_event` | *(none)* | Omitting lets Hatless Ralph plan first |
+| `max_iterations` | `50` | From `ExportPreset` defaults |
+| `cooldown_delay_seconds` | `0` | No delay between iterations by default |
+| `checkpoint_interval` | *(none)* | No checkpointing unless configured |
+
+You can omit any field that matches the default. For example, `completion_promise: "LOOP_COMPLETE"` is redundant.
+
 ## Practical Implications
 
 | Consideration | What It Means for You |

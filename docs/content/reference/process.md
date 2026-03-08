@@ -68,6 +68,14 @@ At any review gate, the human can reject and send the epic back:
 
 The rejecting member appends feedback as a standard comment.
 
+### Team Manager statuses
+
+| Status | Role | Description |
+|--------|------|-------------|
+| `status/mgr:todo` | team-manager | Task awaiting team manager |
+| `status/mgr:in-progress` | team-manager | Team manager working on task |
+| `status/mgr:done` | team-manager | Task completed by team manager |
+
 ### Story statuses
 
 Currently only `status/dev:ready` is active. The remaining story statuses are planned for Milestone 4 when dev, QE (Quality Engineer), and reviewer agents are added.
@@ -85,11 +93,11 @@ Currently only `status/dev:ready` is active. The remaining story statuses are pl
 ### Error status
 
 !!! warning "Failed processing escalation"
-    If an issue fails processing 3 times, the board scanner adds `status/error` and skips it on future scans. The human must investigate and remove the label to allow retries.
+    If an issue fails processing 3 times, the coordinator adds `status/error` and skips it on future scans. The human must investigate and remove the label to allow retries.
 
 | Status | Description |
 |--------|-------------|
-| `status/error` | Issue failed processing 3 times. Board scanner skips it. Human investigates and removes the label to retry. |
+| `status/error` | Issue failed processing 3 times. Coordinator skips it on future scans. Human investigates and removes the label to retry. |
 
 ## Comment format
 
@@ -113,6 +121,7 @@ The emoji and role are read from the member's `.botminter.yml` file.
 | qe | `🧪` | `### 🧪 qe — 2026-01-15T10:30:00Z` |
 | sre | `🛠️` | `### 🛠️ sre — 2026-01-15T10:30:00Z` |
 | cw | `✍️` | `### ✍️ cw — 2026-01-15T10:30:00Z` |
+| team-manager | `📋` | `### 📋 team-manager — 2026-01-15T10:30:00Z` |
 | lead | `👑` | `### 👑 lead — 2026-01-15T10:30:00Z` |
 
 Comments are append-only. Never edit or delete existing comments.

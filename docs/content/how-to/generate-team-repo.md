@@ -31,8 +31,8 @@ The wizard will prompt you for:
 1. **Detects GitHub auth** — checks `GH_TOKEN` env var, then `gh auth token`; shows masked token for confirmation
 2. **Validates token** — calls `gh api user` to verify credentials before proceeding
 3. **Creates team directory** — `{workzone}/{team-name}/team/` with git init
-4. **Extracts profile** — copies PROCESS.md, CLAUDE.md, knowledge/, invariants/, agent/ from the embedded profile
-5. **Hires members** — if specified, extracts member skeletons into `team/{role}-{name}/`
+4. **Extracts profile** — copies PROCESS.md, context.md (renamed to the agent's context file), knowledge/, invariants/, coding-agent/ from the profile on disk, filtering agent-specific content
+5. **Hires members** — if specified, extracts member skeletons into `members/{role}-{name}/`
 6. **Adds projects** — if specified, creates project directories and updates `botminter.yml`
 7. **Creates initial commit** — `git add -A && git commit`
 8. **Creates GitHub repo** — runs `gh repo create` and pushes (uses the validated token)
@@ -50,6 +50,23 @@ The wizard will prompt you for:
 
 !!! warning "Team name must be unique"
     `bm init` refuses to create a team if the target directory already exists. Choose a different name or delete the existing directory.
+
+## Non-interactive mode
+
+For CI pipelines or scripted setup:
+
+```bash
+bm init --non-interactive \
+  --profile scrum-compact \
+  --team-name my-team \
+  --org my-org \
+  --repo my-team-repo \
+  --project new
+```
+
+This runs the full init flow without prompts -- creates the GitHub repo, bootstraps labels, creates a Project board, and registers the team. Requires `GH_TOKEN` in the environment.
+
+All required parameters must be provided as flags. See the [CLI reference](../reference/cli.md#non-interactive-mode) for the full parameter list.
 
 ## Post-generation setup
 
@@ -86,7 +103,7 @@ bm projects add https://github.com/org/my-project.git
 bm teams sync
 ```
 
-This creates member workspaces with the target project clone, `.botminter/` team repo clone, surfaced files (PROMPT.md, CLAUDE.md, ralph.yml), and assembled `.claude/agents/`.
+This creates workspace repos for each member with the team repo as a `team/` submodule, project forks as `projects/` submodules, copied context files (PROMPT.md, CLAUDE.md, ralph.yml), and assembled `.claude/agents/`.
 
 ### 5. Add project-specific knowledge
 

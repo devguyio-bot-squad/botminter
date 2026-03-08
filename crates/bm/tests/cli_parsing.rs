@@ -4,11 +4,15 @@
 //! required args, error messages, and help text — without requiring a real
 //! team setup or HOME env mutation. They run fast and in parallel.
 
+use std::path::Path;
 use std::process::Command;
 
-/// Helper: create a `Command` for the `bm` binary.
-fn bm() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_bm"))
+/// Helper: create a `Command` for the `bm` binary with HOME isolation.
+fn bm(home: &Path) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_bm"));
+    cmd.env("HOME", home);
+    cmd.env("XDG_CONFIG_HOME", home.join(".config"));
+    cmd
 }
 
 /// Clap uses exit code 2 for argument parsing / usage errors.
@@ -19,8 +23,9 @@ const CLAP_PARSE_ERROR_CODE: i32 = 2;
 
 #[test]
 fn start_and_up_are_aliases() {
-    let start = bm().args(["start", "--help"]).output().unwrap();
-    let up = bm().args(["up", "--help"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let start = bm(tmp.path()).args(["start", "--help"]).output().unwrap();
+    let up = bm(tmp.path()).args(["up", "--help"]).output().unwrap();
 
     assert!(start.status.success(), "bm start --help should exit 0");
     assert!(up.status.success(), "bm up --help should exit 0");
@@ -36,7 +41,8 @@ fn start_and_up_are_aliases() {
 
 #[test]
 fn aliases_shown_in_help() {
-    let output = bm().args(["--help"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["--help"]).output().unwrap();
     assert!(output.status.success());
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -51,7 +57,7 @@ fn aliases_shown_in_help() {
     // Verify the alias resolves to a known command (not "unknown subcommand").
     // Note: `alias` (vs `visible_alias`) is hidden from --help output, so
     // we verify the alias works functionally rather than checking for "up" text.
-    let up_help = bm().args(["up", "--help"]).output().unwrap();
+    let up_help = bm(tmp.path()).args(["up", "--help"]).output().unwrap();
     assert!(
         up_help.status.success(),
         "'bm up --help' should succeed — alias resolves to start"
@@ -62,6 +68,7 @@ fn aliases_shown_in_help() {
 
 #[test]
 fn team_flag_short_and_long() {
+    let tmp = tempfile::tempdir().unwrap();
     // Commands accepting -t/--team will fail at runtime (no config) but must
     // NOT fail at the argument-parsing stage. Exit code 2 = parse error,
     // exit code 1 = runtime error (parsing succeeded).
@@ -79,7 +86,7 @@ fn team_flag_short_and_long() {
     ];
 
     for args in cases {
-        let output = bm().args(*args).output().unwrap();
+        let output = bm(tmp.path()).args(*args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
         assert_ne!(
             code, CLAP_PARSE_ERROR_CODE,
@@ -92,12 +99,13 @@ fn team_flag_short_and_long() {
 
 #[test]
 fn force_flag_on_stop() {
+    let tmp = tempfile::tempdir().unwrap();
     // --force and -f are both defined via #[arg(short, long)] on Stop
     for args in [
         vec!["stop", "--force"],
         vec!["stop", "-f"],
     ] {
-        let output = bm().args(&args).output().unwrap();
+        let output = bm(tmp.path()).args(&args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
         assert_ne!(
             code, CLAP_PARSE_ERROR_CODE,
@@ -110,7 +118,8 @@ fn force_flag_on_stop() {
 
 #[test]
 fn push_flag_on_sync() {
-    let output = bm().args(["teams", "sync", "--push"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["teams", "sync", "--push"]).output().unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
         code, CLAP_PARSE_ERROR_CODE,
@@ -121,12 +130,33 @@ fn push_flag_on_sync() {
 
 #[test]
 fn verbose_flag_on_status() {
+    let tmp = tempfile::tempdir().unwrap();
     // -v and --verbose are both defined via #[arg(short, long)] on Status
     for args in [
         vec!["status", "-v"],
         vec!["status", "--verbose"],
     ] {
-        let output = bm().args(&args).output().unwrap();
+        let output = bm(tmp.path()).args(&args).output().unwrap();
+        let code = output.status.code().unwrap_or(-1);
+        assert_ne!(
+            code, CLAP_PARSE_ERROR_CODE,
+            "`bm {}` should not be a parse error, stderr: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn verbose_flag_on_sync() {
+    let tmp = tempfile::tempdir().unwrap();
+    // -v and --verbose are both defined via #[arg(short, long)] on Sync
+    for args in [
+        vec!["teams", "sync", "-v"],
+        vec!["teams", "sync", "--verbose"],
+        vec!["teams", "sync", "--push", "-v"],
+    ] {
+        let output = bm(tmp.path()).args(&args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
         assert_ne!(
             code, CLAP_PARSE_ERROR_CODE,
@@ -139,8 +169,9 @@ fn verbose_flag_on_status() {
 
 #[test]
 fn name_flag_on_hire() {
+    let tmp = tempfile::tempdir().unwrap();
     // --name is defined with #[arg(long)] only (no short -n)
-    let output = bm()
+    let output = bm(tmp.path())
         .args(["hire", "somerole", "--name", "alice"])
         .output()
         .unwrap();
@@ -156,7 +187,8 @@ fn name_flag_on_hire() {
 
 #[test]
 fn hire_requires_role_argument() {
-    let output = bm().args(["hire"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["hire"]).output().unwrap();
     assert_eq!(
         output.status.code(),
         Some(CLAP_PARSE_ERROR_CODE),
@@ -173,7 +205,8 @@ fn hire_requires_role_argument() {
 
 #[test]
 fn profiles_describe_requires_profile_name() {
-    let output = bm().args(["profiles", "describe"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["profiles", "describe"]).output().unwrap();
     assert_eq!(
         output.status.code(),
         Some(CLAP_PARSE_ERROR_CODE),
@@ -192,7 +225,8 @@ fn profiles_describe_requires_profile_name() {
 
 #[test]
 fn projects_add_requires_url() {
-    let output = bm().args(["projects", "add"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["projects", "add"]).output().unwrap();
     assert_eq!(
         output.status.code(),
         Some(CLAP_PARSE_ERROR_CODE),
@@ -209,7 +243,8 @@ fn projects_add_requires_url() {
 
 #[test]
 fn projects_sync_help_works() {
-    let output = bm().args(["projects", "sync", "--help"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["projects", "sync", "--help"]).output().unwrap();
     assert!(
         output.status.success(),
         "bm projects sync --help should exit 0"
@@ -227,7 +262,8 @@ fn projects_sync_help_works() {
 
 #[test]
 fn unknown_subcommand_errors() {
-    let output = bm().args(["foobar"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["foobar"]).output().unwrap();
     assert!(
         !output.status.success(),
         "bm foobar should exit non-zero"
@@ -242,7 +278,8 @@ fn unknown_subcommand_errors() {
 
 #[test]
 fn unknown_flag_errors() {
-    let output = bm().args(["status", "--foobar"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["status", "--foobar"]).output().unwrap();
     assert_eq!(
         output.status.code(),
         Some(CLAP_PARSE_ERROR_CODE),
@@ -252,7 +289,8 @@ fn unknown_flag_errors() {
 
 #[test]
 fn completions_requires_valid_shell() {
-    let output = bm().args(["completions", "notashell"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["completions", "notashell"]).output().unwrap();
     assert!(
         !output.status.success(),
         "bm completions notashell should exit non-zero"
@@ -270,7 +308,8 @@ fn completions_requires_valid_shell() {
 
 #[test]
 fn help_flag_shows_all_commands() {
-    let output = bm().args(["--help"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["--help"]).output().unwrap();
     assert!(output.status.success(), "bm --help should exit 0");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -278,6 +317,7 @@ fn help_flag_shows_all_commands() {
     let expected_commands = [
         "init",
         "hire",
+        "chat",
         "start",
         "stop",
         "status",
@@ -308,7 +348,8 @@ fn help_flag_shows_all_commands() {
 
 #[test]
 fn subcommand_help_works() {
-    let output = bm().args(["teams", "--help"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["teams", "--help"]).output().unwrap();
     assert!(output.status.success(), "bm teams --help should exit 0");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -329,7 +370,8 @@ fn subcommand_help_works() {
 
 #[test]
 fn daemon_subcommand_help() {
-    let output = bm().args(["daemon", "--help"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["daemon", "--help"]).output().unwrap();
     assert!(output.status.success(), "bm daemon --help should exit 0");
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -351,9 +393,8 @@ fn daemon_start_flags_parsed() {
         vec!["daemon", "start", "--interval", "30"],
         vec!["daemon", "start", "-t", "myteam"],
     ] {
-        let output = bm()
+        let output = bm(tmp.path())
             .args(&args)
-            .env("HOME", tmp.path())
             .output()
             .unwrap();
         let code = output.status.code().unwrap_or(-1);
@@ -369,9 +410,8 @@ fn daemon_start_flags_parsed() {
 #[test]
 fn daemon_stop_flags_parsed() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm()
+    let output = bm(tmp.path())
         .args(["daemon", "stop", "-t", "myteam"])
-        .env("HOME", tmp.path())
         .output()
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
@@ -384,9 +424,8 @@ fn daemon_stop_flags_parsed() {
 #[test]
 fn daemon_status_flags_parsed() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm()
+    let output = bm(tmp.path())
         .args(["daemon", "status", "-t", "myteam"])
-        .env("HOME", tmp.path())
         .output()
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
@@ -400,7 +439,8 @@ fn daemon_status_flags_parsed() {
 
 #[test]
 fn teams_show_help_works() {
-    let output = bm().args(["teams", "show", "--help"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["teams", "show", "--help"]).output().unwrap();
     assert!(
         output.status.success(),
         "bm teams show --help should exit 0"
@@ -416,7 +456,8 @@ fn teams_show_help_works() {
 
 #[test]
 fn teams_show_with_name_parses() {
-    let output = bm().args(["teams", "show", "my-team"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["teams", "show", "my-team"]).output().unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
         code, CLAP_PARSE_ERROR_CODE,
@@ -427,7 +468,8 @@ fn teams_show_with_name_parses() {
 
 #[test]
 fn teams_show_with_team_flag_parses() {
-    let output = bm()
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
         .args(["teams", "show", "-t", "my-team"])
         .output()
         .unwrap();
@@ -441,7 +483,8 @@ fn teams_show_with_team_flag_parses() {
 
 #[test]
 fn members_show_requires_member_arg() {
-    let output = bm().args(["members", "show"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["members", "show"]).output().unwrap();
     assert_eq!(
         output.status.code(),
         Some(CLAP_PARSE_ERROR_CODE),
@@ -451,7 +494,8 @@ fn members_show_requires_member_arg() {
 
 #[test]
 fn members_show_with_member_parses() {
-    let output = bm()
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
         .args(["members", "show", "architect-01"])
         .output()
         .unwrap();
@@ -465,7 +509,8 @@ fn members_show_with_member_parses() {
 
 #[test]
 fn projects_list_help_works() {
-    let output = bm().args(["projects", "list", "--help"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["projects", "list", "--help"]).output().unwrap();
     assert!(
         output.status.success(),
         "bm projects list --help should exit 0"
@@ -474,7 +519,8 @@ fn projects_list_help_works() {
 
 #[test]
 fn projects_show_requires_project_arg() {
-    let output = bm().args(["projects", "show"]).output().unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["projects", "show"]).output().unwrap();
     assert_eq!(
         output.status.code(),
         Some(CLAP_PARSE_ERROR_CODE),
@@ -484,7 +530,8 @@ fn projects_show_requires_project_arg() {
 
 #[test]
 fn projects_show_with_project_parses() {
-    let output = bm()
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
         .args(["projects", "show", "my-app"])
         .output()
         .unwrap();
@@ -498,8 +545,9 @@ fn projects_show_with_project_parses() {
 
 #[test]
 fn subcommand_help_shows_new_commands() {
+    let tmp = tempfile::tempdir().unwrap();
     // Teams help should show show, list, sync
-    let output = bm().args(["teams", "--help"]).output().unwrap();
+    let output = bm(tmp.path()).args(["teams", "--help"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("show"),
@@ -508,7 +556,7 @@ fn subcommand_help_shows_new_commands() {
     );
 
     // Members help should show show and list
-    let output = bm().args(["members", "--help"]).output().unwrap();
+    let output = bm(tmp.path()).args(["members", "--help"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("show"),
@@ -517,7 +565,7 @@ fn subcommand_help_shows_new_commands() {
     );
 
     // Projects help should show list, show, add, sync
-    let output = bm().args(["projects", "--help"]).output().unwrap();
+    let output = bm(tmp.path()).args(["projects", "--help"]).output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("list"),
@@ -529,4 +577,461 @@ fn subcommand_help_shows_new_commands() {
         "bm projects --help should list 'show' subcommand, output:\n{}",
         stdout
     );
+}
+
+// ── --show-tags flag (3 tests) ──────────────────────────────────────
+
+#[test]
+fn profiles_describe_show_tags_outputs_tagged_files() {
+    // Extract profiles to disk so the command can find them
+    let profiles_tmp = tempfile::tempdir().unwrap();
+    let profiles_path = profiles_tmp.path().join("botminter").join("profiles");
+    std::fs::create_dir_all(&profiles_path).unwrap();
+    bm::profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
+    let output = bm(profiles_tmp.path())
+        .args(["profiles", "describe", "scrum", "--show-tags"])
+        .env("XDG_CONFIG_HOME", profiles_tmp.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "bm profiles describe scrum --show-tags should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Coding-Agent Dependent Files"),
+        "--show-tags should show 'Coding-Agent Dependent Files' section, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("context.md"),
+        "--show-tags should list context.md as tagged, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("claude-code"),
+        "--show-tags should reference claude-code agent, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn profiles_describe_without_show_tags_omits_tag_section() {
+    // Extract profiles to disk so the command can find them
+    let profiles_tmp = tempfile::tempdir().unwrap();
+    let profiles_path = profiles_tmp.path().join("botminter").join("profiles");
+    std::fs::create_dir_all(&profiles_path).unwrap();
+    bm::profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
+    let output = bm(profiles_tmp.path())
+        .args(["profiles", "describe", "scrum"])
+        .env("XDG_CONFIG_HOME", profiles_tmp.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success(), "bm profiles describe scrum should succeed");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("Coding-Agent Dependent Files"),
+        "Without --show-tags, 'Coding-Agent Dependent Files' section should be absent, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn profiles_init_extracts_to_temp_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["profiles", "init"])
+        .env("XDG_CONFIG_HOME", tmp.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "bm profiles init should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Extracted") && stdout.contains("profiles"),
+        "Should print extraction summary, output:\n{}",
+        stdout
+    );
+
+    // Verify profiles were actually created on disk
+    let profiles_dir = tmp.path().join("botminter").join("profiles");
+    assert!(
+        profiles_dir.join("scrum").join("botminter.yml").exists(),
+        "scrum profile should be extracted"
+    );
+    assert!(
+        profiles_dir.join("scrum-compact").join("botminter.yml").exists(),
+        "scrum-compact profile should be extracted"
+    );
+}
+
+#[test]
+fn profiles_init_without_force_skips_on_piped_stdin() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    // First run — extract
+    let output1 = bm(tmp.path())
+        .args(["profiles", "init"])
+        .env("XDG_CONFIG_HOME", tmp.path())
+        .output()
+        .unwrap();
+    assert!(output1.status.success());
+
+    // Second run — piped stdin (no TTY) means EOF → default to skip
+    let output2 = bm(tmp.path())
+        .args(["profiles", "init"])
+        .env("XDG_CONFIG_HOME", tmp.path())
+        .output()
+        .unwrap();
+    assert!(output2.status.success());
+
+    let stdout = String::from_utf8_lossy(&output2.stdout);
+    assert!(
+        stdout.contains("skipped"),
+        "Second run should skip existing profiles on piped stdin, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Summary"),
+        "Should print summary, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn profiles_init_force_overwrites() {
+    let tmp = tempfile::tempdir().unwrap();
+
+    // First run
+    bm(tmp.path())
+        .args(["profiles", "init"])
+        .env("XDG_CONFIG_HOME", tmp.path())
+        .output()
+        .unwrap();
+
+    // Second run with --force — overwrites all silently
+    let output = bm(tmp.path())
+        .args(["profiles", "init", "--force"])
+        .env("XDG_CONFIG_HOME", tmp.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "bm profiles init --force should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("overwritten"),
+        "--force should overwrite profiles, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Summary"),
+        "--force should print summary, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn profiles_init_help_text() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["profiles", "init", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--force"),
+        "Help should document --force flag, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn profiles_init_extracts_minty_config() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["profiles", "init"])
+        .env("XDG_CONFIG_HOME", tmp.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "bm profiles init should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("minty"),
+        "Should mention minty extraction, output:\n{}",
+        stdout
+    );
+
+    // Verify minty config was extracted alongside profiles
+    let minty_dir = tmp.path().join("botminter").join("minty");
+    assert!(
+        minty_dir.join("prompt.md").exists(),
+        "Minty prompt.md should be extracted"
+    );
+    assert!(
+        minty_dir.join("config.yml").exists(),
+        "Minty config.yml should be extracted"
+    );
+    assert!(
+        minty_dir.join(".claude").join("skills").is_dir(),
+        "Minty .claude/skills/ directory should be extracted"
+    );
+
+    // Verify minty is separate from profiles
+    let profiles_dir = tmp.path().join("botminter").join("profiles");
+    assert!(
+        profiles_dir.is_dir(),
+        "profiles/ should exist as sibling of minty/"
+    );
+    assert!(
+        !profiles_dir.join("minty").exists(),
+        "minty/ should NOT be inside profiles/"
+    );
+}
+
+#[test]
+fn profiles_describe_show_tags_help_text() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["profiles", "describe", "--help"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--show-tags"),
+        "Help should document --show-tags flag, output:\n{}",
+        stdout
+    );
+}
+
+// ── Auto-prompt pattern (ensure_profiles_initialized) ──────────────
+
+#[test]
+fn profiles_list_auto_initializes_when_profiles_missing() {
+    // Use an empty XDG_CONFIG_HOME — no profiles on disk.
+    // Piped stdin = non-TTY → should auto-initialize and succeed.
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["profiles", "list"])
+        .env("XDG_CONFIG_HOME", tmp.path())
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "profiles list should auto-init and succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("Initialized") && stderr.contains("profiles"),
+        "Should print init message on stderr, stderr:\n{}",
+        stderr
+    );
+
+    // The command should also produce profile listing output
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("scrum"),
+        "After auto-init, profiles list should show scrum, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn profiles_list_skips_init_when_profiles_exist() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Pre-populate profiles
+    let profiles_path = tmp.path().join("botminter").join("profiles");
+    std::fs::create_dir_all(&profiles_path).unwrap();
+    bm::profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
+    let output = bm(tmp.path())
+        .args(["profiles", "list"])
+        .env("XDG_CONFIG_HOME", tmp.path())
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("Initialized"),
+        "Should not print init message when profiles exist, stderr:\n{}",
+        stderr
+    );
+}
+
+// ── Chat CLI parsing (5 tests) ──────────────────────────────────────
+
+#[test]
+fn chat_requires_member_argument() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["chat"]).output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(CLAP_PARSE_ERROR_CODE),
+        "bm chat (no member) should exit with clap error code 2"
+    );
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("<MEMBER>") || stderr.contains("member") || stderr.contains("required"),
+        "error should mention the missing member argument, stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn chat_help_shows_flags() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["chat", "--help"]).output().unwrap();
+    assert!(output.status.success(), "bm chat --help should exit 0");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("--hat"),
+        "chat help should show --hat flag, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("--render-system-prompt"),
+        "chat help should show --render-system-prompt flag, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("-t") || stdout.contains("--team"),
+        "chat help should show team flag, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn chat_with_member_parses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["chat", "architect-01"]).output().unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm chat architect-01` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn chat_with_all_flags_parses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args([
+            "chat",
+            "architect-01",
+            "-t",
+            "my-team",
+            "--hat",
+            "executor",
+            "--render-system-prompt",
+        ])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm chat` with all flags should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn chat_team_flag_short_and_long() {
+    let tmp = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["chat", "bob", "-t", "my-team"],
+        vec!["chat", "bob", "--team", "my-team"],
+    ] {
+        let output = bm(tmp.path()).args(&args).output().unwrap();
+        let code = output.status.code().unwrap_or(-1);
+        assert_ne!(
+            code, CLAP_PARSE_ERROR_CODE,
+            "`bm {}` should not be a parse error, stderr: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+// ── Minty CLI parsing (4 tests) ─────────────────────────────────────
+
+#[test]
+fn minty_help_shows_team_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["minty", "--help"]).output().unwrap();
+    assert!(output.status.success(), "bm minty --help should exit 0");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("-t") || stdout.contains("--team"),
+        "minty help should show team flag, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn minty_no_args_parses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["minty"]).output().unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm minty` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn minty_with_team_flag_parses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["minty", "-t", "my-team"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm minty -t my-team` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn minty_team_flag_short_and_long() {
+    let tmp = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["minty", "-t", "my-team"],
+        vec!["minty", "--team", "my-team"],
+    ] {
+        let output = bm(tmp.path()).args(&args).output().unwrap();
+        let code = output.status.code().unwrap_or(-1);
+        assert_ne!(
+            code, CLAP_PARSE_ERROR_CODE,
+            "`bm {}` should not be a parse error, stderr: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

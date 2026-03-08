@@ -1,3 +1,5 @@
+pub mod agent_tags;
+pub mod chat;
 pub mod cli;
 pub mod commands;
 pub mod completions;

@@ -13,12 +13,12 @@ The `bm` CLI embeds profiles at compile time. When you run `bm init`, it extract
 
 ```mermaid
 flowchart TD
-    profile["Profile (e.g., scrum)<br><small>PROCESS.md, CLAUDE.md, member skeletons,<br>knowledge, invariants</small>"]
-    cli["bm CLI<br><small>Profiles embedded via include_dir</small>"]
+    builtin["Built-in Profiles<br><small>Compiled into bm binary</small>"]
+    disk["Profiles on Disk<br><small>~/.config/botminter/profiles/</small>"]
     instance["Team Repo Instance<br><small>Project-specific knowledge, issues, runtime state</small>"]
 
-    profile -->|"compiled into"| cli
-    cli -->|"bm init"| instance
+    builtin -->|"bm profiles init"| disk
+    disk -->|"bm init"| instance
 ```
 
 ### Layer examples
@@ -54,7 +54,7 @@ Each team member is a full [Ralph orchestrator](https://github.com/mikeyobrien/r
 - **Memories** — persistent state across sessions
 - **Workflow** — event-driven loop with configurable persistence
 
-Ralph handles hat selection, event routing, and the execution loop. Each agent runs independently in its own workspace.
+Ralph handles hat selection, event routing, and the execution loop. Each agent runs independently in its own workspace repo — a dedicated git repository with the team repo and project forks as submodules.
 
 ### Outer loop — team repo control plane
 
@@ -77,14 +77,22 @@ See [Design Principles — Two Execution Models](../reference/design-principles.
 
 ```mermaid
 flowchart TB
-    subgraph inner1["Inner Loop: Member A"]
-        bs1[Board Scanner] --> h1[Work Hat 1]
-        bs1 --> h2[Work Hat 2]
+    subgraph ws1["Workspace Repo: Member A"]
+        subgraph inner1["Inner Loop"]
+            coord1[Coordinator] -->|board-scanner skill| h1[Work Hat 1]
+            coord1 --> h2[Work Hat 2]
+        end
+        team1["team/ submodule"]
+        proj1["projects/ submodules"]
     end
 
-    subgraph inner2["Inner Loop: Member B"]
-        bs2[Board Scanner] --> h3[Work Hat 3]
-        bs2 --> h4[Work Hat 4]
+    subgraph ws2["Workspace Repo: Member B"]
+        subgraph inner2["Inner Loop"]
+            coord2[Coordinator] -->|board-scanner skill| h3[Work Hat 3]
+            coord2 --> h4[Work Hat 4]
+        end
+        team2["team/ submodule"]
+        proj2["projects/ submodules"]
     end
 
     subgraph outer["Outer Loop: Team Repo"]
@@ -96,7 +104,38 @@ flowchart TB
 ```
 
 ???+ example "Example: scrum runtime model"
-    In the `scrum` profile, Member A is the `human-assistant` (board scanner, backlog manager, review gater) and Member B is the `architect` (board scanner, designer, planner, breakdown executor). The human-assistant watches for `status/po:*` labels and the architect watches for `status/arch:*` labels.
+    In the `scrum` profile, Member A is the `human-assistant` (backlog manager, review gater) and Member B is the `architect` (designer, planner, breakdown executor, epic monitor). Both use the board-scanner skill (auto-injected into the coordinator) to scan for matching status labels — the human-assistant watches for `status/po:*` and the architect watches for `status/arch:*`.
+
+## Skills extraction
+
+Operational knowledge that was originally embedded in hat instructions (e.g., status transition logic, board scanning) is extracted into **composable skills** — standalone units of knowledge that can be loaded on demand by any hat or interactive session.
+
+### Why extract skills?
+
+Hat instructions in `ralph.yml` contained duplicated logic — the same status transition GraphQL commands were repeated across every hat that needed to change an issue's project status. Extracting this into a shared `status-workflow` skill:
+
+- **Eliminates duplication** — one source of truth for status transition logic instead of copies in every hat
+- **Enables interactive use** — skills are available during `bm chat` sessions (not just Ralph orchestration loops), enabling team members to perform workflow operations outside their normal hat context
+- **Follows recursive scoping** — skills use the same team/project/member resolution model as knowledge and invariants
+
+### Skill architecture
+
+```
+coding-agent/skills/
+  board-scanner/SKILL.md        # Auto-injected coordinator skill
+  status-workflow/SKILL.md      # On-demand workflow operations
+  gh/SKILL.md                   # GitHub CLI patterns and scripts
+```
+
+Skills are discovered from directories listed in `skills.dirs` in `ralph.yml`. Each skill is a directory containing a `SKILL.md` file (YAML frontmatter for metadata + markdown instructions), with optional `references/` and `scripts/` subdirectories.
+
+Hats reference skills instead of inlining operational logic. For example, a hat's status transition instructions become:
+
+```
+Use the `status-workflow` skill for all project status transitions.
+```
+
+The agent loads the skill on demand (`ralph tools skill load status-workflow`) when it needs to perform the operation. See [Configuration — Skills](../reference/configuration.md#skills) for the full format specification.
 
 ## Related topics
 

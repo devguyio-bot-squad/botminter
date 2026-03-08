@@ -26,6 +26,7 @@ tiny_http = "0.12"
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
+tempfile = "3"
 
 [features]
 e2e = []
@@ -34,8 +35,10 @@ e2e = []
 tempfile = "3"
 filetime = "0.2"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
+libtest-mimic = "0.8"
 
 [[test]]
 name = "e2e"
 path = "tests/e2e/main.rs"
 required-features = ["e2e"]
+harness = false

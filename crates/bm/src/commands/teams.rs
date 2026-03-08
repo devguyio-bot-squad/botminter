@@ -16,9 +16,9 @@ struct TeamManifest {
     projects: Vec<profile::ProjectDef>,
 }
 
-/// Counts member directories under `team_repo/team/`.
+/// Counts member directories under `team_repo/members/`.
 fn count_members(team_repo: &std::path::Path) -> usize {
-    let members_dir = team_repo.join("team");
+    let members_dir = team_repo.join("members");
     if !members_dir.is_dir() {
         return 0;
     }
@@ -95,36 +95,73 @@ pub fn show(name: Option<&str>, team_flag: Option<&str>) -> Result<()> {
 
     println!("Team: {}", team.name);
     println!("Profile: {}", team.profile);
+
+    // Show profile source path (disk location)
+    if let Ok(profiles_path) = profile::profiles_dir() {
+        let profile_source = profiles_path.join(&team.profile);
+        if profile_source.is_dir() {
+            println!("Profile Source: {}", profile_source.display());
+        }
+    }
+
+    // Show resolved coding agent
+    let manifest_path = team_repo.join("botminter.yml");
+    if let Ok(contents) = fs::read_to_string(&manifest_path) {
+        if let Ok(manifest) = serde_yml::from_str::<profile::ProfileManifest>(&contents) {
+            if let Ok(agent) = profile::resolve_coding_agent(team, &manifest) {
+                println!("Coding Agent: {}", agent.display_name);
+            }
+        }
+    }
+
     if !team.github_repo.is_empty() {
         println!("GitHub: {}", team.github_repo);
+    }
+    if let Some(number) = team.project_number {
+        let owner = team.github_repo.split('/').next().unwrap_or(&team.github_repo);
+        println!("Board: https://github.com/orgs/{}/projects/{}", owner, number);
     }
     println!("Path: {}", team.path.display());
     println!("Default: {}", if is_default { "yes" } else { "no" });
 
+    print!("{}", format_team_summary(&team_repo));
+
+    Ok(())
+}
+
+/// Formats a summary of the team's members and projects, suitable for display.
+///
+/// Reads member directories from `team_repo/members/` and projects from `team_repo/botminter.yml`.
+/// Returns a formatted string with tables (or "none" placeholders).
+pub fn format_team_summary(team_repo: &std::path::Path) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+
     // Members section
-    let members_dir = team_repo.join("team");
+    let members_dir = team_repo.join("members");
     let mut members: Vec<(String, String)> = Vec::new();
     if members_dir.is_dir() {
-        for entry in fs::read_dir(&members_dir)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() {
-                continue;
+        if let Ok(entries) = fs::read_dir(&members_dir) {
+            for entry in entries.flatten() {
+                if !entry.file_type().map(|ft| ft.is_dir()).unwrap_or(false) {
+                    continue;
+                }
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
+                let role = read_member_role(&members_dir, &name);
+                members.push((name, role));
             }
-            let name = entry.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') {
-                continue;
-            }
-            let role = read_member_role(&members_dir, &name);
-            members.push((name, role));
         }
     }
     members.sort_by(|a, b| a.0.cmp(&b.0));
 
-    println!();
+    writeln!(out).unwrap();
     if members.is_empty() {
-        println!("Members: none");
+        writeln!(out, "Members: none").unwrap();
     } else {
-        println!("Members:");
+        writeln!(out, "Members:").unwrap();
         let mut table = Table::new();
         table
             .load_preset(UTF8_FULL_CONDENSED)
@@ -133,16 +170,16 @@ pub fn show(name: Option<&str>, team_flag: Option<&str>) -> Result<()> {
         for (name, role) in &members {
             table.add_row(vec![name.as_str(), role.as_str()]);
         }
-        println!("{table}");
+        writeln!(out, "{table}").unwrap();
     }
 
     // Projects section
-    let projects = read_projects(&team_repo);
-    println!();
+    let projects = read_projects(team_repo);
+    writeln!(out).unwrap();
     if projects.is_empty() {
-        println!("Projects: none");
+        writeln!(out, "Projects: none").unwrap();
     } else {
-        println!("Projects:");
+        writeln!(out, "Projects:").unwrap();
         let mut table = Table::new();
         table
             .load_preset(UTF8_FULL_CONDENSED)
@@ -151,10 +188,10 @@ pub fn show(name: Option<&str>, team_flag: Option<&str>) -> Result<()> {
         for proj in &projects {
             table.add_row(vec![proj.name.as_str(), proj.fork_url.as_str()]);
         }
-        println!("{table}");
+        writeln!(out, "{table}").unwrap();
     }
 
-    Ok(())
+    out
 }
 
 /// Reads the role from a member's botminter.yml, falling back to dir-name inference.
@@ -181,13 +218,14 @@ struct MemberManifest {
     role: Option<String>,
 }
 
-/// Handles `bm teams sync [--push] [-t team]` — provisions and reconciles workspaces.
-pub fn sync(push: bool, team_flag: Option<&str>) -> Result<()> {
+/// Handles `bm teams sync [--push] [-v] [-t team]` — provisions and reconciles workspaces.
+pub fn sync(push: bool, verbose: bool, team_flag: Option<&str>) -> Result<()> {
+    profile::ensure_profiles_initialized()?;
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
     let team_repo = team.path.join("team");
 
-    // Schema version guard
+    // Schema version guard + resolve coding agent
     let manifest_path = team_repo.join("botminter.yml");
     let manifest: profile::ProfileManifest = {
         let contents = fs::read_to_string(&manifest_path)
@@ -195,14 +233,15 @@ pub fn sync(push: bool, team_flag: Option<&str>) -> Result<()> {
         serde_yml::from_str(&contents).context("Failed to parse botminter.yml")?
     };
     profile::check_schema_version(&team.profile, &manifest.schema_version)?;
+    let coding_agent = profile::resolve_coding_agent(team, &manifest)?;
 
     // Optional push
     if push {
         run_git(&team_repo, &["push"])?;
     }
 
-    // Discover hired members (scan team/team/ dir)
-    let members_dir = team_repo.join("team");
+    // Discover hired members (scan team/members/ dir)
+    let members_dir = team_repo.join("members");
     let mut members: Vec<String> = Vec::new();
     if members_dir.is_dir() {
         for entry in fs::read_dir(&members_dir)? {
@@ -225,52 +264,54 @@ pub fn sync(push: bool, team_flag: Option<&str>) -> Result<()> {
     let mut updated = 0u32;
     let mut failures: Vec<String> = Vec::new();
 
+    let gh = if team.github_repo.is_empty() {
+        None
+    } else {
+        Some(team.github_repo.as_str())
+    };
+    let gh_token = team.credentials.gh_token.as_deref();
+
+    // Build project list for workspace repo creation
+    let project_refs: Vec<(&str, &str)> = projects
+        .iter()
+        .map(|p| (p.name.as_str(), p.fork_url.as_str()))
+        .collect();
+
     for member_dir_name in &members {
-        if projects.is_empty() {
-            // No-project mode: workspace at {team.path}/{member_dir}/
-            let ws = team.path.join(member_dir_name);
-            let gh = Some(team.github_repo.as_str());
-            if ws.join(".botminter").is_dir() {
-                workspace::sync_workspace(&ws, member_dir_name, None, false, gh)?;
-                updated += 1;
-            } else {
-                workspace::create_workspace(&team_repo, &team.path, member_dir_name, None, gh)?;
-                created += 1;
+        // One workspace per member (submodule model)
+        let ws = team.path.join(member_dir_name);
+
+        if ws.join(".botminter.workspace").exists() {
+            // Existing workspace — sync it
+            if verbose {
+                println!("Syncing workspace: {}", member_dir_name);
             }
+            workspace::sync_workspace(
+                &ws,
+                member_dir_name,
+                coding_agent,
+                verbose,
+                push,
+            )?;
+            updated += 1;
         } else {
-            // Project mode: one workspace per member × project
-            let gh = Some(team.github_repo.as_str());
-            for proj in projects {
-                let ws = team.path.join(member_dir_name).join(&proj.name);
-                if ws.join(".botminter").is_dir() {
-                    workspace::sync_workspace(
-                        &ws,
-                        member_dir_name,
-                        Some(&proj.name),
-                        true,
-                        gh,
-                    )?;
-                    updated += 1;
-                } else {
-                    match workspace::create_workspace(
-                        &team_repo,
-                        &team.path,
-                        member_dir_name,
-                        Some((&proj.name, &proj.fork_url)),
-                        gh,
-                    ) {
-                        Ok(()) => created += 1,
-                        Err(e) => {
-                            eprintln!(
-                                "Error: {}/{}: {}",
-                                member_dir_name, proj.name, e
-                            );
-                            failures.push(format!(
-                                "{}/{} ({})",
-                                member_dir_name, proj.name, proj.fork_url
-                            ));
-                        }
-                    }
+            // New workspace — create with submodule model
+            let ws_params = workspace::WorkspaceRepoParams {
+                team_repo_path: &team_repo,
+                workspace_base: &team.path,
+                member_dir_name,
+                team_name: &team.name,
+                projects: &project_refs,
+                github_repo: gh,
+                push,
+                gh_token,
+                coding_agent,
+            };
+            match workspace::create_workspace_repo(&ws_params) {
+                Ok(()) => created += 1,
+                Err(e) => {
+                    eprintln!("Error: {}: {:#}", member_dir_name, e);
+                    failures.push(member_dir_name.clone());
                 }
             }
         }

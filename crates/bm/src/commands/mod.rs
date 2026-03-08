@@ -1,10 +1,13 @@
+pub mod chat;
 pub mod completions;
 pub mod daemon;
 pub mod hire;
 pub mod init;
 pub mod knowledge;
 pub mod members;
+pub mod minty;
 pub mod profiles;
+pub mod profiles_init;
 pub mod projects;
 pub mod roles;
 pub mod start;

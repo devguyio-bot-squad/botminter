@@ -1,29 +1,31 @@
-//! E2E tests for the init → hire → projects add → sync lifecycle.
+//! E2E tests for the init -> hire -> projects add -> sync lifecycle.
 //!
-//! These tests create real GitHub repos under the `devguyio-bot-squad` org
+//! These tests create real GitHub repos under the configured org
 //! and verify that the full `bm` CLI pipeline produces correct workspaces,
 //! labels, and member listings.
+//!
+//! The `team_lifecycle` suite combines 5 tests that share a single TempRepo
+//! to reduce API rate limit consumption.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use bm::config::{BotminterConfig, Credentials, TeamEntry};
-use bm::profile;
+use bm::profile::{self, CodingAgentDef};
+use libtest_mimic::Trial;
 
-use super::helpers::{assert_cmd_success, bm_cmd};
+use super::helpers::{assert_cmd_success, bm_cmd, run_test, E2eConfig, GithubSuite};
 
-/// GitHub org with repo-creation permissions for the E2E test token.
-const E2E_ORG: &str = "devguyio-bot-squad";
-
-/// Skip the test if `gh auth status` fails.
-macro_rules! require_gh_auth {
-    () => {
-        if !super::github::gh_auth_ok() {
-            eprintln!("SKIP: gh auth not available — skipping test");
-            return;
-        }
-    };
+/// Returns the default Claude Code coding agent definition for E2E tests.
+fn claude_code_agent() -> CodingAgentDef {
+    CodingAgentDef {
+        name: "claude-code".into(),
+        display_name: "Claude Code".into(),
+        context_file: "CLAUDE.md".into(),
+        agent_dir: ".claude".into(),
+        binary: "claude".into(),
+    }
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────
@@ -44,62 +46,31 @@ fn git(dir: &Path, args: &[&str]) {
     );
 }
 
-/// Pushes to GitHub using `gh auth git-credential` as the credential helper.
-///
-/// The default system credential helper (e.g. libsecret) may not work in
-/// non-interactive environments. Using gh's credential helper ensures
-/// authentication works when `gh auth status` passes.
+/// Pushes to GitHub. Credential helper is configured via $HOME/.gitconfig
+/// (set up by `setup_git_auth`).
 fn git_push(dir: &Path) {
-    let output = Command::new("git")
-        .args([
-            "-c",
-            "credential.helper=",
-            "-c",
-            "credential.helper=!gh auth git-credential",
-            "push",
-            "-u",
-            "origin",
-            "main",
-        ])
-        .current_dir(dir)
-        .output()
-        .expect("failed to run git push");
-    assert!(
-        output.status.success(),
-        "git push in {} failed: {}",
-        dir.display(),
-        String::from_utf8_lossy(&output.stderr)
-    );
+    git(dir, &["push", "-u", "origin", "main"]);
 }
 
-/// Finds a profile with at least `min_roles` roles.
-/// Returns (profile_name, roles_vec).
+/// Finds a profile with at least `min_roles` roles using embedded data (no disk access).
 fn find_profile_with_roles(min_roles: usize) -> (String, Vec<String>) {
-    for name in profile::list_profiles() {
-        if let Ok(roles) = profile::list_roles(&name) {
-            if roles.len() >= min_roles {
-                return (name, roles);
-            }
+    for name in bm::profile::list_embedded_profiles() {
+        let roles = bm::profile::list_embedded_roles(&name);
+        if roles.len() >= min_roles {
+            return (name, roles);
         }
     }
     panic!("No embedded profile has at least {} roles", min_roles);
 }
 
 /// Sets up a team repo programmatically and pushes it to a real GitHub repo.
-///
-/// Mimics what `bm init` does, but without the interactive wizard:
-/// 1. Extracts profile content
-/// 2. Creates team/ and projects/ dirs
-/// 3. Git init + commit
-/// 4. Adds GitHub remote + pushes
-/// 5. Writes config file
-///
-/// Does NOT set HOME — caller must pass HOME to subprocess `bm` commands.
 fn setup_team_with_github(
     tmp: &Path,
     team_name: &str,
     profile_name: &str,
     github_full_name: &str,
+    profiles_base: &Path,
+    gh_token: Option<&str>,
 ) -> PathBuf {
     let workzone = tmp.join("workspaces");
     let team_dir = workzone.join(team_name);
@@ -107,21 +78,20 @@ fn setup_team_with_github(
 
     fs::create_dir_all(&team_repo).unwrap();
 
-    // Git init with local config
+    // Set up git auth in temp HOME (credential helper + user identity)
+    super::helpers::setup_git_auth(tmp);
+
+    // Git init
     git(&team_repo, &["init", "-b", "main"]);
-    git(
-        &team_repo,
-        &["config", "user.email", "e2e@botminter.test"],
-    );
-    git(&team_repo, &["config", "user.name", "BM E2E"]);
 
-    // Extract profile content into team repo
-    profile::extract_profile_to(profile_name, &team_repo).unwrap();
+    // Extract profile content into team repo (from temp profiles, not real HOME)
+    profile::extract_profile_from(profiles_base, profile_name, &team_repo, &claude_code_agent())
+        .unwrap();
 
-    // Create team/ and projects/ dirs (as bm init does)
-    fs::create_dir_all(team_repo.join("team")).unwrap();
+    // Create members/ and projects/ dirs (as bm init does)
+    fs::create_dir_all(team_repo.join("members")).unwrap();
     fs::create_dir_all(team_repo.join("projects")).unwrap();
-    fs::write(team_repo.join("team/.gitkeep"), "").unwrap();
+    fs::write(team_repo.join("members/.gitkeep"), "").unwrap();
     fs::write(team_repo.join("projects/.gitkeep"), "").unwrap();
 
     // Initial commit
@@ -142,7 +112,12 @@ fn setup_team_with_github(
             path: team_dir,
             profile: profile_name.to_string(),
             github_repo: github_full_name.to_string(),
-            credentials: Credentials::default(),
+            credentials: Credentials {
+                gh_token: gh_token.map(|t| t.to_string()),
+                ..Credentials::default()
+            },
+            coding_agent: None,
+            project_number: None,
         }],
     };
     let config_path = tmp.join(".botminter").join("config.yml");
@@ -152,8 +127,8 @@ fn setup_team_with_github(
 }
 
 /// Bootstraps labels on GitHub from the profile manifest.
-fn bootstrap_labels(repo: &str, profile_name: &str) {
-    let manifest = profile::read_manifest(profile_name).unwrap();
+fn bootstrap_labels(repo: &str, profile_name: &str, profiles_base: &Path) {
+    let manifest = profile::read_manifest_from(profile_name, profiles_base).unwrap();
     for label in &manifest.labels {
         let output = Command::new("gh")
             .args([
@@ -193,487 +168,354 @@ fn create_fake_fork(tmp: &Path, name: &str) -> PathBuf {
     fork
 }
 
-// ── Tests ────────────────────────────────────────────────────────────
+// ── Test registration ────────────────────────────────────────────────
 
-/// Full lifecycle: init → hire × 2 → projects add → sync.
-/// Verifies workspace dirs, symlinks, `.botminter/`, `.claude/agents/`, `ralph.yml`.
-#[test]
-fn e2e_init_hire_sync_lifecycle() {
-    require_gh_auth!();
+pub fn tests(config: &E2eConfig) -> Vec<Trial> {
+    let cfg = config.clone();
 
-    super::github::clean_persistent_repo();
-    let tmp = tempfile::tempdir().unwrap();
+    let mut trials = Vec::new();
 
-    // Find a profile with at least 2 roles (profile-agnostic)
-    let (profile_name, roles) = find_profile_with_roles(2);
-    let role_1 = &roles[0];
-    let role_2 = &roles[1];
-    let team_name = "e2e-lifecycle";
+    // Suite 1: team_lifecycle — 5 tests sharing 1 TempRepo
+    trials.push(team_lifecycle_suite(&cfg));
 
-    // Programmatic team setup with GitHub remote
-    setup_team_with_github(tmp.path(), team_name, &profile_name, super::github::PERSISTENT_REPO);
-    bootstrap_labels(super::github::PERSISTENT_REPO, &profile_name);
-
-    // Create fake fork for project
-    let fork = create_fake_fork(tmp.path(), "test-project");
-
-    // ── CLI operations ───────────────────────────────────────────────
-
-    // Hire alice (role_1)
-    let mut cmd = bm_cmd();
-    cmd.args(["hire", role_1, "--name", "alice", "-t", team_name])
-        .env("HOME", tmp.path());
-    let out = assert_cmd_success(&mut cmd);
-    eprintln!("hire alice: {}", out.trim());
-
-    // Hire bob (role_2)
-    let mut cmd = bm_cmd();
-    cmd.args(["hire", role_2, "--name", "bob", "-t", team_name])
-        .env("HOME", tmp.path());
-    let out = assert_cmd_success(&mut cmd);
-    eprintln!("hire bob: {}", out.trim());
-
-    // Add project
-    let mut cmd = bm_cmd();
-    cmd.args([
-        "projects",
-        "add",
-        &fork.to_string_lossy(),
-        "-t",
-        team_name,
-    ])
-    .env("HOME", tmp.path());
-    let out = assert_cmd_success(&mut cmd);
-    eprintln!("projects add: {}", out.trim());
-
-    // Sync workspaces
-    let mut cmd = bm_cmd();
-    cmd.args(["teams", "sync", "-t", team_name])
-        .env("HOME", tmp.path());
-    let out = assert_cmd_success(&mut cmd);
-    eprintln!("teams sync: {}", out.trim());
-
-    // ── Verify workspace structure ───────────────────────────────────
-
-    let team_dir = tmp.path().join("workspaces").join(team_name);
-    let alice_dir = format!("{}-alice", role_1);
-    let bob_dir = format!("{}-bob", role_2);
-
-    for member_name in [&alice_dir, &bob_dir] {
-        // With a project, workspace is at: {team_dir}/{member}/{project}/
-        let ws = team_dir.join(member_name).join("test-project");
-
-        assert!(
-            ws.join(".botminter").is_dir(),
-            "{}/test-project should have .botminter/",
-            member_name
-        );
-
-        // Symlinks: PROMPT.md, CLAUDE.md
-        for file in ["PROMPT.md", "CLAUDE.md"] {
-            assert!(
-                ws.join(file).exists(),
-                "{}/test-project should have {}",
-                member_name,
-                file
-            );
-            assert!(
-                ws.join(file)
-                    .symlink_metadata()
-                    .unwrap()
-                    .file_type()
-                    .is_symlink(),
-                "{}/test-project/{} should be a symlink",
-                member_name,
-                file
-            );
-        }
-
-        // ralph.yml: copied (NOT symlink)
-        assert!(
-            ws.join("ralph.yml").exists(),
-            "{}/test-project should have ralph.yml",
-            member_name
-        );
-        assert!(
-            !ws.join("ralph.yml")
-                .symlink_metadata()
-                .unwrap()
-                .file_type()
-                .is_symlink(),
-            "{}/test-project/ralph.yml should be a copy, not symlink",
-            member_name
-        );
-
-        // .claude/agents/ directory exists
-        assert!(
-            ws.join(".claude/agents").is_dir(),
-            "{}/test-project should have .claude/agents/",
-            member_name
-        );
-    }
-}
-
-/// Verifies labels bootstrapped on GitHub match the profile manifest exactly.
-#[test]
-fn e2e_labels_bootstrapped_on_github() {
-    require_gh_auth!();
-
-    super::github::clean_persistent_repo();
-    let tmp = tempfile::tempdir().unwrap();
-
-    let (profile_name, _) = find_profile_with_roles(1);
-    let team_name = "e2e-labels";
-
-    setup_team_with_github(tmp.path(), team_name, &profile_name, super::github::PERSISTENT_REPO);
-    bootstrap_labels(super::github::PERSISTENT_REPO, &profile_name);
-
-    // Read expected labels from profile manifest
-    let manifest = profile::read_manifest(&profile_name).unwrap();
-
-    // Query actual labels on GitHub
-    let gh_labels = super::github::list_labels_json(&super::github::PERSISTENT_REPO);
-
-    // Verify every expected label exists with correct color
-    for expected in &manifest.labels {
-        let found = gh_labels.iter().find(|(name, _)| name == &expected.name);
-        assert!(
-            found.is_some(),
-            "Label '{}' from profile manifest not found on GitHub. GitHub has: {:?}",
-            expected.name,
-            gh_labels
-                .iter()
-                .map(|(n, _)| n.as_str())
-                .collect::<Vec<_>>()
-        );
-        let (_, gh_color) = found.unwrap();
-        // Colors may have '#' prefix or not — normalize for comparison
-        let norm_expected = expected.color.trim_start_matches('#').to_lowercase();
-        let norm_actual = gh_color.trim_start_matches('#').to_lowercase();
-        assert_eq!(
-            norm_expected, norm_actual,
-            "Label '{}' color mismatch: expected '{}', got '{}'",
-            expected.name, expected.color, gh_color
-        );
-    }
-
-    // Verify no unexpected labels (beyond GitHub defaults)
-    let github_defaults: &[&str] = &[
-        "bug",
-        "documentation",
-        "duplicate",
-        "enhancement",
-        "good first issue",
-        "help wanted",
-        "invalid",
-        "question",
-        "wontfix",
+    // Remaining isolated tests that need their own repos/projects
+    let isolated: Vec<Trial> = vec![
+        Trial::test("e2e_projects_sync_status_and_views", {
+            let cfg = cfg.clone();
+            move || run_test(|| e2e_projects_sync_status_and_views_impl(&cfg))
+        }),
+        Trial::test("e2e_clone_existing_repo", {
+            let cfg = cfg.clone();
+            move || run_test(|| e2e_clone_existing_repo_impl(&cfg))
+        }),
+        Trial::test("e2e_list_gh_projects", {
+            let cfg = cfg.clone();
+            move || run_test(|| e2e_list_gh_projects_impl(&cfg))
+        }),
+        Trial::test("e2e_sync_status_on_existing_project", {
+            let cfg = cfg.clone();
+            move || run_test(|| e2e_sync_status_on_existing_project_impl(&cfg))
+        }),
+        Trial::test("e2e_projects_add_creates_label_on_github", {
+            let cfg = cfg.clone();
+            move || run_test(|| e2e_projects_add_creates_label_on_github_impl(&cfg))
+        }),
+        Trial::test("e2e_init_non_interactive_full_github", {
+            let cfg = cfg.clone();
+            move || run_test(|| e2e_init_non_interactive_full_github_impl(&cfg))
+        }),
+        Trial::test("e2e_sync_push_creates_workspace_repo", {
+            let cfg = cfg.clone();
+            move || run_test(|| e2e_sync_push_creates_workspace_repo_impl(&cfg))
+        }),
     ];
-    for (name, _) in &gh_labels {
-        let is_expected = manifest.labels.iter().any(|l| l.name == *name);
-        let is_default = github_defaults.contains(&name.as_str());
-        assert!(
-            is_expected || is_default,
-            "Unexpected label '{}' on GitHub — not in profile manifest or GitHub defaults",
-            name
-        );
-    }
+    trials.extend(isolated);
+
+    trials
 }
 
-/// Verifies that running `bm teams sync` twice succeeds without errors
-/// and the workspace structure remains correct.
-#[test]
-fn e2e_sync_idempotent_with_github() {
-    require_gh_auth!();
+// ── Suite: team_lifecycle ─────────────────────────────────────────────
 
-    super::github::clean_persistent_repo();
-    let tmp = tempfile::tempdir().unwrap();
+fn team_lifecycle_suite(config: &E2eConfig) -> Trial {
+    GithubSuite::new("team_lifecycle", "bm-e2e-lifecycle")
+        .setup(|ctx| {
+            let (profile_name, roles) = find_profile_with_roles(2);
+            let role_1 = &roles[0];
+            let role_2 = &roles[1];
+            let team_name = "e2e-lifecycle";
 
-    let (profile_name, roles) = find_profile_with_roles(1);
-    let role = &roles[0];
-    let team_name = "e2e-idem";
+            setup_team_with_github(
+                ctx.home.path(),
+                team_name,
+                &profile_name,
+                &ctx.repo.full_name,
+                &ctx.profiles_base,
+                Some(&ctx.gh_token),
+            );
+            bootstrap_labels(&ctx.repo.full_name, &profile_name, &ctx.profiles_base);
 
-    setup_team_with_github(tmp.path(), team_name, &profile_name, super::github::PERSISTENT_REPO);
+            let fork = create_fake_fork(ctx.home.path(), "test-project");
 
-    // Hire one member
-    let mut cmd = bm_cmd();
-    cmd.args(["hire", role, "--name", "alice", "-t", team_name])
-        .env("HOME", tmp.path());
-    assert_cmd_success(&mut cmd);
+            // Hire alice (role_1)
+            let mut cmd = bm_cmd();
+            cmd.args(["hire", role_1, "--name", "alice", "-t", team_name])
+                .env("HOME", ctx.home.path());
+            let out = assert_cmd_success(&mut cmd);
+            eprintln!("hire alice: {}", out.trim());
 
-    // First sync
-    let mut cmd = bm_cmd();
-    cmd.args(["teams", "sync", "-t", team_name])
-        .env("HOME", tmp.path());
-    let out1 = assert_cmd_success(&mut cmd);
-    eprintln!("sync 1: {}", out1.trim());
+            // Hire bob (role_2)
+            let mut cmd = bm_cmd();
+            cmd.args(["hire", role_2, "--name", "bob", "-t", team_name])
+                .env("HOME", ctx.home.path());
+            let out = assert_cmd_success(&mut cmd);
+            eprintln!("hire bob: {}", out.trim());
 
-    // Second sync — should succeed without errors
-    let mut cmd = bm_cmd();
-    cmd.args(["teams", "sync", "-t", team_name])
-        .env("HOME", tmp.path());
-    let out2 = assert_cmd_success(&mut cmd);
-    eprintln!("sync 2: {}", out2.trim());
+            // Add project
+            let mut cmd = bm_cmd();
+            cmd.args([
+                "projects",
+                "add",
+                &fork.to_string_lossy(),
+                "-t",
+                team_name,
+            ])
+            .env("HOME", ctx.home.path());
+            let out = assert_cmd_success(&mut cmd);
+            eprintln!("projects add: {}", out.trim());
 
-    // Verify workspace structure unchanged after double sync
-    let team_dir = tmp.path().join("workspaces").join(team_name);
-    let member = format!("{}-alice", role);
-    let ws = team_dir.join(&member);
+            // Sync workspaces
+            let mut cmd = bm_cmd();
+            cmd.args(["teams", "sync", "-t", team_name])
+                .env("HOME", ctx.home.path());
+            let out = assert_cmd_success(&mut cmd);
+            eprintln!("teams sync: {}", out.trim());
+        })
+        .case("workspace_structure", |ctx| {
+            let (_, roles) = find_profile_with_roles(2);
+            let role_1 = &roles[0];
+            let role_2 = &roles[1];
+            let team_name = "e2e-lifecycle";
 
-    assert!(
-        ws.join(".botminter").is_dir(),
-        "workspace should have .botminter/ after double sync"
-    );
-    assert!(
-        ws.join("PROMPT.md").exists(),
-        "workspace should have PROMPT.md after double sync"
-    );
-    assert!(
-        ws.join("CLAUDE.md").exists(),
-        "workspace should have CLAUDE.md after double sync"
-    );
-    assert!(
-        ws.join("ralph.yml").exists(),
-        "workspace should have ralph.yml after double sync"
-    );
-    assert!(
-        ws.join(".claude").is_dir(),
-        "workspace should have .claude/ after double sync"
-    );
+            let team_dir = ctx.home.path().join("workspaces").join(team_name);
+            let alice_dir = format!("{}-alice", role_1);
+            let bob_dir = format!("{}-bob", role_2);
+
+            for member_name in [&alice_dir, &bob_dir] {
+                let ws = team_dir.join(member_name);
+
+                assert!(
+                    ws.join(".botminter.workspace").exists(),
+                    "{} should have .botminter.workspace marker",
+                    member_name
+                );
+                assert!(
+                    ws.join("team").is_dir(),
+                    "{} should have team/ submodule",
+                    member_name
+                );
+                for file in ["PROMPT.md", "CLAUDE.md", "ralph.yml"] {
+                    assert!(
+                        ws.join(file).exists(),
+                        "{} should have {}",
+                        member_name,
+                        file
+                    );
+                }
+                assert!(
+                    ws.join(".claude/agents").is_dir(),
+                    "{} should have .claude/agents/",
+                    member_name
+                );
+                assert!(
+                    ws.join("projects/test-project").is_dir(),
+                    "{} should have projects/test-project/ submodule",
+                    member_name
+                );
+            }
+        })
+        .case("labels_on_github", |ctx| {
+            let (profile_name, _) = find_profile_with_roles(1);
+
+            let manifest =
+                profile::read_manifest_from(&profile_name, &ctx.profiles_base).unwrap();
+            let gh_labels = super::github::list_labels_json(&ctx.repo.full_name);
+
+            for expected in &manifest.labels {
+                let found = gh_labels.iter().find(|(name, _)| name == &expected.name);
+                assert!(
+                    found.is_some(),
+                    "Label '{}' from profile manifest not found on GitHub. GitHub has: {:?}",
+                    expected.name,
+                    gh_labels
+                        .iter()
+                        .map(|(n, _)| n.as_str())
+                        .collect::<Vec<_>>()
+                );
+                let (_, gh_color) = found.unwrap();
+                let norm_expected = expected.color.trim_start_matches('#').to_lowercase();
+                let norm_actual = gh_color.trim_start_matches('#').to_lowercase();
+                assert_eq!(
+                    norm_expected, norm_actual,
+                    "Label '{}' color mismatch: expected '{}', got '{}'",
+                    expected.name, expected.color, gh_color
+                );
+            }
+
+            let github_defaults: &[&str] = &[
+                "bug",
+                "documentation",
+                "duplicate",
+                "enhancement",
+                "good first issue",
+                "help wanted",
+                "invalid",
+                "question",
+                "wontfix",
+            ];
+            for (name, _) in &gh_labels {
+                let is_expected = manifest.labels.iter().any(|l| l.name == *name);
+                let is_default = github_defaults.contains(&name.as_str());
+                let is_project = name.starts_with("project/");
+                assert!(
+                    is_expected || is_default || is_project,
+                    "Unexpected label '{}' on GitHub",
+                    name
+                );
+            }
+        })
+        .case("sync_idempotent", |ctx| {
+            let team_name = "e2e-lifecycle";
+
+            // Second sync (first happened in setup)
+            let mut cmd = bm_cmd();
+            cmd.args(["teams", "sync", "-t", team_name])
+                .env("HOME", ctx.home.path());
+            let out = assert_cmd_success(&mut cmd);
+            eprintln!("sync 2: {}", out.trim());
+
+            let (_, roles) = find_profile_with_roles(1);
+            let role = &roles[0];
+            let member = format!("{}-alice", role);
+            let team_dir = ctx.home.path().join("workspaces").join(team_name);
+            let ws = team_dir.join(&member);
+
+            assert!(ws.join(".botminter.workspace").exists());
+            assert!(ws.join("team").is_dir());
+            assert!(ws.join("PROMPT.md").exists());
+            assert!(ws.join("CLAUDE.md").exists());
+            assert!(ws.join("ralph.yml").exists());
+            assert!(ws.join(".claude").is_dir());
+        })
+        .case("members_list", |ctx| {
+            let (_, roles) = find_profile_with_roles(2);
+            let role_1 = &roles[0];
+            let role_2 = &roles[1];
+            let team_name = "e2e-lifecycle";
+
+            let mut cmd = bm_cmd();
+            cmd.args(["members", "list", "-t", team_name])
+                .env("HOME", ctx.home.path());
+            let stdout = assert_cmd_success(&mut cmd);
+
+            let alice = format!("{}-alice", role_1);
+            let bob = format!("{}-bob", role_2);
+            assert!(stdout.contains(&alice), "should show '{}'", alice);
+            assert!(stdout.contains(&bob), "should show '{}'", bob);
+            assert!(stdout.contains(role_1.as_str()));
+            assert!(stdout.contains(role_2.as_str()));
+        })
+        .case("teams_list", |ctx| {
+            let mut cmd = bm_cmd();
+            cmd.args(["teams", "list"]).env("HOME", ctx.home.path());
+            let stdout = assert_cmd_success(&mut cmd);
+
+            assert!(
+                stdout.contains(&ctx.repo.full_name),
+                "teams list should show GitHub repo '{}', output:\n{}",
+                ctx.repo.full_name,
+                stdout
+            );
+        })
+        .build(config)
 }
 
-/// After hiring 2 members and syncing, `bm members list` shows them
-/// with correct roles.
-#[test]
-fn e2e_members_list_after_full_setup() {
-    require_gh_auth!();
+// ── Isolated test implementations ─────────────────────────────────────
 
-    super::github::clean_persistent_repo();
-    let tmp = tempfile::tempdir().unwrap();
-
-    let (profile_name, roles) = find_profile_with_roles(2);
-    let role_1 = &roles[0];
-    let role_2 = &roles[1];
-    let team_name = "e2e-members";
-
-    setup_team_with_github(tmp.path(), team_name, &profile_name, &super::github::PERSISTENT_REPO);
-
-    // Hire two members
-    let mut cmd = bm_cmd();
-    cmd.args(["hire", role_1, "--name", "alice", "-t", team_name])
-        .env("HOME", tmp.path());
-    assert_cmd_success(&mut cmd);
-
-    let mut cmd = bm_cmd();
-    cmd.args(["hire", role_2, "--name", "bob", "-t", team_name])
-        .env("HOME", tmp.path());
-    assert_cmd_success(&mut cmd);
-
-    // Sync
-    let mut cmd = bm_cmd();
-    cmd.args(["teams", "sync", "-t", team_name])
-        .env("HOME", tmp.path());
-    assert_cmd_success(&mut cmd);
-
-    // Run members list
-    let mut cmd = bm_cmd();
-    cmd.args(["members", "list", "-t", team_name])
-        .env("HOME", tmp.path());
-    let stdout = assert_cmd_success(&mut cmd);
-
-    // Verify both members appear
-    let alice = format!("{}-alice", role_1);
-    let bob = format!("{}-bob", role_2);
-
-    assert!(
-        stdout.contains(&alice),
-        "members list should show '{}', output:\n{}",
-        alice,
-        stdout
-    );
-    assert!(
-        stdout.contains(&bob),
-        "members list should show '{}', output:\n{}",
-        bob,
-        stdout
-    );
-
-    // Verify roles appear
-    assert!(
-        stdout.contains(role_1.as_str()),
-        "members list should show role '{}', output:\n{}",
-        role_1,
-        stdout
-    );
-    assert!(
-        stdout.contains(role_2.as_str()),
-        "members list should show role '{}', output:\n{}",
-        role_2,
-        stdout
-    );
-}
-
-/// `bm teams list` output includes the GitHub repo URL/name.
-#[test]
-fn e2e_teams_list_shows_github_repo() {
-    require_gh_auth!();
-
-    super::github::clean_persistent_repo();
-    let tmp = tempfile::tempdir().unwrap();
-
-    let (profile_name, _) = find_profile_with_roles(1);
-    let team_name = "e2e-teams";
-
-    setup_team_with_github(tmp.path(), team_name, &profile_name, super::github::PERSISTENT_REPO);
-
-    // Run teams list
-    let mut cmd = bm_cmd();
-    cmd.args(["teams", "list"]).env("HOME", tmp.path());
-    let stdout = assert_cmd_success(&mut cmd);
-
-    // Verify output includes the GitHub repo full name
-    assert!(
-        stdout.contains(&super::github::PERSISTENT_REPO),
-        "teams list should show GitHub repo '{}', output:\n{}",
-        super::github::PERSISTENT_REPO,
-        stdout
-    );
-}
-
-/// E2E: `bm projects sync` creates a GitHub Project, syncs Status field options
-/// via GraphQL, and prints view instructions.
-///
-/// Uses a local-only team repo setup (no git push needed) with a real GitHub
-/// Project for the API calls.
-#[test]
-fn e2e_projects_sync_status_and_views() {
-    require_gh_auth!();
-
+fn e2e_projects_sync_status_and_views_impl(config: &E2eConfig) {
     let tmp = tempfile::tempdir().unwrap();
     let team_name = "e2e-project-sync";
-    let github_repo = format!("{}/test-team-repo", E2E_ORG);
 
-    // Set up team locally (no push — projects sync doesn't need remote content)
+    // Use a TempRepo for the github_repo field
+    let repo = super::github::TempRepo::new_in_org("bm-e2e-psync", &config.gh_org)
+        .expect("Failed to create temp GitHub repo");
+
     let workzone = tmp.path().join("workspaces");
     let team_dir = workzone.join(team_name);
     let team_repo = team_dir.join("team");
     fs::create_dir_all(&team_repo).unwrap();
 
     git(&team_repo, &["init", "-b", "main"]);
-    git(&team_repo, &["config", "user.email", "e2e@botminter.test"]);
+    git(
+        &team_repo,
+        &["config", "user.email", "e2e@botminter.test"],
+    );
     git(&team_repo, &["config", "user.name", "BM E2E"]);
-    profile::extract_profile_to("scrum-compact", &team_repo).unwrap();
-    fs::create_dir_all(team_repo.join("team")).unwrap();
+    let profiles_base = super::helpers::bootstrap_profiles_to_tmp(tmp.path());
+    profile::extract_profile_from(
+        &profiles_base,
+        "scrum-compact",
+        &team_repo,
+        &claude_code_agent(),
+    )
+    .unwrap();
+    fs::create_dir_all(team_repo.join("members")).unwrap();
     fs::create_dir_all(team_repo.join("projects")).unwrap();
-    fs::write(team_repo.join("team/.gitkeep"), "").unwrap();
+    fs::write(team_repo.join("members/.gitkeep"), "").unwrap();
     fs::write(team_repo.join("projects/.gitkeep"), "").unwrap();
     git(&team_repo, &["add", "-A"]);
     git(&team_repo, &["commit", "-m", "feat: init team repo"]);
 
-    let config = BotminterConfig {
+    let bm_config = BotminterConfig {
         workzone,
         default_team: Some(team_name.to_string()),
         teams: vec![TeamEntry {
             name: team_name.to_string(),
             path: team_dir,
             profile: "scrum-compact".to_string(),
-            github_repo: github_repo.clone(),
-            credentials: Credentials::default(),
+            github_repo: repo.full_name.clone(),
+            credentials: Credentials {
+                gh_token: Some(config.gh_token.clone()),
+                ..Credentials::default()
+            },
+            coding_agent: None,
+            project_number: None,
         }],
     };
     let config_path = tmp.path().join(".botminter").join("config.yml");
-    bm::config::save_to(&config_path, &config).unwrap();
+    bm::config::save_to(&config_path, &bm_config).unwrap();
 
-    // Create a GitHub Project for this test (RAII cleanup)
-    let project = super::github::TempProject::new(E2E_ORG, &format!("{} Board", team_name))
+    let project = super::github::TempProject::new(&config.gh_org, &format!("{} Board", team_name))
         .expect("Failed to create temp GitHub Project");
 
-    // ── Run bm projects sync ─────────────────────────────────────────
     let mut cmd = bm_cmd();
     cmd.args(["projects", "sync", "-t", team_name])
         .env("HOME", tmp.path());
     let stdout = assert_cmd_success(&mut cmd);
 
-    // ── Verify Status field was synced ────────────────────────────────
-    let options = super::github::list_project_status_options(E2E_ORG, project.number);
+    let options = super::github::list_project_status_options(&config.gh_org, project.number);
     assert!(
         options.len() >= 20,
-        "Status field should have at least 20 options after sync, got {}: {:?}",
+        "Status field should have at least 20 options, got {}: {:?}",
         options.len(),
         options
     );
-    assert!(
-        options.contains(&"po:triage".to_string()),
-        "Status field should contain 'po:triage', got: {:?}",
-        options
-    );
-    assert!(
-        options.contains(&"done".to_string()),
-        "Status field should contain 'done', got: {:?}",
-        options
-    );
-    assert!(
-        options.contains(&"error".to_string()),
-        "Status field should contain 'error', got: {:?}",
-        options
-    );
+    assert!(options.contains(&"po:triage".to_string()));
+    assert!(options.contains(&"done".to_string()));
+    assert!(options.contains(&"error".to_string()));
 
-    // ── Verify output format ─────────────────────────────────────────
-    assert!(
-        stdout.contains("Status field synced"),
-        "stdout should confirm sync, got:\n{}",
-        stdout
-    );
-    assert!(
-        stdout.contains("View"),
-        "stdout should show view table header, got:\n{}",
-        stdout
-    );
-    assert!(
-        stdout.contains("Filter"),
-        "stdout should show filter column header, got:\n{}",
-        stdout
-    );
-    // Verify at least one view with a filter string
-    assert!(
-        stdout.contains("status:po:"),
-        "stdout should contain a PO filter like 'status:po:', got:\n{}",
-        stdout
-    );
-    assert!(
-        stdout.contains("status:arch:"),
-        "stdout should contain an Architect filter like 'status:arch:', got:\n{}",
-        stdout
-    );
+    assert!(stdout.contains("Status field synced"));
+    assert!(stdout.contains("View"));
+    assert!(stdout.contains("Filter"));
+    assert!(stdout.contains("status:po:"));
+    assert!(stdout.contains("status:arch:"));
 
-    // ── Verify idempotency (re-run should succeed) ───────────────────
+    // Idempotency
     let mut cmd = bm_cmd();
     cmd.args(["projects", "sync", "-t", team_name])
         .env("HOME", tmp.path());
     let stdout2 = assert_cmd_success(&mut cmd);
-    assert!(
-        stdout2.contains("Status field synced"),
-        "second sync should also succeed, got:\n{}",
-        stdout2
-    );
-
-    // TempProject drops here → deletes the project
+    assert!(stdout2.contains("Status field synced"));
 }
 
-/// E2E: `clone_existing_repo` clones a real GitHub repo into a local team dir.
-///
-/// Creates a temp GitHub repo, pushes content to it, then uses
-/// `clone_existing_repo` to clone it locally and verifies the content.
-#[test]
-fn e2e_clone_existing_repo() {
-    require_gh_auth!();
-
-    super::github::clean_persistent_repo();
+fn e2e_clone_existing_repo_impl(config: &E2eConfig) {
     let tmp = tempfile::tempdir().unwrap();
 
-    let (profile_name, _) = find_profile_with_roles(1);
+    let repo = super::github::TempRepo::new_in_org("bm-e2e-clone", &config.gh_org)
+        .expect("Failed to create temp GitHub repo");
 
-    // Set up and push content to the remote repo
+    let (profile_name, _) = find_profile_with_roles(1);
+    let profiles_base = super::helpers::bootstrap_profiles_to_tmp(tmp.path());
+
     let staging = tmp.path().join("staging");
     let staging_repo = staging.join("team");
     fs::create_dir_all(&staging_repo).unwrap();
@@ -685,69 +527,45 @@ fn e2e_clone_existing_repo() {
     );
     git(&staging_repo, &["config", "user.name", "BM E2E"]);
 
-    profile::extract_profile_to(&profile_name, &staging_repo).unwrap();
-    fs::create_dir_all(staging_repo.join("team")).unwrap();
-    fs::write(staging_repo.join("team/.gitkeep"), "").unwrap();
+    profile::extract_profile_from(
+        &profiles_base,
+        &profile_name,
+        &staging_repo,
+        &claude_code_agent(),
+    )
+    .unwrap();
+    fs::create_dir_all(staging_repo.join("members")).unwrap();
+    fs::write(staging_repo.join("members/.gitkeep"), "").unwrap();
 
     git(&staging_repo, &["add", "-A"]);
     git(&staging_repo, &["commit", "-m", "feat: init"]);
 
-    let remote_url = format!("https://github.com/{}.git", super::github::PERSISTENT_REPO);
+    super::helpers::setup_git_auth(tmp.path());
+    let remote_url = format!("https://github.com/{}.git", repo.full_name);
     git(&staging_repo, &["remote", "add", "origin", &remote_url]);
     git_push(&staging_repo);
 
-    // Now clone using the function under test
     let clone_dir = tmp.path().join("cloned");
     fs::create_dir_all(&clone_dir).unwrap();
 
-    bm::commands::init::clone_existing_repo(&clone_dir, &super::github::PERSISTENT_REPO, None)
+    bm::commands::init::clone_existing_repo(&clone_dir, &repo.full_name, None)
         .expect("clone_existing_repo should succeed");
 
-    // Verify the clone landed in {clone_dir}/team/
     let cloned_repo = clone_dir.join("team");
-    assert!(
-        cloned_repo.join(".git").is_dir(),
-        "cloned team/ should be a git repo"
-    );
-    assert!(
-        cloned_repo.join("botminter.yml").exists(),
-        "cloned repo should contain botminter.yml from the profile"
-    );
-    assert!(
-        cloned_repo.join("team/.gitkeep").exists(),
-        "cloned repo should contain team/.gitkeep"
-    );
+    assert!(cloned_repo.join(".git").is_dir());
+    assert!(cloned_repo.join("botminter.yml").exists());
+    assert!(cloned_repo.join("members/.gitkeep").exists());
 }
 
-/// E2E: `list_gh_projects` returns existing project boards for an org.
-///
-/// Creates a temp project, lists projects, verifies the temp project appears.
-#[test]
-fn e2e_list_gh_projects() {
-    require_gh_auth!();
+fn e2e_list_gh_projects_impl(config: &E2eConfig) {
+    let project =
+        super::github::TempProject::new(&config.gh_org, "bm-e2e-list-projects")
+            .expect("Failed to create temp GitHub Project");
 
-    let project = super::github::TempProject::new(E2E_ORG, "bm-e2e-list-projects")
-        .expect("Failed to create temp GitHub Project");
-
-    let token = std::env::var("GH_TOKEN")
-        .or_else(|_| {
-            let output = Command::new("gh")
-                .args(["auth", "token"])
-                .output()
-                .expect("failed to run gh auth token");
-            Ok::<String, std::env::VarError>(
-                String::from_utf8_lossy(&output.stdout).trim().to_string(),
-            )
-        })
-        .expect("GH_TOKEN required");
-
-    let projects = bm::commands::init::list_gh_projects(&token, E2E_ORG)
+    let projects = bm::commands::init::list_gh_projects(&config.gh_token, &config.gh_org)
         .expect("list_gh_projects should succeed");
 
-    // Verify the temp project appears in the list
-    let found = projects
-        .iter()
-        .find(|(n, _)| *n == project.number);
+    let found = projects.iter().find(|(n, _)| *n == project.number);
     assert!(
         found.is_some(),
         "list_gh_projects should include project #{}, got: {:?}",
@@ -756,120 +574,87 @@ fn e2e_list_gh_projects() {
     );
 
     let (_, title) = found.unwrap();
-    assert_eq!(
-        title, "bm-e2e-list-projects",
-        "project title should match"
-    );
+    assert_eq!(title, "bm-e2e-list-projects");
 
-    // Verify idempotency — listing again returns the same result
-    let projects2 = bm::commands::init::list_gh_projects(&token, E2E_ORG)
+    // Idempotency
+    let projects2 = bm::commands::init::list_gh_projects(&config.gh_token, &config.gh_org)
         .expect("second list_gh_projects should succeed");
     let found2 = projects2.iter().find(|(n, _)| *n == project.number);
-    assert!(
-        found2.is_some(),
-        "second call should also find the project"
-    );
-
-    // TempProject drops here → deletes the project
+    assert!(found2.is_some());
 }
 
-/// E2E: syncing status field on an existing project board is idempotent.
-///
-/// Creates a project, syncs status options, verifies them, syncs again,
-/// verifies the result is identical.
-#[test]
-fn e2e_sync_status_on_existing_project() {
-    require_gh_auth!();
+fn e2e_sync_status_on_existing_project_impl(config: &E2eConfig) {
+    let tmp = tempfile::tempdir().unwrap();
+    let profiles_base = super::helpers::bootstrap_profiles_to_tmp(tmp.path());
 
-    let project = super::github::TempProject::new(E2E_ORG, "bm-e2e-sync-existing")
+    let project = super::github::TempProject::new(&config.gh_org, "bm-e2e-sync-existing")
         .expect("Failed to create temp GitHub Project");
 
-    let manifest = profile::read_manifest("scrum-compact").unwrap();
+    let manifest = profile::read_manifest_from("scrum-compact", &profiles_base).unwrap();
 
-    // First sync
     bm::commands::init::sync_project_status_field(
-        E2E_ORG,
+        &config.gh_org,
         project.number,
         &manifest.statuses,
         None,
     )
-    .expect("first sync_project_status_field should succeed");
+    .expect("first sync should succeed");
 
-    let options1 = super::github::list_project_status_options(E2E_ORG, project.number);
-    assert!(
-        options1.len() >= 20,
-        "Status field should have at least 20 options after first sync, got {}: {:?}",
-        options1.len(),
-        options1
-    );
-    assert!(
-        options1.contains(&"po:triage".to_string()),
-        "Should contain 'po:triage', got: {:?}",
-        options1
-    );
+    let options1 = super::github::list_project_status_options(&config.gh_org, project.number);
+    assert!(options1.len() >= 20);
+    assert!(options1.contains(&"po:triage".to_string()));
 
-    // Second sync (idempotent) — should succeed and produce the same result
     bm::commands::init::sync_project_status_field(
-        E2E_ORG,
+        &config.gh_org,
         project.number,
         &manifest.statuses,
         None,
     )
-    .expect("second sync_project_status_field should succeed");
+    .expect("second sync should succeed");
 
-    let options2 = super::github::list_project_status_options(E2E_ORG, project.number);
-    assert_eq!(
-        options1.len(),
-        options2.len(),
-        "Idempotent sync should produce same number of options"
-    );
-    assert_eq!(
-        options1, options2,
-        "Idempotent sync should produce identical options"
-    );
-
-    // TempProject drops here → deletes the project
+    let options2 = super::github::list_project_status_options(&config.gh_org, project.number);
+    assert_eq!(options1.len(), options2.len());
+    assert_eq!(options1, options2);
 }
 
-#[test]
-fn e2e_projects_add_creates_label_on_github() {
-    require_gh_auth!();
-
-    super::github::clean_persistent_repo();
+fn e2e_projects_add_creates_label_on_github_impl(config: &E2eConfig) {
     let tmp = tempfile::tempdir().unwrap();
+
+    let repo = super::github::TempRepo::new_in_org("bm-e2e-plabels", &config.gh_org)
+        .expect("Failed to create temp GitHub repo");
 
     let (profile_name, _) = find_profile_with_roles(1);
     let team_name = "e2e-project-labels";
+    let profiles_base = super::helpers::bootstrap_profiles_to_tmp(tmp.path());
 
-    setup_team_with_github(tmp.path(), team_name, &profile_name, super::github::PERSISTENT_REPO);
+    setup_team_with_github(
+        tmp.path(),
+        team_name,
+        &profile_name,
+        &repo.full_name,
+        &profiles_base,
+        Some(&config.gh_token),
+    );
 
-    // Create a fake fork
     let fork = create_fake_fork(tmp.path(), "test-project");
     let fork_url = fork.to_string_lossy().to_string();
 
-    // Verify label doesn't exist yet
-    let labels_before = super::github::list_labels(super::github::PERSISTENT_REPO);
-    assert!(
-        !labels_before.contains(&"project/test-project".to_string()),
-        "Label should not exist before bm projects add"
-    );
+    let labels_before = super::github::list_labels(&repo.full_name);
+    assert!(!labels_before.contains(&"project/test-project".to_string()));
 
-    // Run bm projects add
     let mut cmd = bm_cmd();
     cmd.args(["projects", "add", &fork_url, "-t", team_name])
         .env("HOME", tmp.path());
     let output = assert_cmd_success(&mut cmd);
     eprintln!("projects add output: {}", output.trim());
 
-    // Verify label was created on GitHub
-    let labels_after = super::github::list_labels(super::github::PERSISTENT_REPO);
+    let labels_after = super::github::list_labels(&repo.full_name);
     assert!(
         labels_after.contains(&"project/test-project".to_string()),
-        "Label 'project/test-project' should exist after bm projects add. Found labels: {:?}",
+        "Label 'project/test-project' should exist. Found: {:?}",
         labels_after
     );
 
-    // Test idempotency - add a second project
     let fork2 = create_fake_fork(tmp.path(), "another-project");
     let fork2_url = fork2.to_string_lossy().to_string();
 
@@ -878,15 +663,214 @@ fn e2e_projects_add_creates_label_on_github() {
         .env("HOME", tmp.path());
     assert_cmd_success(&mut cmd);
 
-    // Verify second label was also created
-    let labels_final = super::github::list_labels(super::github::PERSISTENT_REPO);
-    assert!(
-        labels_final.contains(&"project/test-project".to_string()),
-        "First label should still exist"
+    let labels_final = super::github::list_labels(&repo.full_name);
+    assert!(labels_final.contains(&"project/test-project".to_string()));
+    assert!(labels_final.contains(&"project/another-project".to_string()));
+}
+
+fn e2e_init_non_interactive_full_github_impl(config: &E2eConfig) {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let repo_name = format!("bm-e2e-init-{}", timestamp);
+    let full_name = format!("{}/{}", config.gh_org, repo_name);
+
+    // RAII guard: deletes the repo on drop (even if bm init created it)
+    let _cleanup = super::github::TempRepo {
+        full_name: full_name.clone(),
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let workzone = tmp.path().join("workspaces");
+
+    let mut cmd = bm_cmd();
+    cmd.args([
+        "init",
+        "--non-interactive",
+        "--profile",
+        "scrum-compact",
+        "--team-name",
+        "e2e-init-test",
+        "--org",
+        &config.gh_org,
+        "--repo",
+        &repo_name,
+        "--workzone",
+        &workzone.to_string_lossy(),
+    ])
+    .env("HOME", tmp.path())
+    .env("GH_TOKEN", &config.gh_token)
+    .env("GIT_AUTHOR_NAME", "BM E2E")
+    .env("GIT_AUTHOR_EMAIL", "e2e@botminter.test")
+    .env("GIT_COMMITTER_NAME", "BM E2E")
+    .env("GIT_COMMITTER_EMAIL", "e2e@botminter.test");
+    let stdout = assert_cmd_success(&mut cmd);
+    eprintln!("bm init output: {}", stdout.trim());
+
+    let labels = super::github::list_labels(&full_name);
+    let profiles_base = super::helpers::bootstrap_profiles_to_tmp(tmp.path());
+    let manifest = profile::read_manifest_from("scrum-compact", &profiles_base).unwrap();
+    for expected_label in &manifest.labels {
+        assert!(
+            labels.contains(&expected_label.name),
+            "Label '{}' should exist after init, found: {:?}",
+            expected_label.name,
+            labels
+        );
+    }
+
+    let config_path = tmp.path().join(".botminter").join("config.yml");
+    assert!(config_path.exists());
+    let config_content = std::fs::read_to_string(&config_path).unwrap();
+    assert!(config_content.contains("e2e-init-test"));
+    assert!(config_content.contains(&full_name));
+
+    let team_repo = workzone.join("e2e-init-test").join("team");
+    assert!(team_repo.join(".git").is_dir());
+    assert!(team_repo.join("botminter.yml").exists());
+    assert!(team_repo.join("PROCESS.md").exists());
+    assert!(team_repo.join("members/.gitkeep").exists());
+    assert!(team_repo.join("projects/.gitkeep").exists());
+
+    let output = Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(&team_repo)
+        .output()
+        .unwrap();
+    let remote = String::from_utf8_lossy(&output.stdout);
+    assert!(remote.contains(&full_name));
+
+    // Clean up project boards
+    let output = Command::new("gh")
+        .args([
+            "project",
+            "list",
+            "--owner",
+            &config.gh_org,
+            "--format",
+            "json",
+            "--limit",
+            "100",
+        ])
+        .env("GH_TOKEN", &config.gh_token)
+        .output()
+        .expect("failed to list projects");
+
+    if output.status.success() {
+        let json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).unwrap_or(serde_json::Value::Null);
+        if let Some(projects) = json["projects"].as_array() {
+            for project in projects {
+                let title = project["title"].as_str().unwrap_or("");
+                if title.contains("e2e-init-test") {
+                    if let Some(number) = project["number"].as_u64() {
+                        eprintln!("Cleaning up project board #{}: {}", number, title);
+                        let _ = Command::new("gh")
+                            .args([
+                                "project",
+                                "delete",
+                                "--owner",
+                                &config.gh_org,
+                                &number.to_string(),
+                                "--format",
+                                "json",
+                            ])
+                            .env("GH_TOKEN", &config.gh_token)
+                            .output();
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn e2e_sync_push_creates_workspace_repo_impl(config: &E2eConfig) {
+    let tmp = tempfile::tempdir().unwrap();
+
+    let repo = super::github::TempRepo::new_in_org("bm-e2e-ws", &config.gh_org)
+        .expect("Failed to create temp GitHub repo");
+
+    let (profile_name, roles) = find_profile_with_roles(1);
+    let role = &roles[0];
+    let team_name = "e2e-ws";
+    let profiles_base = super::helpers::bootstrap_profiles_to_tmp(tmp.path());
+
+    setup_team_with_github(
+        tmp.path(),
+        team_name,
+        &profile_name,
+        &repo.full_name,
+        &profiles_base,
+        Some(&config.gh_token),
     );
+
+    let mut cmd = bm_cmd();
+    cmd.args(["hire", role, "--name", "alice", "-t", team_name])
+        .env("HOME", tmp.path());
+    assert_cmd_success(&mut cmd);
+
+    let team_repo = tmp
+        .path()
+        .join("workspaces")
+        .join(team_name)
+        .join("team");
+    // bm hire already commits; just push
+    git_push(&team_repo);
+
+    let member_dir = format!("{}-alice", role);
+    let ws_repo_name = format!("{}/{}-{}", config.gh_org, team_name, member_dir);
+
+    // Pre-cleanup
+    let _ = Command::new("gh")
+        .args(["repo", "delete", &ws_repo_name, "--yes"])
+        .env("GH_TOKEN", &config.gh_token)
+        .output();
+
+    let mut cmd = bm_cmd();
+    cmd.args(["teams", "sync", "--push", "-t", team_name])
+        .env("HOME", tmp.path())
+        .env("GH_TOKEN", &config.gh_token);
+    let out = assert_cmd_success(&mut cmd);
+    eprintln!("sync --push: {}", out.trim());
+
+    let output = Command::new("gh")
+        .args(["repo", "view", &ws_repo_name, "--json", "name"])
+        .env("GH_TOKEN", &config.gh_token)
+        .output()
+        .expect("failed to run gh repo view");
     assert!(
-        labels_final.contains(&"project/another-project".to_string()),
-        "Second label 'project/another-project' should exist. Found labels: {:?}",
-        labels_final
+        output.status.success(),
+        "workspace repo '{}' should exist on GitHub: {}",
+        ws_repo_name,
+        String::from_utf8_lossy(&output.stderr)
     );
+
+    let ws_path = tmp
+        .path()
+        .join("workspaces")
+        .join(team_name)
+        .join(&member_dir);
+    assert!(ws_path.join(".botminter.workspace").exists());
+    assert!(ws_path.join("team").is_dir());
+    assert!(ws_path.join(".gitmodules").exists());
+    let gitmodules = fs::read_to_string(ws_path.join(".gitmodules")).unwrap();
+    assert!(gitmodules.contains("[submodule \"team\"]"));
+    assert!(ws_path.join("CLAUDE.md").exists());
+    assert!(ws_path.join("PROMPT.md").exists());
+    assert!(ws_path.join("ralph.yml").exists());
+
+    // Idempotency
+    let mut cmd = bm_cmd();
+    cmd.args(["teams", "sync", "--push", "-t", team_name])
+        .env("HOME", tmp.path())
+        .env("GH_TOKEN", &config.gh_token);
+    let out2 = assert_cmd_success(&mut cmd);
+    eprintln!("sync --push (2): {}", out2.trim());
+
+    // Cleanup workspace repo
+    let _ = Command::new("gh")
+        .args(["repo", "delete", &ws_repo_name, "--yes"])
+        .env("GH_TOKEN", &config.gh_token)
+        .output();
 }

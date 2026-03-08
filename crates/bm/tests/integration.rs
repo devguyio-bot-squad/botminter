@@ -1,25 +1,35 @@
 //! Integration tests for the `bm` CLI.
 //!
 //! These tests exercise multi-command workflows against temporary directories.
-//! Tests that modify `HOME` are serialized via a global mutex since `dirs::home_dir()`
-//! reads the env var.
+//! Each test uses fully isolated file system trees — no global env var mutation.
+//! In-process library calls use explicit-path APIs. Commands that resolve
+//! config via `dirs::home_dir()` are invoked as subprocesses with per-test HOME.
 //!
 //! Tests requiring the `ralph` binary (start/stop/status) are omitted since
 //! ralph is not available in the test environment.
 
-use std::env;
 use std::fs;
+use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
+use std::thread;
+use std::time::{Duration, Instant};
 
 use bm::config::{BotminterConfig, Credentials, TeamEntry};
-use bm::profile;
-
-/// Serialize all tests that mutate the HOME env var.
-static ENV_MUTEX: Mutex<()> = Mutex::new(());
+use bm::profile::{self, CodingAgentDef};
 
 // ── Test helpers ──────────────────────────────────────────────────────
+
+/// Returns the default Claude Code coding agent definition for tests.
+fn claude_code_agent() -> CodingAgentDef {
+    CodingAgentDef {
+        name: "claude-code".into(),
+        display_name: "Claude Code".into(),
+        context_file: "CLAUDE.md".into(),
+        agent_dir: ".claude".into(),
+        binary: "claude".into(),
+    }
+}
 
 /// Runs a git command in a directory (test helper).
 fn git(dir: &Path, args: &[&str]) {
@@ -41,10 +51,16 @@ fn git(dir: &Path, args: &[&str]) {
 /// Creates:
 ///   {tmp}/workspaces/{team_name}/team/  — the team git repo with extracted profile
 ///   {tmp}/.botminter/config.yml        — config pointing to the team
+///   {tmp}/.config/botminter/profiles/  — profiles extracted from embedded data
 ///
-/// Sets HOME to `tmp` so `config::load()` finds the config.
+/// Does NOT modify any environment variables. All paths are computed explicitly.
 /// Returns the path to the team repo (the git repo inside the team dir).
 fn setup_team(tmp: &Path, team_name: &str, profile_name: &str) -> PathBuf {
+    // Compute profiles path directly — no env vars needed
+    let profiles_path = profile::profiles_dir_for(tmp);
+    fs::create_dir_all(&profiles_path).unwrap();
+    profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
     let workzone = tmp.join("workspaces");
     let team_dir = workzone.join(team_name);
     let team_repo = team_dir.join("team");
@@ -56,13 +72,13 @@ fn setup_team(tmp: &Path, team_name: &str, profile_name: &str) -> PathBuf {
     git(&team_repo, &["config", "user.email", "test@botminter.test"]);
     git(&team_repo, &["config", "user.name", "BM Test"]);
 
-    // Extract embedded profile content into team repo
-    profile::extract_profile_to(profile_name, &team_repo).unwrap();
+    // Extract profile content from disk into team repo (explicit base path, no env vars)
+    profile::extract_profile_from(&profiles_path, profile_name, &team_repo, &claude_code_agent()).unwrap();
 
-    // Create team/ and projects/ dirs (as bm init does)
-    fs::create_dir_all(team_repo.join("team")).unwrap();
+    // Create members/ and projects/ dirs (as bm init does)
+    fs::create_dir_all(team_repo.join("members")).unwrap();
     fs::create_dir_all(team_repo.join("projects")).unwrap();
-    fs::write(team_repo.join("team/.gitkeep"), "").unwrap();
+    fs::write(team_repo.join("members/.gitkeep"), "").unwrap();
     fs::write(team_repo.join("projects/.gitkeep"), "").unwrap();
 
     // Initial commit
@@ -79,14 +95,13 @@ fn setup_team(tmp: &Path, team_name: &str, profile_name: &str) -> PathBuf {
             profile: profile_name.to_string(),
             github_repo: String::new(),
             credentials: Credentials::default(),
+            coding_agent: None,
+            project_number: None,
         }],
     };
 
     let config_path = tmp.join(".botminter").join("config.yml");
     bm::config::save_to(&config_path, &config).unwrap();
-
-    // Redirect HOME so config::load() finds the right config
-    env::set_var("HOME", tmp);
 
     team_repo
 }
@@ -109,10 +124,11 @@ fn add_team_to_config(
     git(&team_repo, &["init", "-b", "main"]);
     git(&team_repo, &["config", "user.email", "test@botminter.test"]);
     git(&team_repo, &["config", "user.name", "BM Test"]);
-    profile::extract_profile_to(profile_name, &team_repo).unwrap();
-    fs::create_dir_all(team_repo.join("team")).unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp);
+    profile::extract_profile_from(&profiles_path, profile_name, &team_repo, &claude_code_agent()).unwrap();
+    fs::create_dir_all(team_repo.join("members")).unwrap();
     fs::create_dir_all(team_repo.join("projects")).unwrap();
-    fs::write(team_repo.join("team/.gitkeep"), "").unwrap();
+    fs::write(team_repo.join("members/.gitkeep"), "").unwrap();
     fs::write(team_repo.join("projects/.gitkeep"), "").unwrap();
     git(&team_repo, &["add", "-A"]);
     git(&team_repo, &["commit", "-m", "feat: init team repo"]);
@@ -123,6 +139,8 @@ fn add_team_to_config(
         profile: profile_name.to_string(),
         github_repo: String::new(),
         credentials: Credentials::default(),
+        coding_agent: None,
+        project_number: None,
     });
 
     if make_default {
@@ -134,37 +152,149 @@ fn add_team_to_config(
     team_repo
 }
 
-// ── Profile tests (no HOME needed) ───────────────────────────────────
+// ── Subprocess helpers ───────────────────────────────────────────────
+
+/// Creates a `bm` Command with HOME and XDG_CONFIG_HOME set for test isolation.
+fn bm_cmd(home: &Path) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_bm"));
+    cmd.env("HOME", home);
+    cmd.env("XDG_CONFIG_HOME", home.join(".config"));
+    cmd
+}
+
+/// Runs a `bm` command and asserts success.
+fn bm_run(home: &Path, args: &[&str]) -> std::process::Output {
+    let output = bm_cmd(home)
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("bm {} failed to run: {}", args.join(" "), e));
+    assert!(
+        output.status.success(),
+        "bm {} failed (exit {:?}), stderr: {}",
+        args.join(" "),
+        output.status.code(),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    output
+}
+
+/// Runs a `bm` command and asserts failure. Returns stderr as a String.
+fn bm_run_fail(home: &Path, args: &[&str]) -> String {
+    let output = bm_cmd(home)
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("bm {} failed to run: {}", args.join(" "), e));
+    assert!(
+        !output.status.success(),
+        "bm {} should have failed but exited 0, stdout: {}",
+        args.join(" "),
+        String::from_utf8_lossy(&output.stdout)
+    );
+    String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+/// Hires a member via subprocess.
+fn bm_hire(home: &Path, role: &str, name: &str, team: &str) {
+    bm_run(home, &["hire", role, "--name", name, "-t", team]);
+}
+
+/// Adds a project via subprocess.
+fn bm_add_project(home: &Path, url: &str, team: &str) {
+    bm_run(home, &["projects", "add", url, "-t", team]);
+}
+
+/// Runs `bm teams sync` via subprocess.
+fn bm_sync(home: &Path, team: &str) {
+    bm_run(home, &["teams", "sync", "-t", team]);
+}
+
+/// Gets an OS-assigned free port by binding to port 0.
+fn get_free_port() -> u16 {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("failed to bind to free port");
+    listener.local_addr().unwrap().port()
+}
+
+/// Polls until a TCP port accepts connections, with a timeout.
+fn wait_for_port(port: u16, timeout: Duration) -> bool {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        if TcpStream::connect(format!("127.0.0.1:{}", port)).is_ok() {
+            return true;
+        }
+        thread::sleep(Duration::from_millis(50));
+    }
+    false
+}
+
+/// Creates a local git repository that can be used as a project fork URL.
+fn create_fake_fork(tmp: &Path, name: &str) -> PathBuf {
+    let fork = tmp.join(name);
+    fs::create_dir_all(&fork).unwrap();
+    git(&fork, &["init", "-b", "main"]);
+    git(&fork, &["config", "user.email", "test@botminter.test"]);
+    git(&fork, &["config", "user.name", "BM Test"]);
+    fs::write(fork.join("README.md"), format!("# {}", name)).unwrap();
+    git(&fork, &["add", "-A"]);
+    git(&fork, &["commit", "-m", "init"]);
+    fork
+}
+
+// ── Profile tests (need disk profiles) ───────────────────────────────
 
 #[test]
-fn profiles_list_returns_all_embedded() {
-    let profiles = profile::list_profiles();
-    assert!(profiles.contains(&"scrum".to_string()));
-    assert!(profiles.contains(&"scrum-compact".to_string()));
-    assert!(profiles.contains(&"scrum-compact-telegram".to_string()));
-    assert_eq!(profiles.len(), 3);
+fn profiles_list_returns_all_from_disk() {
+    let tmp = tempfile::tempdir().unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    fs::create_dir_all(&profiles_path).unwrap();
+    profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
+    let profiles = profile::list_profiles_from(&profiles_path).unwrap();
+    let embedded = profile::list_embedded_profiles();
+    assert_eq!(
+        profiles.len(),
+        embedded.len(),
+        "list_profiles should find all embedded profiles"
+    );
+    for name in &embedded {
+        assert!(
+            profiles.contains(name),
+            "Profile '{}' should be discoverable",
+            name
+        );
+    }
 }
 
 #[test]
 fn profiles_describe_returns_complete_data() {
-    let manifest = profile::read_manifest("scrum").unwrap();
-    assert_eq!(manifest.name, "scrum");
-    assert!(!manifest.display_name.is_empty());
-    assert!(!manifest.description.is_empty());
-    assert_eq!(manifest.schema_version, "1.0");
-    assert!(!manifest.roles.is_empty());
-    assert!(!manifest.labels.is_empty());
+    let tmp = tempfile::tempdir().unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    fs::create_dir_all(&profiles_path).unwrap();
+    profile::extract_embedded_to_disk(&profiles_path).unwrap();
 
-    // Verify roles have names and descriptions
-    for role in &manifest.roles {
-        assert!(!role.name.is_empty());
-        assert!(!role.description.is_empty());
+    for name in profile::list_profiles_from(&profiles_path).unwrap() {
+        let manifest = profile::read_manifest_from(&name, &profiles_path).unwrap();
+        assert_eq!(manifest.name, name, "Profile '{}' name should match", name);
+        assert!(!manifest.display_name.is_empty(), "Profile '{}' should have display_name", name);
+        assert!(!manifest.description.is_empty(), "Profile '{}' should have description", name);
+        assert!(!manifest.schema_version.is_empty(), "Profile '{}' should have schema_version", name);
+        assert!(!manifest.roles.is_empty(), "Profile '{}' should have roles", name);
+        assert!(!manifest.labels.is_empty(), "Profile '{}' should have labels", name);
+
+        for role in &manifest.roles {
+            assert!(!role.name.is_empty(), "Profile '{}' role should have name", name);
+            assert!(!role.description.is_empty(), "Profile '{}' role '{}' should have description", name, role.name);
+        }
     }
 }
 
 #[test]
 fn profiles_describe_nonexistent_errors() {
-    let result = profile::read_manifest("does-not-exist");
+    let tmp = tempfile::tempdir().unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    fs::create_dir_all(&profiles_path).unwrap();
+    profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
+    let result = profile::read_manifest_from("does-not-exist", &profiles_path);
     assert!(result.is_err());
     let err = result.unwrap_err().to_string();
     assert!(err.contains("not found"));
@@ -174,14 +304,13 @@ fn profiles_describe_nonexistent_errors() {
 
 #[test]
 fn hire_with_explicit_name() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
-    bm::commands::hire::run("architect", Some("bob"), None).unwrap();
+    bm_hire(tmp.path(), "architect", "bob", "test-team");
 
     // Verify member directory was created
-    let member_dir = team_repo.join("team/architect-bob");
+    let member_dir = team_repo.join("members/architect-bob");
     assert!(member_dir.is_dir(), "architect-bob/ should exist");
 
     // Verify botminter.yml was finalized (no .botminter.yml template)
@@ -205,66 +334,57 @@ fn hire_with_explicit_name() {
 
 #[test]
 fn hire_auto_suffix_first_member() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
-    bm::commands::hire::run("architect", None, None).unwrap();
+    bm_run(tmp.path(), &["hire", "architect"]);
 
-    let member_dir = team_repo.join("team/architect-01");
+    let member_dir = team_repo.join("members/architect-01");
     assert!(member_dir.is_dir(), "architect-01/ should exist (auto-suffix)");
 }
 
 #[test]
 fn hire_auto_suffix_increments() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
-    bm::commands::hire::run("architect", None, None).unwrap();
-    bm::commands::hire::run("architect", None, None).unwrap();
+    bm_run(tmp.path(), &["hire", "architect"]);
+    bm_run(tmp.path(), &["hire", "architect"]);
 
-    assert!(team_repo.join("team/architect-01").is_dir());
-    assert!(team_repo.join("team/architect-02").is_dir());
+    assert!(team_repo.join("members/architect-01").is_dir());
+    assert!(team_repo.join("members/architect-02").is_dir());
 }
 
 #[test]
 fn hire_unknown_role_errors() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "test-team", "scrum");
 
-    let result = bm::commands::hire::run("nonexistent-role", Some("alice"), None);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("nonexistent-role"));
-    assert!(err.contains("architect")); // should list available roles
+    let stderr = bm_run_fail(tmp.path(), &["hire", "nonexistent-role", "--name", "alice"]);
+    assert!(stderr.contains("nonexistent-role"));
+    assert!(stderr.contains("architect")); // should list available roles
 }
 
 #[test]
 fn hire_duplicate_name_errors() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "test-team", "scrum");
 
-    bm::commands::hire::run("architect", Some("bob"), None).unwrap();
-    let result = bm::commands::hire::run("architect", Some("bob"), None);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("already exists"));
+    bm_hire(tmp.path(), "architect", "bob", "test-team");
+    let stderr = bm_run_fail(tmp.path(), &["hire", "architect", "--name", "bob"]);
+    assert!(stderr.contains("already exists"));
 }
 
 // ── Projects tests ───────────────────────────────────────────────────
 
 #[test]
 fn projects_add_creates_dirs_and_updates_manifest() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
     let fork = create_fake_fork(tmp.path(), "my-repo");
     let fork_url = fork.to_string_lossy().to_string();
-    bm::commands::projects::add(&fork_url, None).unwrap();
+    bm_add_project(tmp.path(), &fork_url, "test-team");
 
     // Verify project dirs created
     let proj_dir = team_repo.join("projects/my-repo");
@@ -279,22 +399,18 @@ fn projects_add_creates_dirs_and_updates_manifest() {
 
 #[test]
 fn projects_add_duplicate_errors() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "test-team", "scrum");
 
     let fork = create_fake_fork(tmp.path(), "my-repo");
     let fork_url = fork.to_string_lossy().to_string();
-    bm::commands::projects::add(&fork_url, None).unwrap();
-    let result = bm::commands::projects::add(&fork_url, None);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("already exists"));
+    bm_add_project(tmp.path(), &fork_url, "test-team");
+    let stderr = bm_run_fail(tmp.path(), &["projects", "add", &fork_url]);
+    assert!(stderr.contains("already exists"));
 }
 
 #[test]
 fn projects_add_nonexistent_url_errors() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
@@ -303,13 +419,11 @@ fn projects_add_nonexistent_url_errors() {
         fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
 
     let bad_path = tmp.path().join("does-not-exist-repo");
-    let result = bm::commands::projects::add(&bad_path.to_string_lossy(), None);
-    assert!(result.is_err(), "adding a non-existent repo should fail");
-    let err = result.unwrap_err().to_string();
+    let stderr = bm_run_fail(tmp.path(), &["projects", "add", &bad_path.to_string_lossy()]);
     assert!(
-        err.contains("not found") || err.contains("not accessible"),
+        stderr.contains("not found") || stderr.contains("not accessible"),
         "error should mention not found/accessible: {}",
-        err
+        stderr
     );
 
     // Manifest should be unchanged — no partial write
@@ -320,15 +434,13 @@ fn projects_add_nonexistent_url_errors() {
 
 #[test]
 fn sync_with_nonexistent_fork_url_gives_actionable_error() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    setup_team(tmp.path(), "bad-fork-team", "scrum");
+    let team_repo = setup_team(tmp.path(), "bad-fork-team", "scrum");
 
-    bm::commands::hire::run("architect", Some("alice"), None).unwrap();
+    bm_hire(tmp.path(), "architect", "alice", "bad-fork-team");
 
     // Manually inject a project with a non-existent fork URL into botminter.yml
     // (bypasses validation that projects::add will have)
-    let team_repo = tmp.path().join("workspaces/bad-fork-team/team");
     let manifest_path = team_repo.join("botminter.yml");
     let mut manifest: bm::profile::ProfileManifest = {
         let contents = fs::read_to_string(&manifest_path).unwrap();
@@ -344,19 +456,17 @@ fn sync_with_nonexistent_fork_url_gives_actionable_error() {
     git(&team_repo, &["add", "botminter.yml"]);
     git(&team_repo, &["commit", "-m", "add bad project"]);
 
-    let result = bm::commands::teams::sync(false, None);
-    assert!(result.is_err(), "sync should fail with non-existent fork");
-    let err = result.unwrap_err().to_string();
+    let stderr = bm_run_fail(tmp.path(), &["teams", "sync", "-t", "bad-fork-team"]);
+    // The member name should appear in the failure list
     assert!(
-        err.contains(&bad_url.to_string_lossy().to_string()),
-        "error should contain the fork URL: {}",
-        err
+        stderr.contains("architect-alice"),
+        "error should reference the failed member: {}",
+        stderr
     );
 }
 
 #[test]
-fn sync_continues_past_failed_clone() {
-    let _lock = ENV_MUTEX.lock().unwrap();
+fn sync_continues_past_failed_member() {
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "mixed-team", "scrum");
 
@@ -370,47 +480,39 @@ fn sync_continues_past_failed_clone() {
     git(&good_fork, &["add", "-A"]);
     git(&good_fork, &["commit", "-m", "init"]);
 
-    bm::commands::hire::run("architect", Some("alice"), None).unwrap();
+    // Hire two members
+    bm_hire(tmp.path(), "architect", "alice", "mixed-team");
+    bm_hire(tmp.path(), "architect", "bob", "mixed-team");
 
-    // Manually inject two projects: one good, one bad
+    // Manually inject a project with a bad fork URL
     let manifest_path = team_repo.join("botminter.yml");
     let mut manifest: bm::profile::ProfileManifest = {
         let contents = fs::read_to_string(&manifest_path).unwrap();
         serde_yml::from_str(&contents).unwrap()
     };
-    // Bad project FIRST — with current fail-fast, sync would abort
-    // before reaching the good one. After fix, it should continue.
     let bad_url = tmp.path().join("bad-fork-nonexistent");
     manifest.projects.push(bm::profile::ProjectDef {
         name: "bad-fork".to_string(),
         fork_url: bad_url.to_string_lossy().to_string(),
     });
-    manifest.projects.push(bm::profile::ProjectDef {
-        name: "good-fork".to_string(),
-        fork_url: good_fork.to_string_lossy().to_string(),
-    });
     let contents = serde_yml::to_string(&manifest).unwrap();
     fs::write(&manifest_path, contents).unwrap();
     git(&team_repo, &["add", "botminter.yml"]);
-    git(&team_repo, &["commit", "-m", "add projects"]);
+    git(&team_repo, &["commit", "-m", "add bad project"]);
 
-    let result = bm::commands::teams::sync(false, None);
-    assert!(result.is_err(), "sync should report failure");
-    let err = result.unwrap_err().to_string();
+    // Both members should fail (bad fork), but sync should continue past first failure
+    let stderr = bm_run_fail(tmp.path(), &["teams", "sync", "-t", "mixed-team"]);
 
-    // The bad project should be mentioned in the error
+    // Both failing members should be mentioned
     assert!(
-        err.contains("bad-fork"),
-        "error should mention the bad project: {}",
-        err
+        stderr.contains("architect-alice"),
+        "error should mention alice: {}",
+        stderr
     );
-
-    // The good project's workspace should have been created despite the bad one
-    let team_dir = team_repo.parent().unwrap();
-    let good_ws = team_dir.join("architect-alice").join("good-fork");
     assert!(
-        good_ws.join(".botminter").is_dir(),
-        "good fork workspace should be created despite bad fork failure"
+        stderr.contains("architect-bob"),
+        "error should mention bob: {}",
+        stderr
     );
 }
 
@@ -418,7 +520,6 @@ fn sync_continues_past_failed_clone() {
 
 #[test]
 fn schema_version_mismatch_blocks_hire() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
@@ -430,20 +531,17 @@ fn schema_version_mismatch_blocks_hire() {
     git(&team_repo, &["add", "botminter.yml"]);
     git(&team_repo, &["commit", "-m", "chore: bump schema"]);
 
-    let result = bm::commands::hire::run("architect", Some("alice"), None);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("bm upgrade"), "Should suggest bm upgrade: {}", err);
+    let stderr = bm_run_fail(tmp.path(), &["hire", "architect", "--name", "alice"]);
+    assert!(stderr.contains("bm upgrade"), "Should suggest bm upgrade: {}", stderr);
 }
 
 #[test]
 fn schema_version_mismatch_blocks_sync() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
     // Hire a member first (with correct schema)
-    bm::commands::hire::run("architect", Some("bob"), None).unwrap();
+    bm_hire(tmp.path(), "architect", "bob", "test-team");
 
     // Tamper with schema_version
     let manifest_path = team_repo.join("botminter.yml");
@@ -453,88 +551,88 @@ fn schema_version_mismatch_blocks_sync() {
     git(&team_repo, &["add", "botminter.yml"]);
     git(&team_repo, &["commit", "-m", "chore: bump schema"]);
 
-    let result = bm::commands::teams::sync(false, None);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("bm upgrade"), "Should suggest bm upgrade: {}", err);
+    let stderr = bm_run_fail(tmp.path(), &["teams", "sync"]);
+    assert!(stderr.contains("bm upgrade"), "Should suggest bm upgrade: {}", stderr);
 }
 
 // ── Multi-team and -t flag tests ─────────────────────────────────────
 
 #[test]
 fn multi_team_default_resolution() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo_alpha = setup_team(tmp.path(), "alpha", "scrum");
     add_team_to_config(tmp.path(), "beta", "scrum-compact", false);
 
     // Default team is "alpha" (set by setup_team)
     // Hire into default team (no -t flag)
-    bm::commands::hire::run("architect", Some("alice"), None).unwrap();
-    assert!(team_repo_alpha.join("team/architect-alice").is_dir());
+    bm_run(tmp.path(), &["hire", "architect", "--name", "alice"]);
+    assert!(team_repo_alpha.join("members/architect-alice").is_dir());
 }
 
 #[test]
 fn team_flag_overrides_default() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "alpha", "scrum");
     let team_repo_beta = add_team_to_config(tmp.path(), "beta", "scrum-compact", false);
 
     // Use -t to target non-default team
-    bm::commands::hire::run("superman", Some("clark"), Some("beta")).unwrap();
+    bm_hire(tmp.path(), "superman", "clark", "beta");
 
     // Verify member landed in beta, not alpha
-    assert!(team_repo_beta.join("team/superman-clark").is_dir());
+    assert!(team_repo_beta.join("members/superman-clark").is_dir());
 }
 
 #[test]
 fn team_flag_nonexistent_errors() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "alpha", "scrum");
 
-    let result = bm::commands::hire::run("architect", Some("bob"), Some("nonexistent"));
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("nonexistent"));
-    assert!(err.contains("alpha")); // lists available teams
+    let stderr = bm_run_fail(
+        tmp.path(),
+        &["hire", "architect", "--name", "bob", "-t", "nonexistent"],
+    );
+    assert!(stderr.contains("nonexistent"));
+    assert!(stderr.contains("alpha")); // lists available teams
 }
 
 // ── Full lifecycle tests ─────────────────────────────────────────────
 
 #[test]
 fn lifecycle_hire_then_sync_no_project() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "lifecycle-team", "scrum");
 
     // Hire two members
-    bm::commands::hire::run("architect", Some("alice"), None).unwrap();
-    bm::commands::hire::run("human-assistant", Some("bob"), None).unwrap();
+    bm_hire(tmp.path(), "architect", "alice", "lifecycle-team");
+    bm_hire(tmp.path(), "human-assistant", "bob", "lifecycle-team");
 
-    // Sync (no projects — no-project mode)
-    bm::commands::teams::sync(false, None).unwrap();
+    // Sync (no projects — submodule model)
+    bm_sync(tmp.path(), "lifecycle-team");
 
-    // Verify workspaces were created (no-project: workspace at {team_dir}/{member}/)
+    // Verify workspaces were created (one workspace per member)
     let team_dir = team_repo.parent().unwrap();
     let alice_ws = team_dir.join("architect-alice");
     let bob_ws = team_dir.join("human-assistant-bob");
 
-    assert!(alice_ws.join(".botminter").is_dir(), "alice should have .botminter/");
-    assert!(bob_ws.join(".botminter").is_dir(), "bob should have .botminter/");
+    // Submodule model: team/ submodule instead of .botminter/
+    assert!(alice_ws.join("team").is_dir(), "alice should have team/ submodule");
+    assert!(bob_ws.join("team").is_dir(), "bob should have team/ submodule");
+    assert!(alice_ws.join(".gitmodules").exists(), "alice should have .gitmodules");
+    assert!(bob_ws.join(".gitmodules").exists(), "bob should have .gitmodules");
 
-    // Verify surfaced files
-    assert!(alice_ws.join("PROMPT.md").exists(), "alice should have PROMPT.md");
-    assert!(alice_ws.join("CLAUDE.md").exists(), "alice should have CLAUDE.md");
-    assert!(alice_ws.join("ralph.yml").exists(), "alice should have ralph.yml");
-    assert!(alice_ws.join(".gitignore").exists(), "alice should have .gitignore");
-    assert!(alice_ws.join(".claude").is_dir(), "alice should have .claude/");
+    // Verify team submodule has member config
+    assert!(
+        alice_ws.join("team/members/architect-alice").is_dir(),
+        "alice team submodule should contain member dir"
+    );
+    assert!(
+        bob_ws.join("team/members/human-assistant-bob").is_dir(),
+        "bob team submodule should contain member dir"
+    );
 }
 
 #[test]
 fn lifecycle_hire_project_add_then_sync() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "proj-team", "scrum");
 
@@ -549,131 +647,81 @@ fn lifecycle_hire_project_add_then_sync() {
     git(&fork_repo, &["commit", "-m", "init"]);
 
     // Hire a member
-    bm::commands::hire::run("architect", Some("alice"), None).unwrap();
+    bm_hire(tmp.path(), "architect", "alice", "proj-team");
 
     // Add the project (use local path as fork URL)
-    bm::commands::projects::add(&fork_repo.to_string_lossy(), None).unwrap();
+    bm_add_project(tmp.path(), &fork_repo.to_string_lossy(), "proj-team");
 
     // Sync
-    bm::commands::teams::sync(false, None).unwrap();
+    bm_sync(tmp.path(), "proj-team");
 
-    // Verify workspace: {team_dir}/architect-alice/fake-fork/
+    // Submodule model: one workspace per member, project as submodule
     let team_dir = team_repo.parent().unwrap();
-    let ws = team_dir.join("architect-alice").join("fake-fork");
+    let ws = team_dir.join("architect-alice");
 
-    assert!(ws.join(".botminter").is_dir(), "workspace should have .botminter/");
-    assert!(ws.join("PROMPT.md").exists(), "workspace should have PROMPT.md");
-    assert!(ws.join("CLAUDE.md").exists(), "workspace should have CLAUDE.md");
-    assert!(ws.join("ralph.yml").exists(), "workspace should have ralph.yml");
-    assert!(ws.join(".gitignore").exists(), "workspace should have .gitignore");
-    assert!(ws.join(".claude").is_dir(), "workspace should have .claude/");
-    assert!(ws.join("README.md").exists(), "workspace should have target project content");
+    assert!(ws.join("team").is_dir(), "workspace should have team/ submodule");
+    assert!(ws.join(".gitmodules").exists(), "workspace should have .gitmodules");
+    assert!(
+        ws.join("projects/fake-fork").is_dir(),
+        "workspace should have projects/fake-fork/ submodule"
+    );
+    assert!(
+        ws.join("projects/fake-fork/README.md").exists(),
+        "project submodule should have fork content"
+    );
 }
 
 #[test]
 fn lifecycle_sync_idempotent() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "idem-team", "scrum");
 
-    bm::commands::hire::run("architect", Some("alice"), None).unwrap();
+    bm_hire(tmp.path(), "architect", "alice", "idem-team");
 
     // Sync twice — should not error
-    bm::commands::teams::sync(false, None).unwrap();
-    bm::commands::teams::sync(false, None).unwrap();
+    bm_sync(tmp.path(), "idem-team");
+    bm_sync(tmp.path(), "idem-team");
 }
 
 // ── Roles list test ──────────────────────────────────────────────────
 
 #[test]
 fn roles_list_shows_profile_roles() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "test-team", "scrum");
 
     // Should not error — just prints a table to stdout
-    bm::commands::roles::list(None).unwrap();
+    bm_run(tmp.path(), &["roles", "list"]);
 }
 
 // ── Members list test ────────────────────────────────────────────────
 
 #[test]
 fn members_list_shows_hired_members() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "test-team", "scrum");
 
-    bm::commands::hire::run("architect", Some("alice"), None).unwrap();
+    bm_hire(tmp.path(), "architect", "alice", "test-team");
 
     // Should not error — prints table with alice
-    bm::commands::members::list(None).unwrap();
+    bm_run(tmp.path(), &["members", "list"]);
 }
 
 #[test]
 fn members_list_empty_team() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "test-team", "scrum");
 
     // Should not error — prints "no members" message
-    bm::commands::members::list(None).unwrap();
+    bm_run(tmp.path(), &["members", "list"]);
 }
 
 // ── Member-discovery regression tests ─────────────────────────────────
 //
 // These tests document the bug where `bm status` (and `bm start`) scan
 // `team.path.join("team")` — the team repo root — instead of
-// `team.path.join("team").join("team")` where hired members live.
+// `team.path.join("team").join("members")` where hired members live.
 // Structural dirs (knowledge/, invariants/, etc.) get listed as members.
-//
-// These tests use subprocess-only setup (no env::set_var) to avoid poisoning
-// ENV_MUTEX when #[should_panic] catches the panic.
-// Remove #[should_panic] after task-09 fixes the bug.
-
-/// Sets up a team repo without calling `env::set_var("HOME", ...)`.
-///
-/// Use this for `#[should_panic]` tests that must not poison the shared
-/// `ENV_MUTEX`. All `bm` CLI calls should be done via `Command::new()`
-/// with `.env("HOME", tmp)` instead of calling library functions directly.
-fn setup_team_for_subprocess(tmp: &Path, team_name: &str, profile_name: &str) -> PathBuf {
-    let workzone = tmp.join("workspaces");
-    let team_dir = workzone.join(team_name);
-    let team_repo = team_dir.join("team");
-
-    fs::create_dir_all(&team_repo).unwrap();
-
-    git(&team_repo, &["init", "-b", "main"]);
-    git(&team_repo, &["config", "user.email", "test@botminter.test"]);
-    git(&team_repo, &["config", "user.name", "BM Test"]);
-
-    profile::extract_profile_to(profile_name, &team_repo).unwrap();
-
-    fs::create_dir_all(team_repo.join("team")).unwrap();
-    fs::create_dir_all(team_repo.join("projects")).unwrap();
-    fs::write(team_repo.join("team/.gitkeep"), "").unwrap();
-    fs::write(team_repo.join("projects/.gitkeep"), "").unwrap();
-
-    git(&team_repo, &["add", "-A"]);
-    git(&team_repo, &["commit", "-m", "feat: init team repo"]);
-
-    let config = BotminterConfig {
-        workzone: workzone.clone(),
-        default_team: Some(team_name.to_string()),
-        teams: vec![TeamEntry {
-            name: team_name.to_string(),
-            path: team_dir,
-            profile: profile_name.to_string(),
-            github_repo: String::new(),
-            credentials: Credentials::default(),
-        }],
-    };
-
-    let config_path = tmp.join(".botminter").join("config.yml");
-    bm::config::save_to(&config_path, &config).unwrap();
-
-    // NOTE: Does NOT set HOME — caller must pass HOME to subprocesses
-    team_repo
-}
 
 /// Extracts member names from CLI table output.
 ///
@@ -705,43 +753,21 @@ fn extract_member_names(output: &str) -> Vec<String> {
 
 /// Schema-level structural directories that exist at the team repo root.
 /// These should NEVER appear as member entries.
-const STRUCTURAL_DIRS: &[&str] = &["knowledge", "invariants", "projects", "agent"];
+const STRUCTURAL_DIRS: &[&str] = &["knowledge", "invariants", "projects", "coding-agent"];
 
 #[test]
 fn status_only_lists_hired_members() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "regression-team", "scrum");
+    setup_team(tmp.path(), "regression-team", "scrum");
 
-    // Dynamically select a valid role from the profile
-    let roles = profile::list_roles("scrum").unwrap();
-    let role = &roles[0];
+    let role = "architect";
     let expected_member = format!("{}-alice", role);
 
     // Hire one member via subprocess
-    let hire_out = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["hire", role, "--name", "alice", "-t", "regression-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm hire");
-
-    assert!(
-        hire_out.status.success(),
-        "bm hire should exit 0, stderr: {}",
-        String::from_utf8_lossy(&hire_out.stderr)
-    );
+    bm_hire(tmp.path(), role, "alice", "regression-team");
 
     // Run bm status via CLI subprocess to capture stdout
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["status", "-t", "regression-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm status");
-
-    assert!(
-        output.status.success(),
-        "bm status should exit 0, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = bm_run(tmp.path(), &["status", "-t", "regression-team"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let members = extract_member_names(&stdout);
@@ -771,50 +797,18 @@ fn status_only_lists_hired_members() {
 #[test]
 fn status_matches_members_list() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "match-team", "scrum");
+    setup_team(tmp.path(), "match-team", "scrum");
 
-    // Dynamically select a valid role from the profile
-    let roles = profile::list_roles("scrum").unwrap();
-    let role = &roles[0];
+    let role = "architect";
 
     // Hire one member via subprocess
-    let hire_out = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["hire", role, "--name", "alice", "-t", "match-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm hire");
-
-    assert!(
-        hire_out.status.success(),
-        "bm hire should exit 0, stderr: {}",
-        String::from_utf8_lossy(&hire_out.stderr)
-    );
+    bm_hire(tmp.path(), role, "alice", "match-team");
 
     // Run bm status
-    let status_out = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["status", "-t", "match-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm status");
-
-    assert!(
-        status_out.status.success(),
-        "bm status should exit 0, stderr: {}",
-        String::from_utf8_lossy(&status_out.stderr)
-    );
+    let status_out = bm_run(tmp.path(), &["status", "-t", "match-team"]);
 
     // Run bm members list
-    let members_out = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["members", "list", "-t", "match-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm members list");
-
-    assert!(
-        members_out.status.success(),
-        "bm members list should exit 0, stderr: {}",
-        String::from_utf8_lossy(&members_out.stderr)
-    );
+    let members_out = bm_run(tmp.path(), &["members", "list", "-t", "match-team"]);
 
     let status_members = extract_member_names(&String::from_utf8_lossy(&status_out.stdout));
     let members_list = extract_member_names(&String::from_utf8_lossy(&members_out.stdout));
@@ -946,6 +940,7 @@ fn complete_bash(args: &[&str], home: &Path) -> String {
     let output = Command::new(env!("CARGO_BIN_EXE_bm"))
         .env("COMPLETE", "bash")
         .env("HOME", home)
+        .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("_CLAP_COMPLETE_INDEX", index.to_string())
         .env("_CLAP_COMPLETE_COMP_TYPE", "9") // Normal completion
         .env("_CLAP_COMPLETE_SPACE", "true")
@@ -959,24 +954,25 @@ fn complete_bash(args: &[&str], home: &Path) -> String {
 #[test]
 fn dynamic_completions_include_profile_names() {
     let tmp = tempfile::tempdir().unwrap();
-    // No config needed — profiles are embedded in the binary.
+    // Extract profiles to disk so completions can find them
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    fs::create_dir_all(&profiles_path).unwrap();
+    profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
     let completions = complete_bash(&["bm", "profiles", "describe", ""], tmp.path());
-    // Embedded profiles should appear as candidates
-    assert!(
-        completions.contains("scrum"),
-        "profiles describe should suggest 'scrum', got:\n{}",
-        completions
-    );
-    assert!(
-        completions.contains("scrum-compact"),
-        "profiles describe should suggest 'scrum-compact', got:\n{}",
-        completions
-    );
+    // All embedded profiles should appear as candidates
+    for name in profile::list_embedded_profiles() {
+        assert!(
+            completions.contains(&name),
+            "profiles describe should suggest '{}', got:\n{}",
+            name,
+            completions
+        );
+    }
 }
 
 #[test]
 fn dynamic_completions_include_team_names() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_name = "test-completions-team";
     setup_team(tmp.path(), team_name, "scrum-compact");
@@ -992,7 +988,6 @@ fn dynamic_completions_include_team_names() {
 
 #[test]
 fn dynamic_completions_include_role_names() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "roles-team", "scrum");
 
@@ -1006,12 +1001,11 @@ fn dynamic_completions_include_role_names() {
 
 #[test]
 fn dynamic_completions_include_member_names() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "members-team", "scrum");
 
     // Create a hired member directory
-    let member_dir = team_repo.join("team").join("architect-01");
+    let member_dir = team_repo.join("members").join("architect-01");
     fs::create_dir_all(&member_dir).unwrap();
     fs::write(member_dir.join(".botminter.yml"), "role: architect\n").unwrap();
 
@@ -1050,61 +1044,23 @@ fn dynamic_completions_include_subcommands() {
     );
 }
 
-// ── Helper: create fake fork repo ────────────────────────────────────
-
-/// Creates a local git repository that can be used as a project fork URL.
-fn create_fake_fork(tmp: &Path, name: &str) -> PathBuf {
-    let fork = tmp.join(name);
-    fs::create_dir_all(&fork).unwrap();
-    git(&fork, &["init", "-b", "main"]);
-    git(&fork, &["config", "user.email", "test@botminter.test"]);
-    git(&fork, &["config", "user.name", "BM Test"]);
-    fs::write(fork.join("README.md"), format!("# {}", name)).unwrap();
-    git(&fork, &["add", "-A"]);
-    git(&fork, &["commit", "-m", "init"]);
-    fork
-}
-
 // ── Cross-command consistency tests ──────────────────────────────────
 
 /// Verifies that `bm status` and `bm members list` report the same members.
 #[test]
 fn status_and_members_list_agree() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "agree-team", "scrum");
+    setup_team(tmp.path(), "agree-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
-    let role_a = &roles[0];
-    let role_b = if roles.len() > 1 { &roles[1] } else { &roles[0] };
+    let role_a = "architect";
+    let role_b = "human-assistant";
 
-    for (role, name) in [(role_a.as_str(), "alice"), (role_b.as_str(), "bob")] {
-        let out = Command::new(env!("CARGO_BIN_EXE_bm"))
-            .args(["hire", role, "--name", name, "-t", "agree-team"])
-            .env("HOME", tmp.path())
-            .output()
-            .expect("failed to run bm hire");
-        assert!(
-            out.status.success(),
-            "bm hire {} --name {} failed: {}",
-            role,
-            name,
-            String::from_utf8_lossy(&out.stderr)
-        );
+    for (role, name) in [(role_a, "alice"), (role_b, "bob")] {
+        bm_hire(tmp.path(), role, name, "agree-team");
     }
 
-    let status_out = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["status", "-t", "agree-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm status");
-    assert!(status_out.status.success());
-
-    let members_out = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["members", "list", "-t", "agree-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm members list");
-    assert!(members_out.status.success());
+    let status_out = bm_run(tmp.path(), &["status", "-t", "agree-team"]);
+    let members_out = bm_run(tmp.path(), &["members", "list", "-t", "agree-team"]);
 
     let status_members = extract_member_names(&String::from_utf8_lossy(&status_out.stdout));
     let members_list = extract_member_names(&String::from_utf8_lossy(&members_out.stdout));
@@ -1120,20 +1076,12 @@ fn status_and_members_list_agree() {
 #[test]
 fn roles_list_matches_profile_describe() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "roles-match-team", "scrum");
+    setup_team(tmp.path(), "roles-match-team", "scrum");
 
-    let expected_roles = profile::list_roles("scrum").unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    let expected_roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["roles", "list", "-t", "roles-match-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm roles list");
-    assert!(
-        output.status.success(),
-        "bm roles list failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = bm_run(tmp.path(), &["roles", "list", "-t", "roles-match-team"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     for role in &expected_roles {
@@ -1149,28 +1097,13 @@ fn roles_list_matches_profile_describe() {
 #[test]
 fn hire_then_members_list_shows_role() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "hire-shows-team", "scrum");
+    setup_team(tmp.path(), "hire-shows-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
-    let role = &roles[0];
+    let role = "architect";
 
-    let hire = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["hire", role, "--name", "charlie", "-t", "hire-shows-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm hire");
-    assert!(
-        hire.status.success(),
-        "bm hire failed: {}",
-        String::from_utf8_lossy(&hire.stderr)
-    );
+    bm_hire(tmp.path(), role, "charlie", "hire-shows-team");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["members", "list", "-t", "hire-shows-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm members list");
-    assert!(output.status.success());
+    let output = bm_run(tmp.path(), &["members", "list", "-t", "hire-shows-team"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let expected_member = format!("{}-charlie", role);
@@ -1182,7 +1115,7 @@ fn hire_then_members_list_shows_role() {
         stdout
     );
     assert!(
-        stdout.contains(role.as_str()),
+        stdout.contains(role),
         "members list should show role '{}', output:\n{}",
         role,
         stdout
@@ -1193,95 +1126,103 @@ fn hire_then_members_list_shows_role() {
 
 #[test]
 fn hire_multiple_roles_then_sync() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "multi-hire-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
     let picks: Vec<&str> = (0..3).map(|i| roles[i % roles.len()].as_str()).collect();
     let names = ["m1", "m2", "m3"];
 
     for (role, name) in picks.iter().zip(names.iter()) {
-        bm::commands::hire::run(role, Some(name), None).unwrap();
+        bm_hire(tmp.path(), role, name, "multi-hire-team");
     }
 
     let fork_a = create_fake_fork(tmp.path(), "proj-alpha");
     let fork_b = create_fake_fork(tmp.path(), "proj-beta");
-    bm::commands::projects::add(&fork_a.to_string_lossy(), None).unwrap();
-    bm::commands::projects::add(&fork_b.to_string_lossy(), None).unwrap();
+    bm_add_project(tmp.path(), &fork_a.to_string_lossy(), "multi-hire-team");
+    bm_add_project(tmp.path(), &fork_b.to_string_lossy(), "multi-hire-team");
 
-    bm::commands::teams::sync(false, None).unwrap();
+    bm_sync(tmp.path(), "multi-hire-team");
 
     let team_dir = team_repo.parent().unwrap();
     for (role, name) in picks.iter().zip(names.iter()) {
         let member_dir = format!("{}-{}", role, name);
-        let ws_alpha = team_dir.join(&member_dir).join("proj-alpha");
-        let ws_beta = team_dir.join(&member_dir).join("proj-beta");
+        let ws = team_dir.join(&member_dir);
 
+        // Submodule model: one workspace per member with team/ and projects/
         assert!(
-            ws_alpha.join(".botminter").is_dir(),
-            "{}/proj-alpha should have .botminter/",
+            ws.join("team").is_dir(),
+            "{} should have team/ submodule",
             member_dir
         );
         assert!(
-            ws_alpha.join(".claude").is_dir(),
-            "{}/proj-alpha should have .claude/",
+            ws.join("projects/proj-alpha").is_dir(),
+            "{} should have projects/proj-alpha/ submodule",
             member_dir
         );
         assert!(
-            ws_beta.join(".botminter").is_dir(),
-            "{}/proj-beta should have .botminter/",
+            ws.join("projects/proj-beta").is_dir(),
+            "{} should have projects/proj-beta/ submodule",
             member_dir
         );
     }
 }
 
 #[test]
-fn sync_with_multiple_projects_creates_project_workspaces() {
-    let _lock = ENV_MUTEX.lock().unwrap();
+fn sync_with_multiple_projects_creates_project_submodules() {
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "proj-ws-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
     let role = &roles[0];
 
-    bm::commands::hire::run(role, Some("alice"), None).unwrap();
+    bm_hire(tmp.path(), role, "alice", "proj-ws-team");
 
     let fork_a = create_fake_fork(tmp.path(), "project-one");
     let fork_b = create_fake_fork(tmp.path(), "project-two");
-    bm::commands::projects::add(&fork_a.to_string_lossy(), None).unwrap();
-    bm::commands::projects::add(&fork_b.to_string_lossy(), None).unwrap();
+    bm_add_project(tmp.path(), &fork_a.to_string_lossy(), "proj-ws-team");
+    bm_add_project(tmp.path(), &fork_b.to_string_lossy(), "proj-ws-team");
 
-    bm::commands::teams::sync(false, None).unwrap();
+    bm_sync(tmp.path(), "proj-ws-team");
 
     let team_dir = team_repo.parent().unwrap();
     let member = format!("{}-alice", role);
+    let ws = team_dir.join(&member);
+
+    // Submodule model: one workspace with team/ and projects/ submodules
+    assert!(ws.join("team").is_dir(), "{} should have team/ submodule", member);
 
     for proj in &["project-one", "project-two"] {
-        let ws = team_dir.join(&member).join(proj);
-        assert!(ws.join(".botminter").is_dir(), "{}/{} should have .botminter/", member, proj);
-        assert!(ws.join("PROMPT.md").exists(), "{}/{} should have PROMPT.md", member, proj);
-        assert!(ws.join("CLAUDE.md").exists(), "{}/{} should have CLAUDE.md", member, proj);
-        assert!(ws.join("ralph.yml").exists(), "{}/{} should have ralph.yml", member, proj);
-        assert!(ws.join(".claude").is_dir(), "{}/{} should have .claude/", member, proj);
-        assert!(ws.join("README.md").exists(), "{}/{} should have project content", member, proj);
+        assert!(
+            ws.join(format!("projects/{}", proj)).is_dir(),
+            "{} should have projects/{} submodule",
+            member,
+            proj
+        );
+        assert!(
+            ws.join(format!("projects/{}/README.md", proj)).exists(),
+            "projects/{} should have fork content",
+            proj
+        );
     }
 }
 
 #[test]
 fn hire_same_role_twice_auto_suffix() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "suffix-dyn-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
     let role = &roles[0];
 
-    bm::commands::hire::run(role, None, None).unwrap();
-    bm::commands::hire::run(role, None, None).unwrap();
+    bm_run(tmp.path(), &["hire", role, "-t", "suffix-dyn-team"]);
+    bm_run(tmp.path(), &["hire", role, "-t", "suffix-dyn-team"]);
 
-    let m1 = team_repo.join(format!("team/{}-01", role));
-    let m2 = team_repo.join(format!("team/{}-02", role));
+    let m1 = team_repo.join(format!("members/{}-01", role));
+    let m2 = team_repo.join(format!("members/{}-02", role));
 
     assert!(m1.is_dir(), "{}-01 should exist", role);
     assert!(m2.is_dir(), "{}-02 should exist", role);
@@ -1293,37 +1234,37 @@ fn hire_same_role_twice_auto_suffix() {
 
 #[test]
 fn sync_after_second_hire_creates_new_workspace() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "incr-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
     let role_a = &roles[0];
 
-    bm::commands::hire::run(role_a, Some("first"), None).unwrap();
-    bm::commands::teams::sync(false, None).unwrap();
+    bm_hire(tmp.path(), role_a, "first", "incr-team");
+    bm_sync(tmp.path(), "incr-team");
 
     let team_dir = team_repo.parent().unwrap();
     let first_ws = team_dir.join(format!("{}-first", role_a));
     assert!(
-        first_ws.join(".botminter").is_dir(),
-        "first workspace should exist after initial sync"
+        first_ws.join("team").is_dir(),
+        "first workspace should have team/ submodule after initial sync"
     );
 
     // Hire second member (different role if available)
     let role_b = if roles.len() > 1 { &roles[1] } else { role_a };
-    bm::commands::hire::run(role_b, Some("second"), None).unwrap();
+    bm_hire(tmp.path(), role_b, "second", "incr-team");
 
-    bm::commands::teams::sync(false, None).unwrap();
+    bm_sync(tmp.path(), "incr-team");
 
     let second_ws = team_dir.join(format!("{}-second", role_b));
     assert!(
-        second_ws.join(".botminter").is_dir(),
-        "second workspace should exist after incremental sync"
+        second_ws.join("team").is_dir(),
+        "second workspace should have team/ submodule after incremental sync"
     );
     assert!(
-        first_ws.join(".botminter").is_dir(),
-        "first workspace should still exist after incremental sync"
+        first_ws.join("team").is_dir(),
+        "first workspace should still have team/ submodule after incremental sync"
     );
 }
 
@@ -1332,14 +1273,13 @@ fn sync_after_second_hire_creates_new_workspace() {
 #[test]
 fn status_missing_team_repo_dir_errors() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "phantom-team", "scrum");
+    setup_team(tmp.path(), "phantom-team", "scrum");
 
     // Delete the team directory entirely
     fs::remove_dir_all(tmp.path().join("workspaces/phantom-team")).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
+    let output = bm_cmd(tmp.path())
         .args(["status", "-t", "phantom-team"])
-        .env("HOME", tmp.path())
         .output()
         .expect("failed to run bm status");
 
@@ -1358,11 +1298,11 @@ fn status_missing_team_repo_dir_errors() {
 
 #[test]
 fn hire_with_corrupt_manifest_errors() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "corrupt-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
     let role = &roles[0];
 
     // Corrupt the manifest with invalid YAML
@@ -1370,24 +1310,24 @@ fn hire_with_corrupt_manifest_errors() {
     git(&team_repo, &["add", "botminter.yml"]);
     git(&team_repo, &["commit", "-m", "chore: corrupt manifest"]);
 
-    let result = bm::commands::hire::run(role, Some("alice"), None);
+    let stderr = bm_run_fail(tmp.path(), &["hire", role, "--name", "alice"]);
     assert!(
-        result.is_err(),
+        !stderr.is_empty(),
         "hire should error with corrupt manifest"
     );
 }
 
 #[test]
 fn sync_missing_workzone_creates_it() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "recreate-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
     let role = &roles[0];
 
-    bm::commands::hire::run(role, Some("alice"), None).unwrap();
-    bm::commands::teams::sync(false, None).unwrap();
+    bm_hire(tmp.path(), role, "alice", "recreate-team");
+    bm_sync(tmp.path(), "recreate-team");
 
     let member_dir = format!("{}-alice", role);
     let ws = tmp.path().join("workspaces/recreate-team").join(&member_dir);
@@ -1398,10 +1338,10 @@ fn sync_missing_workzone_creates_it() {
     assert!(!ws.exists(), "workspace should be deleted");
 
     // Sync again — should recreate the missing workspace
-    bm::commands::teams::sync(false, None).unwrap();
+    bm_sync(tmp.path(), "recreate-team");
     assert!(
-        ws.join(".botminter").is_dir(),
-        "sync should recreate missing workspace"
+        ws.join("team").is_dir(),
+        "sync should recreate missing workspace with team/ submodule"
     );
 }
 
@@ -1417,43 +1357,32 @@ fn teams_list_with_empty_config() {
     let config_path = tmp.path().join(".botminter/config.yml");
     bm::config::save_to(&config_path, &config).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["teams", "list"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm teams list");
-
-    assert!(
-        output.status.success(),
-        "teams list should succeed with empty config, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    bm_run(tmp.path(), &["teams", "list"]);
 }
 
 #[test]
 fn projects_add_invalid_url_format() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "url-team", "scrum");
 
     // URL with no typical repo path — should derive a name or error helpfully
-    let result = bm::commands::projects::add("https://example.com", None);
+    let output = bm_cmd(tmp.path())
+        .args(["projects", "add", "https://example.com"])
+        .output()
+        .expect("failed to run bm projects add");
 
-    match result {
-        Ok(()) => {
-            // Derived a project name successfully — verify manifest updated
-            let team_repo = tmp.path().join("workspaces/url-team/team");
-            let manifest = fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
-            assert!(
-                manifest.contains("example"),
-                "manifest should reference the derived project name"
-            );
-        }
-        Err(e) => {
-            // Error message should be helpful, not empty
-            let msg = e.to_string();
-            assert!(!msg.is_empty(), "error message should not be empty");
-        }
+    if output.status.success() {
+        // Derived a project name successfully — verify manifest updated
+        let team_repo = tmp.path().join("workspaces/url-team/team");
+        let manifest = fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
+        assert!(
+            manifest.contains("example"),
+            "manifest should reference the derived project name"
+        );
+    } else {
+        // Error message should be helpful, not empty
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(!stderr.is_empty(), "error message should not be empty");
     }
 }
 
@@ -1462,31 +1391,16 @@ fn projects_add_invalid_url_format() {
 #[test]
 fn status_table_has_expected_columns() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "status-cols-team", "scrum");
+    setup_team(tmp.path(), "status-cols-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
-    let role = &roles[0];
+    let role = "architect";
 
-    let hire = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["hire", role, "--name", "alice", "-t", "status-cols-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm hire");
-    assert!(hire.status.success());
+    bm_hire(tmp.path(), role, "alice", "status-cols-team");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["status", "-t", "status-cols-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm status");
-    assert!(
-        output.status.success(),
-        "bm status failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = bm_run(tmp.path(), &["status", "-t", "status-cols-team"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    for header in &["Member", "Role", "Status", "Started", "PID"] {
+    for header in &["Member", "Role", "Status", "Branch", "Started", "PID"] {
         assert!(
             stdout.contains(header),
             "status output should contain '{}' column header, output:\n{}",
@@ -1499,28 +1413,13 @@ fn status_table_has_expected_columns() {
 #[test]
 fn members_list_table_has_expected_columns() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "members-cols-team", "scrum");
+    setup_team(tmp.path(), "members-cols-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
-    let role = &roles[0];
+    let role = "architect";
 
-    let hire = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["hire", role, "--name", "alice", "-t", "members-cols-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm hire");
-    assert!(hire.status.success());
+    bm_hire(tmp.path(), role, "alice", "members-cols-team");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["members", "list", "-t", "members-cols-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm members list");
-    assert!(
-        output.status.success(),
-        "bm members list failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = bm_run(tmp.path(), &["members", "list", "-t", "members-cols-team"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     for header in &["Member", "Role", "Status"] {
@@ -1537,13 +1436,12 @@ fn members_list_table_has_expected_columns() {
 
 #[test]
 fn knowledge_list_shows_files_at_all_scopes() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
     // Team-level knowledge already exists from profile extraction
     // Add project-level and member-level knowledge
-    let member_dir = team_repo.join("team/architect-01");
+    let member_dir = team_repo.join("members/architect-01");
     fs::create_dir_all(&member_dir).unwrap();
     fs::create_dir_all(member_dir.join("knowledge")).unwrap();
     fs::write(
@@ -1561,24 +1459,20 @@ fn knowledge_list_shows_files_at_all_scopes() {
     git(&team_repo, &["commit", "-m", "feat: add member knowledge"]);
 
     // Run knowledge list
-    let result = bm::commands::knowledge::list(None, None);
-    assert!(result.is_ok(), "knowledge list failed: {:?}", result.err());
+    bm_run(tmp.path(), &["knowledge", "list"]);
 }
 
 #[test]
 fn knowledge_list_scope_filter() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let _team_repo = setup_team(tmp.path(), "test-team", "scrum");
+    setup_team(tmp.path(), "test-team", "scrum");
 
     // Team scope only
-    let result = bm::commands::knowledge::list(None, Some("team"));
-    assert!(result.is_ok());
+    bm_run(tmp.path(), &["knowledge", "list", "--scope", "team"]);
 }
 
 #[test]
 fn knowledge_show_displays_file_content() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
@@ -1589,41 +1483,33 @@ fn knowledge_show_displays_file_content() {
     )
     .unwrap();
 
-    let result = bm::commands::knowledge::show("knowledge/test-file.md", None);
-    assert!(result.is_ok(), "knowledge show failed: {:?}", result.err());
+    bm_run(tmp.path(), &["knowledge", "show", "knowledge/test-file.md"]);
 }
 
 #[test]
 fn knowledge_show_file_not_found() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let _team_repo = setup_team(tmp.path(), "test-team", "scrum");
+    setup_team(tmp.path(), "test-team", "scrum");
 
-    let result = bm::commands::knowledge::show("knowledge/nonexistent.md", None);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("File not found"), "Got: {}", err);
+    let stderr = bm_run_fail(tmp.path(), &["knowledge", "show", "knowledge/nonexistent.md"]);
+    assert!(stderr.contains("File not found"), "Got: {}", stderr);
 }
 
 #[test]
 fn knowledge_show_path_outside_knowledge_dir() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let _team_repo = setup_team(tmp.path(), "test-team", "scrum");
+    setup_team(tmp.path(), "test-team", "scrum");
 
-    let result = bm::commands::knowledge::show("botminter.yml", None);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
+    let stderr = bm_run_fail(tmp.path(), &["knowledge", "show", "botminter.yml"]);
     assert!(
-        err.contains("not within a knowledge or invariant directory"),
+        stderr.contains("not within a knowledge or invariant directory"),
         "Got: {}",
-        err
+        stderr
     );
 }
 
 #[test]
 fn knowledge_v1_team_blocked() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
@@ -1635,18 +1521,15 @@ fn knowledge_v1_team_blocked() {
     git(&team_repo, &["add", "botminter.yml"]);
     git(&team_repo, &["commit", "-m", "chore: downgrade to v1"]);
 
-    let result = bm::commands::knowledge::list(None, None);
-    assert!(result.is_err());
-    let err = result.unwrap_err().to_string();
-    assert!(err.contains("requires schema 1.0"), "Got: {}", err);
-    assert!(err.contains("bm upgrade"), "Got: {}", err);
+    let stderr = bm_run_fail(tmp.path(), &["knowledge", "list"]);
+    assert!(stderr.contains("requires schema 1.0"), "Got: {}", stderr);
+    assert!(stderr.contains("bm upgrade"), "Got: {}", stderr);
 }
 
 // ── Schema init tests ─────────────────────────────────────────────
 
 #[test]
 fn init_creates_skills_and_formations_dirs() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
@@ -1675,7 +1558,6 @@ fn init_creates_skills_and_formations_dirs() {
 
 #[test]
 fn botminter_yml_has_correct_schema() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
@@ -1691,7 +1573,6 @@ fn botminter_yml_has_correct_schema() {
 
 #[test]
 fn formation_list_from_team_repo() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
@@ -1702,7 +1583,6 @@ fn formation_list_from_team_repo() {
 
 #[test]
 fn formation_load_local() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
@@ -1713,7 +1593,6 @@ fn formation_load_local() {
 
 #[test]
 fn formation_resolve_default() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
@@ -1724,7 +1603,6 @@ fn formation_resolve_default() {
 
 #[test]
 fn formation_v1_gate_blocks_non_default() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
@@ -1765,9 +1643,8 @@ impl DaemonGuard {
 impl Drop for DaemonGuard {
     fn drop(&mut self) {
         // Try graceful stop via bm daemon stop
-        let _ = Command::new(env!("CARGO_BIN_EXE_bm"))
+        let _ = bm_cmd(&self.home)
             .args(["daemon", "stop", "-t", &self.team_name])
-            .env("HOME", &self.home)
             .output();
 
         // Force-kill via PID file if still alive
@@ -1798,24 +1675,15 @@ impl Drop for DaemonGuard {
 #[test]
 fn daemon_start_creates_pid_and_config_files() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "daemon-test", "scrum");
+    setup_team(tmp.path(), "daemon-test", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-test");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["daemon", "start", "--mode", "poll", "-t", "daemon-test"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm daemon start");
+    let output = bm_run(
+        tmp.path(),
+        &["daemon", "start", "--mode", "poll", "-t", "daemon-test"],
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    assert!(
-        output.status.success(),
-        "bm daemon start should exit 0, stdout: {}, stderr: {}",
-        stdout,
-        stderr
-    );
     assert!(stdout.contains("Daemon started"), "Should print started message: {}", stdout);
 
     // Verify PID file exists
@@ -1836,26 +1704,19 @@ fn daemon_start_creates_pid_and_config_files() {
 #[test]
 fn daemon_status_shows_running() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "daemon-status-test", "scrum");
+    setup_team(tmp.path(), "daemon-status-test", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-status-test");
 
     // Start daemon
-    let start = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["daemon", "start", "--mode", "poll", "-t", "daemon-status-test"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to start daemon");
-    assert!(start.status.success(), "daemon start failed: {}", String::from_utf8_lossy(&start.stderr));
+    bm_run(
+        tmp.path(),
+        &["daemon", "start", "--mode", "poll", "-t", "daemon-status-test"],
+    );
 
     // Check status
-    let status = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["daemon", "status", "-t", "daemon-status-test"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to get daemon status");
+    let output = bm_run(tmp.path(), &["daemon", "status", "-t", "daemon-status-test"]);
 
-    let stdout = String::from_utf8_lossy(&status.stdout);
-    assert!(status.status.success(), "daemon status should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("running"), "Should show running: {}", stdout);
     assert!(stdout.contains("poll"), "Should show mode: {}", stdout);
 }
@@ -1863,26 +1724,19 @@ fn daemon_status_shows_running() {
 #[test]
 fn daemon_stop_cleans_up() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "daemon-stop-test", "scrum");
+    setup_team(tmp.path(), "daemon-stop-test", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-stop-test");
 
     // Start daemon
-    let start = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["daemon", "start", "--mode", "poll", "-t", "daemon-stop-test"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to start daemon");
-    assert!(start.status.success());
+    bm_run(
+        tmp.path(),
+        &["daemon", "start", "--mode", "poll", "-t", "daemon-stop-test"],
+    );
 
     // Stop daemon
-    let stop = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["daemon", "stop", "-t", "daemon-stop-test"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to stop daemon");
+    let output = bm_run(tmp.path(), &["daemon", "stop", "-t", "daemon-stop-test"]);
 
-    let stdout = String::from_utf8_lossy(&stop.stdout);
-    assert!(stop.status.success(), "daemon stop should exit 0");
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Daemon stopped"), "Should print stopped: {}", stdout);
 
     // Verify cleanup
@@ -1895,42 +1749,29 @@ fn daemon_stop_cleans_up() {
 #[test]
 fn daemon_start_already_running_errors() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "daemon-dup-test", "scrum");
+    setup_team(tmp.path(), "daemon-dup-test", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-dup-test");
 
     // Start daemon
-    let start1 = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["daemon", "start", "--mode", "poll", "-t", "daemon-dup-test"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to start daemon");
-    assert!(start1.status.success());
+    bm_run(
+        tmp.path(),
+        &["daemon", "start", "--mode", "poll", "-t", "daemon-dup-test"],
+    );
 
     // Try starting again
-    let start2 = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["daemon", "start", "--mode", "poll", "-t", "daemon-dup-test"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run second daemon start");
-
-    assert!(!start2.status.success(), "Second start should fail");
-    let stderr = String::from_utf8_lossy(&start2.stderr);
+    let stderr = bm_run_fail(
+        tmp.path(),
+        &["daemon", "start", "--mode", "poll", "-t", "daemon-dup-test"],
+    );
     assert!(stderr.contains("already running"), "Should say already running: {}", stderr);
 }
 
 #[test]
 fn daemon_stop_not_running_errors() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "daemon-norun-test", "scrum");
+    setup_team(tmp.path(), "daemon-norun-test", "scrum");
 
-    let stop = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["daemon", "stop", "-t", "daemon-norun-test"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run daemon stop");
-
-    assert!(!stop.status.success(), "Stop should fail when not running");
-    let stderr = String::from_utf8_lossy(&stop.stderr);
+    let stderr = bm_run_fail(tmp.path(), &["daemon", "stop", "-t", "daemon-norun-test"]);
     assert!(
         stderr.contains("not running") || stderr.contains("not found"),
         "Should indicate not running: {}",
@@ -1941,23 +1782,18 @@ fn daemon_stop_not_running_errors() {
 #[test]
 fn daemon_status_not_running() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "daemon-nostat-test", "scrum");
+    setup_team(tmp.path(), "daemon-nostat-test", "scrum");
 
-    let status = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["daemon", "status", "-t", "daemon-nostat-test"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run daemon status");
+    let output = bm_run(tmp.path(), &["daemon", "status", "-t", "daemon-nostat-test"]);
 
-    assert!(status.status.success(), "Status should exit 0 even when not running");
-    let stdout = String::from_utf8_lossy(&status.stdout);
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("not running"), "Should say not running: {}", stdout);
 }
 
 #[test]
 fn daemon_v1_team_blocked() {
     let tmp = tempfile::tempdir().unwrap();
-    let team_repo = setup_team_for_subprocess(tmp.path(), "daemon-v1-test", "scrum");
+    let team_repo = setup_team(tmp.path(), "daemon-v1-test", "scrum");
 
     // Downgrade to v1
     let manifest_path = team_repo.join("botminter.yml");
@@ -1967,54 +1803,43 @@ fn daemon_v1_team_blocked() {
     git(&team_repo, &["add", "botminter.yml"]);
     git(&team_repo, &["commit", "-m", "chore: downgrade to v1"]);
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["daemon", "start", "-t", "daemon-v1-test"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run daemon start");
-
-    assert!(!output.status.success(), "Should fail for v1 team");
-    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = bm_run_fail(tmp.path(), &["daemon", "start", "-t", "daemon-v1-test"]);
     assert!(stderr.contains("requires schema 1.0"), "Got: {}", stderr);
 }
 
 #[test]
 fn daemon_webhook_mode_starts_and_stops() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "daemon-wh-test", "scrum");
+    setup_team(tmp.path(), "daemon-wh-test", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-wh-test");
 
-    // Start in webhook mode on a high port to avoid conflicts
-    let start = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args([
+    let port = get_free_port();
+
+    // Start in webhook mode on an OS-assigned free port
+    let output = bm_run(
+        tmp.path(),
+        &[
             "daemon", "start",
             "--mode", "webhook",
-            "--port", "19484",
+            "--port", &port.to_string(),
             "-t", "daemon-wh-test",
-        ])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to start daemon");
-
-    let stdout = String::from_utf8_lossy(&start.stdout);
-    assert!(
-        start.status.success(),
-        "Webhook daemon start should exit 0, stderr: {}",
-        String::from_utf8_lossy(&start.stderr)
+        ],
     );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Daemon started"), "Should show started: {}", stdout);
 
-    // Wait briefly for server to bind
-    thread::sleep(Duration::from_millis(500));
+    // Wait for server to bind (polling instead of fixed sleep)
+    assert!(
+        wait_for_port(port, Duration::from_secs(5)),
+        "Webhook server should bind to port {} within 5s",
+        port
+    );
 
     // Check status shows webhook mode
-    let status = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["daemon", "status", "-t", "daemon-wh-test"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to get daemon status");
+    let status_out = bm_run(tmp.path(), &["daemon", "status", "-t", "daemon-wh-test"]);
 
-    let status_stdout = String::from_utf8_lossy(&status.stdout);
+    let status_stdout = String::from_utf8_lossy(&status_out.stdout);
     assert!(status_stdout.contains("webhook"), "Should show webhook mode: {}", status_stdout);
 }
 
@@ -2034,39 +1859,38 @@ fn daemon_cli_parsing_start_flags() {
     assert!(stdout.contains("--interval"), "Help should mention --interval: {}", stdout);
 }
 
-use std::time::Duration;
-use std::thread;
-
 // ── Webhook endpoint tests ───────────────────────────────────────────
 
 #[test]
 fn daemon_webhook_accepts_relevant_event() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "daemon-wh-accept", "scrum");
+    setup_team(tmp.path(), "daemon-wh-accept", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-wh-accept");
 
-    let port = 19485u16;
+    let port = get_free_port();
 
     // Start webhook daemon
-    let start = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args([
+    bm_run(
+        tmp.path(),
+        &[
             "daemon", "start",
             "--mode", "webhook",
             "--port", &port.to_string(),
             "-t", "daemon-wh-accept",
-        ])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to start daemon");
-    assert!(start.status.success(), "start failed: {}", String::from_utf8_lossy(&start.stderr));
+        ],
+    );
 
-    // Wait for server to be ready
-    thread::sleep(Duration::from_secs(1));
+    // Wait for server to be ready (polling)
+    assert!(
+        wait_for_port(port, Duration::from_secs(5)),
+        "Webhook server should be ready on port {}",
+        port
+    );
 
     // Send a relevant event via HTTP POST
     let client = reqwest::blocking::Client::new();
     let resp = client
-        .post(&format!("http://127.0.0.1:{}/webhook", port))
+        .post(format!("http://127.0.0.1:{}/webhook", port))
         .header("X-GitHub-Event", "issues")
         .header("Content-Type", "application/json")
         .body(r#"{"action":"opened","issue":{"number":1}}"#)
@@ -2085,29 +1909,31 @@ fn daemon_webhook_accepts_relevant_event() {
 #[test]
 fn daemon_webhook_rejects_irrelevant_event() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "daemon-wh-reject", "scrum");
+    setup_team(tmp.path(), "daemon-wh-reject", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-wh-reject");
 
-    let port = 19486u16;
+    let port = get_free_port();
 
-    let start = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args([
+    bm_run(
+        tmp.path(),
+        &[
             "daemon", "start",
             "--mode", "webhook",
             "--port", &port.to_string(),
             "-t", "daemon-wh-reject",
-        ])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to start daemon");
-    assert!(start.status.success());
+        ],
+    );
 
-    thread::sleep(Duration::from_secs(1));
+    assert!(
+        wait_for_port(port, Duration::from_secs(5)),
+        "Webhook server should be ready on port {}",
+        port
+    );
 
     // Send an irrelevant event (push) — daemon should accept but not trigger members
     let client = reqwest::blocking::Client::new();
     let resp = client
-        .post(&format!("http://127.0.0.1:{}/webhook", port))
+        .post(format!("http://127.0.0.1:{}/webhook", port))
         .header("X-GitHub-Event", "push")
         .header("Content-Type", "application/json")
         .body(r#"{"ref":"refs/heads/main"}"#)
@@ -2126,29 +1952,31 @@ fn daemon_webhook_rejects_irrelevant_event() {
 #[test]
 fn daemon_webhook_returns_404_for_wrong_path() {
     let tmp = tempfile::tempdir().unwrap();
-    setup_team_for_subprocess(tmp.path(), "daemon-wh-404", "scrum");
+    setup_team(tmp.path(), "daemon-wh-404", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-wh-404");
 
-    let port = 19487u16;
+    let port = get_free_port();
 
-    let start = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args([
+    bm_run(
+        tmp.path(),
+        &[
             "daemon", "start",
             "--mode", "webhook",
             "--port", &port.to_string(),
             "-t", "daemon-wh-404",
-        ])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to start daemon");
-    assert!(start.status.success());
+        ],
+    );
 
-    thread::sleep(Duration::from_secs(1));
+    assert!(
+        wait_for_port(port, Duration::from_secs(5)),
+        "Webhook server should be ready on port {}",
+        port
+    );
 
     // Send to wrong path
     let client = reqwest::blocking::Client::new();
     let resp = client
-        .post(&format!("http://127.0.0.1:{}/wrong-path", port))
+        .post(format!("http://127.0.0.1:{}/wrong-path", port))
         .body("test")
         .send();
 
@@ -2166,14 +1994,16 @@ fn daemon_webhook_returns_404_for_wrong_path() {
 
 #[test]
 fn projects_sync_fails_without_github_repo() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     // setup_team creates a team with empty github_repo
     setup_team(tmp.path(), "test-team", "scrum");
 
     // projects sync should fail because there's no github_repo configured
-    let result = bm::commands::projects::sync(None);
-    assert!(result.is_err(), "sync should fail without github_repo");
+    let stderr = bm_run_fail(tmp.path(), &["projects", "sync"]);
+    assert!(
+        !stderr.is_empty(),
+        "sync should fail without github_repo"
+    );
 }
 
 #[test]
@@ -2197,7 +2027,6 @@ fn projects_sync_cli_parses() {
 
 #[test]
 fn profile_views_extracted_to_team_repo() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
@@ -2220,7 +2049,6 @@ fn profile_views_extracted_to_team_repo() {
 
 #[test]
 fn profile_views_parse_correctly() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum-compact");
 
@@ -2269,29 +2097,24 @@ fn profile_views_parse_correctly() {
 
 #[test]
 fn teams_list_shows_member_and_project_counts() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let _team_repo = setup_team(tmp.path(), "count-team", "scrum");
+    setup_team(tmp.path(), "count-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
     let role = &roles[0];
 
     // Hire two members
-    bm::commands::hire::run(role, Some("alice"), None).unwrap();
-    bm::commands::hire::run(role, Some("bob"), None).unwrap();
+    bm_hire(tmp.path(), role, "alice", "count-team");
+    bm_hire(tmp.path(), role, "bob", "count-team");
 
     // Add a project
     let fork = create_fake_fork(tmp.path(), "test-proj");
-    bm::commands::projects::add(&fork.to_string_lossy(), None).unwrap();
+    bm_add_project(tmp.path(), &fork.to_string_lossy(), "count-team");
 
-    // Verify teams list via subprocess (avoids capturing stdout directly)
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["teams", "list"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm teams list");
+    // Verify teams list via subprocess
+    let output = bm_run(tmp.path(), &["teams", "list"]);
 
-    assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
 
     // Table should have Members and Projects columns
@@ -2322,29 +2145,19 @@ fn teams_list_shows_member_and_project_counts() {
 
 #[test]
 fn teams_show_displays_full_details() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let _team_repo = setup_team(tmp.path(), "show-team", "scrum");
+    setup_team(tmp.path(), "show-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
     let role = &roles[0];
 
-    bm::commands::hire::run(role, Some("alice"), None).unwrap();
+    bm_hire(tmp.path(), role, "alice", "show-team");
 
     let fork = create_fake_fork(tmp.path(), "my-project");
-    bm::commands::projects::add(&fork.to_string_lossy(), None).unwrap();
+    bm_add_project(tmp.path(), &fork.to_string_lossy(), "show-team");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["teams", "show", "-t", "show-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm teams show");
-
-    assert!(
-        output.status.success(),
-        "teams show failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = bm_run(tmp.path(), &["teams", "show", "-t", "show-team"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -2372,33 +2185,34 @@ fn teams_show_displays_full_details() {
         "should show project, output:\n{}",
         stdout
     );
+    // New: coding agent and profile source should be shown
+    assert!(
+        stdout.contains("Coding Agent"),
+        "should show coding agent, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("Profile Source"),
+        "should show profile source, output:\n{}",
+        stdout
+    );
 }
 
 // ── Members show tests ───────────────────────────────────────────────
 
 #[test]
 fn members_show_displays_details() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let _team_repo = setup_team(tmp.path(), "mshow-team", "scrum");
+    setup_team(tmp.path(), "mshow-team", "scrum");
 
-    let roles = profile::list_roles("scrum").unwrap();
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
     let role = &roles[0];
 
-    bm::commands::hire::run(role, Some("alice"), None).unwrap();
+    bm_hire(tmp.path(), role, "alice", "mshow-team");
 
     let member_name = format!("{}-alice", role);
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["members", "show", &member_name, "-t", "mshow-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm members show");
-
-    assert!(
-        output.status.success(),
-        "members show failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = bm_run(tmp.path(), &["members", "show", &member_name, "-t", "mshow-team"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -2416,25 +2230,23 @@ fn members_show_displays_details() {
         "should show stopped status, output:\n{}",
         stdout
     );
+    // New: coding agent should be shown
+    assert!(
+        stdout.contains("Coding Agent"),
+        "should show coding agent, output:\n{}",
+        stdout
+    );
 }
 
 #[test]
 fn members_show_nonexistent_errors() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "mshow-err-team", "scrum");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["members", "show", "nonexistent-member", "-t", "mshow-err-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm members show");
-
-    assert!(
-        !output.status.success(),
-        "members show should fail for nonexistent member"
+    let stderr = bm_run_fail(
+        tmp.path(),
+        &["members", "show", "nonexistent-member", "-t", "mshow-err-team"],
     );
-    let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("not found"),
         "should say not found, stderr:\n{}",
@@ -2446,24 +2258,13 @@ fn members_show_nonexistent_errors() {
 
 #[test]
 fn projects_list_displays_table() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let _team_repo = setup_team(tmp.path(), "plist-team", "scrum");
+    setup_team(tmp.path(), "plist-team", "scrum");
 
     let fork = create_fake_fork(tmp.path(), "my-app");
-    bm::commands::projects::add(&fork.to_string_lossy(), None).unwrap();
+    bm_add_project(tmp.path(), &fork.to_string_lossy(), "plist-team");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["projects", "list", "-t", "plist-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm projects list");
-
-    assert!(
-        output.status.success(),
-        "projects list failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = bm_run(tmp.path(), &["projects", "list", "-t", "plist-team"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -2480,17 +2281,11 @@ fn projects_list_displays_table() {
 
 #[test]
 fn projects_list_empty_shows_guidance() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "plist-empty-team", "scrum");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["projects", "list", "-t", "plist-empty-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm projects list");
+    let output = bm_run(tmp.path(), &["projects", "list", "-t", "plist-empty-team"]);
 
-    assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("No projects configured"),
@@ -2503,24 +2298,13 @@ fn projects_list_empty_shows_guidance() {
 
 #[test]
 fn projects_show_displays_details() {
-    let _lock = ENV_MUTEX.lock().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let _team_repo = setup_team(tmp.path(), "pshow-team", "scrum");
+    setup_team(tmp.path(), "pshow-team", "scrum");
 
     let fork = create_fake_fork(tmp.path(), "my-lib");
-    bm::commands::projects::add(&fork.to_string_lossy(), None).unwrap();
+    bm_add_project(tmp.path(), &fork.to_string_lossy(), "pshow-team");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_bm"))
-        .args(["projects", "show", "my-lib", "-t", "pshow-team"])
-        .env("HOME", tmp.path())
-        .output()
-        .expect("failed to run bm projects show");
-
-    assert!(
-        output.status.success(),
-        "projects show failed: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    let output = bm_run(tmp.path(), &["projects", "show", "my-lib", "-t", "pshow-team"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -2542,5 +2326,410 @@ fn projects_show_displays_details() {
         stdout.contains("Invariants"),
         "should show invariants section, output:\n{}",
         stdout
+    );
+}
+
+// ── Chat command tests ───────────────────────────────────────────────
+
+/// Creates a minimal workspace for testing `bm chat`.
+///
+/// Sets up: team repo with a hired member, and a workspace directory containing
+/// `.botminter.workspace`, `ralph.yml`, and `PROMPT.md`.
+fn setup_chat_workspace(tmp: &Path, team_name: &str) -> (String, String) {
+    let team_repo = setup_team(tmp, team_name, "scrum");
+
+    let profiles_path = profile::profiles_dir_for(tmp);
+    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
+    let role = &roles[0];
+
+    // Hire a member
+    bm_hire(tmp, role, "alice", team_name);
+    let member_name = format!("{}-alice", role);
+
+    // Create a workspace directory with required files
+    let team_dir = tmp.join("workspaces").join(team_name);
+    let ws_path = team_dir.join(&member_name);
+    fs::create_dir_all(&ws_path).unwrap();
+
+    // Workspace marker
+    fs::write(ws_path.join(".botminter.workspace"), "").unwrap();
+
+    // Copy ralph.yml from the member dir in team repo
+    let member_ralph = team_repo.join("members").join(&member_name).join("ralph.yml");
+    fs::copy(&member_ralph, ws_path.join("ralph.yml")).unwrap();
+
+    // Copy PROMPT.md from the member dir in team repo
+    let member_prompt = team_repo.join("members").join(&member_name).join("PROMPT.md");
+    fs::copy(&member_prompt, ws_path.join("PROMPT.md")).unwrap();
+
+    (member_name, role.clone())
+}
+
+#[test]
+fn chat_render_system_prompt_outputs_meta_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (member_name, role) = setup_chat_workspace(tmp.path(), "chat-team");
+
+    let output = bm_run(
+        tmp.path(),
+        &[
+            "chat",
+            &member_name,
+            "-t",
+            "chat-team",
+            "--render-system-prompt",
+        ],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Verify meta-prompt structure
+    let display_name = member_name.replace(&format!("{}-", role), "");
+    assert!(
+        stdout.contains(&format!("# Interactive Session — {}", display_name)),
+        "should contain member display name in header, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains(&display_name),
+        "should contain member name (alice), output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("## Your Capabilities"),
+        "should contain capabilities section, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("## Guardrails"),
+        "should contain guardrails section, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("## Role Context"),
+        "should contain role context section, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("## Reference: Operation Mode"),
+        "should contain reference section, output:\n{}",
+        stdout
+    );
+    assert!(
+        stdout.contains("team/ralph-prompts/reference/"),
+        "should reference ralph-prompts via team/ submodule path, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn chat_render_system_prompt_with_hat_filter() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (member_name, _role) = setup_chat_workspace(tmp.path(), "chat-hat-team");
+
+    // Get a valid hat name from the member's ralph.yml
+    let team_dir = tmp.path().join("workspaces").join("chat-hat-team");
+    let ws_path = team_dir.join(&member_name);
+    let ralph_content = fs::read_to_string(ws_path.join("ralph.yml")).unwrap();
+
+    // Parse to find first hat name
+    let ralph_val: serde_yml::Value = serde_yml::from_str(&ralph_content).unwrap();
+    let hats = ralph_val["hats"].as_mapping().unwrap();
+    let first_hat_name = hats.keys().next().unwrap().as_str().unwrap().to_string();
+
+    // Run with --hat filter
+    let output = bm_run(
+        tmp.path(),
+        &[
+            "chat",
+            &member_name,
+            "-t",
+            "chat-hat-team",
+            "--hat",
+            &first_hat_name,
+            "--render-system-prompt",
+        ],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Hat-specific mode: should have capabilities but NOT list all hats as H3
+    assert!(
+        stdout.contains("## Your Capabilities"),
+        "should contain capabilities section, output:\n{}",
+        stdout
+    );
+
+    // In hat-specific mode, the hat name should NOT appear as an H3 heading
+    // (that's the hatless mode pattern). Instead, the instructions are directly under ## Your Capabilities.
+    assert!(
+        !stdout.contains(&format!("### {}", first_hat_name)),
+        "hat-specific mode should NOT have hat as H3 subsection, output:\n{}",
+        stdout
+    );
+}
+
+#[test]
+fn chat_nonexistent_member_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    setup_team(tmp.path(), "chat-err-team", "scrum");
+
+    let stderr = bm_run_fail(
+        tmp.path(),
+        &[
+            "chat",
+            "nonexistent-member",
+            "-t",
+            "chat-err-team",
+        ],
+    );
+    assert!(
+        stderr.contains("not found"),
+        "should say member not found, stderr:\n{}",
+        stderr
+    );
+}
+
+#[test]
+fn chat_without_workspace_errors() {
+    let tmp = tempfile::tempdir().unwrap();
+    setup_team(tmp.path(), "chat-nows-team", "scrum");
+
+    let profiles_path = profile::profiles_dir_for(tmp.path());
+    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
+    let role = &roles[0];
+
+    // Hire but don't create workspace
+    bm_hire(tmp.path(), role, "bob", "chat-nows-team");
+    let member_name = format!("{}-bob", role);
+
+    let stderr = bm_run_fail(
+        tmp.path(),
+        &[
+            "chat",
+            &member_name,
+            "-t",
+            "chat-nows-team",
+        ],
+    );
+    assert!(
+        stderr.contains("No workspace") || stderr.contains("sync"),
+        "should mention missing workspace, stderr:\n{}",
+        stderr
+    );
+}
+
+// ── bm init --non-interactive tests ──────────────────────────────────
+
+#[test]
+fn init_non_interactive_creates_team_with_skip_github() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let workzone = home.join("workzone");
+
+    let output = bm_cmd(home)
+        .args([
+            "init",
+            "--non-interactive",
+            "--profile",
+            "scrum-compact",
+            "--team-name",
+            "test-team",
+            "--org",
+            "test-org",
+            "--repo",
+            "test-repo",
+            "--skip-github",
+            "--workzone",
+            &workzone.to_string_lossy(),
+        ])
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .expect("failed to run bm init --non-interactive");
+
+    assert!(
+        output.status.success(),
+        "bm init --non-interactive should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify config.yml was written
+    let config_path = home
+        .join(".botminter")
+        .join("config.yml");
+    assert!(
+        config_path.exists(),
+        "config.yml should exist at {}",
+        config_path.display()
+    );
+
+    // Verify team directory structure
+    let team_dir = workzone.join("test-team");
+    assert!(team_dir.exists(), "Team directory should exist");
+
+    let team_repo = team_dir.join("team");
+    assert!(team_repo.exists(), "Team repo should exist");
+
+    // Verify botminter.yml exists in team repo
+    assert!(
+        team_repo.join("botminter.yml").exists(),
+        "botminter.yml should exist in team repo"
+    );
+
+    // Verify git repo was initialized
+    assert!(
+        team_repo.join(".git").is_dir(),
+        "Team repo should be a git repository"
+    );
+
+    // Verify profiles were extracted with botminter.yml manifest
+    // profiles_dir uses dirs::config_dir() -> XDG_CONFIG_HOME or HOME/.config
+    let profiles_dir = home
+        .join(".config")
+        .join("botminter")
+        .join("profiles");
+    assert!(
+        profiles_dir.join("scrum-compact").join("botminter.yml").exists(),
+        "botminter.yml should exist in extracted profile directory"
+    );
+
+    // Verify roles/ directory exists in extracted profiles (not stale members/ layout)
+    let scrum_compact_roles = profiles_dir.join("scrum-compact").join("roles");
+    assert!(
+        scrum_compact_roles.is_dir(),
+        "roles/ directory should exist in extracted profile at {}",
+        scrum_compact_roles.display()
+    );
+
+    // Verify config contains the team entry
+    let config_content = fs::read_to_string(&config_path).unwrap();
+    assert!(
+        config_content.contains("test-team"),
+        "config should contain team name"
+    );
+    assert!(
+        config_content.contains("test-org/test-repo"),
+        "config should contain github repo"
+    );
+}
+
+#[test]
+fn init_non_interactive_fails_without_required_args() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+
+    // Missing --profile
+    let stderr = bm_run_fail(
+        home,
+        &[
+            "init",
+            "--non-interactive",
+            "--team-name",
+            "test-team",
+            "--org",
+            "test-org",
+            "--repo",
+            "test-repo",
+            "--skip-github",
+        ],
+    );
+    assert!(
+        stderr.contains("--profile is required"),
+        "Should error about missing --profile, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn init_non_interactive_fails_on_invalid_profile() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+
+    let stderr = bm_run_fail(
+        home,
+        &[
+            "init",
+            "--non-interactive",
+            "--profile",
+            "nonexistent-profile",
+            "--team-name",
+            "test-team",
+            "--org",
+            "test-org",
+            "--repo",
+            "test-repo",
+            "--skip-github",
+            "--workzone",
+            &tmp.path().join("wz").to_string_lossy(),
+        ],
+    );
+    assert!(
+        stderr.contains("not found"),
+        "Should error about invalid profile, got: {}",
+        stderr
+    );
+}
+
+#[test]
+fn init_non_interactive_fails_on_duplicate_team_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let workzone = home.join("workzone");
+
+    // First init should succeed
+    let output = bm_cmd(home)
+        .args([
+            "init",
+            "--non-interactive",
+            "--profile",
+            "scrum-compact",
+            "--team-name",
+            "dup-team",
+            "--org",
+            "test-org",
+            "--repo",
+            "test-repo",
+            "--skip-github",
+            "--workzone",
+            &workzone.to_string_lossy(),
+        ])
+        .env("GIT_AUTHOR_NAME", "Test")
+        .env("GIT_AUTHOR_EMAIL", "test@test.com")
+        .env("GIT_COMMITTER_NAME", "Test")
+        .env("GIT_COMMITTER_EMAIL", "test@test.com")
+        .output()
+        .expect("failed to run first init");
+    assert!(
+        output.status.success(),
+        "First init should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Second init with same team name should fail
+    let stderr = bm_run_fail(
+        home,
+        &[
+            "init",
+            "--non-interactive",
+            "--profile",
+            "scrum-compact",
+            "--team-name",
+            "dup-team",
+            "--org",
+            "test-org",
+            "--repo",
+            "test-repo2",
+            "--skip-github",
+            "--workzone",
+            &workzone.to_string_lossy(),
+        ],
+    );
+    assert!(
+        stderr.contains("already exists"),
+        "Should error about existing directory, got: {}",
+        stderr
     );
 }

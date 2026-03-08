@@ -21,7 +21,7 @@ git add knowledge/api-conventions.md
 git commit -m "docs: add API conventions knowledge"
 ```
 
-After pushing, agents pick up new knowledge on their next `.botminter/` pull.
+After pushing, agents pick up new knowledge on their next `team/` submodule update.
 
 ## Add project-level knowledge
 
@@ -100,7 +100,7 @@ Invariants are mandatory constraints. Add them at the appropriate scope:
 
 ## Browse knowledge via the CLI
 
-Schema v2 teams can use `bm knowledge` commands to browse and manage knowledge files without navigating the directory structure manually:
+Teams can use `bm knowledge` commands to browse and manage knowledge files without navigating the directory structure manually:
 
 ```bash
 bm knowledge list                    # List all knowledge and invariant files
@@ -119,9 +119,9 @@ Knowledge and invariants follow the same recursive scoping. All levels are addit
 |-------|---------------|----------------|
 | Team | `knowledge/` | `invariants/` |
 | Project | `projects/<project>/knowledge/` | `projects/<project>/invariants/` |
-| Member | `team/<member>/knowledge/` | `team/<member>/invariants/` |
-| Member+project | `team/<member>/projects/<project>/knowledge/` | — |
-| Hat | `team/<member>/hats/<hat>/knowledge/` | — |
+| Member | `members/<member>/knowledge/` | `members/<member>/invariants/` |
+| Member+project | `members/<member>/projects/<project>/knowledge/` | — |
+| Hat | `members/<member>/hats/<hat>/knowledge/` | — |
 
 ## Knowledge file guidelines
 
@@ -137,14 +137,14 @@ Knowledge and invariants follow the same recursive scoping. All levels are addit
 Knowledge and invariant changes propagate automatically:
 
 1. Commit and push changes to the team repo
-2. Agents pull `.botminter/` at the start of every board scan cycle
+2. Agents update the `team/` submodule at the start of every board scan cycle
 3. New knowledge is available on the next cycle
 
-No restart required — knowledge and invariants are read from `.botminter/` paths each time the agent consults them.
+No restart required — knowledge and invariants are read from `team/` paths each time the agent consults them.
 
 ## Related topics
 
 - [Knowledge & Invariants](../concepts/knowledge-invariants.md) — recursive scoping model
-- [Workspace Model](../concepts/workspace-model.md) — how `.botminter/` works
+- [Workspace Model](../concepts/workspace-model.md) — workspace repo structure
 - [Design Principles](../reference/design-principles.md) — rules for knowledge and backpressure configuration
 - [CLI Reference — Knowledge](../reference/cli.md#knowledge-management) — `bm knowledge list/show` command details

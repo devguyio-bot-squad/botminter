@@ -20,6 +20,9 @@ Run the interactive wizard:
 bm init
 ```
 
+!!! note "First run"
+    If this is your first time using `bm`, you'll be prompted to initialize profiles: "Profiles not initialized. Initialize now? [Y/n]". Press Enter to accept — this extracts the built-in profiles to `~/.config/botminter/profiles/` so they're available for team creation. This only happens once.
+
 The wizard walks you through the full setup:
 
 1. **Workzone directory** — where teams live (default: `~/.botminter/workspaces`)
@@ -53,12 +56,12 @@ Config is saved early so that if a GitHub operation fails, the team is still reg
           CLAUDE.md                     # Team-wide agent context
           knowledge/                    # Team-level knowledge files
           invariants/                   # Team-level quality rules
-          agent/
+          coding-agent/
             skills/                     # Shared agent skills (gh CLI wrapper)
           skills/                       # Profile-level skills (knowledge-manager, etc.)
           formations/                   # Deployment targets (local, k8s)
           projects/                     # Project-specific knowledge and invariants
-          team/                         # Member configurations (populated if you hired during init)
+          members/                      # Member configurations (populated if you hired during init)
     ```
 
 ## Step 2: Hire members and add projects
@@ -73,7 +76,7 @@ Add a member to the team by specifying a role from the profile:
 bm hire superman
 ```
 
-This extracts the member skeleton from the embedded profile into the team repo — including its Ralph config, prompts, knowledge, and invariants. With the `scrum-compact` profile, the `superman` role is a single agent that wears all hats (PO, architect, developer, QE).
+This extracts the member skeleton from the profile on disk into the team repo — including its Ralph config, prompts, knowledge, and invariants. With the `scrum-compact` profile, the `superman` role is a single agent that wears all hats (PO, architect, developer, QE).
 
 You can optionally provide a name:
 
@@ -115,9 +118,9 @@ This is where the setup becomes real. `bm teams sync` does the following for eac
 - **Pushes the team repo** to GitHub (with `--push`) so agents can coordinate via issues
 - **Creates a workspace directory** per member × project
 - **Clones the project fork** into the workspace
-- **Embeds the team repo** as `.botminter/` inside the workspace
-- **Surfaces configuration files** — symlinks `PROMPT.md` and `CLAUDE.md` from the team repo, copies `ralph.yml`
-- **Assembles `.claude/agents/`** — merges agent definitions from team, project, and member scopes via symlinks
+- **Adds the team repo** as a `team/` submodule inside the workspace repo
+- **Copies context files** — copies `PROMPT.md`, `CLAUDE.md`, and `ralph.yml` from the team submodule to the workspace root
+- **Assembles `.claude/agents/`** — merges agent definitions from `team/` submodule paths via symlinks
 
 If you've already pushed the team repo, you can run `bm teams sync` without `--push`.
 
@@ -188,15 +191,17 @@ bm projects list                 # List configured projects with fork URLs
     workzone/
       my-team/                                   # Team directory
         team/                                    # Team repo (control plane)
-          team/superman-01/                      # Member config
+          members/superman-01/                    # Member config
           projects/my-project/                   # Project-specific dirs
-        superman-01/                             # Member directory
-          my-project/                            # Project fork clone (agent CWD)
-            .botminter/                          # Team repo clone
-            PROMPT.md → .botminter/...           # Symlinked from team repo
-            CLAUDE.md → .botminter/...           # Symlinked from team repo
-            ralph.yml                            # Copied from team repo
-            .claude/agents/                      # Assembled from team/project/member scopes
+        superman-01/                             # Workspace repo (agent CWD)
+          team/                                  # Submodule → team repo
+          projects/
+            my-project/                          # Submodule → project fork
+          PROMPT.md                              # Copied from team/members/superman-01/
+          CLAUDE.md                              # Copied from team/members/superman-01/
+          ralph.yml                              # Copied from team/members/superman-01/
+          .claude/agents/                        # Symlinks into team/ submodule paths
+          .botminter.workspace                   # Workspace marker file
     ```
 
 ## Shell completions (optional)

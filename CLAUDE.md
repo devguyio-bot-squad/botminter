@@ -14,13 +14,15 @@ The project has completed Milestone 3 (bm CLI). See `specs/master-plan/summary.m
 
 ```bash
 bm init                              # Interactive wizard — create a new team
+bm init --non-interactive ...        # Scripted/CI mode (requires --profile, --team-name, --org, --repo)
 bm hire <role> [--name <n>] [-t team] # Hire a member into a role
+bm chat <member> [-t team] [--hat h]  # Interactive session with a member
 bm projects add <url> [-t team]       # Add a project to the team
 bm projects list [-t team]            # List configured projects
 bm projects show <project> [-t team]  # Show project details
 bm teams list                         # List registered teams
 bm teams show [<name>] [-t team]      # Show detailed team info
-bm teams sync [--push] [-t team]      # Provision and reconcile workspaces
+bm teams sync [--push] [-v] [-t team] # Provision and reconcile workspaces
 bm start [-t team]                    # Launch all members (alias: bm up)
 bm stop [-t team] [--force]           # Stop all members
 bm status [-t team] [-v]              # Status dashboard
@@ -83,24 +85,27 @@ Project fork URLs are validated as HTTPS-only. If label or project bootstrap fai
 workzone/
   my-team/                           # Team directory
     team/                            # Team repo (control plane, git repo)
-      team/<member>/                 # Member config (ralph.yml, PROMPT.md, etc.)
-    <member>/                        # Member workspace (created by bm teams sync)
-      .botminter/                    # Clone of team repo
-      PROMPT.md → .botminter/...     # Symlinked from team repo
-      CLAUDE.md → .botminter/...     # Symlinked from team repo
-      ralph.yml                      # Copied from team repo
-      .claude/agents/                # Assembled from three scopes
+      members/<member>/              # Member config (ralph.yml, PROMPT.md, etc.)
+    <member>/                        # Workspace repo (created by bm teams sync)
+      team/                          # Submodule → team repo
+      projects/
+        <project>/                   # Submodule → project fork
+      PROMPT.md                      # Copied from team/members/<member>/
+      CLAUDE.md                      # Copied from team/members/<member>/
+      ralph.yml                      # Copied from team/members/<member>/
+      .claude/agents/                # Symlinks into team/ submodule paths
+      .botminter.workspace           # Workspace marker file
 ```
 
-**Surfacing** means symlinking or copying files from the team repo member dir to the workspace root. Runtime files (Ralph memories, scratchpad) stay workspace-local.
+**Surfacing** means copying or symlinking files from the team repo member dir to the workspace root. Runtime files (Ralph memories, scratchpad) stay workspace-local.
 
 ### Knowledge & Invariant Scoping (Recursive)
 
 Resolution order — all levels are additive:
 1. Team-level: `knowledge/`, `invariants/`
 2. Project-level: `projects/<project>/knowledge/`, `projects/<project>/invariants/`
-3. Member-level: `team/<member>/knowledge/`, `team/<member>/invariants/`
-4. Member+project: `team/<member>/projects/<project>/knowledge/`
+3. Member-level: `members/<member>/knowledge/`, `members/<member>/invariants/`
+4. Member+project: `members/<member>/projects/<project>/knowledge/`
 
 ### GitHub Coordination
 
@@ -130,8 +135,7 @@ Issues, milestones, and PRs live on the team repo's GitHub. Status transitions u
 - **Commit convention:** `<type>(<scope>): <subject>` with types `feat|fix|docs|refactor|test|chore`. Include `Ref: #<issue-number>` when applicable. Defined in `profiles/scrum/knowledge/commit-convention.md`.
 - **Docs must stay in sync with CLI changes:** The `docs/` directory contains a MkDocs site. When changing CLI behavior (commands, wizard flow, config format), update the corresponding docs in `docs/content/` — especially `getting-started/index.md`, `reference/cli.md`, `how-to/generate-team-repo.md`, and `reference/configuration.md`.
 - When embedding a codeblock inside a markdown codeblock, the outer block needs more backticks than the inner block.
-- **Invariants:** Development invariants live in `invariants/`. Read them before making changes to the areas they cover. Currently: `e2e-testing.md` (mandatory E2E tests for external API code).
-- **E2E tests for API code:** Any code constructing payloads for GitHub's API (`gh` CLI, GraphQL) must have an E2E test in `crates/bm/tests/e2e/` that hits the real API. Run with `cargo test -p bm --features e2e --test e2e -- --test-threads=1`. See `invariants/e2e-testing.md`.
+- **Invariants are constitutional.** All files in `invariants/` are hard constraints that MUST be satisfied — they are not suggestions. Read them before making changes and review compliance after implementation. Violations are treated as bugs.
 
 ## Generator Repo Runtime
 
@@ -140,3 +144,27 @@ The root of this repo has its own `ralph.yml` (feature-development preset with b
 ### Launching team members
 
 When launching a team member's Ralph instance from this repo, always use `just dev-launch` (root Justfile) instead of the team repo's `just launch`. This is because developing botminter via Ralph creates a Claude-inside-Claude situation — `just dev-launch` unsets the `CLAUDECODE` env var to allow the nested invocation.
+
+### DANGER: Nested Claude Code & Process Safety
+
+Commands like `bm chat`, `bm minty`, and `bm start` launch Claude Code. When you are running inside Ralph (i.e., you ARE a Claude Code instance managed by Ralph), this creates a Claude-inside-Claude situation.
+
+- **CLAUDECODE env var:** You MUST unset `CLAUDECODE` before launching Claude Code for testing. Use `CLAUDECODE= bm chat ...` or `env -u CLAUDECODE bm chat ...`. The nested instance will refuse to start otherwise.
+- **NEVER kill Ralph:** You MUST NOT run `kill`, `pkill`, `killall`, or any signal-sending command against Ralph or its parent processes. If you need to stop a process you spawned for testing, kill it ONLY by the specific PID you received — never by name, never by pattern.
+- **No `bm stop` against yourself:** Do NOT run `bm stop` during implementation — it terminates Ralph (your own orchestrator).
+
+## Alpha Policy
+
+- **Breaking changes are expected.** During Alpha, every change is a breaking change. No migration paths, no backwards compatibility shims, no upgrade tooling. Operators re-create teams/workspaces from scratch when the model changes.
+
+## Naming Conventions
+
+- Always **"Ralph Orchestrator"** when referring to the product/project — never just "Ralph" in product context. Casual references to `ralph.yml` or Ralph instances within a team are fine, but the product name is "Ralph Orchestrator."
+- Use **"coding-agent-agnostic"** (not "LLM-agnostic") when talking about abstracting away Claude Code / Gemini CLI specifics. The LLM layer is already abstracted by Ralph Orchestrator; the coding agent layer is what BotMinter needs to abstract.
+
+## Ralph Orchestrator
+- Ralph Orchestrator project is an open source project and a dependecy for BotMinter.
+- The GitHub repo is https://github.com/mikeyobrien/ralph-orchestrator/
+- There is a local checked out version under /opt/workspace/ralph-orchestrator
+- The checked out version has a local commit that we created to support setting a custom Telegram URL which is needed to run a Telegram moch server in e2e tests
+
