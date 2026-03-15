@@ -1,0 +1,23 @@
+# Stub/no-op bridge implementation -- conformance test fixture
+# All recipes exit 0 and produce minimal valid output
+
+start:
+    @mkdir -p "$BRIDGE_CONFIG_DIR"
+    @echo '{"url": "http://localhost:0", "status": "stub"}' > "$BRIDGE_CONFIG_DIR/config.json"
+
+stop:
+    @echo "stub: stop (no-op)" >&2
+
+health:
+    @echo "stub: healthy" >&2
+
+onboard username:
+    @mkdir -p "$BRIDGE_CONFIG_DIR"
+    @echo '{"username": "{{username}}", "user_id": "stub-id", "token": "stub-token"}' > "$BRIDGE_CONFIG_DIR/config.json"
+
+rotate username:
+    @mkdir -p "$BRIDGE_CONFIG_DIR"
+    @echo '{"username": "{{username}}", "user_id": "stub-id", "token": "rotated-stub-token"}' > "$BRIDGE_CONFIG_DIR/config.json"
+
+remove username:
+    @echo "stub: removed {{username}}" >&2

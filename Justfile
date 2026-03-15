@@ -16,8 +16,12 @@ build:
 unit:
     cargo test -p bm
 
-# Run all tests (unit + E2E)
-test: unit e2e
+# Run bridge conformance tests only
+conformance:
+    cargo test -p bm --test conformance
+
+# Run all tests (unit + conformance + E2E)
+test: unit conformance e2e
 
 # Run E2E tests ONLY (requires TESTS_GH_TOKEN and TESTS_GH_ORG env vars)
 e2e:

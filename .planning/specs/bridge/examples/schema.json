@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Rocket.Chat Bridge Configuration",
+  "description": "Configuration schema for the Rocket.Chat bridge. Defines bridge-specific values that BotMinter validates before invoking any bridge command.",
+  "type": "object",
+  "properties": {
+    "host": {
+      "type": "string",
+      "description": "Rocket.Chat server hostname",
+      "default": "localhost"
+    },
+    "port": {
+      "type": "integer",
+      "description": "Rocket.Chat server port",
+      "default": 3000
+    },
+    "admin_username": {
+      "type": "string",
+      "description": "Admin username for API operations"
+    },
+    "admin_password": {
+      "type": "string",
+      "description": "Admin password for API operations"
+    },
+    "mongodb_port": {
+      "type": "integer",
+      "description": "MongoDB port for the backing database",
+      "default": 27017
+    }
+  },
+  "required": ["admin_username", "admin_password"]
+}

@@ -1,0 +1,39 @@
+# Bridge Plugin Manifest - External Bridge Reference
+#
+# This is a complete reference example of a bridge.yml for an external bridge
+# (identity management only). Based on a Telegram-style integration.
+#
+# External bridges do NOT include a lifecycle section. The messaging service
+# runs independently and is not managed by BotMinter.
+#
+# See: ../bridge-spec.md for the full specification.
+
+apiVersion: botminter.dev/v1alpha1
+kind: Bridge
+metadata:
+  name: telegram
+  displayName: "Telegram"
+  description: "Telegram bot integration (external service)"
+
+spec:
+  # External bridges provide identity management only.
+  # The messaging service runs independently (SaaS).
+  type: external
+
+  # Reference to the JSON Schema file that validates bridge-specific
+  # configuration values. Path is relative to bridge root.
+  configSchema: schema.json
+
+  # No lifecycle section for external bridges.
+  # BotMinter does not start, stop, or health-check the service.
+
+  # Identity commands (all bridges).
+  # Each value is a Justfile recipe name.
+  identity:
+    onboard: onboard
+    rotate-credentials: rotate
+    remove: remove
+
+  # Config exchange directory. Commands write output to
+  # $BRIDGE_CONFIG_DIR/config.json. Set by BotMinter at runtime.
+  configDir: "$BRIDGE_CONFIG_DIR"

@@ -1,0 +1,40 @@
+# Bridge Plugin Manifest - Local Bridge Reference
+#
+# This is a complete reference example of a bridge.yml for a local bridge
+# (full lifecycle management). Based on a Rocket.Chat-style integration.
+#
+# See: ../bridge-spec.md for the full specification.
+
+apiVersion: botminter.dev/v1alpha1
+kind: Bridge
+metadata:
+  name: rocketchat
+  displayName: "Rocket.Chat"
+  description: "Self-hosted team chat via Rocket.Chat and MongoDB"
+
+spec:
+  # Local bridges have full lifecycle management.
+  # BotMinter starts, stops, and monitors the service.
+  type: local
+
+  # Reference to the JSON Schema file that validates bridge-specific
+  # configuration values. Path is relative to bridge root.
+  configSchema: schema.json
+
+  # Lifecycle commands (local bridges only).
+  # Each value is a Justfile recipe name.
+  lifecycle:
+    start: start
+    stop: stop
+    health: health
+
+  # Identity commands (all bridges).
+  # Each value is a Justfile recipe name.
+  identity:
+    onboard: onboard
+    rotate-credentials: rotate
+    remove: remove
+
+  # Config exchange directory. Commands write output to
+  # $BRIDGE_CONFIG_DIR/config.json. Set by BotMinter at runtime.
+  configDir: "$BRIDGE_CONFIG_DIR"

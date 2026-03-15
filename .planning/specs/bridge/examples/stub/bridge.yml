@@ -1,0 +1,29 @@
+# Bridge Plugin Manifest - Stub Bridge
+#
+# Minimal conformant local bridge for conformance testing.
+# All commands are no-op Justfile recipes that exit 0.
+#
+# See: ../../bridge-spec.md for the full specification.
+
+apiVersion: botminter.dev/v1alpha1
+kind: Bridge
+metadata:
+  name: stub
+  displayName: "Stub Bridge"
+  description: "No-op bridge for conformance testing"
+
+spec:
+  type: local
+  configSchema: schema.json
+
+  lifecycle:
+    start: start
+    stop: stop
+    health: health
+
+  identity:
+    onboard: onboard
+    rotate-credentials: rotate
+    remove: remove
+
+  configDir: "$BRIDGE_CONFIG_DIR"

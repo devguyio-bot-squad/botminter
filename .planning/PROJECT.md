@@ -58,7 +58,18 @@ When you run several agents across multiple projects, four gaps show up fast:
 
 ### Active
 
-(None — start next milestone to define)
+#### Current Milestone: v0.07 Team Bridge
+
+**Goal:** Decouple communication into a pluggable "bridge" abstraction, ship a local Slack-like reference implementation (Rocket.Chat), migrate Telegram into the same abstraction, and establish ADRs + Knative-style specs for extensible interfaces.
+
+**Target features:**
+- Bridge abstraction: pluggable communication backend defined by shell script lifecycle (start, stop, health, configure) with stdout config
+- Bridge CLI: `bm bridge start/stop/status` with optional auto-start from `bm start`
+- Rocket.Chat bridge: reference implementation for local Slack-like experience with per-agent identity
+- Telegram bridge: wrap existing Telegram support into the bridge abstraction
+- Ralph Orchestrator robot abstraction: upstream contribution to make Ralph's robot backend pluggable
+- Agent identity: each team member gets their own bot user on the bridge
+- ADRs + specs: Architecture Decision Records and Knative-style specs for extensible interfaces (bridge spec first)
 
 ### Out of Scope
 
@@ -74,6 +85,10 @@ BotMinter is pre-alpha. Six milestones complete (v0.01 through v0.06). The full 
 Three profiles ship today: `scrum` (multi-agent, one per role), `scrum-compact` (solo agent, all hats), and `scrum-compact-telegram` (solo with Telegram notifications). The `bm` CLI is a Rust binary (`crates/bm/`) with profiles embedded at compile time via `include_dir` and extractable to disk for customization.
 
 21,267 lines of Rust. 471 tests (327 unit + 49 cli_parsing + 95 integration). Prior planning artifacts in `specs/` (PDD format).
+
+Communication is currently tied to Telegram via Ralph Orchestrator's hardcoded robot backend. Ralph has a robot abstraction concept but no pluggable implementation — Telegram is the only option. The v0.07 milestone decouples communication at both layers: a robot abstraction in Ralph (upstream contribution) and a bridge abstraction in BotMinter that manages service lifecycle and agent identity.
+
+Architectural practice is evolving: v0.07 introduces ADRs for decision tracking and Knative-style specs for extensible interfaces. The bridge plugin contract will be the first formally specified extension point.
 
 ## Constraints
 
@@ -99,4 +114,4 @@ Three profiles ship today: `scrum` (multi-agent, one per role), `scrum-compact` 
 | Two-layer profile model: embedded for bootstrap, disk for runtime | Ensures CLI always works (embedded) while supporting customization (disk) | Good |
 
 ---
-*Last updated: 2026-03-08 after v0.06 milestone*
+*Last updated: 2026-03-08 after v0.07 milestone started*

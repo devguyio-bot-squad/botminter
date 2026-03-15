@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Stub Bridge Configuration",
+  "description": "Minimal configuration for the stub bridge",
+  "type": "object",
+  "properties": {
+    "port": {
+      "type": "integer",
+      "description": "Stub service port",
+      "default": 0
+    }
+  },
+  "required": []
+}

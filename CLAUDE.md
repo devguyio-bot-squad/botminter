@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **botminter** is a Rust CLI (`bm`) for managing GitOps-style agentic teams. Each team member is an independent Ralph orchestrator instance running in its own workspace. Members coordinate through GitHub issues, milestones, and PRs on a shared team repo via the `gh` CLI — no central orchestrator.
 
-The project has completed Milestone 3 (bm CLI). See `specs/master-plan/summary.md` for the full milestone roadmap.
+The project has completed Milestone 6 (Minty and Friends). See `.planning/ROADMAP.md` for the current milestone roadmap.
 
 ## Commands
 
@@ -45,11 +45,7 @@ just clippy   # cargo clippy -p bm -- -D warnings
 
 ### Planning workflow
 
-Milestone planning uses reusable prompts in `specs/prompts/`. Feed them to Claude Code via PROMPT.md or direct paste:
-
-- `planning-new.md` — Start planning the next unplanned milestone. Detects which milestone, creates `specs/milestones/<name>/` with requirements.md and research/.
-- `planning-resume.md` — Resume an in-progress milestone's planning session.
-- `planning-revisit.md` — Revisit and refine an existing milestone's artifacts.
+Milestone planning uses the GSD (Get Shit Done) workflow. Planning artifacts live in `.planning/` with phase-based execution plans, research, and context documents. See `.planning/ROADMAP.md` for milestone structure and `.planning/STATE.md` for current position.
 
 ## Architecture
 
@@ -121,15 +117,13 @@ Issues, milestones, and PRs live on the team repo's GitHub. Status transitions u
 | `docs/` | MkDocs documentation site (`docs/content/` has the markdown, `docs/mkdocs.yml` is the config) |
 | `profiles/scrum/` | Scrum profile (PROCESS.md, member skeletons, knowledge, invariants) |
 | `profiles/scrum-compact/` | Compact solo profile (single "superman" role) |
-| `specs/master-plan/` | Design docs: rough-idea, requirements (26 Q&A), design, plan, research/ |
-| `specs/milestones/` | Per-milestone planning artifacts (completed/, active at root, future/) |
-| `specs/tasks/` | Standalone task batches (completed/ and active) |
-| `specs/prompts/` | Reusable planning prompts (planning-new, planning-resume, planning-revisit) |
+| `.planning/adrs/` | Architecture Decision Records (MADR 4.0.0 format) |
+| `.planning/specs/` | Formal specifications for external contracts and plugin interfaces |
 
 ## Development Patterns
 
 - **Rust + Cargo workspace:** `crates/bm/` is the main binary crate. Profiles are embedded at compile time via `include_dir`.
-- **Specs-first workflow:** Design artifacts in `specs/` are produced before implementation. Each milestone has requirements (Q&A format), design, and plan documents.
+- **Specs-first workflow:** Design artifacts in `.planning/specs/` define external contracts before implementation. Architectural decisions are recorded as ADRs in `.planning/adrs/`.
 - **Incremental milestones:** Each milestone builds on the previous one and is validated with synthetic data before real operational use.
 - **Profile reusability:** Changes that apply to a process methodology go in the profile (`profiles/`), not in the generated team repo.
 - **Commit convention:** `<type>(<scope>): <subject>` with types `feat|fix|docs|refactor|test|chore`. Include `Ref: #<issue-number>` when applicable. Defined in `profiles/scrum/knowledge/commit-convention.md`.
