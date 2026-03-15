@@ -1,326 +1,274 @@
 # Codebase Structure
 
-**Analysis Date:** 2026-03-04
+**Analysis Date:** 2026-03-10
 
 ## Directory Layout
 
 ```
 botminter/
-├── crates/
-│   └── bm/                    # Main Rust binary crate
-│       ├── src/               # Source code
-│       │   ├── commands/      # Command handler modules
-│       │   ├── main.rs        # Entry point
-│       │   ├── cli.rs         # Clap CLI definitions
-│       │   ├── lib.rs         # Library exports
-│       │   ├── config.rs      # Config loading/saving
-│       │   ├── profile.rs     # Profile parsing & extraction (~69K)
-│       │   ├── workspace.rs   # Workspace creation & sync (~71K)
-│       │   ├── agent_tags.rs  # Agent tag filtering (~16K)
-│       │   ├── chat.rs        # Meta-prompt building (~12K)
-│       │   ├── completions.rs # Dynamic shell completions (~19K)
-│       │   ├── formation.rs   # Formation config parsing
-│       │   ├── session.rs     # Claude Code session launch
-│       │   ├── state.rs       # Runtime PID state
-│       │   └── topology.rs    # Member topology tracking
-│       ├── tests/
-│       │   ├── integration.rs # Unit/integration tests (~87K)
-│       │   ├── cli_parsing.rs # CLI parsing tests (~31K)
-│       │   └── e2e/           # End-to-end tests (feature-gated)
-│       │       ├── main.rs
-│       │       ├── init_to_sync.rs
-│       │       ├── start_to_stop.rs
-│       │       ├── daemon_lifecycle.rs
-│       │       ├── github.rs
-│       │       ├── telegram.rs
-│       │       └── helpers.rs
-│       └── Cargo.toml         # Crate manifest
-├── profiles/
-│   ├── scrum/                 # Multi-agent scrum profile
-│   │   ├── botminter.yml      # Profile manifest
-│   │   └── coding-agent/      # Agent-specific files (skills, agents)
-│   └── scrum-compact/         # Single-agent compact profile
-│       ├── botminter.yml      # Profile manifest
-│       ├── context.md         # Becomes CLAUDE.md in workspace
-│       ├── PROCESS.md         # Workflow/label definitions
-│       ├── coding-agent/      # Agent skills and references
-│       │   ├── agents/
-│       │   └── skills/
-│       │       ├── board-scanner/
-│       │       ├── gh/
-│       │       │   ├── SKILL.md
-│       │       │   ├── scripts/
-│       │       │   └── references/
-│       │       └── status-workflow/
-│       ├── formations/
-│       │   ├── local/         # Local process formation
-│       │   │   └── formation.yml
-│       │   └── k8s/           # Kubernetes formation
-│       │       ├── formation.yml
-│       │       ├── ralph.yml
-│       │       ├── PROMPT.md
-│       │       └── hats/
-│       ├── knowledge/         # Team-level knowledge
-│       │   ├── commit-convention.md
-│       │   ├── communication-protocols.md
-│       │   └── pr-standards.md
-│       ├── invariants/        # Team-level invariants
-│       │   ├── code-review-required.md
-│       │   └── test-coverage.md
-│       └── ralph-prompts/     # Ralph Orchestrator prompt templates
-│           ├── guardrails.md
-│           ├── hat-template.md
-│           ├── orientation.md
-│           └── reference/
-├── docs/
-│   ├── mkdocs.yml             # MkDocs config (nav, theme, extensions)
-│   ├── content/               # Markdown source files
-│   │   ├── index.md           # Landing page trigger (frontmatter only)
-│   │   ├── workflow.md        # "The Agentic Workflow" page
-│   │   ├── faq.md             # FAQ page
-│   │   ├── roadmap.md         # Roadmap page
-│   │   ├── getting-started/
-│   │   │   ├── index.md       # Getting Started overview
-│   │   │   ├── prerequisites.md
-│   │   │   ├── bootstrap-your-team.md
-│   │   │   └── first-journey.md
-│   │   ├── concepts/
-│   │   │   ├── architecture.md
-│   │   │   ├── workspace-model.md
-│   │   │   ├── knowledge-invariants.md
-│   │   │   ├── coordination-model.md
-│   │   │   └── profiles.md
-│   │   ├── how-to/
-│   │   │   ├── generate-team-repo.md
-│   │   │   ├── manage-members.md
-│   │   │   ├── launch-members.md
-│   │   │   └── manage-knowledge.md
-│   │   ├── reference/
-│   │   │   ├── cli.md
-│   │   │   ├── daemon-operations.md
-│   │   │   ├── process.md
-│   │   │   ├── configuration.md
-│   │   │   ├── member-roles.md
-│   │   │   └── design-principles.md
-│   │   ├── assets/            # Images (logos, favicon, og-preview)
-│   │   ├── stylesheets/
-│   │   │   └── home.css       # Brand colors, dark theme, landing styles
-│   │   └── js/
-│   │       ├── mermaid-init.js     # Mermaid diagram initialization
-│   │       └── palette-version.js  # Palette cache busting
-│   ├── overrides/             # MkDocs Material template overrides
-│   │   ├── home.html          # Custom landing page template (~15K)
-│   │   └── main.html          # Base override (palette version script)
-│   ├── site/                  # Generated output (not committed)
-│   └── .venv/                 # Python virtualenv for MkDocs
-├── specs/
-│   ├── master-plan/           # Top-level design documents
-│   │   ├── rough-idea.md
-│   │   ├── requirements.md
-│   │   ├── design.md
-│   │   ├── plan.md
-│   │   ├── summary.md
-│   │   └── research/         # Research artifacts
-│   ├── milestones/
-│   │   ├── completed/        # Past milestone planning
-│   │   └── [active]/         # Current milestone artifacts
-│   ├── tasks/                 # Standalone task batches
-│   ├── prompts/               # Reusable planning prompts
-│   └── design-principles.md
-├── knowledge/                 # Dev workflow knowledge (this repo)
-├── invariants/                # Dev workflow invariants (this repo)
-├── minty/                     # Minty assistant config
-│   ├── config.yml
-│   ├── prompt.md
-│   └── skills/
-├── assets/                    # Project assets (branding, etc.)
-├── .claude/                   # Claude Code config for this repo
-│   ├── agents/
-│   └── skills/                # ~20 Claude Code skills
-├── .planning/                 # GSD planning artifacts
-├── .github/
-│   └── workflows/             # CI workflows
-├── Cargo.toml                 # Workspace manifest
-├── Cargo.lock
-├── Justfile                   # Development task runner
-├── CLAUDE.md                  # Claude Code instructions for this repo
-├── ralph.yml                  # Ralph Orchestrator config for this repo
-├── PROMPT.md                  # Symlink to current milestone PROMPT
-├── README.md
-├── RELEASE_NOTES.md
-├── LICENSE                    # Apache-2.0
-└── .gitignore
+├── crates/bm/                  # Main Rust binary crate
+│   ├── src/
+│   │   ├── main.rs             # Entry point + CLI dispatch
+│   │   ├── lib.rs              # Module declarations
+│   │   ├── cli.rs              # Clap CLI definition
+│   │   ├── commands/           # One file per subcommand group
+│   │   │   ├── mod.rs
+│   │   │   ├── init.rs         # bm init (wizard + non-interactive)
+│   │   │   ├── start.rs        # bm start / bm up
+│   │   │   ├── stop.rs         # bm stop
+│   │   │   ├── status.rs       # bm status
+│   │   │   ├── hire.rs         # bm hire
+│   │   │   ├── chat.rs         # bm chat
+│   │   │   ├── minty.rs        # bm minty
+│   │   │   ├── teams.rs        # bm teams {list,show,sync}
+│   │   │   ├── members.rs      # bm members {list,show}
+│   │   │   ├── roles.rs        # bm roles list
+│   │   │   ├── profiles.rs     # bm profiles {list,describe}
+│   │   │   ├── profiles_init.rs# bm profiles init
+│   │   │   ├── projects.rs     # bm projects {list,show,add,sync}
+│   │   │   ├── knowledge.rs    # bm knowledge {list,show}
+│   │   │   ├── bridge.rs       # bm bridge {start,stop,status,identity,room}
+│   │   │   ├── daemon.rs       # bm daemon {start,stop,status} + event loop
+│   │   │   └── completions.rs  # bm completions
+│   │   ├── config.rs           # ~/.botminter/config.yml management
+│   │   ├── profile.rs          # Profile parsing, extraction, schema
+│   │   ├── workspace.rs        # Workspace provisioning + surfacing
+│   │   ├── bridge.rs           # Bridge abstraction + credential store
+│   │   ├── chat.rs             # Meta-prompt builder
+│   │   ├── formation.rs        # Formation config (local/k8s)
+│   │   ├── topology.rs         # Runtime topology (endpoints)
+│   │   ├── state.rs            # Runtime state (PIDs)
+│   │   ├── session.rs          # Claude/Ralph session launching
+│   │   ├── agent_tags.rs       # Agent-specific content filtering
+│   │   └── completions.rs      # Dynamic shell completion logic
+│   ├── tests/
+│   │   ├── integration.rs      # Integration tests (114K, filesystem-based)
+│   │   ├── cli_parsing.rs      # CLI arg parsing tests (41K)
+│   │   ├── conformance.rs      # Bridge conformance tests (13K)
+│   │   ├── bridge_sync.rs      # Bridge sync tests (11K)
+│   │   ├── profile_roundtrip.rs# Profile extraction roundtrip (1.8K)
+│   │   ├── README.md           # Test documentation
+│   │   └── e2e/                # E2E tests (real GitHub)
+│   │       ├── main.rs         # libtest-mimic custom harness
+│   │       ├── helpers.rs      # Test utilities
+│   │       ├── github.rs       # GithubSuite shared-repo pattern
+│   │       ├── isolated.rs     # Isolated test scenarios
+│   │       ├── telegram.rs     # Telegram bridge e2e
+│   │       ├── stub-ralph.sh   # Stub ralph binary for e2e
+│   │       └── scenarios/
+│   │           ├── mod.rs
+│   │           └── operator_journey.rs  # Full operator journey test
+│   └── Cargo.toml              # Crate manifest
+├── profiles/                    # Embedded team profiles
+│   ├── scrum/                   # Full scrum profile (multi-role)
+│   └── scrum-compact/           # Compact solo profile (single "superman" role)
+│       ├── PROCESS.md           # Process conventions
+│       ├── context.md           # Role context (becomes CLAUDE.md)
+│       ├── .schema/v1.yml       # Schema version marker
+│       ├── formations/          # Deployment formations
+│       │   ├── local/formation.yml
+│       │   └── k8s/             # K8s formation + manager config
+│       ├── invariants/          # Constitutional constraints
+│       ├── knowledge/           # Shared knowledge docs
+│       ├── skills/              # Team-level skills
+│       ├── coding-agent/        # Coding-agent-specific files
+│       │   ├── agents/          # Agent configs
+│       │   ├── skills/          # Agent skills (gh, board-scanner, etc.)
+│       │   └── context.md       # Agent-specific context
+│       └── ralph-prompts/       # Ralph Orchestrator prompt templates
+├── invariants/                  # Project-level constitutional constraints
+├── knowledge/                   # Project-level knowledge documents
+├── docs/                        # MkDocs documentation site
+│   ├── mkdocs.yml               # MkDocs configuration
+│   ├── content/                 # Markdown source files
+│   ├── overrides/               # Theme overrides
+│   └── site/                    # Built static site (generated)
+├── minty/                       # Minty assistant config
+│   ├── config.yml               # Minty session config
+│   └── prompt.md                # Minty system prompt
+├── .planning/                   # Planning artifacts (GSD workflow)
+│   ├── adrs/                    # Architecture Decision Records
+│   ├── specs/                   # Formal specifications
+│   ├── phases/                  # Phase execution plans
+│   ├── milestones/              # Milestone definitions
+│   ├── research/                # Research documents
+│   ├── debug/                   # Debug reports
+│   └── codebase/                # Codebase analysis (this file)
+├── .claude/                     # Claude Code development config
+│   ├── agents/                  # Agent definitions
+│   └── skills/                  # Development skills
+├── Cargo.toml                   # Workspace manifest
+├── Cargo.lock                   # Dependency lock
+├── Justfile                     # Task runner recipes
+├── CLAUDE.md                    # Project instructions for Claude
+├── ralph.yml                    # Ralph config for developing botminter
+├── PROMPT.md                    # -> specs/milestones/.../PROMPT.md
+├── README.md                    # Project readme
+└── RELEASE_NOTES.md             # Release notes
 ```
 
 ## Directory Purposes
 
 **`crates/bm/src/`:**
 - Purpose: All Rust source code for the `bm` CLI binary
-- Contains: Library modules and command handlers
-- Key files: `profile.rs` and `workspace.rs` are the largest (~69K and ~71K respectively) containing core profile extraction and workspace management logic
+- Contains: Domain modules at root level, subcommand handlers in `commands/`
+- Key files: `profile.rs` (85K, largest), `workspace.rs` (68K), `bridge.rs` (43K)
 
 **`crates/bm/src/commands/`:**
-- Purpose: One module per CLI command group
-- Contains: 16 command modules matching CLI subcommands
-- Key files: `init.rs` (wizard, ~44K), `daemon.rs` (~42K), `start.rs` (~19K)
+- Purpose: One-to-one mapping from CLI subcommands to handler functions
+- Contains: Each file exports `run()` or named functions matching subcommand variants
+- Key files: `init.rs` (60K, most complex), `daemon.rs` (39K), `start.rs` (26K)
 
 **`crates/bm/tests/`:**
-- Purpose: All test code
-- Contains: `integration.rs` (unit/integration tests, ~87K), `cli_parsing.rs` (~31K), `e2e/` directory (feature-gated end-to-end tests)
+- Purpose: Integration and E2E tests (unit tests are inline in source modules)
+- Contains: Filesystem-based integration tests, CLI parsing tests, bridge conformance, e2e scenarios
+- Key files: `integration.rs` (114K), `cli_parsing.rs` (41K)
 
 **`profiles/`:**
-- Purpose: Methodology profile templates embedded into the binary at compile time
-- Contains: Two profiles — `scrum` (multi-agent) and `scrum-compact` (single agent)
-- Key files: `botminter.yml` in each profile defines manifest; `PROCESS.md` defines workflow
-
-**`docs/content/`:**
-- Purpose: MkDocs documentation source files
-- Contains: Markdown pages organized by Diataxis framework (tutorials, how-to, concepts, reference)
-- Key files: `index.md` (landing page trigger), `workflow.md` (core messaging page)
-
-**`docs/overrides/`:**
-- Purpose: MkDocs Material theme template overrides
-- Contains: Custom landing page HTML (`home.html`), base template injection (`main.html`)
-
-**`specs/`:**
-- Purpose: Design-first planning artifacts produced before implementation
-- Contains: Master plan, per-milestone requirements/design/plan documents, reusable planning prompts
-
-**`knowledge/`:**
-- Purpose: Development knowledge for this repo's Ralph workflow
-- Contains: Guides for testing patterns, Ralph integration, skill development, process safety
+- Purpose: Team methodology templates embedded into the binary at compile time
+- Contains: Two profiles (`scrum`, `scrum-compact`), each with process docs, roles, knowledge, invariants, formations, skills
+- Key pattern: Files may contain `+agent:NAME` tags for coding-agent-specific content
 
 **`invariants/`:**
-- Purpose: Hard constraints for this repo's development workflow
-- Contains: Testing invariants (flaky tests, path isolation, e2e patterns), profile update rules
+- Purpose: Hard constraints that must be satisfied by all code changes
+- Contains: Rules about CLI idempotency, e2e coverage, test isolation, flaky tests, profile updates
+- Key files: `cli-idempotency.md`, `e2e-scenario-coverage.md`, `no-hardcoded-profiles.md`
+
+**`knowledge/`:**
+- Purpose: Reference documents for development workflows and tooling context
+- Contains: E2E testing patterns, Ralph Orchestrator internals, Claude Code skill development
+- Key files: `e2e-testing-patterns.md`, `nested-claude-code-process-safety.md`
+
+**`docs/`:**
+- Purpose: MkDocs documentation site for end users
+- Contains: Getting started guides, concept explanations, CLI reference, how-to guides
+- Key files: `docs/mkdocs.yml`, `docs/content/reference/cli.md`
 
 **`minty/`:**
-- Purpose: Configuration for the Minty interactive assistant
-- Contains: `config.yml`, `prompt.md`, skills directory
-
-**`.claude/skills/`:**
-- Purpose: Claude Code skills for developing botminter itself
-- Contains: ~20 skills (code-assist, test-driven-development, release-bump, pr-demo, etc.)
+- Purpose: Configuration for the Minty interactive assistant feature
+- Contains: Claude Code session config and system prompt
+- Key files: `minty/config.yml`, `minty/prompt.md`
 
 ## Key File Locations
 
 **Entry Points:**
 - `crates/bm/src/main.rs`: Binary entry point, CLI dispatch
-- `crates/bm/src/lib.rs`: Library entry, module re-exports
+- `crates/bm/tests/e2e/main.rs`: E2E test harness entry (custom `libtest-mimic` main)
 
 **Configuration:**
-- `Cargo.toml`: Workspace manifest (members = ["crates/*"])
-- `crates/bm/Cargo.toml`: Crate manifest with dependencies and e2e feature flag
+- `Cargo.toml`: Workspace manifest (`members = ["crates/*"]`)
+- `crates/bm/Cargo.toml`: Crate manifest with dependencies and feature flags
+- `Justfile`: Task runner (build, test, clippy, docs, release)
 - `docs/mkdocs.yml`: Documentation site config
-- `Justfile`: Development task runner (build, test, clippy, docs-serve, docs-build)
-- `ralph.yml`: Ralph Orchestrator config for developing this repo
 
-**Core Logic:**
-- `crates/bm/src/profile.rs`: Profile parsing, extraction, schema versioning, agent tag processing
-- `crates/bm/src/workspace.rs`: Workspace creation, submodule management, file surfacing
-- `crates/bm/src/config.rs`: Global config at `~/.botminter/config.yml`
-- `crates/bm/src/commands/init.rs`: Team creation wizard
-- `crates/bm/src/commands/daemon.rs`: Event-driven daemon (webhook + poll modes)
-- `crates/bm/src/agent_tags.rs`: `+agent:NAME` / `-agent` content filtering
+**Core Logic (by size/importance):**
+- `crates/bm/src/profile.rs`: Profile parsing, embedded extraction, schema validation (85K)
+- `crates/bm/src/workspace.rs`: Workspace creation, submodule management, file surfacing (68K)
+- `crates/bm/src/bridge.rs`: Bridge abstraction, credential storage, lifecycle (43K)
+- `crates/bm/src/commands/init.rs`: Team initialization wizard (60K)
+- `crates/bm/src/commands/daemon.rs`: Event-driven daemon with webhook/poll modes (39K)
+- `crates/bm/src/commands/start.rs`: Member launch orchestration (26K)
+- `crates/bm/src/completions.rs`: Dynamic shell completions (20K)
+- `crates/bm/src/chat.rs`: Meta-prompt assembly for chat sessions (19K)
+- `crates/bm/src/agent_tags.rs`: Agent-specific content filtering (16K)
 
 **Testing:**
-- `crates/bm/tests/integration.rs`: Core integration tests (~87K)
-- `crates/bm/tests/cli_parsing.rs`: CLI argument parsing tests (~31K)
-- `crates/bm/tests/e2e/`: End-to-end tests requiring `--features e2e`
-
-**Documentation:**
-- `docs/content/`: All markdown source
-- `docs/overrides/home.html`: Custom landing page
-- `docs/content/stylesheets/home.css`: Brand styling
-- `docs/content/workflow.md`: Core "Agentic Workflow" messaging
+- `crates/bm/tests/integration.rs`: Main integration test suite (114K)
+- `crates/bm/tests/cli_parsing.rs`: CLI argument parsing tests (41K)
+- `crates/bm/tests/conformance.rs`: Bridge conformance tests (13K)
+- `crates/bm/tests/e2e/scenarios/operator_journey.rs`: Full operator journey E2E
 
 ## Naming Conventions
 
 **Files:**
-- Rust modules: `snake_case.rs` (e.g., `agent_tags.rs`, `profiles_init.rs`)
-- Commands: named after CLI subcommand (e.g., `init.rs`, `hire.rs`, `start.rs`)
-- Docs: `kebab-case.md` (e.g., `bootstrap-your-team.md`, `daemon-operations.md`)
-- Profile files: specific names (`botminter.yml`, `PROCESS.md`, `context.md`, `formation.yml`)
-- Knowledge/invariants: `kebab-case.md`
+- Source modules: `snake_case.rs` (e.g., `agent_tags.rs`, `profile_roundtrip.rs`)
+- Commands: one file per subcommand group, named after the subcommand (e.g., `init.rs`, `start.rs`, `bridge.rs`)
+- Profile content: `kebab-case.md` for knowledge/invariants (e.g., `commit-convention.md`, `cli-idempotency.md`)
 
 **Directories:**
-- Rust: `snake_case` (e.g., `commands/`)
-- Docs: `kebab-case` (e.g., `getting-started/`, `how-to/`)
-- Profiles: `kebab-case` (e.g., `scrum-compact/`, `coding-agent/`)
+- Rust convention: `snake_case` for module dirs (e.g., `commands/`)
+- Profile convention: `kebab-case` for profile content dirs (e.g., `coding-agent/`, `ralph-prompts/`)
 
-**Types:**
-- Structs: `PascalCase` (e.g., `BotminterConfig`, `TeamEntry`, `FormationConfig`)
-- Enums: `PascalCase` with `PascalCase` variants (e.g., `Command::Init`, `Endpoint::Local`)
+**Functions:**
+- Command handlers: `pub fn run(...)` or named functions like `list()`, `show()`, `sync()`
+- Domain functions: `pub fn load(...)`, `pub fn save(...)`, `pub fn resolve_...()`
+
+**Structs:**
+- PascalCase: `BotminterConfig`, `TeamEntry`, `FormationConfig`, `WorkspaceRepoParams`
+- Serde-derived with rename attributes for external format compatibility
 
 ## Where to Add New Code
 
-**New CLI Command:**
-- Add variant to `Command` enum in `crates/bm/src/cli.rs`
-- Create handler module in `crates/bm/src/commands/<name>.rs`
-- Register module in `crates/bm/src/commands/mod.rs`
-- Add dispatch in `crates/bm/src/main.rs`
-- Add CLI parsing tests in `crates/bm/tests/cli_parsing.rs`
-- Add integration tests in `crates/bm/tests/integration.rs`
-- Update docs at `docs/content/reference/cli.md`
+**New CLI Subcommand:**
+1. Add variant to `Command` enum in `crates/bm/src/cli.rs`
+2. Create handler file in `crates/bm/src/commands/{name}.rs`
+3. Add `pub mod {name};` to `crates/bm/src/commands/mod.rs`
+4. Add dispatch arm in `crates/bm/src/main.rs`
+5. Add integration tests in `crates/bm/tests/integration.rs`
+6. Update docs in `docs/content/reference/cli.md`
 
-**New Core Module:**
-- Create `crates/bm/src/<name>.rs`
-- Register in `crates/bm/src/lib.rs`
+**New Domain Module:**
+1. Create `crates/bm/src/{name}.rs`
+2. Add `pub mod {name};` to `crates/bm/src/lib.rs`
+3. Import in command handlers that need it
 
 **New Profile:**
-- Create `profiles/<profile-name>/` with `botminter.yml` manifest
-- Add `PROCESS.md`, `context.md`, knowledge/, invariants/ as needed
-- Profile is automatically embedded at compile time via `include_dir`
+1. Create directory under `profiles/{name}/`
+2. Must include `PROCESS.md`, `.schema/v1.yml`, role definitions
+3. Follow existing profile structure (see `profiles/scrum-compact/` as minimal example)
+4. Binary must be recompiled (profiles are embedded at compile time via `include_dir!`)
 
-**New Documentation Page:**
-- Add markdown file in appropriate `docs/content/<section>/` directory
-- Register in `docs/mkdocs.yml` nav structure
+**New Integration Test:**
+- Add `#[test]` function in `crates/bm/tests/integration.rs`
+- Use `tempfile::tempdir()` for filesystem isolation
 
-**New Test:**
-- Unit/integration: add to `crates/bm/tests/integration.rs`
-- CLI parsing: add to `crates/bm/tests/cli_parsing.rs`
-- E2E: add to appropriate file in `crates/bm/tests/e2e/` and register in `crates/bm/tests/e2e/main.rs`
+**New E2E Test Scenario:**
+- Add scenario file in `crates/bm/tests/e2e/scenarios/`
+- Register in `crates/bm/tests/e2e/scenarios/mod.rs`
+- Wire into harness in `crates/bm/tests/e2e/main.rs`
+- Requires `TESTS_GH_TOKEN` + `TESTS_GH_ORG` environment variables
 
-**New Knowledge/Invariant (for this repo):**
-- Knowledge: `knowledge/<name>.md`
-- Invariant: `invariants/<name>.md`
+**New Invariant:**
+- Add markdown file to `invariants/` (project-level) or `profiles/*/invariants/` (profile-level)
+- Follow format in `knowledge/invariant-format.md`
 
-**New Claude Code Skill (for this repo):**
-- Create `.claude/skills/<skill-name>/` directory
+**New Knowledge Document:**
+- Add markdown file to `knowledge/` (project-level) or `profiles/*/knowledge/` (profile-level)
 
 ## Special Directories
 
 **`profiles/`:**
-- Purpose: Methodology templates embedded in binary
-- Generated: No (authored by profile developers)
+- Purpose: Team methodology templates embedded into binary
+- Generated: No (authored manually)
 - Committed: Yes
-- Note: Changes here require recompilation (`cargo build`) to take effect
+- Note: Compiled into binary via `include_dir!()` macro; changes require rebuild
 
 **`docs/site/`:**
-- Purpose: MkDocs generated HTML output
+- Purpose: Built MkDocs static site
 - Generated: Yes (by `just docs-build`)
-- Committed: No (in .gitignore)
-
-**`docs/.venv/`:**
-- Purpose: Python virtualenv for MkDocs dependencies
-- Generated: Yes (by `just docs-setup`)
-- Committed: No
+- Committed: Partially (appears in repo)
 
 **`target/`:**
-- Purpose: Cargo build output
+- Purpose: Cargo build artifacts
 - Generated: Yes
-- Committed: No
+- Committed: No (gitignored)
 
 **`.planning/`:**
-- Purpose: GSD planning artifacts for current work
-- Generated: By planning tools
+- Purpose: GSD workflow artifacts, ADRs, specs, research
+- Generated: Partially (some generated by planning tools)
 - Committed: Yes
 
-**`specs/milestones/completed/`:**
-- Purpose: Archive of past milestone planning artifacts
-- Generated: No (moved manually after completion)
-- Committed: Yes
+**`.ralph/`:**
+- Purpose: Ralph Orchestrator runtime state for developing botminter itself
+- Generated: Yes (runtime)
+- Committed: Partially
+
+**`~/.botminter/` (runtime, not in repo):**
+- Purpose: Global CLI state — config, runtime state, daemon configs, logs
+- Key files: `config.yml`, `state.json`, `daemon-{team}.json`, `logs/`
+- Generated: Yes (by `bm init` and other commands)
+- Committed: No (user home directory)
 
 ---
 
-*Structure analysis: 2026-03-04*
+*Structure analysis: 2026-03-10*

@@ -19,6 +19,10 @@ bridges:
     display_name: "Telegram"
     description: "Telegram Bot API for team communication"
     type: external
+  - name: rocketchat
+    display_name: "Rocket.Chat"
+    description: "Rocket.Chat bridge for team communication (local Podman Pod)"
+    type: local
 
 roles:
   - name: superman

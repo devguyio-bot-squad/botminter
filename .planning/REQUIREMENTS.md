@@ -43,13 +43,13 @@ Requirements for milestone v0.07. Each maps to roadmap phases.
 
 ### Rocket.Chat Bridge
 
-- [ ] **RC-01**: Rocket.Chat bridge ships `bridge.yml`, `schema.json`, and `Justfile` with all lifecycle and identity recipes
-- [ ] **RC-02**: Rocket.Chat lifecycle recipes implementing the bridge contract (start via Podman Pod, stop, health check via REST API)
-- [ ] **RC-03**: Podman Pod definition for Rocket.Chat + MongoDB (single-node replica set) with automated initialization
-- [ ] **RC-04**: Per-agent bot identity -- onboard recipe creates a Rocket.Chat user with bot role via REST API, returns credentials
-- [ ] **RC-05**: Team channel/room provisioned during `bm teams sync` if it doesn't exist, same pattern as GitHub repo provisioning
-- [ ] **RC-06**: Bot commands (`/status`, `/tasks`, etc.) available through Rocket.Chat by reusing Ralph's command handler
-- [ ] **RC-07**: Rocket.Chat bridge config (`schema.json`) includes operator identity — the human user ID for the team operator
+- [x] **RC-01**: Rocket.Chat bridge ships `bridge.yml`, `schema.json`, and `Justfile` with all lifecycle and identity recipes
+- [x] **RC-02**: Rocket.Chat lifecycle recipes implementing the bridge contract (start via Podman Pod, stop, health check via REST API)
+- [x] **RC-03**: Podman Pod definition for Rocket.Chat + MongoDB (single-node replica set) with automated initialization
+- [x] **RC-04**: Per-agent bot identity -- onboard recipe creates a Rocket.Chat user with bot role via REST API, returns credentials
+- [x] **RC-05**: Team channel/room provisioned during `bm teams sync` if it doesn't exist, same pattern as GitHub repo provisioning
+- [x] **RC-06**: Bot commands (`/status`, `/tasks`, etc.) available through Rocket.Chat by reusing Ralph's command handler
+- [x] **RC-07**: Rocket.Chat bridge config (`schema.json`) includes operator identity — the human user ID for the team operator
 
 ### Telegram Bridge
 
@@ -131,13 +131,13 @@ Which phases cover which requirements. Updated during roadmap creation.
 | CLI-09 | Phase 8 | Complete |
 | CLI-10 | Phase 8 | Complete |
 | CLI-11 | Phase 8 | Complete |
-| RC-01 | Phase 10 | Pending |
-| RC-02 | Phase 10 | Pending |
-| RC-03 | Phase 10 | Pending |
-| RC-04 | Phase 10 | Pending |
-| RC-05 | Phase 10 | Pending |
-| RC-06 | Phase 10 | Pending |
-| RC-07 | Phase 10 | Pending |
+| RC-01 | Phase 10 | Complete |
+| RC-02 | Phase 10 | Complete |
+| RC-03 | Phase 10 | Complete |
+| RC-04 | Phase 10 | Complete |
+| RC-05 | Phase 10 | Complete |
+| RC-06 | Phase 10 | Complete |
+| RC-07 | Phase 10 | Complete |
 | TELE-01 | Phase 8 | Complete |
 | TELE-02 | Phase 8 | Complete |
 | PROF-01 | Phase 9 | Complete |

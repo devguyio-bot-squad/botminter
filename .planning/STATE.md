@@ -2,16 +2,16 @@
 gsd_state_version: 1.0
 milestone: v0.07
 milestone_name: Team Bridge
-status: executing
-stopped_at: Phase 9 complete — bridge lifecycle e2e test added, teams show + identity add fixed
-last_updated: "2026-03-09T06:30:00Z"
-last_activity: 2026-03-09 -- Phase 9 complete with bridge lifecycle e2e test
+status: completed
+stopped_at: Completed 10-02-PLAN.md
+last_updated: "2026-03-10T21:05:31.401Z"
+last_activity: 2026-03-10 -- Phase 10 Plan 02 complete (RC bridge + E2E operator journey)
 progress:
   total_phases: 4
   completed_phases: 3
-  total_plans: 14
-  completed_plans: 14
-  percent: 100
+  total_plans: 16
+  completed_plans: 15
+  percent: 88
 ---
 
 # Project State: BotMinter
@@ -26,16 +26,16 @@ See: .planning/PROJECT.md (updated 2026-03-08)
 ## Current Position
 
 Phase: 10 of 10 (Rocket.Chat Bridge)
-Plan: 0 of 3 in current phase
-Status: Not started
-Last activity: 2026-03-09 -- Phase 9 complete with bridge lifecycle e2e test
+Plan: 2 of 3 in current phase
+Status: Executing
+Last activity: 2026-03-10 -- Phase 10 Plan 02 complete (RC bridge + E2E operator journey)
 
-Progress: [███████░░░] 75%
+Progress: [█████████░] 88%
 
 ## Current Milestone
 
 **Version:** v0.07 -- Team Bridge
-**Status:** Ready to plan
+**Status:** Milestone complete
 
 ## Prior Milestones
 
@@ -74,6 +74,8 @@ Artifacts: `.planning/milestones/`
 | Phase 09 P04 | 3min | 2 tasks | 6 files |
 | Phase 09 P05 | 2min | 2 tasks | 6 files |
 | Phase 09 P06 | 2min | 2 tasks | 2 files |
+| Phase 10 P01 | 36min | 3 tasks | 5 files |
+| Phase 10 P02 | 18min | 3 tasks | 16 files |
 
 ## Accumulated Context
 
@@ -119,6 +121,12 @@ Decisions are logged in PROJECT.md Key Decisions table.
 - [Phase 09]: bm bridge identity add prompts for token interactively on external bridges (mirrors hire.rs pattern)
 - [Phase 09]: CLI idempotency invariant codified in invariants/cli-idempotency.md
 - [Phase 09]: E2e bridge lifecycle test covers scrum-compact + telegram happy path (init → hire → show → identity add → list → sync)
+- [Phase 10]: RC 8.2.0 users.createToken requires CREATE_TOKENS_FOR_USERS_SECRET env var
+- [Phase 10]: RC 8.2.0 2FA disabled via OVERWRITE_SETTING env vars for bot auth
+- [Phase 10]: Ralph >= 2.7.0 required for RC-only RObot config (2.6.0 has validation bug)
+- [Phase 10]: Use 127.0.0.1 not localhost for RC connectivity (IPv6 issues with Podman)
+- [Phase 10]: Profile manifest bridges[] array is the bridge discovery mechanism (not filesystem)
+- [Phase 10]: E2E real D-Bus passthrough needed for Podman commands in isolated keyring tests
 
 ### Pending Todos
 
@@ -137,8 +145,8 @@ Decisions are logged in PROJECT.md Key Decisions table.
 
 ## Session Continuity
 
-Last session: 2026-03-09T06:30:00Z
-Stopped at: Phase 9 complete — bridge lifecycle e2e test added, teams show + identity add fixed
+Last session: 2026-03-10T21:00:00Z
+Stopped at: Completed 10-02-PLAN.md
 Resume file: None
 
 ---

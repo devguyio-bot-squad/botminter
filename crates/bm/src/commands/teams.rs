@@ -333,17 +333,19 @@ pub fn sync(repos: bool, bridge_flag: bool, verbose: bool, team_flag: Option<&st
         .map(|p| (p.name.as_str(), p.fork_url.as_str()))
         .collect();
 
-    // Set up credential store for RObot injection (only if bridge is configured)
-    let robot_cred_store = if let Some(ref bdir) = bridge_dir {
+    // Set up credential store and bridge metadata for RObot injection (only if bridge is configured)
+    let (robot_cred_store, robot_bridge_type, robot_bridge_state) = if let Some(ref bdir) = bridge_dir {
         let bridge_manifest = bridge::load_manifest(bdir)?;
         let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
-        Some(bridge::LocalCredentialStore::new(
+        let bstate = bridge::load_state(&bstate_path)?;
+        let store = bridge::LocalCredentialStore::new(
             &team.name,
             &bridge_manifest.metadata.name,
             bstate_path,
-        ).with_collection(cfg.keyring_collection.clone()))
+        ).with_collection(cfg.keyring_collection.clone());
+        (Some(store), Some(bridge_manifest.metadata.name.clone()), Some(bstate))
     } else {
-        None
+        (None, None, None)
     };
 
     for member_dir_name in &members {
@@ -386,7 +388,7 @@ pub fn sync(repos: bool, bridge_flag: bool, verbose: bool, team_flag: Option<&st
             }
         }
 
-        // Inject RObot.enabled into ralph.yml (only when bridge is configured)
+        // Inject RObot config into ralph.yml (only when bridge is configured)
         if let Some(ref cred_store) = robot_cred_store {
             let ralph_yml = ws.join("ralph.yml");
             if ralph_yml.exists() {
@@ -395,7 +397,44 @@ pub fn sync(repos: bool, bridge_flag: bool, verbose: bool, team_flag: Option<&st
                     cred_store,
                 )?
                 .is_some();
-                workspace::inject_robot_enabled(&ralph_yml, has_cred)?;
+
+                // Build bridge config from bridge state for RC bridges
+                let bridge_config = if robot_bridge_type.as_deref() == Some("rocketchat") {
+                    if let Some(ref bstate) = robot_bridge_state {
+                        let bot_user_id = bstate
+                            .identities
+                            .get(member_dir_name)
+                            .map(|id| id.user_id.clone())
+                            .unwrap_or_default();
+                        let room_id = bstate
+                            .rooms
+                            .first()
+                            .and_then(|r| r.room_id.clone())
+                            .unwrap_or_default();
+                        let server_url = bstate
+                            .service_url
+                            .clone()
+                            .unwrap_or_default();
+
+                        Some(workspace::RobotBridgeConfig {
+                            bot_user_id,
+                            room_id,
+                            server_url,
+                            operator_id: None,
+                        })
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                workspace::inject_robot_config(
+                    &ralph_yml,
+                    has_cred,
+                    robot_bridge_type.as_deref(),
+                    bridge_config.as_ref(),
+                )?;
                 if verbose {
                     println!(
                         "  RObot.enabled = {} for {}",

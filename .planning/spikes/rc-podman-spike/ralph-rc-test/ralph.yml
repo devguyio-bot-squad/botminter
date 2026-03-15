@@ -1,0 +1,18 @@
+cli:
+  backend: claude
+
+event_loop:
+  prompt_file: PROMPT.md
+  max_iterations: 30
+  max_runtime_seconds: 300
+  completion_promise: LOOP_COMPLETE
+  persistent: false
+
+RObot:
+  enabled: true
+  timeout_seconds: 120
+  rocketchat:
+    server_url: "http://127.0.0.1:3100"
+    bot_user_id: "7FryHKgqztLZ6Togm"
+    room_id: "69b01fbdb016581b7e3f660b"
+  operator_id: "69b01fbab016581b7e3f6603"

@@ -110,19 +110,29 @@ pub fn run(
 
     // Per-member credential resolution via CredentialStore (system keyring).
     // Each Ralph instance gets its own credential, not a team-wide token.
-    // TODO: When more bridge types are added (Rocket.Chat), the env var name
-    // should become bridge-type-aware instead of hardcoded RALPH_TELEGRAM_BOT_TOKEN.
-    let (credential_store, _has_bridge) = if let Some(ref dir) = bridge::discover(&team_repo, &team.name)? {
+    // Bridge-type-aware: dispatches RALPH_ROCKETCHAT_AUTH_TOKEN for RC,
+    // RALPH_TELEGRAM_BOT_TOKEN for Telegram.
+    let (credential_store, _bridge_type, bridge_service_url) = if let Some(ref dir) = bridge::discover(&team_repo, &team.name)? {
         let manifest = bridge::load_manifest(dir)?;
         let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
+        let bstate = bridge::load_state(&bstate_path)?;
         let store = bridge::LocalCredentialStore::new(
             &team.name,
             &manifest.metadata.name,
             bstate_path,
         ).with_collection(cfg.keyring_collection.clone());
-        (Some(store), true)
+        let btype = Some(manifest.spec.bridge_type.clone());
+        let surl = bstate.service_url.clone();
+        (Some(store), btype, surl)
     } else {
-        (None, false)
+        (None, None, None)
+    };
+    // Resolve bridge_type name from manifest for env var dispatch
+    let bridge_type_name = if let Some(ref dir) = bridge::discover(&team_repo, &team.name)? {
+        let manifest = bridge::load_manifest(dir)?;
+        Some(manifest.metadata.name.clone())
+    } else {
+        None
     };
 
     // Discover members
@@ -204,7 +214,7 @@ pub fn run(
         }
 
         // Launch ralph
-        match launch_ralph(&ws, &gh_token, member_token.as_deref()) {
+        match launch_ralph(&ws, &gh_token, member_token.as_deref(), bridge_type_name.as_deref(), bridge_service_url.as_deref()) {
             Ok(pid) => {
                 let started_at = chrono::Utc::now().to_rfc3339();
                 state.members.insert(
@@ -277,7 +287,9 @@ fn require_gh_token(team: &TeamEntry) -> Result<String> {
 fn launch_ralph(
     workspace: &std::path::Path,
     gh_token: &str,
-    telegram_token: Option<&str>,
+    member_token: Option<&str>,
+    bridge_type: Option<&str>,
+    service_url: Option<&str>,
 ) -> Result<u32> {
     let mut cmd = Command::new("ralph");
     cmd.args(["run", "-p", "PROMPT.md"])
@@ -286,8 +298,18 @@ fn launch_ralph(
         // Unset CLAUDECODE to avoid nested-Claude issues
         .env_remove("CLAUDECODE");
 
-    if let Some(token) = telegram_token {
-        cmd.env("RALPH_TELEGRAM_BOT_TOKEN", token);
+    if let Some(token) = member_token {
+        match bridge_type {
+            Some("rocketchat") => {
+                cmd.env("RALPH_ROCKETCHAT_AUTH_TOKEN", token);
+                if let Some(url) = service_url {
+                    cmd.env("RALPH_ROCKETCHAT_SERVER_URL", url);
+                }
+            }
+            _ => {
+                cmd.env("RALPH_TELEGRAM_BOT_TOKEN", token);
+            }
+        }
     }
 
     // Detach from current process group
@@ -427,10 +449,25 @@ fn run_formation_manager(
     if let Some(token) = &team.credentials.gh_token {
         env_vars.push(("GH_TOKEN".to_string(), token.clone()));
     }
+    // Legacy fallback: formation manager gets team-wide token.
     // TODO: Formation manager should resolve per-member credentials via CredentialStore
-    // when non-local formations support bridge integration. Legacy fallback for now.
+    // when non-local formations support bridge integration.
     if let Some(token) = &team.credentials.telegram_bot_token {
-        env_vars.push(("RALPH_TELEGRAM_BOT_TOKEN".to_string(), token.clone()));
+        // Determine bridge type for correct env var dispatch
+        let team_bridge_type = bridge::discover(team_repo, &team.name)
+            .ok()
+            .flatten()
+            .and_then(|dir| bridge::load_manifest(&dir).ok())
+            .map(|m| m.metadata.name.clone());
+
+        match team_bridge_type.as_deref() {
+            Some("rocketchat") => {
+                env_vars.push(("RALPH_ROCKETCHAT_AUTH_TOKEN".to_string(), token.clone()));
+            }
+            _ => {
+                env_vars.push(("RALPH_TELEGRAM_BOT_TOKEN".to_string(), token.clone()));
+            }
+        }
     }
     // Pass workzone and team info to formation manager
     env_vars.push(("BM_WORKZONE".to_string(), workzone.display().to_string()));
@@ -736,16 +773,15 @@ mod tests {
 
     #[test]
     fn launch_ralph_receives_per_member_credential() {
-        // This test verifies that launch_ralph correctly accepts and uses
-        // per-member credentials. We can't test actual process spawning,
-        // but we verify the function signature accepts Option<&str> for
-        // per-member credential (same as before, but now fed per-member).
+        // This test verifies that launch_ralph correctly accepts bridge-type-aware
+        // parameters. We can't test actual process spawning, but we verify the
+        // function signature accepts the new bridge_type + service_url parameters.
         //
         // The real test is that `bm start` resolves credentials per-member
         // via resolve_credential_from_store() in the member loop.
 
-        // Verify launch_ralph compiles with credential parameter
-        let _: fn(&std::path::Path, &str, Option<&str>) -> Result<u32> = launch_ralph;
+        // Verify launch_ralph compiles with bridge-type-aware parameters
+        let _: fn(&std::path::Path, &str, Option<&str>, Option<&str>, Option<&str>) -> Result<u32> = launch_ralph;
     }
 
     #[test]

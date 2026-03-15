@@ -30,7 +30,7 @@ Full details: `.planning/milestones/v0.06-ROADMAP.md`
 - [x] **Phase 7: Specs Foundation & Bridge Contract** - Establish ADR practice, create specs directory, and define the bridge plugin contract with spec and schema (completed 2026-03-08)
 - [x] **Phase 8: Bridge Abstraction, CLI & Telegram** - Build the Rust bridge module, all `bm bridge` CLI commands, Telegram migration, and `bm start/stop/status` integration — validated end-to-end with Telegram as the first real bridge (completed 2026-03-08)
 - [x] **Phase 9: Profile Integration & Cleanup** - Connect bridge to profiles, init wizard, teams sync provisioning, and verify full cycle end-to-end with Telegram (completed 2026-03-09)
-- [ ] **Phase 10: Rocket.Chat Bridge** - Ship the reference bridge implementation proving the full abstraction with Podman-based Rocket.Chat
+- [x] **Phase 10: Rocket.Chat Bridge** - Ship the reference bridge implementation proving the full abstraction with Podman-based Rocket.Chat (completed 2026-03-10)
 
 ## Phase Details
 
@@ -104,12 +104,11 @@ Plans:
   3. A team channel is provisioned during `bm teams sync` if it does not already exist
   4. Bot commands (`/status`, `/tasks`) work in Rocket.Chat by reusing Ralph's command handler
   5. Operator identity is configured in the bridge's `schema.json` config
-**Plans**: TBD
+**Plans**: 2 plans
 
 Plans:
-- [ ] 10-01: TBD
-- [ ] 10-02: TBD
-- [ ] 10-03: TBD
+- [x] 10-01-PLAN.md -- Spike: RC + MongoDB Podman Pod standalone validation (completed 2026-03-10)
+- [ ] 10-02-PLAN.md -- Ship RC bridge and prove it works end-to-end via full operator journey
 
 ## Progress
 
@@ -127,7 +126,7 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 7. Specs Foundation & Bridge Contract | v0.07 | 3/3 | Complete | 2026-03-08 |
 | 8. Bridge Abstraction, CLI & Telegram | v0.07 | 4/5 | Gap closure | 2026-03-08 |
 | 9. Profile Integration & Cleanup | v0.07 | 6/6 | Complete | 2026-03-09 |
-| 10. Rocket.Chat Bridge | v0.07 | 0/3 | Not started | - |
+| 10. Rocket.Chat Bridge | 2/2 | Complete    | 2026-03-10 | - |
 
 ---
-*Roadmap updated: 2026-03-09 -- Phase 9 gap closure plans created (09-05, 09-06)*
+*Roadmap updated: 2026-03-10 -- Phase 10 merged plans 02+03 into single plan 02 (implementation + E2E as one deliverable)*

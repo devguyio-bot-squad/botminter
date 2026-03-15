@@ -1,68 +1,69 @@
 # External Integrations
 
-**Analysis Date:** 2026-03-04
+**Analysis Date:** 2026-03-10
 
 ## APIs & External Services
 
 **GitHub API (via `gh` CLI):**
-- Used for all team coordination: issues, labels, milestones, PRs, project boards
-- SDK/Client: `gh` CLI (shelled out via `std::process::Command`)
-- Auth: `GH_TOKEN` env var or `gh auth token` (auto-detected during `bm init`)
-- Operations: repo creation, label bootstrapping, project board setup (v2 with Status field), issue CRUD, org listing, user validation
-- Key files: `crates/bm/src/commands/init.rs`, `crates/bm/src/commands/daemon.rs`
+- Primary coordination fabric for all team operations
+- Used for: repo creation, label management, GitHub Projects (v2), issue tracking, milestone management, PR operations, user/org listing, webhook event polling
+- Client: `gh` CLI (shelled out via `std::process::Command`)
+- Auth: `GH_TOKEN` env var or `gh auth token` (stored in `~/.botminter/config.yml` as `credentials.gh_token`)
+- Key files:
+  - `crates/bm/src/commands/init.rs` - Repo creation, label bootstrap, project board setup
+  - `crates/bm/src/workspace.rs` - Repo view/create for workspace provisioning
+  - `crates/bm/src/commands/daemon.rs` - Event polling via `gh api`
 
-**GitHub Webhooks:**
-- Daemon mode receives webhook events from GitHub
-- Server: `tiny_http` 0.12 (`crates/bm/src/commands/daemon.rs`)
-- Verification: HMAC-SHA256 signature validation (`hmac`, `sha2`, `hex` crates)
+**GitHub Webhooks (Incoming):**
+- Daemon webhook mode listens on configurable port (default 8484) via `tiny_http`
+- Accepts GitHub webhook POST requests at `/webhook`
+- Verifies HMAC-SHA256 signatures using `webhook_secret` from config
 - Relevant events: `issues`, `issue_comment`, `pull_request`
-- Webhook secret stored in `~/.botminter/config.yml` under team credentials
+- Files: `crates/bm/src/commands/daemon.rs` (lines 354-430)
 
-**GitHub Events API (polling):**
-- Alternative to webhooks: daemon poll mode queries GitHub events API
-- Uses `gh api` CLI for polling
-- Poll state persisted at `~/.botminter/daemon-{team}-poll.json`
+**GitHub Event Polling (Alternative):**
+- Daemon poll mode uses `gh api` to poll for events at configurable intervals
+- Stores last event ID in `~/.botminter/daemon-<team>-poll.json`
+- Files: `crates/bm/src/commands/daemon.rs`
 
-**Claude Code (Anthropic):**
-- Coding agent for interactive sessions and member orchestration
-- Binary: `claude` CLI (detected via `which::which`)
-- Invocation: `crates/bm/src/session.rs` - spawns `claude --print` with skill content as prompt
-- Used by: `bm chat`, `bm minty` commands
-- No direct API calls - all interaction via CLI binary
+**Telegram Bot API:**
+- Bridge plugin for team communication
+- Managed via bridge manifest system in profiles (`profiles/scrum/bridges/telegram/`, `profiles/scrum-compact/bridges/telegram/`)
+- Identity management: `bm bridge identity add/rotate/remove`
+- Room management: `bm bridge room create/list`
+- Bot tokens stored in system keyring (not config files)
+- Files: `crates/bm/src/bridge.rs` (bridge abstraction), `crates/bm/src/commands/bridge.rs`
 
-**Ralph Orchestrator:**
-- Member orchestration runtime - each team member runs as a Ralph instance
-- Binary: `ralph` CLI (detected via `which::which`)
-- Invocation: `crates/bm/src/commands/start.rs` - spawns ralph processes per member
-- Config: `ralph.yml` per member workspace
-- Source: https://github.com/mikeyobrien/ralph-orchestrator/
-- Local checkout at `/opt/workspace/ralph-orchestrator` (development dependency)
+**Claude Code (Coding Agent):**
+- Launched as subprocess for interactive chat sessions (`bm chat`)
+- Binary name: `claude`
+- Uses `--append-system-prompt-file` flag with temp file
+- Files: `crates/bm/src/session.rs` (lines 10-66)
 
-**Telegram Bot API (optional):**
-- Optional notification integration for team members
-- Tokens stored per-member in system keyring via CredentialStore (env var fallback: BM_BRIDGE_TOKEN_{NAME})
-- Available as optional bridge on any profile (select during `bm init` or `--bridge telegram`)
-- E2E tests include Telegram mock server: `crates/bm/tests/e2e/telegram.rs`
+**Ralph Orchestrator (Process Manager):**
+- Launched as subprocess for autonomous member operation (`bm start`)
+- Binary name: `ralph`
+- Uses `ralph run -p <prompt_path>` command
+- Env var `CLAUDECODE` is explicitly removed to avoid nested-Claude issues
+- Files: `crates/bm/src/session.rs` (lines 68-122)
 
 ## Data Storage
 
 **Databases:**
-- None - all state is file-based
+- None. All state is file-based.
 
-**File Storage (local filesystem):**
-- Global config: `~/.botminter/config.yml` (YAML, 0o600 permissions)
-- Daemon state: `~/.botminter/daemon-{team}.json`, `~/.botminter/daemon-{team}.pid`
-- Poll state: `~/.botminter/daemon-{team}-poll.json`
-- Runtime state: `{workzone}/{team}/runtime-state.json` (`crates/bm/src/state.rs`)
-- Topology: `{workzone}/{team}/topology.json` (`crates/bm/src/topology.rs`)
-- Logs: `~/.botminter/logs/daemon-{team}.log`, `~/.botminter/logs/member-{team}-{member}.log`
-- Log rotation: 10 MB max per log file
+**File Storage (Local Filesystem):**
+- `~/.botminter/config.yml` - Global configuration (YAML, 0600 permissions)
+- `~/.botminter/state.json` - Runtime state (member PIDs, workspaces)
+- `~/.botminter/daemon-<team>.json` - Daemon config per team
+- `~/.botminter/daemon-<team>-poll.json` - Poll mode state
+- `<workzone>/<team>/team/` - Team repo (git repository, control plane)
+- `<workzone>/<team>/<member>/` - Member workspaces (provisioned by `bm teams sync`)
 
-**Team Repos (git):**
-- Team coordination data lives in git repos on GitHub
-- Local clones at `{workzone}/{team}/team/`
-- Member workspaces at `{workzone}/{team}/{member}/`
-- Project forks as git submodules within member workspaces
+**Git Repositories:**
+- Team repo: GitHub-hosted, cloned locally to `<workzone>/<team>/team/`
+- Project repos: Added as git submodules in member workspaces
+- All coordination state (issues, labels, milestones, PRs) lives on GitHub
 
 **Caching:**
 - None
@@ -70,107 +71,97 @@
 ## Authentication & Identity
 
 **GitHub Auth:**
-- Primary auth mechanism for all team operations
-- Token sources (checked in order during `bm init`):
-  1. `GH_TOKEN` environment variable
-  2. `gh auth token` CLI output
+- Token auto-detected from `GH_TOKEN` env var or `gh auth token` during `bm init`
 - Validated via `gh api user` before proceeding
-- Stored in `~/.botminter/config.yml` per team under `credentials.gh_token`
-- Passed to member processes as `GH_TOKEN` env var at runtime
+- Stored in `~/.botminter/config.yml` with 0600 permissions
+- Passed to all `gh` CLI calls and Ralph instances at runtime
+- Files: `crates/bm/src/commands/init.rs` (lines 1012-1018)
 
-**Webhook Auth:**
-- Optional `webhook_secret` per team in credentials
-- HMAC-SHA256 verification of GitHub webhook payloads
-- Implementation: `hmac` + `sha2` + `hex` crates in `crates/bm/src/commands/daemon.rs`
+**Bridge Credentials (Keyring):**
+- System keyring via `keyring` crate with `sync-secret-service` feature
+- Service name pattern: `botminter-<team>-telegram`
+- Supports custom keyring collection via `keyring_collection` config field
+- Falls back to `dbus-secret-service` crate for direct D-Bus access when custom collection specified
+- Linux requires: D-Bus session bus + Secret Service provider (gnome-keyring) with initialized `login` collection
+- Files: `crates/bm/src/bridge.rs` (LocalCredentialStore, lines 76-340)
 
-**No user auth system:**
-- Single-user CLI tool - no login/session/user management
-- Relies entirely on GitHub token for authorization
+**Webhook Verification:**
+- HMAC-SHA256 signature verification for incoming GitHub webhooks
+- Secret stored as `credentials.webhook_secret` in config
+- Files: `crates/bm/src/commands/daemon.rs` (lines 829-830)
 
 ## Monitoring & Observability
 
 **Error Tracking:**
-- None (no external error tracking service)
+- None (no external service)
 
 **Logs:**
-- File-based logging to `~/.botminter/logs/`
-- Per-daemon logs: `daemon-{team}.log`
-- Per-member logs: `member-{team}-{member}.log`
-- Log rotation at 10 MB
-- No structured logging framework - uses direct file writes
-
-**Status:**
-- `bm status` command provides runtime dashboard
-- Reads from `runtime-state.json` and `topology.json`
+- Daemon logs to `~/.botminter/daemon-<team>.log` with 10MB rotation (`crates/bm/src/commands/daemon.rs`)
+- Member output: stdout/stderr inherited from Ralph subprocess
+- CLI output: `eprintln!` for warnings, `println!` for info
+- No structured logging framework
 
 ## CI/CD & Deployment
 
 **Hosting:**
-- GitHub Pages - documentation site
-- GitHub Releases - binary distribution
+- GitHub Releases - Binary distribution (tar.gz per platform)
+- GitHub Pages - Documentation site
 
-**CI Pipeline (GitHub Actions):**
+**CI Pipeline:**
+- GitHub Actions
+- `.github/workflows/release.yml` - Tag-triggered release builds (4 platform matrix: linux x86_64, linux arm64, macos x86_64, macos arm64)
+- `.github/workflows/docs.yml` - Push-to-main triggered docs deployment via Zensical/MkDocs
 
-**Documentation (`docs.yml`):**
-- Trigger: push to `master` or `main`
-- Steps: checkout, Python setup, install zensical, build site, deploy to GitHub Pages
-- Uses: `actions/configure-pages@v5`, `actions/upload-pages-artifact@v3`, `actions/deploy-pages@v4`
-- Permissions: `contents: read`, `pages: write`, `id-token: write`
-
-**Release (`release.yml`):**
-- Trigger: push tag `v*` or `workflow_dispatch`
-- Matrix build: 4 targets (Linux x86_64, Linux ARM64, macOS x86_64, macOS ARM64)
-- Cross-compilation: `cross-rs/cross` for Linux ARM64
-- Artifact: `bm-{target}.tar.gz` attached to GitHub Release
-- Uses: `dtolnay/rust-toolchain@stable`, `actions/upload-artifact@v4`, `actions/download-artifact@v4`
-
-**Local Release (`just release`):**
-- Justfile recipe for creating GitHub releases with signed tags
-- Updates `Cargo.toml` version, creates signed git tag, pushes, creates release via `gh release create`
-- Fallback: `just release-build-local` for manual binary attachment
+**Release Process:**
+- `just release <version> <notes_file>` - Version bump, tag, push, GitHub release creation
+- CI builds binaries and attaches to the release
+- `just release-build-local <tag>` - Fallback for manual binary attachment
 
 ## Environment Configuration
 
 **Required env vars (runtime):**
-- `GH_TOKEN` - GitHub authentication (auto-detected or stored in config)
+- `GH_TOKEN` (or `gh auth token` in PATH) - GitHub authentication
+
+**Required env vars (E2E testing):**
+- `TESTS_GH_TOKEN` - GitHub token for test operations
+- `TESTS_GH_ORG` - GitHub org for test repo creation
 
 **Optional env vars:**
-- `CLAUDECODE` - Must be unset when launching nested Claude Code sessions (Claude-inside-Claude safety)
-- Telegram bot token - stored in config, not env var
-
-**Config file locations:**
-- `~/.botminter/config.yml` - Global config with teams, credentials, workzone path
-- `{workspace}/ralph.yml` - Per-member Ralph orchestrator config
-- `{workspace}/PROMPT.md` - Per-member system prompt
-- `{workspace}/CLAUDE.md` - Per-member Claude Code instructions
+- `CLAUDECODE` - Must be unset when launching nested Claude Code instances
 
 **Secrets location:**
-- `~/.botminter/config.yml` - Contains `GH_TOKEN`, optional `telegram_bot_token`, optional `webhook_secret`
-- File permissions: `0o600` (owner read/write only)
-- Never committed to git
+- GitHub token: `~/.botminter/config.yml` (file-based, 0600 permissions)
+- Bridge tokens: System keyring (gnome-keyring / macOS Keychain)
+- Webhook secret: `~/.botminter/config.yml`
 
 ## Webhooks & Callbacks
 
 **Incoming:**
-- GitHub webhook receiver in daemon webhook mode
-- Server: `tiny_http` on configurable port
-- Endpoint: listens for `issues`, `issue_comment`, `pull_request` events
-- Verification: HMAC-SHA256 signature check against stored webhook secret
-- Handler: triggers member launches based on event type (`crates/bm/src/commands/daemon.rs`)
+- `/webhook` - GitHub webhook endpoint (daemon webhook mode, `tiny_http` on configurable port)
+- Accepts: `issues`, `issue_comment`, `pull_request` events
+- Verification: HMAC-SHA256 via `X-Hub-Signature-256` header
 
 **Outgoing:**
-- None directly from `bm` CLI
-- Members may interact with GitHub via `gh` CLI during their Ralph sessions
+- Telegram Bot API calls (via bridge plugin, delegated to `just` recipes in bridge directory)
+- GitHub API calls via `gh` CLI (issue creation, label management, project board updates)
 
-## Kubernetes (Future/Partial)
+## External Tool Dependencies
 
-**Formation Support:**
-- K8s formation type defined in `crates/bm/src/formation.rs`
-- Config model: context, image, namespace_prefix
-- Topology model supports K8s endpoints: namespace, pod, container, context (`crates/bm/src/topology.rs`)
-- Non-local formations delegate to a formation manager (Ralph session with deployment skills)
-- Status: data models present, full implementation in progress
+**Required at Runtime:**
+- `gh` (GitHub CLI) - All GitHub operations, must be in PATH
+- `git` - Repository operations (clone, submodule, push)
+- `claude` (Claude Code) - Interactive chat sessions (`bm chat`, `bm minty`)
+- `ralph` (Ralph Orchestrator) - Autonomous member operation (`bm start`)
+
+**Optional at Runtime:**
+- `just` - Bridge lifecycle management (start/stop/health recipes)
+- `podman` - Telegram mock server in E2E tests
+
+**Build-time Only:**
+- `cargo` - Rust build system
+- `cross` - Cross-compilation (CI only)
+- `python3` + `zensical` - Documentation site
 
 ---
 
-*Integration audit: 2026-03-04*
+*Integration audit: 2026-03-10*

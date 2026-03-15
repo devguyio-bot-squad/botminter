@@ -1,326 +1,495 @@
 # Testing Patterns
 
-**Analysis Date:** 2026-03-04
+**Analysis Date:** 2026-03-10
 
 ## Test Framework
 
 **Runner:**
-- Rust's built-in `cargo test` via `#[test]` attribute
-- No external test runner (no `nextest`)
-- Config: `Cargo.toml` at `crates/bm/Cargo.toml`
+- Rust's built-in test framework for unit and integration tests
+- `libtest-mimic` 0.8 for E2E tests (custom harness with custom CLI args)
+- Config: `[[test]]` entry in `crates/bm/Cargo.toml` with `harness = false` for E2E
 
 **Assertion Library:**
-- Standard `assert!()`, `assert_eq!()`, `assert_ne!()` macros
-- No external assertion library
+- Standard `assert!()`, `assert_eq!()`, `assert!(result.is_err())` macros
+- `assert!(matches!(...))` for enum variant checks
+- Custom `assert_cmd_success()` / `assert_cmd_fails()` helpers for CLI subprocess tests
 
 **Run Commands:**
 ```bash
-just test          # cargo test -p bm (unit + integration, excludes e2e)
-just e2e           # cargo test -p bm --features e2e -- --test-threads=1
-just e2e-verbose   # same with --nocapture for visible output
-just clippy        # cargo clippy -p bm -- -D warnings
+just unit          # Unit + integration tests (no GitHub token needed)
+just conformance   # Bridge spec conformance tests only
+just e2e           # E2E tests (requires TESTS_GH_TOKEN + TESTS_GH_ORG)
+just e2e-step      # Progressive E2E — one case at a time
+just e2e-reset     # Clean up progressive E2E state
+just test          # All tests: unit + conformance + e2e
+just clippy        # Lint check (not tests, but part of quality gate)
+```
+
+**Running a single test:**
+```bash
+# Unit/integration test by name
+cargo test -p bm <test_name>
+
+# Single E2E scenario
+cargo test -p bm --features e2e --test e2e -- \
+    --gh-token "$TESTS_GH_TOKEN" --gh-org "$TESTS_GH_ORG" \
+    <scenario_name> --test-threads=1
 ```
 
 ## Test File Organization
 
-**Location:** Mixed — unit tests are co-located within source files, integration and CLI tests are in `crates/bm/tests/`.
+**Location:** Tests are split across three locations:
+
+1. **Co-located unit tests** in `#[cfg(test)] mod tests` blocks within source files
+2. **Integration tests** in `crates/bm/tests/` (separate binaries, can use `bm` as library)
+3. **E2E tests** in `crates/bm/tests/e2e/` (custom harness, real GitHub)
 
 **Naming:**
-- Unit tests: `#[cfg(test)] mod tests` block at the bottom of each source file
-- Integration tests: `crates/bm/tests/integration.rs`
-- CLI parsing tests: `crates/bm/tests/cli_parsing.rs`
-- E2E tests: `crates/bm/tests/e2e/` (feature-gated, multi-file module)
+- Unit test modules: `mod tests` inside each source file
+- Integration test files: descriptive names (`integration.rs`, `cli_parsing.rs`, `conformance.rs`, `bridge_sync.rs`, `profile_roundtrip.rs`)
+- E2E files: `main.rs` (harness entry), `helpers.rs`, `github.rs`, `telegram.rs`, `isolated.rs`, `scenarios/`
 
 **Structure:**
 ```
 crates/bm/
   src/
-    config.rs          # Contains #[cfg(test)] mod tests { ... }
-    state.rs           # Contains #[cfg(test)] mod tests { ... }
-    formation.rs       # Contains #[cfg(test)] mod tests { ... }
-    commands/
-      hire.rs          # Contains #[cfg(test)] mod tests { ... }
+    config.rs        # Contains #[cfg(test)] mod tests { ... }
+    topology.rs      # Contains #[cfg(test)] mod tests { ... }
+    state.rs         # Contains #[cfg(test)] mod tests { ... }
+    commands/hire.rs  # Contains #[cfg(test)] mod tests { ... }
+    profile.rs       # Contains #[cfg(test)] mod tests { ... }
+    ...
   tests/
-    cli_parsing.rs     # CLI arg parsing tests (subprocess-based)
-    integration.rs     # Multi-command workflow tests (~2000 lines)
-    README.md          # Test architecture documentation
+    integration.rs      # 3412 lines — multi-command workflow tests
+    cli_parsing.rs      # 1295 lines — clap argument validation
+    conformance.rs      # 437 lines — bridge spec compliance
+    bridge_sync.rs      # 370 lines — bridge sync logic
+    profile_roundtrip.rs # 61 lines — profile extract/read cycle
     e2e/
-      main.rs          # E2E module root with smoke test
-      helpers.rs       # Shared E2E helpers (bm_cmd, DaemonGuard, etc.)
-      github.rs        # GitHub API helpers (TempRepo, TempProject RAII)
-      telegram.rs      # Telegram mock helpers (podman-based)
-      init_to_sync.rs  # Full lifecycle E2E tests
-      daemon_lifecycle.rs  # Daemon start/stop E2E tests
-      start_to_stop.rs     # Member launch E2E tests
+      main.rs           # Custom harness entry point
+      helpers.rs        # Shared helpers (GithubSuite, KeyringGuard, etc.)
+      github.rs         # TempRepo, TempProject with RAII cleanup
+      telegram.rs       # TgMock Podman container helper
+      isolated.rs       # Standalone smoke tests
+      scenarios/
+        mod.rs           # Suite dispatch
+        operator_journey.rs  # Main happy path scenario
 ```
 
-## Test Structure
+## Test Types
 
-**Unit test pattern** (co-located in source files):
+### Unit Tests (co-located)
+
+Scope: Test individual functions and data structures in isolation. Located inside source files.
+
+Pattern: Each source module has a `#[cfg(test)] mod tests` block with focused tests:
+
 ```rust
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn descriptive_test_name() {
+    fn save_and_load_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
-        // Setup
-        let result = function_under_test(tmp.path());
-        // Assert
-        assert_eq!(result, expected);
+        let path = test_config_path(tmp.path());
+
+        let config = BotminterConfig { /* ... */ };
+        save_to(&path, &config).unwrap();
+        let loaded = load_from(&path).unwrap();
+
+        assert_eq!(loaded.default_team, Some("my-team".to_string()));
+    }
+
+    #[test]
+    fn load_missing_config_errors() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = test_config_path(tmp.path());
+        let result = load_from(&path);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("bm init"));
     }
 }
 ```
 
-**Section separators in test files** — tests are grouped by concern with Unicode line separators:
-```rust
-// ── Command aliases (2 tests) ────────────────────────────────────────
+Common unit test patterns:
+- **Round-trip tests:** serialize then deserialize, assert equality
+- **Error path tests:** verify specific error messages using `.to_string()` + `assert!(err.contains(...))`
+- **Permission tests:** verify files get correct Unix permissions (0o600)
+- **Atomic write tests:** verify temp files are cleaned up after rename
+- **Edge case tests:** missing files return `None`/empty, gap-filling algorithms, etc.
 
-#[test]
-fn start_and_up_are_aliases() { ... }
+### Integration Tests (`crates/bm/tests/`)
 
-// ── Flag parsing (5 tests) ───────────────────────────────────────────
+Scope: Multi-command workflows against temporary directories. Use `bm` as a library (in-process) and as a subprocess.
 
-#[test]
-fn team_flag_short_and_long() { ... }
-```
-
-**Integration test pattern** (subprocess-based):
-```rust
-fn bm() -> Command {
-    Command::new(env!("CARGO_BIN_EXE_bm"))
-}
-
-#[test]
-fn some_cli_behavior() {
-    let output = bm().args(["some", "command"]).output().unwrap();
-    let code = output.status.code().unwrap_or(-1);
-    assert_ne!(code, CLAP_PARSE_ERROR_CODE,
-        "`bm some command` should not be a parse error, stderr: {}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-}
-```
-
-## Test Isolation Model
-
-**Critical principle:** No `env::set_var()` — tests never mutate process-global environment variables.
-
-**Filesystem isolation:**
-- Every test creates a `tempfile::tempdir()` for its own filesystem tree
-- Config files written to `{tmp}/.botminter/config.yml`
-- Profiles extracted to `{tmp}/.config/botminter/profiles/`
-
-**Subprocess isolation:**
-- Commands that resolve config via `dirs::home_dir()` run as subprocesses
-- HOME is overridden per-test via `.env("HOME", tmp.path())`
-- XDG_CONFIG_HOME overridden similarly for profile tests
-
-**Port isolation:**
-- Webhook/daemon tests use OS-assigned free ports via `get_free_port()`
-- `wait_for_port(port, timeout)` polls TCP readiness instead of `thread::sleep()`
-
-**Documented in:** `crates/bm/tests/README.md`
-
-## Test Helpers
-
-**Integration test helpers** (in `crates/bm/tests/integration.rs`):
-
-| Helper | Purpose |
-|--------|---------|
-| `setup_team(tmp, name, profile)` | Creates team repo + config in a temp directory |
-| `bm_cmd(home)` | Creates a `Command` with HOME set for isolation |
-| `bm_run(home, args)` | Runs `bm` and asserts success |
-| `bm_run_fail(home, args)` | Runs `bm` and asserts failure, returns stderr |
-| `bm_hire(home, role, name, team)` | Hires a member via subprocess |
-| `bm_sync(home, team)` | Runs `bm teams sync` via subprocess |
-| `get_free_port()` | Returns an OS-assigned free port |
-| `wait_for_port(port, timeout)` | Polls until TCP port accepts connections |
-| `claude_code_agent()` | Returns a `CodingAgentDef` for tests |
-| `git(dir, args)` | Runs a git command, asserts success |
-
-**E2E test helpers** (in `crates/bm/tests/e2e/helpers.rs`):
-
-| Helper | Purpose |
-|--------|---------|
-| `bm_cmd()` | Creates a `Command` for the `bm` binary |
-| `assert_cmd_success(cmd)` | Asserts exit 0, returns stdout |
-| `assert_cmd_fails(cmd)` | Asserts non-zero exit, returns stderr |
-| `is_alive(pid)` | Checks process liveness via `kill(pid, 0)` |
-| `force_kill(pid)` | Sends SIGKILL to a process |
-| `wait_for_exit(pid, timeout)` | Polls until process exits |
-| `DaemonGuard` | RAII guard that stops/cleans up daemon on drop |
-
-**E2E GitHub helpers** (in `crates/bm/tests/e2e/github.rs`):
-
-| Helper | Purpose |
-|--------|---------|
-| `TempRepo::new_in_org(name, org)` | Creates a temp GitHub repo (RAII, deletes on drop) |
-| `TempProject::new(org, title)` | Creates a temp GitHub Project (RAII, deletes on drop) |
-| `gh_auth_ok()` | Checks if `gh auth status` succeeds |
-| `list_labels(repo)` | Queries labels on a GitHub repo |
-| `clean_persistent_repo()` | Resets the persistent E2E test repo |
-
-## Mocking
-
-**Framework:** No mocking framework. Tests use real filesystem and real external services.
-
-**Patterns:**
-- **Filesystem mocking:** `tempfile::tempdir()` creates isolated temp directories — all tests write to temp dirs
-- **External service mocking:** Telegram mock server via `podman` container (`crates/bm/tests/e2e/telegram.rs`)
-- **No in-process mocks:** Functions are tested via their public API with real file I/O
-
-**What to mock:**
-- Telegram API: use `tg-mock` podman container for E2E tests
-- HOME directory: override via `.env("HOME", tmp_dir)` on subprocess `Command`
-
-**What NOT to mock:**
-- GitHub API: E2E tests use real GitHub repos (feature-gated behind `--features e2e`)
-- Filesystem: use real temp directories, never mock `fs` operations
-- Git operations: use real git repos initialized in temp directories
-
-## Fixtures and Factories
-
-**Test Data:**
-```rust
-// Config factory pattern (inline construction)
-let config = BotminterConfig {
-    workzone: PathBuf::from("/tmp/workspaces"),
-    default_team: Some("my-team".to_string()),
-    teams: vec![TeamEntry {
-        name: "my-team".to_string(),
-        path: PathBuf::from("/tmp/workspaces/my-team"),
-        profile: "scrum".to_string(),
-        github_repo: "org/my-team".to_string(),
-        credentials: Credentials::default(),
-        coding_agent: None,
-    }],
-};
-```
-
-**Team repo setup factory** (integration tests):
+**Key pattern — `setup_team()` helper** (`crates/bm/tests/integration.rs`):
 ```rust
 fn setup_team(tmp: &Path, team_name: &str, profile_name: &str) -> PathBuf {
     let profiles_path = profile::profiles_dir_for(tmp);
     fs::create_dir_all(&profiles_path).unwrap();
     profile::extract_embedded_to_disk(&profiles_path).unwrap();
-    // ... git init, extract profile, write config ...
+
+    let team_repo = workzone.join(team_name).join("team");
+    fs::create_dir_all(&team_repo).unwrap();
+    git(&team_repo, &["init", "-b", "main"]);
+    // ... extract profile, create dirs, initial commit, save config
     team_repo
 }
 ```
 
-**Location:** Test helpers are defined at the top of each test file, not in shared fixtures directories.
+**Subprocess testing pattern** (`crates/bm/tests/cli_parsing.rs`):
+```rust
+fn bm(home: &Path) -> Command {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_bm"));
+    cmd.env("HOME", home);
+    cmd.env("XDG_CONFIG_HOME", home.join(".config"));
+    cmd
+}
+
+#[test]
+fn start_and_up_are_aliases() {
+    let tmp = tempfile::tempdir().unwrap();
+    let start = bm(tmp.path()).args(["start", "--help"]).output().unwrap();
+    let up = bm(tmp.path()).args(["up", "--help"]).output().unwrap();
+    assert_eq!(start_text, up_text);
+}
+```
+
+### Conformance Tests (`crates/bm/tests/conformance.rs`)
+
+Scope: Validate bridge spec artifacts (YAML/JSON schema compliance). No command execution.
+
+```rust
+#[test]
+fn stub_bridge_yml_has_required_fields() {
+    let path = stub_dir().join("bridge.yml");
+    let val = read_yaml(&path);
+    assert_eq!(val["apiVersion"].as_str(), Some("botminter.dev/v1alpha1"));
+    assert_eq!(val["kind"].as_str(), Some("Bridge"));
+    // ...
+}
+```
+
+### E2E Tests (`crates/bm/tests/e2e/`)
+
+Scope: Full operator journeys against real GitHub. Require `TESTS_GH_TOKEN` and `TESTS_GH_ORG`.
+
+**Custom harness:** Uses `libtest-mimic` instead of `#[test]` macros. Key differences:
+- Standard `--nocapture` does NOT work. Use `eprintln!()` for debug output.
+- Custom args: `--gh-token`, `--gh-org`, `--progressive`, `--progressive-reset`
+- Feature-gated: requires `--features e2e`
+- Tests run against real GitHub (create/delete repos)
+- MUST run single-threaded: `--test-threads=1`
+
+## E2E Test Architecture
+
+### GithubSuite Pattern
+
+The core E2E abstraction is `GithubSuite` in `crates/bm/tests/e2e/helpers.rs`. It provides:
+- Shared context (`SuiteCtx`) with GitHub token, org, repo name, and HOME dir
+- Sequential case execution with independent pass/fail tracking
+- Progressive mode (step through one case at a time across runs)
+- RAII cleanup of GitHub repos via `TempRepo`
+- Isolated keyring via `KeyringGuard` (D-Bus + gnome-keyring-daemon)
+
+**Building a scenario:**
+```rust
+pub fn scenario(config: &E2eConfig) -> Trial {
+    let repo_name = format!("{}/bm-e2e-journey-{}", config.gh_org, timestamp());
+
+    GithubSuite::new_self_managed("scenario_operator_journey", &repo_name)
+        .setup(|ctx| {
+            // Setup runs BEFORE keyring isolation (podman needs real D-Bus)
+            install_stub_ralph(&ctx.home);
+            // Optional: start tg-mock container
+        })
+        .case("init_with_bridge", |ctx| {
+            let mut cmd = bm_cmd();
+            cmd.args(["init", "--non-interactive", ...])
+               .env("HOME", &ctx.home)
+               .env("GH_TOKEN", &ctx.gh_token);
+            let stdout = assert_cmd_success(&mut cmd);
+            // Assert expected state
+        })
+        .case("hire_member", |ctx| { /* ... */ })
+        .case("teams_sync", |ctx| { /* ... */ })
+        .case("start_member", |ctx| { /* ... */ })
+        .case("stop_member", |ctx| { /* ... */ })
+        .case("cleanup", |ctx| { /* ... */ })
+        .build(config)
+}
+```
+
+**Progressive mode:**
+```rust
+pub fn scenario_progressive(config: &E2eConfig) -> Trial {
+    // Same suite definition
+    GithubSuite::new_self_managed(...)
+        .setup(...)
+        .case(...)
+        .build_progressive(config)  // <-- only difference
+}
+```
+
+### SuiteCtx (Shared Context)
+
+```rust
+pub struct SuiteCtx {
+    pub gh_token: String,
+    pub gh_org: String,
+    pub repo_full_name: String,
+    pub home: PathBuf,
+}
+```
+
+All cases in a suite share this context. The `home` directory is isolated per suite.
+
+### Case Groups
+
+Cases can be grouped so they run together in progressive mode:
+```rust
+.case("start_and_verify", |ctx| { /* ... */ })
+.case("check_status", |ctx| { /* ... */ })
+.group(3, 4)  // These two cases always run together
+```
+
+### Expected Errors
+
+Cases can declare expected panics:
+```rust
+.case_expect_error("duplicate_hire_fails", |ctx| {
+    // This should panic
+    assert_cmd_success(&mut cmd);
+}, |msg| msg.contains("already exists"))
+```
+
+## RAII Test Resources
+
+### TempRepo (`crates/bm/tests/e2e/github.rs`)
+
+Creates a private GitHub repo on construction, deletes on drop:
+```rust
+let repo = TempRepo::new_in_org("bm-e2e-smoke", &org)?;
+// ... use repo.full_name ...
+// Repo auto-deleted when `repo` goes out of scope
+```
+
+### TempProject (`crates/bm/tests/e2e/github.rs`)
+
+Creates a GitHub Project (v2), deletes on drop.
+
+### KeyringGuard (`crates/bm/tests/e2e/helpers.rs`)
+
+Creates an isolated D-Bus session + gnome-keyring-daemon. Restores original env vars on drop:
+```rust
+let _guard = KeyringGuard::new();
+// All keyring operations go to isolated instance
+// Cleaned up when _guard drops
+```
+
+### ProcessGuard / DaemonGuard (`crates/bm/tests/e2e/helpers.rs`)
+
+RAII guards that stop processes on drop:
+```rust
+let mut guard = ProcessGuard::new(&home, TEAM_NAME);
+// ... start process ...
+guard.set_pid(pid);
+// Process killed on drop
+```
+
+## Test Helpers
+
+**Command helpers** (`crates/bm/tests/e2e/helpers.rs`):
+```rust
+// Get a Command for the bm binary with isolated D-Bus
+pub fn bm_cmd() -> Command
+
+// Run command and assert success, return stdout
+pub fn assert_cmd_success(cmd: &mut Command) -> String
+
+// Run command and assert failure, return stderr
+pub fn assert_cmd_fails(cmd: &mut Command) -> String
+```
+
+**Setup helpers:**
+```rust
+// Write .gitconfig for test git operations
+pub fn setup_git_auth(home: &Path)
+
+// Install stub-ralph.sh as "ralph" in PATH
+pub fn install_stub_ralph(home: &Path)
+
+// Get PATH with stub ralph prepended
+pub fn path_with_stub(home: &Path) -> String
+
+// Extract embedded profiles to temp dir
+pub fn bootstrap_profiles_to_tmp(tmp: &Path) -> PathBuf
+```
+
+**Integration test helpers** (`crates/bm/tests/integration.rs`):
+```rust
+// Set up a team repo programmatically (bypasses interactive wizard)
+fn setup_team(tmp: &Path, team_name: &str, profile_name: &str) -> PathBuf
+
+// Run a git command in a directory
+fn git(dir: &Path, args: &[&str])
+```
+
+## Stub Ralph
+
+E2E tests use a stub shell script (`crates/bm/tests/e2e/stub-ralph.sh`) instead of real Ralph to avoid Claude API calls. The stub:
+- Writes received environment variables to `.ralph-stub-env` for assertion
+- Sleeps indefinitely (simulating a running Ralph process)
+- Responds to SIGTERM for clean shutdown
+
+## Telegram Mock
+
+E2E tests use `tg-mock` (a Podman container) to mock the Telegram Bot API:
+```rust
+if telegram::podman_available() {
+    let mock = telegram::TgMock::start();
+    mock.inject_message(token, "hello", chat_id);
+    let requests = mock.get_requests(token, "sendMessage");
+}
+```
+
+Tests gracefully skip Telegram verification if Podman is not available.
+
+## Mocking Patterns
+
+**No mock framework.** The project uses these strategies instead:
+
+1. **Trait-based injection** for credential stores:
+   ```rust
+   pub trait CredentialStore {
+       fn store(&self, member_name: &str, token: &str) -> Result<()>;
+       fn retrieve(&self, member_name: &str) -> Result<Option<String>>;
+       // ...
+   }
+
+   // Production: LocalCredentialStore (system keyring)
+   // Tests: InMemoryCredentialStore
+   pub struct InMemoryCredentialStore {
+       tokens: std::sync::Mutex<HashMap<String, String>>,
+   }
+   ```
+
+2. **Closure injection** for testability:
+   ```rust
+   // Production
+   pub fn interactive_claude_session(...) -> Result<()> {
+       interactive_claude_session_with_check(..., |name| which::which(name).map(|_| ()))
+   }
+
+   // Internal: accepts check function
+   fn interactive_claude_session_with_check<F>(..., check_binary: F) -> Result<()>
+   where F: FnOnce(&str) -> Result<(), which::Error> { ... }
+   ```
+
+3. **Stub binaries** for external processes (stub-ralph.sh)
+
+4. **Real external services** for E2E (GitHub API, tg-mock container)
+
+**What to mock:**
+- System keyring (use `InMemoryCredentialStore` or `KeyringGuard` for isolation)
+- Ralph orchestrator binary (use stub-ralph.sh)
+- Telegram Bot API (use tg-mock Podman container)
+
+**What NOT to mock:**
+- GitHub API in E2E tests (invariant: `invariants/gh-api-e2e.md`)
+- File system operations (use real temp directories)
+- Git operations (use real git with temp repos)
+
+## Test Isolation
+
+**Critical invariant** (`invariants/test-path-isolation.md`): Tests MUST NOT use real user directories.
+
+**Patterns:**
+- Unit tests: `tempfile::tempdir()` for file system operations, explicit path APIs (`save_to()`, `load_from()`)
+- Integration tests: `tempfile::tempdir()` + subprocess `HOME` override
+- E2E tests: `tempfile::tempdir()` for HOME, isolated D-Bus for keyring
+
+```rust
+// Unit test — explicit path, no env var mutation
+let tmp = tempfile::tempdir().unwrap();
+let path = tmp.path().join(".botminter").join("config.yml");
+save_to(&path, &config).unwrap();
+let loaded = load_from(&path).unwrap();
+
+// Integration test — subprocess with HOME override
+let tmp = tempfile::tempdir().unwrap();
+let mut cmd = Command::new(env!("CARGO_BIN_EXE_bm"));
+cmd.env("HOME", tmp.path());
+
+// E2E test — full HOME isolation + keyring isolation
+let home_td = tempfile::tempdir().unwrap();
+let _keyring_guard = KeyringGuard::new();
+bm_cmd().env("HOME", &home).args([...]);
+```
 
 ## Coverage
 
-**Requirements:** None enforced. No coverage threshold configured.
+**Requirements:** None enforced programmatically. Coverage targets are implicit through the invariant system:
+- Every happy path feature must have E2E scenario coverage (`invariants/e2e-scenario-coverage.md`)
+- Unit tests cover internal logic (round trips, edge cases, error paths)
+- Integration tests cover multi-command workflows
 
-**View Coverage:** Not configured. No coverage tool in CI or Justfile.
+## Test Counts
 
-## Test Types
-
-**Unit Tests:**
-- Co-located `#[cfg(test)] mod tests` in source files
-- Test individual functions with isolated temp directories
-- Examples: round-trip serialization, auto-suffix computation, formation resolution, state management
-- Files with unit tests: `crates/bm/src/config.rs`, `crates/bm/src/state.rs`, `crates/bm/src/formation.rs`, `crates/bm/src/commands/hire.rs`
-
-**CLI Parsing Tests** (`crates/bm/tests/cli_parsing.rs`):
-- Verify clap argument definitions: aliases, flags, required args, error messages
-- Run the `bm` binary as a subprocess
-- Check exit codes: `2` = clap parse error, `1` = runtime error (parsing succeeded)
-- Fast, parallel execution, no filesystem setup needed
-
-**Integration Tests** (`crates/bm/tests/integration.rs`):
-- Multi-command workflows against temp directories
-- Test sequences: setup_team -> hire -> sync -> verify workspace structure
-- Full filesystem isolation with per-test HOME
-- Exercise `bm` library API and subprocess invocations
-- ~2000 lines, extensive coverage of workspace sync, multi-team, idempotency
-
-**E2E Tests** (`crates/bm/tests/e2e/`):
-- Feature-gated: `--features e2e`
-- Run serially: `--test-threads=1` (shared GitHub resources)
-- Prerequisites: `gh auth status` must pass, `podman` for Telegram tests
-- RAII cleanup: `TempRepo`, `TempProject`, `DaemonGuard` all clean up on drop
-- Skip pattern: `require_gh_auth!()` macro skips tests when auth unavailable
-- Test organization: `devguyio-bot-squad` org for GitHub operations
+Approximate counts (as of 2026-03-10):
+- ~576 unit + integration tests (run via `just unit`)
+- ~20 E2E tests (run via `just e2e`)
+- Conformance tests for bridge spec compliance
 
 ## Common Patterns
 
-**Assertion with context message:**
+**Round-trip testing:**
 ```rust
-assert!(
-    stdout.contains("expected text"),
-    "bm command should show expected text, output:\n{}",
-    stdout
-);
-```
-
-**Exit code checking (CLI parsing tests):**
-```rust
-const CLAP_PARSE_ERROR_CODE: i32 = 2;
-
-let output = bm().args(["some", "command"]).output().unwrap();
-let code = output.status.code().unwrap_or(-1);
-assert_ne!(
-    code, CLAP_PARSE_ERROR_CODE,
-    "`bm some command` should not be a parse error, stderr: {}",
-    String::from_utf8_lossy(&output.stderr)
-);
-```
-
-**Error message assertion:**
-```rust
-let result = function_under_test();
-assert!(result.is_err());
-let err = result.unwrap_err().to_string();
-assert!(err.contains("expected substring"));
-```
-
-**RAII test cleanup (E2E):**
-```rust
-pub struct DaemonGuard {
-    team_name: String,
-    home: PathBuf,
-    stub_dir: Option<PathBuf>,
-}
-
-impl Drop for DaemonGuard {
-    fn drop(&mut self) {
-        // Graceful stop, then force-kill, then cleanup files
-    }
+#[test]
+fn save_and_load_round_trip() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("file.json");
+    let data = create_sample_data();
+    save(&path, &data).unwrap();
+    let loaded = load(&path).unwrap().unwrap();
+    assert_eq!(loaded.field, data.field);
 }
 ```
 
-**Idempotency verification:**
+**Error message testing:**
 ```rust
-// Run operation twice, verify same result
-let out1 = assert_cmd_success(&mut cmd1);
-let out2 = assert_cmd_success(&mut cmd2);
-// Verify structure unchanged after double operation
+#[test]
+fn missing_config_gives_helpful_error() {
+    let result = load_from(&nonexistent_path);
+    assert!(result.is_err());
+    let err = result.unwrap_err().to_string();
+    assert!(err.contains("bm init"));
+}
 ```
 
-## Documentation Testing
-
-**No automated docs testing.** The docs site (`docs/`) has no link checker, spell checker, or build-on-CI validation.
-
-**Manual quality tracking:**
-- `docs/review-report.md` tracks accuracy issues found by review agents
-- Issues are tracked with IDs (e.g., D5.1) and statuses (Open/Fixed)
-- Three independent review agents evaluated 17 pages
-
-**Docs build commands:**
-```bash
-just docs-build    # Build static docs site to docs/site/
-just docs-serve    # Start live-reload dev server at localhost:8000
+**Subprocess CLI testing:**
+```rust
+#[test]
+fn command_fails_with_useful_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["hire", "architect"])
+        .output().unwrap();
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("No teams configured"));
+}
 ```
 
-**CI for docs:**
-- `.github/workflows/docs.yml` exists (contents not examined, but workflow is present)
-- `.github/workflows/release.yml` exists for binary releases
+**Idempotency testing (E2E invariant):**
+```rust
+// Run the same command twice — second run must not error
+assert_cmd_success(&mut bm_cmd().args(["init", ...]));
+assert_cmd_success(&mut bm_cmd().args(["init", ...]));  // Must succeed again
+```
 
 ---
 
-*Testing analysis: 2026-03-04*
+*Testing analysis: 2026-03-10*

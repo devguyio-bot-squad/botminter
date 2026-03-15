@@ -38,10 +38,36 @@ All commands accepting `-t`/`--team` resolve to the default team when the flag i
 ### Development (root Justfile)
 
 ```bash
-just build    # cargo build -p bm
-just test     # cargo test -p bm
-just clippy   # cargo clippy -p bm -- -D warnings
+just build        # cargo build -p bm
+just unit         # Unit tests only (no GitHub token needed)
+just conformance  # Bridge conformance tests only
+just e2e          # E2E tests only (requires TESTS_GH_TOKEN + TESTS_GH_ORG)
+just e2e-step     # Progressive E2E — one case at a time
+just e2e-reset    # Clean up progressive E2E state
+just test         # All tests: unit + conformance + e2e
+just clippy       # cargo clippy -p bm -- -D warnings
+just docs-serve   # Live-reload MkDocs dev server at localhost:8000
+just docs-build   # Build static docs site
+just release version notes_file  # Tag + GitHub release
 ```
+
+### Running a single test
+
+```bash
+# Run a single unit/integration test by name
+cargo test -p bm <test_name>
+
+# Run a single E2E scenario (libtest-mimic filter)
+cargo test -p bm --features e2e --test e2e -- --gh-token "$TESTS_GH_TOKEN" --gh-org "$TESTS_GH_ORG" <scenario_name> --test-threads=1
+```
+
+### E2E test harness
+
+E2E tests use `libtest-mimic` with a custom `main()` — not standard `#[test]` macros. Key differences:
+- Standard flags like `--nocapture` don't work — use `eprintln!()` instead (stderr is always visible)
+- Custom args `--gh-token` and `--gh-org` are required
+- The `e2e` feature gate must be enabled (`--features e2e`)
+- Tests run against real GitHub — they create/delete repos and projects
 
 ### Planning workflow
 
@@ -112,7 +138,7 @@ Issues, milestones, and PRs live on the team repo's GitHub. Status transitions u
 | Directory | Purpose |
 |-----------|---------|
 | `crates/bm/` | Rust binary crate for the `bm` CLI |
-| `crates/bm/src/` | Source: cli.rs, config.rs, profile.rs, state.rs, workspace.rs, commands/ |
+| `crates/bm/src/` | Source modules (see table below) |
 | `crates/bm/tests/` | Integration tests (full lifecycle, hire, sync, schema guard, multi-team) |
 | `docs/` | MkDocs documentation site (`docs/content/` has the markdown, `docs/mkdocs.yml` is the config) |
 | `profiles/scrum/` | Scrum profile (PROCESS.md, member skeletons, knowledge, invariants) |
@@ -121,6 +147,22 @@ Issues, milestones, and PRs live on the team repo's GitHub. Status transitions u
 | `invariants/` | Constitutional constraints — hard requirements, not suggestions |
 | `.planning/adrs/` | Architecture Decision Records (MADR 4.0.0 format) |
 | `.planning/specs/` | Formal specifications for external contracts and plugin interfaces |
+
+### Source modules (`crates/bm/src/`)
+
+| Module | Purpose |
+|--------|---------|
+| `cli.rs` | Clap CLI definition and subcommand dispatch |
+| `config.rs` | `~/.botminter/config.yml` read/write |
+| `profile.rs` | Embedded profile extraction and validation |
+| `formation.rs` | Orchestrates `bm init` — the multi-step wizard |
+| `topology.rs` | Resolves team/member/project paths and relationships |
+| `workspace.rs` | Workspace provisioning and file surfacing |
+| `bridge.rs` | Bridge plugin abstraction (Telegram, future Rocket.Chat) |
+| `session.rs` | Ralph session management (start/stop/status) |
+| `state.rs` | Runtime state persistence (`state.json`) |
+| `agent_tags.rs` | Agent identification tags in workspace markers |
+| `commands/` | One file per CLI subcommand (init, hire, start, stop, etc.) |
 
 ## Development Patterns
 
@@ -187,8 +229,8 @@ Key rules:
 - Evidence files live in `crates/bm/target/e2e-evidence/`. Always run `just` from the project root.
 
 ## Ralph Orchestrator
-- Ralph Orchestrator project is an open source project and a dependecy for BotMinter.
+- Ralph Orchestrator project is an open source project and a dependency for BotMinter.
 - The GitHub repo is https://github.com/mikeyobrien/ralph-orchestrator/
 - There is a local checked out version under /opt/workspace/ralph-orchestrator
-- The checked out version has a local commit that we created to support setting a custom Telegram URL which is needed to run a Telegram moch server in e2e tests
+- The checked out version has a local commit that we created to support setting a custom Telegram URL which is needed to run a Telegram mock server in e2e tests
 

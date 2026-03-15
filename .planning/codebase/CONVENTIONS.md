@@ -1,232 +1,226 @@
 # Coding Conventions
 
-**Analysis Date:** 2026-03-04
+**Analysis Date:** 2026-03-10
 
 ## Naming Patterns
 
 **Files:**
-- Rust source files: `snake_case.rs` (e.g., `agent_tags.rs`, `profiles_init.rs`)
-- Command modules: one file per CLI command in `crates/bm/src/commands/` (e.g., `hire.rs`, `teams.rs`, `daemon.rs`)
-- Test files: `snake_case.rs` in `crates/bm/tests/` (e.g., `cli_parsing.rs`, `integration.rs`)
-- Documentation: `kebab-case.md` in `docs/content/` (e.g., `bootstrap-your-team.md`, `workspace-model.md`)
+- Source modules: `snake_case.rs` (e.g., `agent_tags.rs`, `profile.rs`, `workspace.rs`)
+- Command modules: one file per CLI subcommand in `crates/bm/src/commands/` (e.g., `hire.rs`, `start.rs`, `teams.rs`)
+- Test files: `snake_case.rs` in `crates/bm/tests/` (e.g., `integration.rs`, `cli_parsing.rs`, `conformance.rs`)
+- E2E scenarios: descriptive names in `crates/bm/tests/e2e/scenarios/` (e.g., `operator_journey.rs`)
 
 **Functions:**
-- `snake_case` for all functions (Rust standard)
-- Public entry points for commands: `pub fn run(...)` or `pub fn list(...)`, `pub fn show(...)`
-- Test helpers: descriptive `snake_case` (e.g., `setup_team()`, `claude_code_agent()`, `assert_cmd_success()`)
-- Boolean queries: `is_` prefix (e.g., `is_alive()`, `is_local()`)
+- Use `snake_case` for all functions
+- Public entry points for commands: `pub fn run(...)` or `pub fn list(...)` — verb-first naming
+- Helper functions: descriptive verbs (`auto_suffix`, `count_members`, `read_projects`, `setup_git_auth`)
+- Builder/factory patterns: `new()`, `new_in_org()`, `from_existing()`
 
 **Variables:**
-- `snake_case` for all variables
-- Constants: `UPPER_SNAKE_CASE` (e.g., `CONFIG_PERMISSIONS`, `MAX_LOG_SIZE`, `RELEVANT_EVENTS`, `BM_GITIGNORE_STATIC`)
+- Use `snake_case` for all variables and parameters
+- Abbreviations kept lowercase: `gh_token`, `gh_org`, `tg_mock`
+- Path variables descriptive: `team_repo`, `member_dir`, `workzone`, `config_path`
 
 **Types:**
-- `PascalCase` for structs, enums, traits (Rust standard)
-- Structs: descriptive nouns (e.g., `BotminterConfig`, `TeamEntry`, `MemberRuntime`, `FormationConfig`)
-- Enums: `PascalCase` variants (e.g., `Command::Init`, `TeamsCommand::Sync`)
+- Structs and enums: `PascalCase` (e.g., `BotminterConfig`, `TeamEntry`, `RuntimeState`)
+- Enum variants: `PascalCase` (e.g., `Endpoint::Local`, `Endpoint::K8s`)
+- Trait names: `PascalCase` describing behavior (e.g., `CredentialStore`)
 
-**Modules:**
-- One module per CLI subcommand group in `crates/bm/src/commands/`
-- Core modules at `crates/bm/src/` for cross-cutting concerns (`config.rs`, `state.rs`, `profile.rs`, `workspace.rs`)
+**Constants:**
+- Module-level: `SCREAMING_SNAKE_CASE` (e.g., `CONFIG_DIR`, `CONFIG_FILE`, `CONFIG_PERMISSIONS`)
+- Test constants: `SCREAMING_SNAKE_CASE` (e.g., `TEAM_NAME`, `PROFILE`, `MEMBER_DIR`)
 
 ## Code Style
 
 **Formatting:**
-- `rustfmt` (default settings, no `.rustfmt.toml` override)
-- No `.editorconfig` file
+- Default `rustfmt` settings (no `.rustfmt.toml` present)
+- 4-space indentation (Rust default)
+- Run `cargo fmt` before committing
 
 **Linting:**
-- `clippy` with warnings-as-errors: `cargo clippy -p bm -- -D warnings`
+- Clippy with warnings-as-errors: `cargo clippy -p bm -- -D warnings`
 - Run via `just clippy`
-- Zero TODO/FIXME/HACK/XXX markers in the source tree — the codebase is clean
+- `#[allow(dead_code)]` used sparingly on test helper functions not yet in use
 
 ## Import Organization
 
 **Order:**
-1. `std::` imports (grouped by module)
-2. External crate imports (`anyhow`, `clap`, `serde`, etc.)
-3. Internal crate imports (`crate::config`, `crate::profile`, etc.)
-4. `super::` imports (in submodules)
+1. `std` library imports (grouped by module: `std::fs`, `std::path`, `std::process`, etc.)
+2. Blank line
+3. External crate imports (`anyhow`, `serde`, `clap`, `comfy_table`, etc.)
+4. Blank line
+5. Internal crate imports (`crate::config`, `crate::profile`, `crate::workspace`)
 
-**Example** (from `crates/bm/src/commands/hire.rs`):
+**Example from `crates/bm/src/commands/hire.rs`:**
 ```rust
 use std::fs;
+use std::io::IsTerminal;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
+use crate::bridge::{self, CredentialStore};
 use crate::config;
 use crate::profile;
-
-use super::init::{finalize_member_manifest, run_git};
 ```
 
 **Path Aliases:**
-- None. All imports use explicit `crate::` or `super::` paths.
+- No custom path aliases. All imports use `crate::` for internal modules
+- Re-exports via `pub mod` in `crates/bm/src/lib.rs` (flat module list)
 
 ## Error Handling
 
-**Framework:** `anyhow` for all error propagation.
+**Framework:** `anyhow` for all error propagation
 
 **Patterns:**
-- Use `Result<()>` (from `anyhow`) as the return type for all command functions
-- Use `bail!()` for early-return errors with user-facing messages
-- Use `.context("descriptive message")?` for wrapping lower-level errors
-- Use `.with_context(|| format!("message with {}", var))?` when context needs formatting
-- Error messages are user-actionable: include what failed and what to do next
+- Use `Result<T>` (anyhow's `Result`) as the return type for all fallible functions
+- Use `bail!()` for early-return errors with descriptive messages:
+  ```rust
+  bail!("Role '{}' not available in profile '{}'. Available roles: {}",
+      role, team.profile, available_roles.join(", "));
+  ```
+- Use `.context()` and `.with_context()` to add context to upstream errors:
+  ```rust
+  fs::read_to_string(&manifest_path)
+      .context("Failed to read team repo's botminter.yml")?;
+  ```
+- Use `.with_context()` for dynamic context strings:
+  ```rust
+  fs::create_dir_all(dir)
+      .with_context(|| format!("Failed to create config directory at {}", dir.display()))?;
+  ```
+- Include actionable guidance in user-facing errors:
+  ```rust
+  bail!("No teams configured. Run `bm init` first.");
+  bail!("No default team set. Use `-t <team>` or run `bm init` to create a team.");
+  ```
+- List available options when a lookup fails:
+  ```rust
+  format!("Team '{}' not found. Available teams: {}", team_name, available.join(", "))
+  ```
 
-**Example** (from `crates/bm/src/config.rs`):
+**Non-fatal warnings:** Use `eprintln!()` for warnings that should not abort execution:
 ```rust
-pub fn load_from(path: &Path) -> Result<BotminterConfig> {
-    if !path.exists() {
-        bail!("No teams configured. Run `bm init` first.");
-    }
-    let contents = fs::read_to_string(path)
-        .context("Failed to read config file")?;
-    let config: BotminterConfig = serde_yml::from_str(&contents)
-        .context("Failed to parse config file")?;
-    Ok(config)
-}
+eprintln!("Warning: Config file {} has permissions {:04o} (expected {:04o}).", ...);
 ```
-
-**User-facing error messages:**
-- Include the value that failed (e.g., `"Team '{}' not found"`)
-- Suggest the fix (e.g., `"Run \`bm init\` first."`)
-- List alternatives when applicable (e.g., `"Available formations: {}"`)
 
 ## Logging
 
-**Framework:** Direct `println!()` / `eprintln!()` — no logging framework.
+**Framework:** No logging framework. Uses `println!()` for user output, `eprintln!()` for diagnostics/warnings.
 
 **Patterns:**
-- `println!()` for normal output (tables, success messages)
-- `eprintln!()` for warnings (e.g., config permissions warning in `crates/bm/src/config.rs`)
-- No structured logging, no log levels
-- Tables use `comfy-table` with UTF-8 rounded corners preset
+- `println!()` for successful operation results shown to the user
+- `eprintln!()` for warnings, progress info, and debug output in tests
+- No structured logging (no log levels, no log crate)
 
 ## Comments
 
 **When to Comment:**
-- Doc comments (`///`) on all public functions and structs
-- Module-level doc comments (`//!`) at the top of test files explaining scope and constraints
-- Section separator comments using Unicode box-drawing characters: `// -- Section Name --` pattern
+- Module-level doc comments (`//!`) on test files and complex modules:
+  ```rust
+  //! Custom E2E test harness for the `bm` CLI.
+  //!
+  //! Uses libtest-mimic to accept custom CLI arguments.
+  ```
+- Doc comments (`///`) on all public structs, enums, traits, and functions
+- Inline comments for non-obvious logic (e.g., `// Safety: kill with signal 0 only checks existence`)
+- Section separators using `// -- Section Name --` pattern:
+  ```rust
+  // -- CredentialStore trait + implementations --
+  ```
 
-**Section separators** (used consistently in test files):
-```rust
-// ── Test helpers ──────────────────────────────────────────────────────
-// ── Command aliases (2 tests) ────────────────────────────────────────
-```
-
-**Doc comments:**
-- Use `///` for public items with a single-line summary
-- Multi-line doc comments for complex functions (e.g., `workspace.rs`)
-- No `#[doc(hidden)]` usage
+**Doc Comments:**
+- Use `///` for public API documentation
+- Include parameter descriptions inline in the doc text, not as separate `@param` tags
+- Document what the function does, not how it does it
 
 ## Function Design
 
-**Size:** Functions are generally under 100 lines. The largest files (`workspace.rs` at 1912 lines, `profile.rs` at 1796 lines) contain many small functions, not a few large ones.
+**Size:** Most functions are under 80 lines. Larger functions (100-200 lines) exist in command modules (`init.rs`, `start.rs`) for multi-step orchestration flows.
 
 **Parameters:**
-- Use `Option<&str>` for optional string flags (team name, member name)
-- Use `&str` for required string parameters
-- Use `&Path` for filesystem paths
-- Resolve optional team flags via `config::resolve_team(&cfg, flag)?`
+- Use `&str` / `&Path` for borrowed string/path parameters
+- Use `Option<&str>` for optional flags: `fn run(team_flag: Option<&str>)`
+- Group related parameters into structs for complex calls:
+  ```rust
+  pub struct WorkspaceRepoParams<'a> {
+      pub team_repo_path: &'a Path,
+      pub workspace_base: &'a Path,
+      pub member_dir_name: &'a str,
+      // ...
+  }
+  ```
 
 **Return Values:**
-- `Result<()>` for commands (success = side effects happened)
-- `Result<T>` for data-returning functions
-- `Result<Vec<String>>` for list operations
+- `Result<()>` for commands that succeed or fail
+- `Result<T>` for functions returning data
+- `Result<Option<T>>` for "might not exist" semantics (e.g., `load()` returning `None` for missing files)
 
 ## Module Design
 
 **Exports:**
-- `pub mod` declarations in `crates/bm/src/lib.rs` — flat list, one per module
-- `pub mod` declarations in `crates/bm/src/commands/mod.rs` — one per command
-- No re-exports or barrel files
+- `crates/bm/src/lib.rs` is a flat list of `pub mod` declarations (no re-exports, no barrel)
+- `crates/bm/src/commands/mod.rs` is a flat list of `pub mod` declarations
+- Modules expose public functions and types needed by other modules; internal helpers are private
 
-**Visibility:**
-- `pub fn` for functions called from `main.rs` or tests
-- `pub(crate)` for internal-only items (e.g., `pub(crate) mod embedded` in `profile.rs`)
-- Private functions for module-internal helpers
+**Barrel Files:**
+- No barrel files. Modules are imported directly: `use crate::config;`
 
 ## CLI Design Patterns
 
-**Clap derive macros:**
-- All CLI types use `#[derive(Parser)]` or `#[derive(Subcommand)]`
-- Subcommand nesting: `Command::Teams { command: TeamsCommand }` pattern
-- Optional team flag: `#[arg(short, long)] team: Option<String>` on every relevant command
-- Hidden commands: `#[command(hide = true)]` for internal-only commands like `DaemonRun`
-- Aliases: `#[command(alias = "up")]` for `Start`
+**Clap derive macros:** All CLI types use `#[derive(Parser)]` / `#[derive(Subcommand)]`:
+```rust
+#[derive(Parser)]
+#[command(name = "bm", version, about)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Command,
+}
+```
+
+**Team flag pattern:** All team-scoped commands accept `Option<String>` for `-t`/`--team` and resolve via `config::resolve_team()`.
+
+**Consistent dispatch:** `main.rs` pattern-matches on command enum variants and delegates to `commands::<module>::run()`.
+
+## Serialization
+
+**YAML:** `serde_yml` for config files (`config.yml`, `botminter.yml`, `bridge.yml`, `formation.yml`)
+**JSON:** `serde_json` for state files (`state.json`, `topology.json`, bridge state)
+**Derive macros:** All serializable types use `#[derive(Serialize, Deserialize)]`
+**Optional fields:** Use `#[serde(default, skip_serializing_if = "Option::is_none")]` for optional fields
+
+## File I/O Patterns
+
+**Atomic writes:** State files use temp-file-then-rename:
+```rust
+let tmp_path = path.with_extension("json.tmp");
+fs::write(&tmp_path, contents)?;
+fs::rename(&tmp_path, path)?;
+```
+
+**Permissions:** Config and state files get `0o600` permissions (owner read/write only):
+```rust
+let perms = fs::Permissions::from_mode(0o600);
+fs::set_permissions(path, perms)?;
+```
 
 ## Commit Convention
 
-**Format:** `<type>(<scope>): <subject>` — conventional commits.
+- Format: `<type>(<scope>): <subject>`
+- Types: `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+- Include `Ref: #<issue-number>` when applicable
+- Defined in `profiles/scrum/knowledge/commit-convention.md`
 
-**Types:** `feat`, `fix`, `docs`, `refactor`, `test`, `chore`
+## Constitutional Invariants
 
-**Scope:** Optional. The area of the codebase affected.
-
-**Subject:** Imperative mood, lowercase, no period.
-
-**Reference:** `Ref: #<issue-number>` in commit body when applicable.
-
-**Defined in:** `profiles/scrum/knowledge/commit-convention.md`
-
-## Documentation Writing Conventions
-
-The docs site uses MkDocs Material and lives in `docs/`. Content is in `docs/content/`.
-
-**Build tool:** `zensical` (installed via `docs/requirements.txt`), a MkDocs-compatible tool.
-
-**Serving:** `just docs-serve` (live reload at localhost:8000), `just docs-build` (static build to `docs/site/`).
-
-**Information architecture** (Diataxis):
-- `docs/content/getting-started/` — Tutorials (step-by-step walkthroughs)
-- `docs/content/concepts/` — Explanation (architecture, models, design rationale)
-- `docs/content/how-to/` — How-to guides (task-oriented procedures)
-- `docs/content/reference/` — Reference (CLI commands, configuration, process)
-
-**Page structure:**
-- H1 title at top (single `#` heading per page)
-- No skipped heading levels (H1 -> H2 -> H3)
-- First paragraph answers "what is this page about?" immediately
-- Cross-references at the bottom in a "Related topics" or "Next steps" section with relative links
-
-**Markdown extensions used:**
-- Admonitions: `!!! note`, `!!! warning`, `!!! tip` — for callouts
-- Collapsible sections: `???+ example "Title"` or `??? note "Title"` — for optional detail
-- Code blocks: triple backticks with language specifier (`bash`, `yaml`)
-- Mermaid diagrams: fenced `mermaid` blocks for flowcharts
-- Tabbed content: `=== "Tab Name"` for multi-option content (e.g., shell completions)
-- Tables: pipe tables for structured data (parameters, comparisons)
-
-**Writing style:**
-- Second person ("you") for tutorials and how-to guides
-- Present tense throughout
-- Active voice preferred
-- No emojis in prose (checkmarks allowed in tables)
-- Document length target: under 3000 words per page (longest is ~1042 words)
-- Concise sentences — avoid filler phrases
-
-**CLI reference format** (in `docs/content/reference/cli.md`):
-- Each command gets an H3 heading with inline code: `### \`bm hire\``
-- Usage shown as a bash code block
-- Parameters in a pipe table with Required/Description columns
-- **Behavior:** section with bullet list of what the command does
-- Examples with realistic values
-
-**Landing page:**
-- `docs/content/index.md` uses a custom template (`home.html` in `docs/overrides/`)
-- Custom CSS in `docs/content/stylesheets/home.css`
-
-**Docs quality tracking:**
-- `docs/review-report.md` tracks accuracy issues with IDs (e.g., D5.1), status, and resolution
-
-**Config reference:**
-- `docs/mkdocs.yml` defines nav structure, theme, and extensions
-- Logo: `docs/content/assets/logo-icon-only.png`
-- Favicon: `docs/content/assets/fav-icon.png`
+All files in `invariants/` are hard constraints. Key invariants:
+- `invariants/cli-idempotency.md` — all state-mutating commands MUST be idempotent
+- `invariants/test-path-isolation.md` — tests MUST use temp directories, never real HOME
+- `invariants/e2e-scenario-coverage.md` — E2E tests MUST be complete user journeys
+- `invariants/flaky-tests.md` — flaky tests MUST be root-caused and fixed or tracked
+- `invariants/no-hardcoded-profiles.md` — no hardcoded profile names in runtime code
+- `invariants/gh-api-e2e.md` — E2E tests use real GitHub APIs
 
 ---
 
-*Convention analysis: 2026-03-04*
+*Convention analysis: 2026-03-10*

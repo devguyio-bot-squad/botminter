@@ -12,6 +12,7 @@
 mod helpers;
 
 mod github;
+mod rocketchat;
 mod telegram;
 
 mod isolated;

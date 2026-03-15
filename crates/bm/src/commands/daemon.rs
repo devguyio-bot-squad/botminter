@@ -630,7 +630,7 @@ fn launch_members_oneshot(team_name: &str, shutdown: &Arc<AtomicBool>) -> Result
     // Per-member bridge tokens are now resolved via CredentialStore (system keyring)
     // + BM_BRIDGE_TOKEN_{USERNAME} env var fallback. The daemon passes None here;
     // individual members resolve their own tokens at runtime.
-    let telegram_token: Option<&str> = None;
+    let member_token: Option<&str> = None;
 
     let workzone = &cfg.workzone;
     let team_ws_base = workzone.join(team_name);
@@ -651,7 +651,7 @@ fn launch_members_oneshot(team_name: &str, shutdown: &Arc<AtomicBool>) -> Result
             }
         };
 
-        match launch_ralph_oneshot(&ws, gh_token, telegram_token, team_name, member_dir_name) {
+        match launch_ralph_oneshot(&ws, gh_token, member_token, None, None, team_name, member_dir_name) {
             Ok(child) => {
                 daemon_log(
                     team_name,
@@ -699,7 +699,9 @@ fn launch_members_oneshot(team_name: &str, shutdown: &Arc<AtomicBool>) -> Result
 fn launch_ralph_oneshot(
     workspace: &Path,
     gh_token: &str,
-    telegram_token: Option<&str>,
+    member_token: Option<&str>,
+    bridge_type: Option<&str>,
+    service_url: Option<&str>,
     team_name: &str,
     member_name: &str,
 ) -> Result<std::process::Child> {
@@ -709,8 +711,18 @@ fn launch_ralph_oneshot(
         .env("GH_TOKEN", gh_token)
         .env_remove("CLAUDECODE");
 
-    if let Some(token) = telegram_token {
-        cmd.env("RALPH_TELEGRAM_BOT_TOKEN", token);
+    if let Some(token) = member_token {
+        match bridge_type {
+            Some("rocketchat") => {
+                cmd.env("RALPH_ROCKETCHAT_AUTH_TOKEN", token);
+                if let Some(url) = service_url {
+                    cmd.env("RALPH_ROCKETCHAT_SERVER_URL", url);
+                }
+            }
+            _ => {
+                cmd.env("RALPH_TELEGRAM_BOT_TOKEN", token);
+            }
+        }
     }
 
     // One-shot: null stdin

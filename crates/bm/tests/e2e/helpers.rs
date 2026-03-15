@@ -38,6 +38,10 @@ pub struct ProgressState {
     pub setup_done: bool,
     pub tg_mock_container_id: Option<String>,
     pub tg_mock_port: Option<u16>,
+    #[serde(default)]
+    pub rc_pod_name: Option<String>,
+    #[serde(default)]
+    pub rc_pod_port: Option<u16>,
 }
 
 impl ProgressState {
@@ -127,6 +131,15 @@ pub fn assert_cmd_fails(cmd: &mut Command) -> String {
         String::from_utf8_lossy(&output.stdout)
     );
     String::from_utf8_lossy(&output.stderr).to_string()
+}
+
+/// Finds a free TCP port by binding to port 0.
+pub fn find_free_port() -> u16 {
+    std::net::TcpListener::bind("127.0.0.1:0")
+        .expect("failed to bind to a free port")
+        .local_addr()
+        .expect("failed to get local address")
+        .port()
 }
 
 pub fn wait_for_port(port: u16, timeout: Duration) {
@@ -639,6 +652,8 @@ impl GithubSuite {
                     setup_done: false,
                     tg_mock_container_id: None,
                     tg_mock_port: None,
+                    rc_pod_name: None,
+                    rc_pod_port: None,
                 };
                 s.save();
                 eprintln!("  [{}] created home", suite_name);

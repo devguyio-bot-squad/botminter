@@ -1,152 +1,175 @@
 # Codebase Concerns
 
-**Analysis Date:** 2026-03-04
+**Analysis Date:** 2026-03-10
 
 ## Tech Debt
 
-**Duplicated `find_workspace` with divergent logic (BUG):**
-- Issue: `crates/bm/src/commands/daemon.rs` (line 713) uses the **old** `.botminter/` directory-based workspace detection, while `crates/bm/src/commands/start.rs` (line 212) uses the **current** `.botminter.workspace` marker file. The daemon will fail to find workspaces created by the current `bm teams sync`.
-- Files: `crates/bm/src/commands/daemon.rs`, `crates/bm/src/commands/start.rs`
-- Impact: `bm daemon start` (both webhook and poll modes) will silently skip all members, logging "no workspace found" warnings. The daemon becomes a no-op for any team provisioned with the current workspace model.
-- Fix approach: Replace `daemon.rs::find_workspace` with the same `.botminter.workspace` marker logic from `start.rs`. Better yet, extract a shared `find_workspace` function to eliminate duplication entirely.
+**Profile staleness detection missing:**
+- Issue: `ensure_profiles_initialized()` in `crates/bm/src/profile.rs` (line 585-599) returns early if ANY profile subdirectory exists on disk, with no version or content staleness check. When the embedded profile structure changes (e.g., `members/` renamed to `roles/` in commit 6499c62), stale disk profiles cause silent failures.
+- Files: `crates/bm/src/profile.rs`, `crates/bm/src/commands/profiles_init.rs`
+- Impact: Users with stale profiles get confusing errors like "Available roles: (empty list)" because the disk layout no longer matches what the code expects. Diagnosed in `.planning/debug/scrum-compact-roles-empty.md`.
+- Fix approach: Compare embedded profile version against an on-disk version marker. If mismatched, auto-update or prompt. The `embedded_profile_version()` function (line 568) already exists but is unused for staleness detection.
 
-**Triplicated `list_member_dirs` function:**
-- Issue: Three identical implementations of `list_member_dirs` exist across the codebase, each with its own tests.
-- Files: `crates/bm/src/commands/start.rs` (line 191), `crates/bm/src/commands/daemon.rs` (line 695), `crates/bm/src/completions.rs` (line 223)
-- Impact: Maintenance burden. Changes to member directory conventions must be applied in three places. The daemon version already drifted (see above).
-- Fix approach: Extract to a shared module (e.g., `crates/bm/src/workspace.rs` already exists and would be a natural home). Re-export and use from all three call sites.
+**Profile-core coupling:**
+- Issue: `bm` CLI source contains hardcoded assumptions about profile conventions (label bootstrapping, status field configurations, workspace assembly patterns). Adding a new profile requires changes to CLI source code.
+- Files: `crates/bm/src/commands/init.rs`, `crates/bm/src/workspace.rs`, `crates/bm/src/profile.rs`
+- Impact: Profile extensibility is blocked. Detailed in `.planning/todos/pending/2026-03-06-decouple-profile-specific-logic-from-botminter-core.md`.
+- Fix approach: Research and design a hook/lifecycle model where profiles declare what happens at each stage (init, hire, sync, start) and the CLI executes those declarations.
 
-**Roadmap page is stale:**
-- Issue: `docs/content/roadmap.md` lists "Minty and Friends" as "Planned" with sub-items (Minty, profile externalization, workspace repository model, coding-agent-agnostic cleanup) that are already implemented in the current codebase. The CLI already has `bm minty`, `bm profiles init`, workspace repos with `.botminter.workspace`, and agent tag support.
-- Files: `docs/content/roadmap.md`
-- Impact: Confuses users about project maturity. Features they can use today appear as future work.
-- Fix approach: Move "Minty and Friends" to the Completed section. Update the "Planned" and "Future" sections to reflect actual next milestones.
+**GH_TOKEN passed to `gh` CLI via `.env()` in 19+ call sites:**
+- Issue: Every function that shells out to `gh` manually adds `.env("GH_TOKEN", token)`. This is repeated across `crates/bm/src/commands/init.rs` (15 sites), `crates/bm/src/workspace.rs` (2 sites), `crates/bm/src/commands/start.rs` (1 site), `crates/bm/src/commands/daemon.rs` (1 site). No shared helper abstracts this.
+- Files: `crates/bm/src/commands/init.rs`, `crates/bm/src/workspace.rs`, `crates/bm/src/commands/start.rs`, `crates/bm/src/commands/daemon.rs`
+- Impact: Easy to forget the `.env()` call when adding new `gh` invocations, leading to auth failures. Maintenance burden for any auth model change.
+- Fix approach: Create a `gh_command(token: Option<&str>) -> Command` helper that pre-configures `GH_TOKEN` when present, and use it everywhere.
+
+**`init.rs` is 1792 lines with mixed concerns:**
+- Issue: `crates/bm/src/commands/init.rs` contains the full interactive wizard, non-interactive mode, GitHub API helpers (label creation, project creation, repo management), org/repo selection UI, and project URL validation. This is the largest source file.
+- Files: `crates/bm/src/commands/init.rs`
+- Impact: Difficult to test individual concerns in isolation. Hard to navigate and modify safely.
+- Fix approach: Extract GitHub API helpers into a `github.rs` module, and interactive selection UI into a `wizard.rs` or `prompts.rs` module.
+
+**Executable permissions lost during profile extraction:**
+- Issue: The `include_dir` crate used for compile-time embedding does not preserve Unix file permissions. Shell scripts in profiles (e.g., `profiles/scrum/coding-agent/skills/gh/scripts/`) are extracted as `-rw-r--r--` instead of `-rwxr-xr-x`.
+- Files: `crates/bm/src/commands/profiles_init.rs`, `crates/bm/src/profile.rs`
+- Impact: Direct execution of extracted scripts fails (`./scripts/foo.sh`). Workaround exists (`bash scripts/foo.sh`). Detailed in `.planning/todos/pending/2026-03-07-preserve-executable-permissions-in-bm-profiles-init-extraction.md`.
+- Fix approach: After extraction, scan for `.sh` extension and `chmod +x`, or store a manifest of executable files.
+
+**Formation credential resolution is incomplete:**
+- Issue: Two TODO comments in `crates/bm/src/commands/start.rs` (lines 113 and 430) note that bridge env var naming is hardcoded to `RALPH_TELEGRAM_BOT_TOKEN` and that the formation manager should resolve per-member credentials via CredentialStore.
+- Files: `crates/bm/src/commands/start.rs`
+- Impact: Adding a second bridge type (e.g., Rocket.Chat) will require refactoring credential resolution to be bridge-type-aware.
+- Fix approach: Make the env var name bridge-type-driven from the bridge manifest rather than hardcoded.
 
 ## Known Bugs
 
-**Daemon workspace detection uses obsolete model:**
-- Symptoms: `bm daemon start` in poll or webhook mode triggers member launches, but every member gets "no workspace found, skipping" in daemon logs. No actual work happens.
-- Files: `crates/bm/src/commands/daemon.rs` (lines 713-738)
-- Trigger: Any team provisioned with current `bm teams sync` (which writes `.botminter.workspace` marker, not `.botminter/` directories).
-- Workaround: Use `bm start` (persistent mode) instead of `bm daemon start`.
+**No known production bugs at this time.** Clippy passes clean with `-D warnings`. All diagnosed issues in `.planning/debug/` are test-level defects (see Test Coverage Gaps below).
 
 ## Security Considerations
 
-**Webhook server binds to 0.0.0.0:**
-- Risk: The daemon webhook server binds to `0.0.0.0:{port}` (line 359 of `crates/bm/src/commands/daemon.rs`), accepting connections from any network interface. If the host has a public IP, the webhook endpoint is exposed to the internet.
-- Files: `crates/bm/src/commands/daemon.rs`
-- Current mitigation: HMAC-SHA256 webhook signature validation is available when `webhook_secret` is configured. Without it, any POST to `/webhook` with valid event headers triggers member launches.
-- Recommendations: Default to `127.0.0.1` binding. Add a `--bind` flag for explicit override. Warn if no `webhook_secret` is configured in webhook mode.
+**GH_TOKEN stored in plaintext config file:**
+- Risk: `~/.botminter/config.yml` contains `gh_token` in plaintext YAML. While the file is written with `0o600` permissions (`crates/bm/src/config.rs` line 106-108), the token is still plaintext on disk.
+- Files: `crates/bm/src/config.rs` (lines 44-45, 96-111)
+- Current mitigation: File permissions set to 0600; `check_permissions()` warns on load if permissions are wrong (line 143-157). Bridge tokens (Telegram) use system keyring via `LocalCredentialStore`.
+- Recommendations: Migrate GH_TOKEN to the system keyring alongside bridge tokens. The `keyring` crate infrastructure already exists in `crates/bm/src/bridge.rs`.
 
-**GH token stored in plaintext YAML:**
-- Risk: `~/.botminter/config.yml` stores `gh_token`, `telegram_bot_token`, and `webhook_secret` as plaintext YAML values.
-- Files: `crates/bm/src/config.rs`, `crates/bm/src/commands/init.rs`
-- Current mitigation: File is created with `0600` permissions. `check_permissions()` warns on load if permissions are wrong.
-- Recommendations: Consider integration with OS keychain (via `keyring` crate) or at minimum document the security model. The permission check only warns to stderr; it does not block operation.
+**Unsafe signal handling in daemon:**
+- Risk: The daemon uses `libc::signal()` with a bare function pointer for SIGTERM/SIGINT handling (`crates/bm/src/commands/daemon.rs` lines 314-322). The handler writes to an `AtomicBool` which is safe, but `libc::signal()` itself is not async-signal-safe on all platforms and the handler function is a bare `extern "C"` function.
+- Files: `crates/bm/src/commands/daemon.rs` (lines 310-352)
+- Current mitigation: Handler only writes to `AtomicBool`, which is signal-safe. A polling thread reads the flag.
+- Recommendations: Consider using `signal-hook` crate for more robust signal handling, or `ctrlc` crate for portable handling.
 
-**Multiple `unsafe` blocks for signal handling:**
-- Risk: Seven `unsafe` blocks across `daemon.rs`, `stop.rs`, and `state.rs` use `libc::kill()` and `libc::signal()` directly. The signal handler in `daemon.rs` (line 349) uses a bare `extern "C"` function writing to a global `AtomicBool`.
-- Files: `crates/bm/src/commands/daemon.rs` (lines 212, 226, 313, 577, 588), `crates/bm/src/commands/stop.rs` (line 136), `crates/bm/src/state.rs` (line 74)
-- Current mitigation: Each `unsafe` block is minimal and well-documented. Signal handler only writes an atomic bool.
-- Recommendations: Consider using the `signal-hook` crate for safe signal handling. The `nix` crate provides safe wrappers for `kill()`.
+**Unsafe `libc::kill()` calls without return value checks:**
+- Risk: Multiple `libc::kill()` calls ignore the return value: `crates/bm/src/commands/daemon.rs` (lines 213-215, 227-229), `crates/bm/src/commands/stop.rs` (lines 158-160). If `kill()` fails (e.g., EPERM), the code proceeds as if the signal was delivered.
+- Files: `crates/bm/src/commands/stop.rs` (line 158-160), `crates/bm/src/commands/daemon.rs` (lines 213, 227, 578, 589)
+- Current mitigation: `is_alive()` polling after kill catches most cases (process still alive = retry). `force_stop()` sleeps 500ms after SIGTERM but does not verify death.
+- Recommendations: Check `kill()` return value and log/handle EPERM or ESRCH errors explicitly.
+
+**PID reuse vulnerability in state management:**
+- Risk: `state::is_alive()` uses `kill(pid, 0)` to check process liveness. Between process death and stale-entry cleanup, the PID could be reassigned to an unrelated process. `force_stop()` would then SIGTERM a random process.
+- Files: `crates/bm/src/state.rs` (line 72-75), `crates/bm/src/commands/stop.rs` (line 157-163)
+- Current mitigation: None. The window is small on modern systems but nonzero.
+- Recommendations: Store process start time alongside PID and verify it matches before sending signals. On Linux, read `/proc/<pid>/stat` start time.
 
 ## Performance Bottlenecks
 
-**GitHub Events API pagination in poll mode:**
-- Problem: `poll_github_events()` calls `gh api repos/{repo}/events --paginate` which fetches ALL pages of events, then filters in memory.
-- Files: `crates/bm/src/commands/daemon.rs` (line 813-851)
-- Cause: The `--paginate` flag retrieves all available events (up to 300 per the GitHub API). On active repos, this is wasteful when only events newer than `last_event_id` are needed.
-- Improvement path: Remove `--paginate` (first page of 30 events is usually sufficient). Add `--jq` filtering to stop early. Or use `If-None-Match` / `If-Modified-Since` headers for conditional requests.
+**Sequential workspace sync:**
+- Problem: `bm teams sync` provisions workspaces one member at a time, each involving git clone, submodule add, and potentially GitHub API calls.
+- Files: `crates/bm/src/commands/teams.rs`, `crates/bm/src/workspace.rs`
+- Cause: Serial iteration over members with blocking `Command::new("gh")` and `Command::new("git")` calls.
+- Improvement path: Parallelize workspace creation with `rayon` or `tokio`. Already identified in `.planning/todos/pending/2026-03-06-improve-teams-sync-push-speed-with-concurrency-and-progress-bar.md`.
 
-**Sequential member launches:**
-- Problem: `bm start` launches members sequentially with a 2-second sleep per member to verify process liveness (line 138 of `start.rs`).
+**Sequential member launch in `bm start`:**
+- Problem: Members are launched one at a time in a for loop (`crates/bm/src/commands/start.rs` lines 152-232). Each launch involves process spawning and state file writing.
 - Files: `crates/bm/src/commands/start.rs`
-- Cause: The liveness check blocks the launch loop.
-- Improvement path: Launch all members first, then batch-verify liveness after a single delay. For N members, this saves (N-1) * 2 seconds.
+- Cause: Serial loop with `state::save()` after each launch.
+- Improvement path: Launch processes in parallel, batch state saves.
 
 ## Fragile Areas
 
-**`workspace.rs` — largest file in the codebase (1912 lines):**
-- Files: `crates/bm/src/workspace.rs`
-- Why fragile: Handles workspace creation, submodule management, context file copying, agent directory assembly, gitignore generation, branch management, and sync operations. Many interacting concerns in a single module.
-- Safe modification: Changes to workspace sync logic should be tested with `bm teams sync -v` on a real team. The integration test suite (`crates/bm/tests/integration.rs` at 2517 lines) covers the happy path but may miss edge cases in submodule state.
-- Test coverage: Integration tests cover init-to-sync flow but not incremental sync scenarios (e.g., adding a new project to an existing team, or re-syncing after upstream changes).
+**State file (state.json) has no locking:**
+- Files: `crates/bm/src/state.rs`, `crates/bm/src/commands/start.rs`, `crates/bm/src/commands/stop.rs`, `crates/bm/src/commands/status.rs`
+- Why fragile: Multiple `bm` commands (`start`, `stop`, `status`, `members list`) read and write `~/.botminter/state.json` without file locking. If `bm start` and `bm stop` run concurrently, they can overwrite each other's changes. `start.rs` does load -> modify -> save in multiple places (lines 140-146, 218, 231); `stop.rs` does the same (lines 21, 43, 52, 60).
+- Safe modification: Always load state immediately before modifying and save immediately after. Consider adding `flock()`-based file locking.
+- Test coverage: Unit tests cover save/load round-trip but not concurrent access.
 
-**`profile.rs` — profile extraction pipeline (1796 lines):**
-- Files: `crates/bm/src/profile.rs`
-- Why fragile: Agent tag filtering, `context.md` → agent-specific filename renaming, schema version gating, and manifest parsing all live here. A bug in agent tag filtering silently drops content from profile files.
-- Safe modification: The embedded profile test suite (starting at line 718) covers structural invariants well. Run `just test` after any change.
-- Test coverage: Good unit test coverage for extraction and manifest parsing. Agent tag filtering has tests but edge cases (nested tags, multi-agent files) could be under-tested.
+**Daemon signal handling with global static:**
+- Files: `crates/bm/src/commands/daemon.rs` (lines 347-352)
+- Why fragile: `SHUTDOWN_FLAG` is a global `AtomicBool`. The `sigterm_handler` is a bare `extern "C"` function. Multiple daemon instances in the same process (tests) would share this global state.
+- Safe modification: Do not run multiple daemon instances in-process. Tests that test daemon behavior should use subprocess isolation.
+- Test coverage: No unit tests for signal handling path.
 
-**`init.rs` — interactive wizard (1342 lines):**
-- Files: `crates/bm/src/commands/init.rs`
-- Why fragile: Complex interactive flow with many branches (new repo vs existing, GitHub auth detection, label bootstrapping, project board sync). Failures mid-wizard can leave partial state.
-- Safe modification: The wizard uses `cliclack` for prompts which makes automated testing difficult. E2E tests exist in `crates/bm/tests/e2e/init_to_sync.rs` but require GitHub mock infrastructure.
-- Test coverage: E2E tests cover the full init flow with mock GitHub server. Unit-level tests for individual wizard steps are sparse.
+**`let _ =` error suppression in daemon (21 sites):**
+- Files: `crates/bm/src/commands/daemon.rs` (lines 108, 182, 183, 234, 236, 238, 261, 269, 271, 384, 394, 411, 426, 592, 878, 898, 906)
+- Why fragile: File removal, HTTP response sending, log rotation, and child process wait errors are silently discarded. If `fs::remove_file` fails on a PID file, the daemon may fail to start next time because the stale PID file remains.
+- Safe modification: Log errors via `daemon_log()` instead of discarding. For PID file cleanup, at minimum log the failure.
+- Test coverage: None for error paths in daemon cleanup.
+
+## Scaling Limits
+
+**Single state.json file for all teams:**
+- Current capacity: Handles tens of members across a few teams.
+- Limit: All teams share one `~/.botminter/state.json`. No partitioning. Concurrent multi-team operations risk write conflicts.
+- Scaling path: Partition state per team (`~/.botminter/<team>/state.json`) or use a database.
+
+**GitHub API rate limits during init/sync:**
+- Current capacity: Works for teams with < 50 labels and a few projects.
+- Limit: `bm init` creates labels one at a time via `gh label create` (loop in `bootstrap_labels`). Large profile with many labels could hit GitHub API rate limits.
+- Scaling path: Batch label creation via GraphQL API instead of REST.
 
 ## Dependencies at Risk
 
-**Ralph Orchestrator (external runtime dependency):**
-- Risk: BotMinter depends on `ralph` binary being in `PATH`. Local checkout at `/opt/workspace/ralph-orchestrator` has a custom commit for Telegram mock URL support. If upstream changes the CLI interface, `bm start`, `bm stop`, `bm chat`, and `bm daemon` all break.
-- Impact: All member lifecycle commands fail.
-- Migration plan: Pin Ralph version in documentation. Consider vendoring a known-good version or adding version detection at startup.
+**`keyring` crate platform sensitivity:**
+- Risk: The `keyring` crate's Linux backend requires a running Secret Service provider (gnome-keyring-daemon) with an initialized and unlocked login collection. This is unreliable on headless/SSH/su access.
+- Impact: `bridge identity add` fails on fresh Linux installs or headless servers. Detailed diagnosis in `.planning/debug/keyring-report.md` and fix proposal in `.planning/todos/pending/2026-03-09-improve-local-formation-keyring-ux.md`.
+- Migration plan: Improve error messages to distinguish failure modes. Consider offering a fallback encrypted file store for headless environments.
+
+**`include_dir` crate limitations:**
+- Risk: Does not preserve file permissions (executable bits lost). Does not support symlinks.
+- Impact: Extracted shell scripts are not executable. See executable permissions concern above.
+- Migration plan: Post-extraction `chmod` for known executable extensions, or switch to `rust-embed` which has similar limitations but wider adoption.
 
 ## Missing Critical Features
 
-**No `bm daemon` workspace detection fix:**
-- Problem: The daemon is documented and has a full test suite but cannot discover workspaces created by the current `bm teams sync`. This is the highest-priority bug.
-- Blocks: Event-driven autonomous operation via daemon mode.
+**No `bm doctor` / prerequisite checker:**
+- Problem: No single command validates that all runtime prerequisites are met (gh CLI installed, gh authenticated, keyring unlocked, ralph installed, required env vars set).
+- Blocks: Users encounter failures deep in `bm start` or `bm init` instead of getting upfront guidance.
 
-**No docs search page / 404 page:**
-- Problem: The MkDocs site has no custom 404 page. The `docs/content/index.md` is just a frontmatter template redirect — if the home template fails to load, users see a blank page.
-- Files: `docs/content/index.md`, `docs/overrides/`
+**No config migration tooling:**
+- Problem: Alpha policy says breaking changes expected, but there is no tooling to detect that config.yml or on-disk profiles are from an incompatible version.
+- Blocks: Users hit confusing runtime errors after binary upgrades instead of clear "re-run bm init" guidance.
 
 ## Test Coverage Gaps
 
-**Daemon workspace discovery not tested against current workspace model:**
-- What's not tested: `daemon.rs::find_workspace` is tested against the old `.botminter/` directory model. No test validates it against the current `.botminter.workspace` marker file model.
-- Files: `crates/bm/tests/e2e/daemon_lifecycle.rs`, `crates/bm/src/commands/daemon.rs` (tests at line 1190)
-- Risk: The daemon silently fails to launch any members. This is the divergent workspace detection bug documented above.
-- Priority: High
+**CLI parsing tests lack HOME isolation:**
+- What's not tested: `crates/bm/tests/cli_parsing.rs` uses a `bm()` helper (line 10-12) that creates `Command` without setting `HOME` or `XDG_CONFIG_HOME`. Tests that reach runtime trigger `ensure_profiles_initialized()` which writes to the real `~/.config/botminter/profiles/`.
+- Files: `crates/bm/tests/cli_parsing.rs`
+- Risk: Tests pollute the developer's real config directory. Violates `invariants/test-path-isolation.md`. Diagnosed in `.planning/debug/test-path-isolation.md`.
+- Priority: Medium -- causes filesystem side effects in dev environments.
 
-**No unit tests for `init.rs` wizard sub-functions:**
-- What's not tested: Individual steps of the init wizard (token detection, org listing, repo creation) are not unit tested. Only the full E2E flow is covered.
-- Files: `crates/bm/src/commands/init.rs`
-- Risk: Regressions in wizard sub-steps (e.g., token validation, label bootstrapping) are only caught by expensive E2E tests.
-- Priority: Medium
+**Daemon E2E tests use fake tokens and conditionally skip assertions:**
+- What's not tested: Daemon lifecycle tests in E2E hardcode `gh_token: "ghp_test_token"` and `github_repo: "test-org/test-repo"`. When daemon polls GitHub, it gets errors, never launches members, and tests skip their namesake assertions via conditional guards.
+- Files: `crates/bm/tests/e2e/` (daemon-related scenarios)
+- Risk: Daemon member-launch, child termination, and per-member logging are not actually verified. Diagnosed in `.planning/debug/daemon-namesake-claims.md` and `.planning/debug/e2e-missing-runtime-dependency-gate.md`.
+- Priority: High -- core daemon functionality is untested end-to-end.
 
-**Incremental `bm teams sync` scenarios:**
-- What's not tested: Adding a new project to an existing team and re-syncing, removing a member and re-syncing, or syncing when upstream submodule references have changed.
-- Files: `crates/bm/src/workspace.rs`, `crates/bm/tests/integration.rs`
-- Risk: Incremental sync bugs could corrupt workspace state or leave stale submodule references.
-- Priority: Medium
+**Conditional state assertions in start-to-stop E2E tests:**
+- What's not tested: Three test sites wrap `state.json` member-empty assertions in `if state_path.exists()` guards instead of unconditional `assert!`. Since production code always writes state.json after member removal, file absence would be a regression these tests cannot catch.
+- Files: `crates/bm/tests/e2e/` (start-to-stop scenarios)
+- Risk: A regression that deletes state.json instead of clearing it would go undetected. Diagnosed in `.planning/debug/conditional-state-asserts.md`.
+- Priority: Medium -- silently weakened assertions.
 
-## Docs-Specific Concerns
+**No tests for concurrent state.json access:**
+- What's not tested: Simultaneous `bm start` + `bm stop` or `bm status` + `bm stop` operating on the same state file.
+- Files: `crates/bm/src/state.rs`
+- Risk: Race conditions could corrupt state or cause one command's changes to be lost.
+- Priority: Low -- unlikely in normal usage (single operator), but possible.
 
-**`getting-started/bootstrap-your-team.md` links to wrong prerequisites page:**
-- Issue: Line 13 links to `[Prerequisites](index.md)` but the prerequisites content is at `prerequisites.md`. The `index.md` file is the Getting Started overview page, not prerequisites.
-- Files: `docs/content/getting-started/bootstrap-your-team.md`
-- Impact: Users clicking "Prerequisites" from the bootstrap guide land on the overview page instead of the prerequisites page.
-- Fix: Change link to `[Prerequisites](prerequisites.md)`.
-
-**Roadmap milestone statuses are outdated:**
-- Issue: "Minty and Friends" is listed as "Planned" but all its sub-items (Minty assistant, profile externalization, workspace repository model, coding-agent abstraction) are implemented. The `bm` CLI milestone description also doesn't mention features added after initial completion (daemon, knowledge, formations, completions, Minty, chat).
-- Files: `docs/content/roadmap.md`
-- Impact: Misleading status for users evaluating the project.
-- Fix: Move "Minty and Friends" to Completed. Update the `bm CLI` milestone description. Add current planning as the new "Planned" item.
-
-**FAQ references `@bot` prefix convention that may be outdated:**
-- Issue: FAQ states "you need to prefix comments with `@bot`" but this convention is profile-specific and may have changed.
-- Files: `docs/content/faq.md` (line 52-54)
-- Impact: Low — FAQ accurately describes the current state but should be validated against latest profile PROCESS.md.
-- Fix: Verify against `profiles/scrum/PROCESS.md` and `profiles/scrum-compact/PROCESS.md`.
-
-**Mermaid JS loaded from unpkg CDN:**
-- Issue: `docs/mkdocs.yml` loads `mermaid@11` from `unpkg.com` (line 83). This is an external dependency that could break if unpkg has an outage, or if mermaid@11 publishes a breaking update (the `@11` tag is a major version range, not a pinned version).
-- Files: `docs/mkdocs.yml`
-- Impact: Diagrams on all docs pages could fail to render.
-- Fix: Pin to a specific mermaid version (e.g., `mermaid@11.4.1`) or vendor the JS file locally.
+**No tests for `force_stop()` behavior:**
+- What's not tested: The `force_stop()` function in `crates/bm/src/commands/stop.rs` (lines 157-163) sends SIGTERM and sleeps 500ms but never verifies the process died. No test exercises this path.
+- Files: `crates/bm/src/commands/stop.rs`
+- Risk: Force stop could silently fail to kill a process. No feedback to user.
+- Priority: Low -- rare code path, SIGTERM almost always works.
 
 ---
 
-*Concerns audit: 2026-03-04*
+*Concerns audit: 2026-03-10*
