@@ -98,6 +98,7 @@ fn setup_team(tmp: &Path, team_name: &str, profile_name: &str) -> PathBuf {
             coding_agent: None,
             project_number: None,
         }],
+        keyring_collection: None,
     };
 
     let config_path = tmp.join(".botminter").join("config.yml");
@@ -226,8 +227,8 @@ fn wait_for_port(port: u16, timeout: Duration) -> bool {
     false
 }
 
-/// Creates a local git repository that can be used as a project fork URL.
-fn create_fake_fork(tmp: &Path, name: &str) -> PathBuf {
+/// Creates a local git repository and returns a `file://` URL for use as a project fork URL.
+fn create_fake_fork(tmp: &Path, name: &str) -> String {
     let fork = tmp.join(name);
     fs::create_dir_all(&fork).unwrap();
     git(&fork, &["init", "-b", "main"]);
@@ -236,7 +237,7 @@ fn create_fake_fork(tmp: &Path, name: &str) -> PathBuf {
     fs::write(fork.join("README.md"), format!("# {}", name)).unwrap();
     git(&fork, &["add", "-A"]);
     git(&fork, &["commit", "-m", "init"]);
-    fork
+    format!("file://{}", fork.to_string_lossy())
 }
 
 // ── Profile tests (need disk profiles) ───────────────────────────────
@@ -382,8 +383,7 @@ fn projects_add_creates_dirs_and_updates_manifest() {
     let tmp = tempfile::tempdir().unwrap();
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
-    let fork = create_fake_fork(tmp.path(), "my-repo");
-    let fork_url = fork.to_string_lossy().to_string();
+    let fork_url = create_fake_fork(tmp.path(), "my-repo");
     bm_add_project(tmp.path(), &fork_url, "test-team");
 
     // Verify project dirs created
@@ -402,8 +402,7 @@ fn projects_add_duplicate_errors() {
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "test-team", "scrum");
 
-    let fork = create_fake_fork(tmp.path(), "my-repo");
-    let fork_url = fork.to_string_lossy().to_string();
+    let fork_url = create_fake_fork(tmp.path(), "my-repo");
     bm_add_project(tmp.path(), &fork_url, "test-team");
     let stderr = bm_run_fail(tmp.path(), &["projects", "add", &fork_url]);
     assert!(stderr.contains("already exists"));
@@ -418,11 +417,21 @@ fn projects_add_nonexistent_url_errors() {
     let manifest_before =
         fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
 
+    // Bare local paths are rejected (must use a URI scheme)
     let bad_path = tmp.path().join("does-not-exist-repo");
     let stderr = bm_run_fail(tmp.path(), &["projects", "add", &bad_path.to_string_lossy()]);
     assert!(
-        stderr.contains("not found") || stderr.contains("not accessible"),
-        "error should mention not found/accessible: {}",
+        stderr.contains("must use a URI scheme"),
+        "error should reject bare path: {}",
+        stderr
+    );
+
+    // file:// URI to a nonexistent repo is also rejected
+    let bad_file_url = format!("file://{}", bad_path.to_string_lossy());
+    let stderr = bm_run_fail(tmp.path(), &["projects", "add", &bad_file_url]);
+    assert!(
+        stderr.contains("not found") || stderr.contains("not a git repository"),
+        "error should mention not found: {}",
         stderr
     );
 
@@ -637,20 +646,13 @@ fn lifecycle_hire_project_add_then_sync() {
     let team_repo = setup_team(tmp.path(), "proj-team", "scrum");
 
     // Create a dummy "fork" repo to clone from
-    let fork_repo = tmp.path().join("fake-fork");
-    fs::create_dir_all(&fork_repo).unwrap();
-    git(&fork_repo, &["init", "-b", "main"]);
-    git(&fork_repo, &["config", "user.email", "test@botminter.test"]);
-    git(&fork_repo, &["config", "user.name", "BM Test"]);
-    fs::write(fork_repo.join("README.md"), "# Fake fork").unwrap();
-    git(&fork_repo, &["add", "-A"]);
-    git(&fork_repo, &["commit", "-m", "init"]);
+    let fork_url = create_fake_fork(tmp.path(), "fake-fork");
 
     // Hire a member
     bm_hire(tmp.path(), "architect", "alice", "proj-team");
 
-    // Add the project (use local path as fork URL)
-    bm_add_project(tmp.path(), &fork_repo.to_string_lossy(), "proj-team");
+    // Add the project
+    bm_add_project(tmp.path(), &fork_url, "proj-team");
 
     // Sync
     bm_sync(tmp.path(), "proj-team");
@@ -1140,8 +1142,8 @@ fn hire_multiple_roles_then_sync() {
 
     let fork_a = create_fake_fork(tmp.path(), "proj-alpha");
     let fork_b = create_fake_fork(tmp.path(), "proj-beta");
-    bm_add_project(tmp.path(), &fork_a.to_string_lossy(), "multi-hire-team");
-    bm_add_project(tmp.path(), &fork_b.to_string_lossy(), "multi-hire-team");
+    bm_add_project(tmp.path(), &fork_a, "multi-hire-team");
+    bm_add_project(tmp.path(), &fork_b, "multi-hire-team");
 
     bm_sync(tmp.path(), "multi-hire-team");
 
@@ -1182,8 +1184,8 @@ fn sync_with_multiple_projects_creates_project_submodules() {
 
     let fork_a = create_fake_fork(tmp.path(), "project-one");
     let fork_b = create_fake_fork(tmp.path(), "project-two");
-    bm_add_project(tmp.path(), &fork_a.to_string_lossy(), "proj-ws-team");
-    bm_add_project(tmp.path(), &fork_b.to_string_lossy(), "proj-ws-team");
+    bm_add_project(tmp.path(), &fork_a, "proj-ws-team");
+    bm_add_project(tmp.path(), &fork_b, "proj-ws-team");
 
     bm_sync(tmp.path(), "proj-ws-team");
 
@@ -1353,6 +1355,7 @@ fn teams_list_with_empty_config() {
         workzone: tmp.path().join("workspaces"),
         default_team: None,
         teams: vec![],
+        keyring_collection: None,
     };
     let config_path = tmp.path().join(".botminter/config.yml");
     bm::config::save_to(&config_path, &config).unwrap();
@@ -2110,7 +2113,7 @@ fn teams_list_shows_member_and_project_counts() {
 
     // Add a project
     let fork = create_fake_fork(tmp.path(), "test-proj");
-    bm_add_project(tmp.path(), &fork.to_string_lossy(), "count-team");
+    bm_add_project(tmp.path(), &fork, "count-team");
 
     // Verify teams list via subprocess
     let output = bm_run(tmp.path(), &["teams", "list"]);
@@ -2155,7 +2158,7 @@ fn teams_show_displays_full_details() {
     bm_hire(tmp.path(), role, "alice", "show-team");
 
     let fork = create_fake_fork(tmp.path(), "my-project");
-    bm_add_project(tmp.path(), &fork.to_string_lossy(), "show-team");
+    bm_add_project(tmp.path(), &fork, "show-team");
 
     let output = bm_run(tmp.path(), &["teams", "show", "-t", "show-team"]);
 
@@ -2262,7 +2265,7 @@ fn projects_list_displays_table() {
     setup_team(tmp.path(), "plist-team", "scrum");
 
     let fork = create_fake_fork(tmp.path(), "my-app");
-    bm_add_project(tmp.path(), &fork.to_string_lossy(), "plist-team");
+    bm_add_project(tmp.path(), &fork, "plist-team");
 
     let output = bm_run(tmp.path(), &["projects", "list", "-t", "plist-team"]);
 
@@ -2302,7 +2305,7 @@ fn projects_show_displays_details() {
     setup_team(tmp.path(), "pshow-team", "scrum");
 
     let fork = create_fake_fork(tmp.path(), "my-lib");
-    bm_add_project(tmp.path(), &fork.to_string_lossy(), "pshow-team");
+    bm_add_project(tmp.path(), &fork, "pshow-team");
 
     let output = bm_run(tmp.path(), &["projects", "show", "my-lib", "-t", "pshow-team"]);
 
@@ -2787,6 +2790,7 @@ fn setup_bridge_test() -> (tempfile::TempDir, String, PathBuf, PathBuf) {
             coding_agent: None,
             project_number: None,
         }],
+        keyring_collection: None,
     };
 
     let config_path = home.join(".botminter").join("config.yml");
@@ -2823,6 +2827,7 @@ fn setup_no_bridge_test() -> (tempfile::TempDir, String) {
             coding_agent: None,
             project_number: None,
         }],
+        keyring_collection: None,
     };
 
     let config_path = home.join(".botminter").join("config.yml");
@@ -2897,6 +2902,7 @@ remove username:
             coding_agent: None,
             project_number: None,
         }],
+        keyring_collection: None,
     };
 
     let config_path = home.join(".botminter").join("config.yml");

@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config;
 use crate::profile;
+use crate::workspace;
 use crate::state;
 
 /// Daemon config file stored at `~/.botminter/daemon-<team>.json`.
@@ -614,7 +615,7 @@ fn launch_members_oneshot(team_name: &str, shutdown: &Arc<AtomicBool>) -> Result
         return Ok(0);
     }
 
-    let member_dirs = list_member_dirs(&members_dir)?;
+    let member_dirs = workspace::list_member_dirs(&members_dir)?;
     if member_dirs.is_empty() {
         daemon_log(team_name, "WARN", "No members found");
         return Ok(0);
@@ -637,7 +638,7 @@ fn launch_members_oneshot(team_name: &str, shutdown: &Arc<AtomicBool>) -> Result
     let mut children: Vec<(String, std::process::Child)> = Vec::new();
 
     for member_dir_name in &member_dirs {
-        let ws = find_workspace(&team_ws_base, member_dir_name);
+        let ws = workspace::find_workspace(&team_ws_base, member_dir_name);
         let ws = match ws {
             Some(ws) => ws,
             None => {
@@ -692,52 +693,6 @@ fn launch_members_oneshot(team_name: &str, shutdown: &Arc<AtomicBool>) -> Result
     }
 
     Ok(launched)
-}
-
-/// Lists member directory names under `team/members/`.
-fn list_member_dirs(team_dir: &Path) -> Result<Vec<String>> {
-    let mut dirs = Vec::new();
-    for entry in fs::read_dir(team_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            continue;
-        }
-        dirs.push(name);
-    }
-    dirs.sort();
-    Ok(dirs)
-}
-
-/// Finds the workspace path for a member (same logic as start.rs).
-fn find_workspace(team_ws_base: &Path, member_dir_name: &str) -> Option<PathBuf> {
-    let member_ws = team_ws_base.join(member_dir_name);
-    if !member_ws.is_dir() {
-        return None;
-    }
-
-    // Check for project subdirectories
-    if let Ok(entries) = fs::read_dir(&member_ws) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.is_dir() {
-                let name = entry.file_name().to_string_lossy().to_string();
-                if !name.starts_with('.') && path.join(".botminter").is_dir() {
-                    return Some(path);
-                }
-            }
-        }
-    }
-
-    // No-project mode
-    if member_ws.join(".botminter").is_dir() {
-        return Some(member_ws);
-    }
-
-    None
 }
 
 /// Launches ralph one-shot (blocking child — we hold the Child handle to wait on it).
@@ -1175,46 +1130,7 @@ mod tests {
         assert_eq!(events[1].event_type, "PushEvent");
     }
 
-    // ── Member discovery tests (daemon-internal) ─────────────────────
-
-    #[test]
-    fn list_member_dirs_returns_sorted() {
-        let tmp = tempfile::tempdir().unwrap();
-        fs::create_dir(tmp.path().join("bob")).unwrap();
-        fs::create_dir(tmp.path().join("alice")).unwrap();
-        fs::create_dir(tmp.path().join(".hidden")).unwrap();
-        fs::write(tmp.path().join("file.txt"), "").unwrap();
-
-        let result = list_member_dirs(tmp.path()).unwrap();
-        assert_eq!(result, vec!["alice", "bob"]);
-    }
-
-    #[test]
-    fn find_workspace_project_mode() {
-        let tmp = tempfile::tempdir().unwrap();
-        let project_dir = tmp.path().join("member").join("my-project");
-        fs::create_dir_all(project_dir.join(".botminter")).unwrap();
-
-        let result = find_workspace(tmp.path(), "member");
-        assert_eq!(result, Some(project_dir));
-    }
-
-    #[test]
-    fn find_workspace_no_project_mode() {
-        let tmp = tempfile::tempdir().unwrap();
-        let member_dir = tmp.path().join("member");
-        fs::create_dir_all(member_dir.join(".botminter")).unwrap();
-
-        let result = find_workspace(tmp.path(), "member");
-        assert_eq!(result, Some(member_dir));
-    }
-
-    #[test]
-    fn find_workspace_missing() {
-        let tmp = tempfile::tempdir().unwrap();
-        let result = find_workspace(tmp.path(), "nonexistent");
-        assert_eq!(result, None);
-    }
+    // list_member_dirs and find_workspace tests are in workspace.rs
 
     // ── Per-member log path tests ─────────────────────────────────────
 

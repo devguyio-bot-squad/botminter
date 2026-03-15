@@ -29,6 +29,16 @@ e2e:
     @test -n "$TESTS_GH_ORG" || { echo "Error: TESTS_GH_ORG env var must be set"; exit 1; }
     cargo test -p bm --features e2e --test e2e -- --gh-token "$TESTS_GH_TOKEN" --gh-org "$TESTS_GH_ORG" --test-threads=1
 
+# Step through one E2E case at a time (progressive mode). SUITE is optional (e.g., scenario_fresh_start).
+e2e-step SUITE="":
+    @test -n "$TESTS_GH_TOKEN" || { echo "Error: TESTS_GH_TOKEN env var must be set"; exit 1; }
+    @test -n "$TESTS_GH_ORG" || { echo "Error: TESTS_GH_ORG env var must be set"; exit 1; }
+    cargo test -p bm --features e2e --test e2e -- --gh-token "$TESTS_GH_TOKEN" --gh-org "$TESTS_GH_ORG" --progressive {{ SUITE }} --test-threads=1
+
+# Reset progressive E2E state (clean up repos, containers, state files). SUITE is optional.
+e2e-reset SUITE="":
+    cargo test -p bm --features e2e --test e2e -- --progressive-reset {{ SUITE }}
+
 # Run E2E tests with output visible (note: libtest-mimic does not support --nocapture, but stderr from eprintln! is always visible)
 e2e-verbose:
     @test -n "$TESTS_GH_TOKEN" || { echo "Error: TESTS_GH_TOKEN env var must be set"; exit 1; }

@@ -16,6 +16,10 @@ pub struct BotminterConfig {
     pub default_team: Option<String>,
     #[serde(default)]
     pub teams: Vec<TeamEntry>,
+    /// Override the Secret Service collection used for credential storage.
+    /// Default (None) uses the `login` collection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keyring_collection: Option<String>,
 }
 
 /// A registered team.
@@ -182,6 +186,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
             }],
+            keyring_collection: None,
         };
 
         save_to(&path, &config).unwrap();
@@ -218,6 +223,7 @@ mod tests {
             workzone: PathBuf::from("/tmp/ws"),
             default_team: None,
             teams: vec![],
+            keyring_collection: None,
         };
         save_to(&path, &config).unwrap();
 
@@ -251,6 +257,7 @@ mod tests {
                     project_number: None,
                 },
             ],
+            keyring_collection: None,
         };
 
         // Flag overrides default
@@ -273,6 +280,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
             }],
+            keyring_collection: None,
         };
 
         let team = resolve_team(&config, None).unwrap();
@@ -285,6 +293,7 @@ mod tests {
             workzone: PathBuf::from("/tmp"),
             default_team: None,
             teams: vec![],
+            keyring_collection: None,
         };
 
         let result = resolve_team(&config, None);
@@ -307,6 +316,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
             }],
+            keyring_collection: None,
         };
 
         let result = resolve_team(&config, Some("nope"));

@@ -7,25 +7,6 @@ use anyhow::{bail, Context, Result};
 
 use crate::profile::CodingAgentDef;
 
-/// BM files that should always be hidden from git in the workspace.
-/// Agent-specific entries (context file, agent dir) are added dynamically.
-const BM_GITIGNORE_STATIC: &[&str] = &[
-    ".botminter/",
-    "PROMPT.md",
-    "ralph.yml",
-    ".ralph/",
-    "poll-log.txt",
-    ".gitignore",
-];
-
-/// Builds the full list of gitignore entries including agent-specific paths.
-fn bm_gitignore_entries(context_file: &str, agent_dir: &str) -> Vec<String> {
-    let mut entries: Vec<String> = BM_GITIGNORE_STATIC.iter().map(|s| s.to_string()).collect();
-    entries.push(context_file.to_string());
-    entries.push(format!("{}/", agent_dir.trim_end_matches('/')));
-    entries
-}
-
 /// Parameters for creating a workspace repo with submodules.
 pub struct WorkspaceRepoParams<'a> {
     pub team_repo_path: &'a Path,
@@ -74,10 +55,10 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
         let view_output = view_cmd
             .output()
             .context("Failed to run `gh repo view`")?;
-        if view_output.status.success() {
-            // Repo already exists — skip creation
+        let repo_already_exists = view_output.status.success();
+        if repo_already_exists {
             eprintln!(
-                "Workspace repo '{}' already exists on GitHub, skipping creation.",
+                "Workspace repo '{}' already exists on GitHub, cloning it.",
                 ws_repo_name
             );
         } else {
@@ -102,12 +83,14 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
             }
         }
 
-        // Clone the newly created repo
+        // Clone the repo — use --recursive for existing repos to init submodules
         let clone_url = format!("https://github.com/{}.git", ws_repo_name);
-        git_cmd(
-            params.workspace_base,
-            &["clone", &clone_url, &member_ws.to_string_lossy()],
-        )
+        let ws_path_str = member_ws.to_string_lossy().to_string();
+        if repo_already_exists {
+            git_cmd(params.workspace_base, &["clone", "--recursive", &clone_url, &ws_path_str])
+        } else {
+            git_cmd(params.workspace_base, &["clone", &clone_url, &ws_path_str])
+        }
         .with_context(|| {
             format!(
                 "Failed to clone workspace repo {}\n\n\
@@ -115,6 +98,11 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
                 ws_repo_name, ws_repo_name
             )
         })?;
+
+        // If repo already existed, submodules + files are already present from clone
+        if repo_already_exists {
+            return Ok(());
+        }
     } else {
         // Local-only mode: git init
         fs::create_dir_all(&member_ws)
@@ -247,9 +235,6 @@ pub fn assemble_workspace_repo_context(
     // Assemble agent dir with symlinks into team/ submodule
     assemble_agent_dir_submodule(ws_root, member_dir_name, project_names, coding_agent)?;
 
-    // Write .gitignore
-    write_gitignore(ws_root, &coding_agent.context_file, &coding_agent.agent_dir)?;
-
     // Write .botminter.workspace marker
     write_workspace_marker(ws_root, member_dir_name)?;
 
@@ -322,6 +307,38 @@ fn assemble_agent_dir_submodule(
 }
 
 /// Writes the `.botminter.workspace` marker file with workspace metadata.
+/// Lists member directory names from a members/ directory.
+/// Returns sorted directory names, skipping hidden entries.
+pub fn list_member_dirs(members_dir: &Path) -> Result<Vec<String>> {
+    let mut dirs = Vec::new();
+    if !members_dir.is_dir() {
+        return Ok(dirs);
+    }
+    for entry in fs::read_dir(members_dir)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if !name.starts_with('.') {
+            dirs.push(name);
+        }
+    }
+    dirs.sort();
+    Ok(dirs)
+}
+
+/// Finds the workspace path for a member.
+/// Returns Some if the member workspace dir exists and has the `.botminter.workspace` marker.
+pub fn find_workspace(team_ws_base: &Path, member_dir_name: &str) -> Option<PathBuf> {
+    let member_ws = team_ws_base.join(member_dir_name);
+    if member_ws.is_dir() && member_ws.join(".botminter.workspace").exists() {
+        Some(member_ws)
+    } else {
+        None
+    }
+}
+
 fn write_workspace_marker(ws_root: &Path, member_dir_name: &str) -> Result<()> {
     let content = format!(
         "# BotMinter workspace marker — do not delete\nmember: {}\n",
@@ -496,98 +513,6 @@ fn checkout_member_branch(sub_dir: &Path, member_dir_name: &str, verbose: bool) 
             println!("    Branch: {} (created)", member_dir_name);
         }
     }
-    Ok(())
-}
-
-/// Writes `.gitignore` in the workspace to hide BM files.
-pub fn write_gitignore(ws_root: &Path, context_file: &str, agent_dir: &str) -> Result<()> {
-    fs::write(ws_root.join(".gitignore"), gitignore_content(context_file, agent_dir))
-        .context("Failed to write .gitignore")
-}
-
-/// Returns the gitignore content for a workspace.
-pub fn gitignore_content(context_file: &str, agent_dir: &str) -> String {
-    let entries = bm_gitignore_entries(context_file, agent_dir);
-    let mut lines: Vec<&str> = vec!["# botminter — managed workspace files"];
-    lines.extend(entries.iter().map(|s| s.as_str()));
-    lines.push(""); // trailing newline
-    lines.join("\n")
-}
-
-/// Writes `.git/info/exclude` with BM patterns.
-pub fn write_git_exclude(ws_root: &Path, context_file: &str, agent_dir: &str) -> Result<()> {
-    let git_dir = ws_root.join(".git");
-    if !git_dir.is_dir() {
-        return Ok(()); // No .git dir — skip
-    }
-    let exclude_dir = git_dir.join("info");
-    fs::create_dir_all(&exclude_dir).context("Failed to create .git/info/")?;
-    fs::write(
-        exclude_dir.join("exclude"),
-        gitignore_content(context_file, agent_dir),
-    )
-    .context("Failed to write .git/info/exclude")
-}
-
-/// Hides botminter-managed files from git status when they are already tracked
-/// by the project repo. Uses `git update-index --skip-worktree` for modified files
-/// and `--assume-unchanged` for deleted files.
-pub fn hide_tracked_bm_files(
-    ws_root: &Path,
-    context_file: &str,
-    agent_dir: &str,
-) -> Result<()> {
-    let git_dir = ws_root.join(".git");
-    if !git_dir.is_dir() {
-        return Ok(());
-    }
-
-    // Collect all files under gitignore entries that git currently tracks
-    let output = Command::new("git")
-        .args(["ls-files", "--full-name"])
-        .current_dir(ws_root)
-        .output()
-        .context("Failed to run git ls-files")?;
-    if !output.status.success() {
-        return Ok(()); // Not a git repo or other issue — skip silently
-    }
-
-    let entries = bm_gitignore_entries(context_file, agent_dir);
-    let tracked = String::from_utf8_lossy(&output.stdout);
-    let bm_tracked: Vec<&str> = tracked
-        .lines()
-        .filter(|f| {
-            entries.iter().any(|pattern| {
-                let pat = pattern.trim_end_matches('/');
-                f.starts_with(pat) || *f == pat
-            })
-        })
-        .collect();
-
-    if bm_tracked.is_empty() {
-        return Ok(());
-    }
-
-    // Apply --skip-worktree to all matching tracked files (handles both
-    // modified and deleted files — git won't report changes for them)
-    let mut cmd = Command::new("git");
-    cmd.arg("update-index").arg("--skip-worktree");
-    for file in &bm_tracked {
-        cmd.arg(file);
-    }
-    cmd.current_dir(ws_root);
-    let _ = cmd.output(); // best-effort — some files may fail if deleted
-
-    // For files that --skip-worktree doesn't cover (some deleted files),
-    // fall back to --assume-unchanged
-    let mut cmd = Command::new("git");
-    cmd.arg("update-index").arg("--assume-unchanged");
-    for file in &bm_tracked {
-        cmd.arg(file);
-    }
-    cmd.current_dir(ws_root);
-    let _ = cmd.output(); // best-effort
-
     Ok(())
 }
 
@@ -795,6 +720,18 @@ fn verify_symlink(link: &Path, expected_target: &Path) -> Result<()> {
 /// (during `bm teams sync --repos` for local workspace setup). For remote
 /// repos, URLs are HTTPS and this config has no effect.
 fn git_submodule_add(dir: &Path, url: &str, path: &str) -> Result<()> {
+    // Check if submodule already exists via git
+    let status = Command::new("git")
+        .args(["submodule", "status", path])
+        .current_dir(dir)
+        .output();
+    if let Ok(ref out) = status {
+        if out.status.success() {
+            // Submodule already registered — skip
+            return Ok(());
+        }
+    }
+
     let output = Command::new("git")
         .args([
             "-c",
@@ -943,19 +880,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn gitignore_content_has_all_bm_entries() {
-        let content = gitignore_content("CLAUDE.md", ".claude");
-        for entry in BM_GITIGNORE_STATIC {
-            assert!(
-                content.contains(entry),
-                ".gitignore should contain '{}'",
-                entry
-            );
-        }
-        assert!(content.contains("CLAUDE.md"), ".gitignore should contain context file");
-        assert!(content.contains(".claude/"), ".gitignore should contain agent dir");
-    }
 
     // ── Symlink edge cases ──────────────────────────────────────────
 
@@ -1309,44 +1233,6 @@ mod tests {
         );
     }
 
-    // ── Gitignore / git exclude ─────────────────────────────────────
-
-    #[test]
-    fn write_git_exclude_creates_file() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("workspace");
-        fs::create_dir_all(ws.join(".git")).unwrap();
-
-        write_git_exclude(&ws, "CLAUDE.md", ".claude").unwrap();
-
-        let exclude = ws.join(".git/info/exclude");
-        assert!(exclude.exists(), ".git/info/exclude should be created");
-
-        let content = fs::read_to_string(&exclude).unwrap();
-        for entry in BM_GITIGNORE_STATIC {
-            assert!(
-                content.contains(entry),
-                ".git/info/exclude should contain '{}'",
-                entry
-            );
-        }
-        assert!(content.contains("CLAUDE.md"), "should contain context file");
-        assert!(content.contains(".claude/"), "should contain agent dir");
-    }
-
-    #[test]
-    fn write_git_exclude_no_git_dir_noop() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("workspace");
-        fs::create_dir_all(&ws).unwrap();
-        // No .git/ directory
-
-        // Should return Ok without error
-        write_git_exclude(&ws, "CLAUDE.md", ".claude").unwrap();
-
-        // No .git/info/exclude should have been created
-        assert!(!ws.join(".git").exists());
-    }
 
     // ── Workspace repo (submodule model) ──────────────────────────────
 
@@ -1744,24 +1630,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn workspace_repo_writes_gitignore() {
-        let tmp = tempfile::tempdir().unwrap();
-        let team_repo = setup_team_repo_for_ws(tmp.path());
-        let workspace_base = tmp.path().join("workzone");
-        fs::create_dir_all(&workspace_base).unwrap();
-
-        let agent = claude_code_agent();
-        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
-        create_workspace_repo(&params).unwrap();
-
-        let ws = workspace_base.join("arch-01");
-        let gitignore = fs::read_to_string(ws.join(".gitignore")).unwrap();
-
-        assert!(gitignore.contains(".ralph/"), ".gitignore should contain .ralph/");
-        assert!(gitignore.contains(".claude/"), ".gitignore should contain agent dir");
-        assert!(gitignore.contains("CLAUDE.md"), ".gitignore should contain context file");
-    }
 
     #[test]
     fn workspace_repo_writes_marker_file() {

@@ -59,7 +59,7 @@ impl CompletionContext {
     pub fn member_names(&self) -> Vec<String> {
         self.team_repo
             .as_ref()
-            .and_then(|repo| list_member_dirs(repo).ok())
+            .and_then(|repo| crate::workspace::list_member_dirs(&repo.join("members")).ok())
             .unwrap_or_default()
     }
 
@@ -241,25 +241,7 @@ fn make(values: Vec<String>) -> ArgValueCandidates {
     })
 }
 
-/// List member directories under `team_repo/members/`.
-fn list_member_dirs(team_repo: &Path) -> anyhow::Result<Vec<String>> {
-    let members_dir = team_repo.join("members");
-    if !members_dir.is_dir() {
-        return Ok(Vec::new());
-    }
-    let mut names = Vec::new();
-    for entry in std::fs::read_dir(&members_dir)? {
-        let entry = entry?;
-        if entry.file_type()?.is_dir() {
-            let name = entry.file_name().to_string_lossy().to_string();
-            if !name.starts_with('.') {
-                names.push(name);
-            }
-        }
-    }
-    names.sort();
-    Ok(names)
-}
+// list_member_dirs lives in crate::workspace
 
 /// List project names from the team repo's botminter.yml manifest.
 fn list_project_names(team_repo: &Path) -> anyhow::Result<Vec<String>> {
@@ -337,6 +319,7 @@ mod tests {
                         project_number: None,
                     },
                 ],
+                keyring_collection: None,
             }),
             team: None,
             team_repo: None,

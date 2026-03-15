@@ -162,6 +162,30 @@ Commands like `bm chat`, `bm minty`, and `bm start` launch Claude Code. When you
 - Always **"Ralph Orchestrator"** when referring to the product/project — never just "Ralph" in product context. Casual references to `ralph.yml` or Ralph instances within a team are fine, but the product name is "Ralph Orchestrator."
 - Use **"coding-agent-agnostic"** (not "LLM-agnostic") when talking about abstracting away Claude Code / Gemini CLI specifics. The LLM layer is already abstracted by Ralph Orchestrator; the coding agent layer is what BotMinter needs to abstract.
 
+## Progressive Interactive E2E Testing
+
+When stepping through e2e tests progressively with the user (`just e2e-step`), follow this workflow strictly:
+
+1. **Run a progressive step** — execute `just e2e-step SUITE=<name>`.
+2. **Collect evidence** — run evidence commands (state file, GitHub checks, filesystem) and write the commands + raw output to `target/e2e-evidence/step-NN.txt`.
+3. **Report** — tell the user the evidence file path. Wait for them to review and confirm.
+4. **If step passed** — wait for confirmation before running the next step.
+5. **If step failed** — describe the bug and propose a fix. **Do NOT apply the fix.** Wait for the user to confirm the fix before implementing it.
+6. **After fix confirmed + applied** — re-run the same step, collect evidence, wait for confirmation.
+
+Key rules:
+- Never apply a fix without user confirmation.
+- Always write evidence to a file, not inline in the conversation.
+- Evidence must include the raw commands that generated the output.
+- **Evidence must prove the side effects actually happened**, not just that the test returned exit 0. Examples:
+  - `bm hire` → `ls` the members dir to show the member was created
+  - `bridge identity add` → `secret-tool search` to show the token is in the keyring
+  - `bm start` → `ps` to show the process is running; check `.ralph-stub-env` for correct env vars
+  - `bm stop` → `ps` to show the process is gone; check `state.json` for empty members
+  - `teams sync` → `ls` the workspace dir to show files were created
+  - Label creation → `gh label list` to show the label exists on GitHub
+- Evidence files live in `crates/bm/target/e2e-evidence/`. Always run `just` from the project root.
+
 ## Ralph Orchestrator
 - Ralph Orchestrator project is an open source project and a dependecy for BotMinter.
 - The GitHub repo is https://github.com/mikeyobrien/ralph-orchestrator/

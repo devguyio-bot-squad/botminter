@@ -27,7 +27,7 @@ Full details: `.planning/milestones/v0.06-ROADMAP.md`
 
 **Prerequisite:** Ralph Orchestrator's robot backend is already pluggable (RobotConfig supports backend selection, robot service factory dispatches by config).
 
-- [ ] **Phase 7: Specs Foundation & Bridge Contract** - Establish ADR practice, create specs directory, and define the bridge plugin contract with spec and schema
+- [x] **Phase 7: Specs Foundation & Bridge Contract** - Establish ADR practice, create specs directory, and define the bridge plugin contract with spec and schema (completed 2026-03-08)
 - [x] **Phase 8: Bridge Abstraction, CLI & Telegram** - Build the Rust bridge module, all `bm bridge` CLI commands, Telegram migration, and `bm start/stop/status` integration — validated end-to-end with Telegram as the first real bridge (completed 2026-03-08)
 - [x] **Phase 9: Profile Integration & Cleanup** - Connect bridge to profiles, init wizard, teams sync provisioning, and verify full cycle end-to-end with Telegram (completed 2026-03-09)
 - [ ] **Phase 10: Rocket.Chat Bridge** - Ship the reference bridge implementation proving the full abstraction with Podman-based Rocket.Chat
@@ -47,9 +47,9 @@ Full details: `.planning/milestones/v0.06-ROADMAP.md`
 **Plans**: 3 plans
 
 Plans:
-- [ ] 07-01-PLAN.md -- ADR practice, specs practice, legacy cleanup
-- [ ] 07-02-PLAN.md -- Bridge spec document and reference examples
-- [ ] 07-03-PLAN.md -- Stub bridge and conformance tests
+- [x] 07-01-PLAN.md -- ADR practice, specs practice, legacy cleanup (completed 2026-03-08)
+- [x] 07-02-PLAN.md -- Bridge spec document and reference examples (completed 2026-03-08)
+- [x] 07-03-PLAN.md -- Stub bridge and conformance tests (completed 2026-03-08)
 
 ### Phase 8: Bridge Abstraction, CLI & Telegram
 **Goal**: Operators can manage bridge services and identities through `bm bridge` commands, Telegram is wrapped as the first real bridge implementation validating the abstraction end-to-end, and bridge lifecycle is wired into `bm start/stop/status`
@@ -124,7 +124,7 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 4. Skills Extraction | v0.06 | 1/1 | Complete | 2026-03-04 |
 | 5. Team Manager + Chat | v0.06 | 4/4 | Complete | 2026-03-07 |
 | 6. Minty | v0.06 | 2/2 | Complete | 2026-03-08 |
-| 7. Specs Foundation & Bridge Contract | v0.07 | 0/3 | Planning | - |
+| 7. Specs Foundation & Bridge Contract | v0.07 | 3/3 | Complete | 2026-03-08 |
 | 8. Bridge Abstraction, CLI & Telegram | v0.07 | 4/5 | Gap closure | 2026-03-08 |
 | 9. Profile Integration & Cleanup | v0.07 | 6/6 | Complete | 2026-03-09 |
 | 10. Rocket.Chat Bridge | v0.07 | 0/3 | Not started | - |

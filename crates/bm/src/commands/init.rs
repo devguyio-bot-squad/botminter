@@ -132,62 +132,75 @@ pub fn run_non_interactive(
     fs::create_dir_all(&team_dir)
         .with_context(|| format!("Failed to create team directory at {}", team_dir.display()))?;
 
-    // Set up team repo (always new in non-interactive mode)
-    let team_repo = team_dir.join("team");
-    fs::create_dir_all(&team_repo).context("Failed to create team repo directory")?;
-
-    run_git(&team_repo, &["init", "-b", "main"])?;
-
-    let coding_agent = manifest
-        .coding_agents
-        .get(&manifest.default_coding_agent)
-        .with_context(|| {
-            format!(
-                "Profile '{}' default coding agent '{}' not found in coding_agents map",
-                selected_profile, manifest.default_coding_agent
-            )
-        })?;
-    profile::extract_profile_to(&selected_profile, &team_repo, coding_agent)?;
-
-    // Handle optional project
-    let projects_to_add: Vec<(String, String)> = if let Some(ref proj_url) = project {
-        let name = derive_project_name(proj_url);
-        vec![(name, proj_url.clone())]
+    // Check if repo already exists on GitHub
+    let is_new_repo = if skip_github {
+        true
     } else {
-        Vec::new()
+        !repo_exists(&github_repo, gh_token.as_deref())?
     };
 
-    if !projects_to_add.is_empty() {
-        augment_manifest_with_projects(&team_repo, &projects_to_add)?;
-    }
+    let team_repo = team_dir.join("team");
 
-    // Record bridge selection in team botminter.yml
-    if let Some(ref bridge_name) = selected_bridge {
-        record_bridge_in_manifest(&team_repo, bridge_name)?;
-    }
+    if is_new_repo {
+        // New repo: init locally, extract profile, commit, push
+        fs::create_dir_all(&team_repo).context("Failed to create team repo directory")?;
+        run_git(&team_repo, &["init", "-b", "main"])?;
 
-    fs::create_dir_all(team_repo.join("members")).context("Failed to create members/ dir")?;
-    fs::create_dir_all(team_repo.join("projects")).context("Failed to create projects/ dir")?;
-    fs::write(team_repo.join("members/.gitkeep"), "").ok();
-    fs::write(team_repo.join("projects/.gitkeep"), "").ok();
+        let coding_agent = manifest
+            .coding_agents
+            .get(&manifest.default_coding_agent)
+            .with_context(|| {
+                format!(
+                    "Profile '{}' default coding agent '{}' not found in coding_agents map",
+                    selected_profile, manifest.default_coding_agent
+                )
+            })?;
+        profile::extract_profile_to(&selected_profile, &team_repo, coding_agent)?;
 
-    for (proj_name, _url) in &projects_to_add {
-        let proj_dir = team_repo.join("projects").join(proj_name);
-        fs::create_dir_all(proj_dir.join("knowledge"))
-            .with_context(|| format!("Failed to create projects/{}/knowledge/", proj_name))?;
-        fs::create_dir_all(proj_dir.join("invariants"))
-            .with_context(|| format!("Failed to create projects/{}/invariants/", proj_name))?;
-        fs::write(proj_dir.join("knowledge/.gitkeep"), "").ok();
-        fs::write(proj_dir.join("invariants/.gitkeep"), "").ok();
-    }
+        // Handle optional project
+        let projects_to_add: Vec<(String, String)> = if let Some(ref proj_url) = project {
+            let name = derive_project_name(proj_url);
+            vec![(name, proj_url.clone())]
+        } else {
+            Vec::new()
+        };
 
-    // Initial commit
-    run_git(&team_repo, &["add", "-A"])?;
-    let commit_msg = format!("feat: initialize team repo ({} profile)", selected_profile);
-    run_git(&team_repo, &["commit", "-m", &commit_msg])?;
+        if !projects_to_add.is_empty() {
+            augment_manifest_with_projects(&team_repo, &projects_to_add)?;
+        }
 
-    if !skip_github {
-        create_github_repo(&team_repo, &github_repo, gh_token.as_deref())?;
+        // Record bridge selection in team botminter.yml
+        if let Some(ref bridge_name) = selected_bridge {
+            record_bridge_in_manifest(&team_repo, bridge_name)?;
+        }
+
+        fs::create_dir_all(team_repo.join("members")).context("Failed to create members/ dir")?;
+        fs::create_dir_all(team_repo.join("projects")).context("Failed to create projects/ dir")?;
+        fs::write(team_repo.join("members/.gitkeep"), "").ok();
+        fs::write(team_repo.join("projects/.gitkeep"), "").ok();
+
+        for (proj_name, _url) in &projects_to_add {
+            let proj_dir = team_repo.join("projects").join(proj_name);
+            fs::create_dir_all(proj_dir.join("knowledge"))
+                .with_context(|| format!("Failed to create projects/{}/knowledge/", proj_name))?;
+            fs::create_dir_all(proj_dir.join("invariants"))
+                .with_context(|| format!("Failed to create projects/{}/invariants/", proj_name))?;
+            fs::write(proj_dir.join("knowledge/.gitkeep"), "").ok();
+            fs::write(proj_dir.join("invariants/.gitkeep"), "").ok();
+        }
+
+        // Initial commit
+        run_git(&team_repo, &["add", "-A"])?;
+        let commit_msg = format!("feat: initialize team repo ({} profile)", selected_profile);
+        run_git(&team_repo, &["commit", "-m", &commit_msg])?;
+
+        if !skip_github {
+            create_github_repo(&team_repo, &github_repo, gh_token.as_deref())?;
+        }
+    } else {
+        // Existing repo: clone it
+        eprintln!("Repository '{}' already exists — cloning it.", github_repo);
+        clone_existing_repo(&team_dir, &github_repo, gh_token.as_deref())?;
     }
 
     // Register in config
@@ -786,44 +799,45 @@ pub fn derive_project_name(url: &str) -> String {
     basename.trim_end_matches(".git").to_string()
 }
 
-/// Verifies that a fork URL is reachable before adding it.
+/// Verifies that a fork URL is a remote URL and is reachable.
 ///
-/// For local paths: checks the path exists and is a git repository.
-/// For HTTPS URLs: runs `gh repo view` to verify the repo exists and is accessible.
+/// Rejects local paths — workspace repos need remote URLs so they can be cloned
+/// on any machine. Runs `gh repo view` to verify the repo exists and is accessible.
 pub(crate) fn verify_fork_url(url: &str, gh_token: Option<&str>) -> Result<()> {
-    if url.starts_with("https://") || url.starts_with("git@") {
-        // Remote URL — verify via gh CLI
-        let mut cmd = Command::new("gh");
-        cmd.args(["repo", "view", url, "--json", "name"]);
-        if let Some(token) = gh_token {
-            cmd.env("GH_TOKEN", token);
-        }
-        let output = cmd.output().context("Failed to run `gh repo view`")?;
-        if !output.status.success() {
-            bail!(
-                "Repository '{}' not found or not accessible.\n\
-                 Check the URL and ensure your token has access.\n\
-                 To verify manually:  gh repo view {}",
-                url, url
-            );
-        }
-    } else {
-        // Local path — check it exists and is a git repo
-        let path = Path::new(url);
-        if !path.exists() {
-            bail!(
-                "Repository path '{}' not found or not accessible.\n\
-                 The path does not exist.",
-                url
-            );
-        }
+    if url.starts_with("file://") {
+        // file:// URI — check the local path exists and is a git repo
+        let path_str = url.strip_prefix("file://").unwrap();
+        let path = Path::new(path_str);
         if !path.join(".git").is_dir() {
             bail!(
-                "Repository path '{}' not found or not accessible.\n\
-                 The path exists but is not a git repository.",
+                "Repository '{}' not found or is not a git repository.",
                 url
             );
         }
+        return Ok(());
+    }
+
+    if !url.starts_with("https://") && !url.starts_with("git@") {
+        bail!(
+            "Project URL must use a URI scheme (https://, git@, or file://), got: {}\n\
+             Bare local paths are not supported — use file:// for local repos.",
+            url
+        );
+    }
+
+    let mut cmd = Command::new("gh");
+    cmd.args(["repo", "view", url, "--json", "name"]);
+    if let Some(token) = gh_token {
+        cmd.env("GH_TOKEN", token);
+    }
+    let output = cmd.output().context("Failed to run `gh repo view`")?;
+    if !output.status.success() {
+        bail!(
+            "Repository '{}' not found or not accessible.\n\
+             Check the URL and ensure your token has access.\n\
+             To verify manually:  gh repo view {}",
+            url, url
+        );
     }
     Ok(())
 }
@@ -891,6 +905,17 @@ pub(crate) fn finalize_member_manifest(member_dir: &Path, name: &str) -> Result<
 }
 
 /// Creates a GitHub repo and pushes the team repo.
+/// Checks if a GitHub repository exists and is accessible.
+fn repo_exists(repo_name: &str, gh_token: Option<&str>) -> Result<bool> {
+    let mut cmd = Command::new("gh");
+    cmd.args(["repo", "view", repo_name, "--json", "name"]);
+    if let Some(token) = gh_token {
+        cmd.env("GH_TOKEN", token);
+    }
+    let output = cmd.output().context("Failed to run `gh repo view`")?;
+    Ok(output.status.success())
+}
+
 fn create_github_repo(team_repo: &Path, repo_name: &str, gh_token: Option<&str>) -> Result<()> {
     let mut cmd = Command::new("gh");
     cmd.args([
@@ -1581,6 +1606,7 @@ fn load_or_default_config() -> BotminterConfig {
         workzone: default_workzone_path(),
         default_team: None,
         teams: Vec::new(),
+        keyring_collection: None,
     })
 }
 
@@ -1718,5 +1744,49 @@ mod tests {
         // validate_bridge_selection is only called when --bridge is provided
         // This test documents the expected behavior: no call = no error
         assert!(bridges.is_empty());
+    }
+
+    // ── verify_fork_url rejects bare local paths ──────────────
+
+    #[test]
+    fn verify_fork_url_rejects_bare_local_path() {
+        let result = verify_fork_url("/tmp/some-repo", None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("must use a URI scheme"), "{}", err);
+    }
+
+    #[test]
+    fn verify_fork_url_rejects_relative_path() {
+        let result = verify_fork_url("../my-project", None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("must use a URI scheme"), "{}", err);
+    }
+
+    #[test]
+    fn verify_fork_url_rejects_dot_path() {
+        let result = verify_fork_url("./local-repo", None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("must use a URI scheme"), "{}", err);
+    }
+
+    #[test]
+    fn verify_fork_url_accepts_file_uri() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("test-repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        Command::new("git").args(["init", "-b", "main"]).current_dir(&repo).output().unwrap();
+        let url = format!("file://{}", repo.to_string_lossy());
+        assert!(verify_fork_url(&url, None).is_ok());
+    }
+
+    #[test]
+    fn verify_fork_url_rejects_nonexistent_file_uri() {
+        let result = verify_fork_url("file:///tmp/does-not-exist-repo-xyz", None);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("not found") || err.contains("not a git repository"), "{}", err);
     }
 }

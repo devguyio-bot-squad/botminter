@@ -9,6 +9,15 @@ pub struct TempRepo {
 }
 
 impl TempRepo {
+    /// Wraps an already-existing GitHub repo by name, without creating anything.
+    /// Used by progressive mode to reconnect to a repo from a previous run.
+    pub fn from_existing(full_name: &str) -> Self {
+        eprintln!("TempRepo from_existing: {}", full_name);
+        TempRepo {
+            full_name: full_name.to_string(),
+        }
+    }
+
     /// Creates a new private GitHub repository under a specific organization.
     ///
     /// Returns `Err` if the gh token lacks permission to create repos in the org.
@@ -133,6 +142,7 @@ pub fn list_labels(repo: &str) -> Vec<String> {
 /// Lists labels on a GitHub repository with name and color.
 ///
 /// Returns `(name, color)` pairs parsed from `gh label list --json`.
+#[allow(dead_code)]
 pub fn list_labels_json(repo: &str) -> Vec<(String, String)> {
     let output = Command::new("gh")
         .args([
@@ -234,6 +244,7 @@ impl Drop for TempProject {
 
 /// Lists Status field options on a GitHub Project.
 /// Returns a list of option names.
+#[allow(dead_code)]
 pub fn list_project_status_options(owner: &str, project_number: u64) -> Vec<String> {
     let output = Command::new("gh")
         .args([

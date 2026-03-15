@@ -7,15 +7,22 @@ use crate::bridge::{self, BridgeIdentity, BridgeRoom, LocalCredentialStore, Cred
 use crate::config;
 
 /// Common setup: load config, resolve team, check `just` is installed, discover bridge.
-/// Returns (team_name, bridge_dir, team_repo_path, workzone).
-fn resolve_bridge(
-    team_flag: Option<&str>,
-) -> Result<Option<(String, std::path::PathBuf, std::path::PathBuf, std::path::PathBuf)>> {
+struct BridgeContext {
+    team_name: String,
+    bridge_dir: std::path::PathBuf,
+    #[allow(dead_code)]
+    team_repo: std::path::PathBuf,
+    workzone: std::path::PathBuf,
+    keyring_collection: Option<String>,
+}
+
+fn resolve_bridge(team_flag: Option<&str>) -> Result<Option<BridgeContext>> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
     let team_repo = team.path.join("team");
     let team_name = team.name.clone();
     let workzone = cfg.workzone.clone();
+    let keyring_collection = cfg.keyring_collection.clone();
 
     if which::which("just").is_err() {
         bail!(
@@ -24,7 +31,9 @@ fn resolve_bridge(
     }
 
     match bridge::discover(&team_repo, &team_name)? {
-        Some(bridge_dir) => Ok(Some((team_name, bridge_dir, team_repo, workzone))),
+        Some(bridge_dir) => Ok(Some(BridgeContext {
+            team_name, bridge_dir, team_repo, workzone, keyring_collection,
+        })),
         None => {
             println!("No bridge configured for team '{}'.", team_name);
             Ok(None)
@@ -34,12 +43,12 @@ fn resolve_bridge(
 
 /// Handles `bm bridge start [-t team]`.
 pub fn start(team_flag: Option<&str>) -> Result<()> {
-    let (team_name, bridge_dir, _team_repo, workzone) = match resolve_bridge(team_flag)? {
+    let ctx = match resolve_bridge(team_flag)? {
         Some(v) => v,
         None => return Ok(()),
     };
 
-    let manifest = bridge::load_manifest(&bridge_dir)?;
+    let manifest = bridge::load_manifest(&ctx.bridge_dir)?;
     let bridge_name = &manifest.metadata.name;
 
     if manifest.spec.bridge_type == "external" {
@@ -58,10 +67,10 @@ pub fn start(team_flag: Option<&str>) -> Result<()> {
     })?;
 
     let start_result =
-        bridge::invoke_recipe(&bridge_dir, &lifecycle.start, &[], &team_name)?;
-    bridge::invoke_recipe(&bridge_dir, &lifecycle.health, &[], &team_name)?;
+        bridge::invoke_recipe(&ctx.bridge_dir, &lifecycle.start, &[], &ctx.team_name)?;
+    bridge::invoke_recipe(&ctx.bridge_dir, &lifecycle.health, &[], &ctx.team_name)?;
 
-    let state_path = bridge::state_path(&workzone, &team_name);
+    let state_path = bridge::state_path(&ctx.workzone, &ctx.team_name);
     let mut state = bridge::load_state(&state_path)?;
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -85,12 +94,12 @@ pub fn start(team_flag: Option<&str>) -> Result<()> {
 
 /// Handles `bm bridge stop [-t team]`.
 pub fn stop(team_flag: Option<&str>) -> Result<()> {
-    let (team_name, bridge_dir, _team_repo, workzone) = match resolve_bridge(team_flag)? {
+    let ctx = match resolve_bridge(team_flag)? {
         Some(v) => v,
         None => return Ok(()),
     };
 
-    let manifest = bridge::load_manifest(&bridge_dir)?;
+    let manifest = bridge::load_manifest(&ctx.bridge_dir)?;
     let bridge_name = &manifest.metadata.name;
 
     if manifest.spec.bridge_type == "external" {
@@ -108,9 +117,9 @@ pub fn stop(team_flag: Option<&str>) -> Result<()> {
         )
     })?;
 
-    bridge::invoke_recipe(&bridge_dir, &lifecycle.stop, &[], &team_name)?;
+    bridge::invoke_recipe(&ctx.bridge_dir, &lifecycle.stop, &[], &ctx.team_name)?;
 
-    let state_path = bridge::state_path(&workzone, &team_name);
+    let state_path = bridge::state_path(&ctx.workzone, &ctx.team_name);
     let mut state = bridge::load_state(&state_path)?;
     state.status = "stopped".to_string();
     state.started_at = None;
@@ -122,16 +131,16 @@ pub fn stop(team_flag: Option<&str>) -> Result<()> {
 
 /// Handles `bm bridge status [-t team]`.
 pub fn status(team_flag: Option<&str>) -> Result<()> {
-    let (team_name, _bridge_dir, _team_repo, workzone) = match resolve_bridge(team_flag)? {
+    let ctx = match resolve_bridge(team_flag)? {
         Some(v) => v,
         None => return Ok(()),
     };
 
-    let state_path = bridge::state_path(&workzone, &team_name);
+    let state_path = bridge::state_path(&ctx.workzone, &ctx.team_name);
     let state = bridge::load_state(&state_path)?;
 
     if state.bridge_name.is_none() {
-        println!("No bridge active for team '{}'.", team_name);
+        println!("No bridge active for team '{}'.", ctx.team_name);
         return Ok(());
     }
 
@@ -193,12 +202,12 @@ pub fn status(team_flag: Option<&str>) -> Result<()> {
 
 /// Handles `bm bridge identity add <username> [-t team]`.
 pub fn identity_add(username: &str, team_flag: Option<&str>) -> Result<()> {
-    let (team_name, bridge_dir, _team_repo, workzone) = match resolve_bridge(team_flag)? {
+    let ctx = match resolve_bridge(team_flag)? {
         Some(v) => v,
         None => return Ok(()),
     };
 
-    let manifest = bridge::load_manifest(&bridge_dir)?;
+    let manifest = bridge::load_manifest(&ctx.bridge_dir)?;
     let bridge_name = &manifest.metadata.name;
 
     // For external bridges, prompt for token if interactive (mirrors hire.rs pattern)
@@ -224,13 +233,13 @@ pub fn identity_add(username: &str, team_flag: Option<&str>) -> Result<()> {
     }
 
     let result = bridge::invoke_recipe(
-        &bridge_dir,
+        &ctx.bridge_dir,
         &manifest.spec.identity.onboard,
         &[username],
-        &team_name,
+        &ctx.team_name,
     )?;
 
-    let state_path = bridge::state_path(&workzone, &team_name);
+    let state_path = bridge::state_path(&ctx.workzone, &ctx.team_name);
     let mut state = bridge::load_state(&state_path)?;
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -278,10 +287,10 @@ pub fn identity_add(username: &str, team_flag: Option<&str>) -> Result<()> {
     // Store token in system keyring via CredentialStore (best-effort)
     if !token_str.is_empty() {
         let credential_store = LocalCredentialStore::new(
-            &team_name,
+            &ctx.team_name,
             bridge_name,
             state_path,
-        );
+        ).with_collection(ctx.keyring_collection.clone());
         if let Err(e) = credential_store.store(username, &token_str) {
             eprintln!(
                 "Warning: Could not store token in system keyring: {}\n\
@@ -298,12 +307,12 @@ pub fn identity_add(username: &str, team_flag: Option<&str>) -> Result<()> {
 
 /// Handles `bm bridge identity rotate <username> [-t team]`.
 pub fn identity_rotate(username: &str, team_flag: Option<&str>) -> Result<()> {
-    let (team_name, bridge_dir, _team_repo, workzone) = match resolve_bridge(team_flag)? {
+    let ctx = match resolve_bridge(team_flag)? {
         Some(v) => v,
         None => return Ok(()),
     };
 
-    let state_path = bridge::state_path(&workzone, &team_name);
+    let state_path = bridge::state_path(&ctx.workzone, &ctx.team_name);
     let mut state = bridge::load_state(&state_path)?;
 
     if !state.identities.contains_key(username) {
@@ -313,13 +322,13 @@ pub fn identity_rotate(username: &str, team_flag: Option<&str>) -> Result<()> {
         );
     }
 
-    let manifest = bridge::load_manifest(&bridge_dir)?;
+    let manifest = bridge::load_manifest(&ctx.bridge_dir)?;
     let bridge_name = &manifest.metadata.name;
     let result = bridge::invoke_recipe(
-        &bridge_dir,
+        &ctx.bridge_dir,
         &manifest.spec.identity.rotate_credentials,
         &[username],
-        &team_name,
+        &ctx.team_name,
     )?;
 
     if let Some(val) = result {
@@ -331,10 +340,10 @@ pub fn identity_rotate(username: &str, team_flag: Option<&str>) -> Result<()> {
         // Store rotated token in keyring (best-effort)
         if let Some(token) = val.get("token").and_then(|v| v.as_str()) {
             let credential_store = LocalCredentialStore::new(
-                &team_name,
+                &ctx.team_name,
                 bridge_name,
                 state_path.clone(),
-            );
+            ).with_collection(ctx.keyring_collection.clone());
             if let Err(e) = credential_store.store(username, token) {
                 eprintln!(
                     "Warning: Could not store rotated token in system keyring: {}\n\
@@ -353,12 +362,12 @@ pub fn identity_rotate(username: &str, team_flag: Option<&str>) -> Result<()> {
 
 /// Handles `bm bridge identity remove <username> [-t team]`.
 pub fn identity_remove(username: &str, team_flag: Option<&str>) -> Result<()> {
-    let (team_name, bridge_dir, _team_repo, workzone) = match resolve_bridge(team_flag)? {
+    let ctx = match resolve_bridge(team_flag)? {
         Some(v) => v,
         None => return Ok(()),
     };
 
-    let state_path = bridge::state_path(&workzone, &team_name);
+    let state_path = bridge::state_path(&ctx.workzone, &ctx.team_name);
     let mut state = bridge::load_state(&state_path)?;
 
     if !state.identities.contains_key(username) {
@@ -368,13 +377,13 @@ pub fn identity_remove(username: &str, team_flag: Option<&str>) -> Result<()> {
         );
     }
 
-    let manifest = bridge::load_manifest(&bridge_dir)?;
+    let manifest = bridge::load_manifest(&ctx.bridge_dir)?;
     let bridge_name = &manifest.metadata.name;
     bridge::invoke_recipe(
-        &bridge_dir,
+        &ctx.bridge_dir,
         &manifest.spec.identity.remove,
         &[username],
-        &team_name,
+        &ctx.team_name,
     )?;
 
     state.identities.remove(username);
@@ -382,10 +391,10 @@ pub fn identity_remove(username: &str, team_flag: Option<&str>) -> Result<()> {
 
     // Remove credential from keyring
     let credential_store = LocalCredentialStore::new(
-        &team_name,
+        &ctx.team_name,
         bridge_name,
         state_path,
-    );
+    ).with_collection(ctx.keyring_collection.clone());
     // Best-effort: don't fail if keyring is unavailable
     let _ = credential_store.remove(username);
 
@@ -395,12 +404,12 @@ pub fn identity_remove(username: &str, team_flag: Option<&str>) -> Result<()> {
 
 /// Handles `bm bridge identity list [-t team]`.
 pub fn identity_list(team_flag: Option<&str>) -> Result<()> {
-    let (team_name, _bridge_dir, _team_repo, workzone) = match resolve_bridge(team_flag)? {
+    let ctx = match resolve_bridge(team_flag)? {
         Some(v) => v,
         None => return Ok(()),
     };
 
-    let state_path = bridge::state_path(&workzone, &team_name);
+    let state_path = bridge::state_path(&ctx.workzone, &ctx.team_name);
     let state = bridge::load_state(&state_path)?;
 
     if state.identities.is_empty() {
@@ -431,12 +440,12 @@ pub fn identity_list(team_flag: Option<&str>) -> Result<()> {
 
 /// Handles `bm bridge room create <name> [-t team]`.
 pub fn room_create(name: &str, team_flag: Option<&str>) -> Result<()> {
-    let (team_name, bridge_dir, _team_repo, workzone) = match resolve_bridge(team_flag)? {
+    let ctx = match resolve_bridge(team_flag)? {
         Some(v) => v,
         None => return Ok(()),
     };
 
-    let manifest = bridge::load_manifest(&bridge_dir)?;
+    let manifest = bridge::load_manifest(&ctx.bridge_dir)?;
     let bridge_name = &manifest.metadata.name;
 
     let room_spec = manifest.spec.room.as_ref().ok_or_else(|| {
@@ -447,9 +456,9 @@ pub fn room_create(name: &str, team_flag: Option<&str>) -> Result<()> {
     })?;
 
     let result =
-        bridge::invoke_recipe(&bridge_dir, &room_spec.create, &[name], &team_name)?;
+        bridge::invoke_recipe(&ctx.bridge_dir, &room_spec.create, &[name], &ctx.team_name)?;
 
-    let state_path = bridge::state_path(&workzone, &team_name);
+    let state_path = bridge::state_path(&ctx.workzone, &ctx.team_name);
     let mut state = bridge::load_state(&state_path)?;
 
     let now = chrono::Utc::now().to_rfc3339();
@@ -484,12 +493,12 @@ pub fn room_create(name: &str, team_flag: Option<&str>) -> Result<()> {
 
 /// Handles `bm bridge room list [-t team]`.
 pub fn room_list(team_flag: Option<&str>) -> Result<()> {
-    let (team_name, bridge_dir, _team_repo, workzone) = match resolve_bridge(team_flag)? {
+    let ctx = match resolve_bridge(team_flag)? {
         Some(v) => v,
         None => return Ok(()),
     };
 
-    let manifest = bridge::load_manifest(&bridge_dir)?;
+    let manifest = bridge::load_manifest(&ctx.bridge_dir)?;
     let bridge_name = &manifest.metadata.name;
 
     let room_spec = manifest.spec.room.as_ref().ok_or_else(|| {
@@ -500,10 +509,10 @@ pub fn room_list(team_flag: Option<&str>) -> Result<()> {
     })?;
 
     let result =
-        bridge::invoke_recipe(&bridge_dir, &room_spec.list, &[], &team_name)?;
+        bridge::invoke_recipe(&ctx.bridge_dir, &room_spec.list, &[], &ctx.team_name)?;
 
     // Also load state for persisted rooms
-    let state_path = bridge::state_path(&workzone, &team_name);
+    let state_path = bridge::state_path(&ctx.workzone, &ctx.team_name);
     let state = bridge::load_state(&state_path)?;
 
     // Prefer live data from recipe if available, otherwise show state

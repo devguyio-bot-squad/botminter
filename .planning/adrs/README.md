@@ -11,3 +11,4 @@ All ADRs use the [MADR 4.0.0](https://adr.github.io/madr/) format. See [adr-temp
 | [0001](0001-adr-process.md) | Use MADR 4.0.0 for Architecture Decision Records | Accepted | 2026-03-08 |
 | [0002](0002-bridge-abstraction.md) | Shell Script Bridge with YAML Manifest | Accepted | 2026-03-08 |
 | [0003](0003-ralph-robot-backend.md) | Bridge Outputs Credentials, BotMinter Maps to Ralph | Accepted | 2026-03-08 |
+| [0004](0004-scenario-based-e2e-tests.md) | Scenario-Based E2E Tests Over Feature-Fragment Tests | Accepted | 2026-03-09 |

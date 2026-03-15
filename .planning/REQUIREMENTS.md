@@ -140,12 +140,12 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RC-07 | Phase 10 | Pending |
 | TELE-01 | Phase 8 | Complete |
 | TELE-02 | Phase 8 | Complete |
-| PROF-01 | Phase 9 | In Progress (09-01: CredentialStore + keyring backend) |
-| PROF-02 | Phase 9 | In Progress (09-01: bridges field + YAML declarations) |
+| PROF-01 | Phase 9 | Complete |
+| PROF-02 | Phase 9 | Complete |
 | PROF-03 | Phase 9 | Complete |
 | PROF-04 | Phase 9 | Complete |
 | PROF-05 | Phase 9 | Complete |
-| PROF-06 | Phase 9 | Pending |
+| PROF-06 | Phase 9 | Complete |
 
 **Coverage:**
 - v0.07 requirements: 34 total

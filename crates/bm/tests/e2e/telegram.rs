@@ -6,9 +6,7 @@ use std::net::TcpListener;
 use std::process::Command;
 use std::time::Duration;
 
-use libtest_mimic::Trial;
-
-use super::helpers::{wait_for_port, E2eConfig};
+use super::helpers::wait_for_port;
 
 const TG_MOCK_IMAGE: &str = "ghcr.io/watzon/tg-mock:latest";
 
@@ -19,6 +17,42 @@ pub struct TgMock {
 }
 
 impl TgMock {
+    /// Wraps an already-running tg-mock container by ID and port.
+    /// Used by progressive mode to reconnect to a container from a previous run.
+    pub fn from_existing(container_id: String, port: u16) -> Self {
+        eprintln!(
+            "TgMock from_existing: container={} port={}",
+            &container_id[..12.min(container_id.len())],
+            port
+        );
+        TgMock { container_id, port }
+    }
+
+    /// Checks if the container is still running via `podman inspect`.
+    pub fn is_running(&self) -> bool {
+        Command::new("podman")
+            .args([
+                "inspect",
+                "--format",
+                "{{.State.Running}}",
+                &self.container_id,
+            ])
+            .output()
+            .map(|o| {
+                o.status.success()
+                    && String::from_utf8_lossy(&o.stdout).trim() == "true"
+            })
+            .unwrap_or(false)
+    }
+
+    /// Extracts container_id and port without triggering Drop.
+    pub fn into_parts(self) -> (String, u16) {
+        let id = self.container_id.clone();
+        let port = self.port;
+        std::mem::forget(self);
+        (id, port)
+    }
+
     /// Starts a tg-mock container on a random free port.
     pub fn start() -> Self {
         let port = find_free_port();
@@ -151,10 +185,3 @@ fn find_free_port() -> u16 {
         .port()
 }
 
-// ── Test registration ────────────────────────────────────────────────
-
-pub fn tests(_config: &E2eConfig) -> Vec<Trial> {
-    // Telegram tests are registered in start_to_stop module (e2e_tg_mock_receives_bot_messages).
-    // This module provides infrastructure only.
-    vec![]
-}

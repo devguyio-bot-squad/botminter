@@ -11,6 +11,7 @@ use crate::formation;
 use crate::profile;
 use crate::state::{self, MemberRuntime, RuntimeState};
 use crate::topology::{self, Endpoint, MemberTopology, Topology};
+use crate::workspace;
 
 /// Handles `bm start [-t team] [--formation <name>] [--no-bridge] [--bridge-only]`.
 pub fn run(
@@ -118,7 +119,7 @@ pub fn run(
             &team.name,
             &manifest.metadata.name,
             bstate_path,
-        );
+        ).with_collection(cfg.keyring_collection.clone());
         (Some(store), true)
     } else {
         (None, false)
@@ -130,7 +131,7 @@ pub fn run(
         bail!("No members hired. Run `bm hire <role>` first.");
     }
 
-    let member_dirs = list_member_dirs(&members_dir)?;
+    let member_dirs = workspace::list_member_dirs(&members_dir)?;
     if member_dirs.is_empty() {
         bail!("No members hired. Run `bm hire <role>` first.");
     }
@@ -170,7 +171,7 @@ pub fn run(
         }
 
         // Find workspace
-        let ws = find_workspace(&team_ws_base, member_dir_name);
+        let ws = workspace::find_workspace(&team_ws_base, member_dir_name);
         let ws = match ws {
             Some(ws) => ws,
             None => {
@@ -269,43 +270,7 @@ fn require_gh_token(team: &TeamEntry) -> Result<String> {
         })
 }
 
-/// Lists member directory names under `members/`.
-fn list_member_dirs(team_dir: &std::path::Path) -> Result<Vec<String>> {
-    let mut dirs = Vec::new();
-    for entry in fs::read_dir(team_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if name.starts_with('.') {
-            continue;
-        }
-        dirs.push(name);
-    }
-    dirs.sort();
-    Ok(dirs)
-}
-
-/// Finds the workspace path for a member.
-///
-/// Uses the `.botminter.workspace` marker file to identify valid workspaces.
-/// In the submodule model, the workspace is at `{team_ws_base}/{member_dir}/`.
-fn find_workspace(
-    team_ws_base: &std::path::Path,
-    member_dir_name: &str,
-) -> Option<std::path::PathBuf> {
-    let member_ws = team_ws_base.join(member_dir_name);
-    if !member_ws.is_dir() {
-        return None;
-    }
-
-    if member_ws.join(".botminter.workspace").exists() {
-        return Some(member_ws);
-    }
-
-    None
-}
+// list_member_dirs and find_workspace live in crate::workspace
 
 /// Launches `ralph run -p PROMPT.md` in the given workspace directory.
 /// Returns the child PID.
@@ -540,14 +505,14 @@ mod tests {
         // Create a plain file
         fs::write(tmp.path().join("file.txt"), "hello").unwrap();
 
-        let result = list_member_dirs(tmp.path()).unwrap();
+        let result = crate::workspace::list_member_dirs(tmp.path()).unwrap();
         assert_eq!(result, vec!["alice", "bob"]);
     }
 
     #[test]
     fn list_member_dirs_empty_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = list_member_dirs(tmp.path()).unwrap();
+        let result = crate::workspace::list_member_dirs(tmp.path()).unwrap();
         assert!(result.is_empty());
     }
 
@@ -561,7 +526,7 @@ mod tests {
         fs::create_dir_all(&member_dir).unwrap();
         fs::write(member_dir.join(".botminter.workspace"), "member: member\n").unwrap();
 
-        let result = find_workspace(team_ws_base, "member");
+        let result = crate::workspace::find_workspace(team_ws_base, "member");
         assert_eq!(result, Some(member_dir));
     }
 
@@ -573,14 +538,14 @@ mod tests {
         let member_dir = team_ws_base.join("member");
         fs::create_dir_all(member_dir.join(".botminter")).unwrap();
 
-        let result = find_workspace(team_ws_base, "member");
+        let result = crate::workspace::find_workspace(team_ws_base, "member");
         assert_eq!(result, None);
     }
 
     #[test]
     fn find_workspace_missing_member_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = find_workspace(tmp.path(), "nonexistent");
+        let result = crate::workspace::find_workspace(tmp.path(), "nonexistent");
         assert_eq!(result, None);
     }
 
@@ -590,7 +555,7 @@ mod tests {
         // Create member dir without any marker
         fs::create_dir_all(tmp.path().join("member")).unwrap();
 
-        let result = find_workspace(tmp.path(), "member");
+        let result = crate::workspace::find_workspace(tmp.path(), "member");
         assert_eq!(result, None);
     }
 

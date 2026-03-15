@@ -109,7 +109,7 @@ pub fn run(role: &str, name: Option<&str>, team_flag: Option<&str>) -> Result<()
                         &team.name,
                         &bridge_manifest.metadata.name,
                         state_path,
-                    );
+                    ).with_collection(cfg.keyring_collection.clone());
                     match cred_store.store(&member_name, &token) {
                         Ok(()) => {
                             println!(

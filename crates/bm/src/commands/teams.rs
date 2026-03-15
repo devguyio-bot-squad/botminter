@@ -281,7 +281,7 @@ pub fn sync(repos: bool, bridge_flag: bool, verbose: bool, team_flag: Option<&st
                 &team.name,
                 &bridge_manifest.metadata.name,
                 bstate_path,
-            );
+            ).with_collection(cfg.keyring_collection.clone());
 
             println!("Provisioning bridge identities...");
             bridge::provision_bridge(
@@ -341,7 +341,7 @@ pub fn sync(repos: bool, bridge_flag: bool, verbose: bool, team_flag: Option<&st
             &team.name,
             &bridge_manifest.metadata.name,
             bstate_path,
-        ))
+        ).with_collection(cfg.keyring_collection.clone()))
     } else {
         None
     };
