@@ -326,6 +326,7 @@ fn help_flag_shows_all_commands() {
         "roles",
         "profiles",
         "projects",
+        "bridge",
         "completions",
     ];
 
@@ -818,6 +819,149 @@ fn profiles_describe_show_tags_help_text() {
         stdout.contains("--show-tags"),
         "Help should document --show-tags flag, output:\n{}",
         stdout
+    );
+}
+
+// ── Bridge CLI parsing (10 tests) ────────────────────────────────────
+
+#[test]
+fn parse_bridge_start() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["bridge", "start"]).output().unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm bridge start` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn parse_bridge_start_team() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["bridge", "start", "-t", "myteam"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm bridge start -t myteam` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn parse_bridge_stop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["bridge", "stop"]).output().unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm bridge stop` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn parse_bridge_status() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["bridge", "status"]).output().unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm bridge status` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn parse_bridge_identity_add() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["bridge", "identity", "add", "testuser"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm bridge identity add testuser` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn parse_bridge_identity_rotate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["bridge", "identity", "rotate", "testuser"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm bridge identity rotate testuser` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn parse_bridge_identity_remove() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["bridge", "identity", "remove", "testuser"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm bridge identity remove testuser` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn parse_bridge_identity_list() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["bridge", "identity", "list"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm bridge identity list` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn parse_bridge_room_create() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["bridge", "room", "create", "general"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm bridge room create general` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn parse_bridge_room_list() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args(["bridge", "room", "list"])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm bridge room list` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

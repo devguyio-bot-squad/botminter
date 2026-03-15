@@ -21,3 +21,11 @@ rotate username:
 
 remove username:
     @echo "stub: removed {{username}}" >&2
+
+room-create name:
+    @mkdir -p "$BRIDGE_CONFIG_DIR"
+    @echo '{"name": "{{name}}", "room_id": "stub-room-id"}' > "$BRIDGE_CONFIG_DIR/config.json"
+
+room-list:
+    @mkdir -p "$BRIDGE_CONFIG_DIR"
+    @echo '{"rooms": [{"name": "general", "room_id": "stub-room-id"}]}' > "$BRIDGE_CONFIG_DIR/config.json"

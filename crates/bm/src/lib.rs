@@ -1,4 +1,5 @@
 pub mod agent_tags;
+pub mod bridge;
 pub mod chat;
 pub mod cli;
 pub mod commands;

@@ -5,6 +5,7 @@ use anyhow::{Context, Result};
 use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
 use serde::Deserialize;
 
+use crate::bridge;
 use crate::commands::daemon;
 use crate::commands::start::{resolve_member_status, MemberStatus};
 use crate::config;
@@ -161,6 +162,40 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
             runtime_state.members.remove(key);
         }
         state::save(&runtime_state)?;
+    }
+
+    // Bridge status section
+    let bridge_state_path = bridge::state_path(&cfg.workzone, team_name);
+    let bridge_state = bridge::load_state(&bridge_state_path)?;
+
+    if let Some(bridge_name) = &bridge_state.bridge_name {
+        println!();
+        println!(
+            "Bridge: {} ({})",
+            bridge_name,
+            bridge_state.bridge_type.as_deref().unwrap_or("unknown")
+        );
+        println!("Status: {}", bridge_state.status);
+        if let Some(url) = &bridge_state.service_url {
+            println!("URL: {}", url);
+        }
+
+        if !bridge_state.identities.is_empty() {
+            println!();
+            let mut bridge_table = Table::new();
+            bridge_table
+                .load_preset(UTF8_FULL_CONDENSED)
+                .apply_modifier(UTF8_ROUND_CORNERS)
+                .set_header(vec!["Member", "Bridge User", "User ID"]);
+            for (username, identity) in &bridge_state.identities {
+                bridge_table.add_row(vec![
+                    username,
+                    &identity.username,
+                    &identity.user_id,
+                ]);
+            }
+            println!("{bridge_table}");
+        }
     }
 
     // Verbose mode: show workspace and Ralph runtime details

@@ -3,8 +3,9 @@ use clap::Parser;
 use clap_complete::CompleteEnv;
 
 use bm::cli::{
-    Cli, Command, DaemonCommand, KnowledgeCommand, MembersCommand, ProfilesCommand,
-    ProjectsCommand, RolesCommand, TeamsCommand,
+    BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Cli, Command, DaemonCommand,
+    KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand, RolesCommand,
+    TeamsCommand,
 };
 use bm::commands;
 use bm::completions;
@@ -111,6 +112,34 @@ fn main() -> Result<()> {
             }
         },
 
+        Command::Bridge { command } => match command {
+            BridgeCommand::Start { team } => commands::bridge::start(team.as_deref())?,
+            BridgeCommand::Stop { team } => commands::bridge::stop(team.as_deref())?,
+            BridgeCommand::Status { team } => commands::bridge::status(team.as_deref())?,
+            BridgeCommand::Identity { command } => match command {
+                BridgeIdentityCommand::Add { username, team } => {
+                    commands::bridge::identity_add(&username, team.as_deref())?
+                }
+                BridgeIdentityCommand::Rotate { username, team } => {
+                    commands::bridge::identity_rotate(&username, team.as_deref())?
+                }
+                BridgeIdentityCommand::Remove { username, team } => {
+                    commands::bridge::identity_remove(&username, team.as_deref())?
+                }
+                BridgeIdentityCommand::List { team } => {
+                    commands::bridge::identity_list(team.as_deref())?
+                }
+            },
+            BridgeCommand::Room { command } => match command {
+                BridgeRoomCommand::Create { name, team } => {
+                    commands::bridge::room_create(&name, team.as_deref())?
+                }
+                BridgeRoomCommand::List { team } => {
+                    commands::bridge::room_list(team.as_deref())?
+                }
+            },
+        },
+
         Command::Daemon { command } => match command {
             DaemonCommand::Start {
                 team,
@@ -155,8 +184,13 @@ fn main() -> Result<()> {
             commands::minty::run(team.as_deref())?;
         }
 
-        Command::Start { team, formation } => {
-            commands::start::run(team.as_deref(), formation.as_deref())?;
+        Command::Start {
+            team,
+            formation,
+            no_bridge,
+            bridge_only,
+        } => {
+            commands::start::run(team.as_deref(), formation.as_deref(), no_bridge, bridge_only)?;
         }
         Command::Stop { team, force } => {
             commands::stop::run(team.as_deref(), force)?;

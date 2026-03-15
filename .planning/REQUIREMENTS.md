@@ -21,25 +21,25 @@ Requirements for milestone v0.07. Each maps to roadmap phases.
 - [x] **BRDG-02**: Bridge config schema (`schema.json`) validates bridge-specific configuration values. BotMinter validates config against the schema before invoking commands.
 - [x] **BRDG-03**: Bridge contract supports "external" bridges (like Telegram) that skip start/stop and only implement identity management
 - [x] **BRDG-04**: Bridge identity management commands defined in `bridge.yml` (onboard, rotate-credentials, remove) for per-user bot lifecycle, implemented as Justfile recipes
-- [ ] **BRDG-05**: Bridge config model with bridge type resolution, state tracking, and per-user credentials
-- [ ] **BRDG-06**: Bridge state persisted across sessions tracking service URLs, container IDs, and registered user credentials
+- [x] **BRDG-05**: Bridge config model with bridge type resolution, state tracking, and per-user credentials
+- [x] **BRDG-06**: Bridge state persisted across sessions tracking service URLs, container IDs, and registered user credentials
 - [x] **BRDG-07**: Config exchange between bridge commands and BotMinter uses file-based output (`$BRIDGE_CONFIG_DIR/config.json`), not stdout
-- [ ] **BRDG-08**: Bridge is optional -- a team can operate without any bridge. All bridge-dependent features degrade gracefully.
-- [ ] **BRDG-09**: Bridge credentials resolved in priority order: env var → config file → system keyring. Same resolution pattern as Ralph's credential handling.
+- [x] **BRDG-08**: Bridge is optional -- a team can operate without any bridge. All bridge-dependent features degrade gracefully.
+- [x] **BRDG-09**: Bridge credentials resolved in priority order: env var → config file → system keyring. Same resolution pattern as Ralph's credential handling.
 
 ### Bridge CLI
 
-- [ ] **CLI-01**: `bm bridge start` starts the bridge service -- runs lifecycle start command + health check, stores state. No team or member logic.
-- [ ] **CLI-02**: `bm bridge stop` stops the bridge service. Pure bridge lifecycle.
-- [ ] **CLI-03**: `bm bridge status` shows bridge service health, URL, uptime, and registered identities. Operational view, not team view.
-- [ ] **CLI-04**: `bm bridge identity add <username>` creates a user on the bridge. Bridge-native, not team-aware.
-- [ ] **CLI-05**: `bm bridge identity rotate <username>` rotates credentials for a bridge user.
-- [ ] **CLI-06**: `bm bridge identity list` lists all users registered on the bridge.
-- [ ] **CLI-07**: `bm bridge identity remove <username>` removes a user from the bridge.
-- [ ] **CLI-08**: `bm start` supports flexibility flags: `--no-bridge` (skip bridge), `--bridge-only` (bridge without members). Default behavior controlled by `bridge.auto_start` config.
-- [ ] **CLI-09**: `bm status` team view includes member bridge identity mapping alongside agent status.
-- [ ] **CLI-10**: `bm bridge room create <name>` creates a room/channel on the bridge.
-- [ ] **CLI-11**: `bm bridge room list` lists rooms on the bridge.
+- [x] **CLI-01**: `bm bridge start` starts the bridge service -- runs lifecycle start command + health check, stores state. No team or member logic.
+- [x] **CLI-02**: `bm bridge stop` stops the bridge service. Pure bridge lifecycle.
+- [x] **CLI-03**: `bm bridge status` shows bridge service health, URL, uptime, and registered identities. Operational view, not team view.
+- [x] **CLI-04**: `bm bridge identity add <username>` creates a user on the bridge. Bridge-native, not team-aware.
+- [x] **CLI-05**: `bm bridge identity rotate <username>` rotates credentials for a bridge user.
+- [x] **CLI-06**: `bm bridge identity list` lists all users registered on the bridge.
+- [x] **CLI-07**: `bm bridge identity remove <username>` removes a user from the bridge.
+- [x] **CLI-08**: `bm start` supports flexibility flags: `--no-bridge` (skip bridge), `--bridge-only` (bridge without members). Default behavior controlled by `bridge.auto_start` config.
+- [x] **CLI-09**: `bm status` team view includes member bridge identity mapping alongside agent status.
+- [x] **CLI-10**: `bm bridge room create <name>` creates a room/channel on the bridge.
+- [x] **CLI-11**: `bm bridge room list` lists rooms on the bridge.
 
 ### Rocket.Chat Bridge
 
@@ -53,8 +53,8 @@ Requirements for milestone v0.07. Each maps to roadmap phases.
 
 ### Telegram Bridge
 
-- [ ] **TELE-01**: Existing Telegram support wrapped as a bridge implementation with external type and identity-only commands in `bridge.yml`
-- [ ] **TELE-02**: Telegram bridge ships as a built-in bridge in supported profiles
+- [x] **TELE-01**: Existing Telegram support wrapped as a bridge implementation with external type and identity-only commands in `bridge.yml`
+- [x] **TELE-02**: Telegram bridge ships as a built-in bridge in supported profiles
 
 ### Profile & Config
 
@@ -115,37 +115,37 @@ Which phases cover which requirements. Updated during roadmap creation.
 | BRDG-02 | Phase 7 | Complete |
 | BRDG-03 | Phase 7 | Complete |
 | BRDG-04 | Phase 7 | Complete |
-| BRDG-05 | Phase 8 | Pending |
-| BRDG-06 | Phase 8 | Pending |
+| BRDG-05 | Phase 8 | Complete |
+| BRDG-06 | Phase 8 | Complete |
 | BRDG-07 | Phase 7 | Complete |
-| BRDG-08 | Phase 8 | Pending |
-| BRDG-09 | Phase 8 | Pending |
-| CLI-01 | Phase 8 | Pending |
-| CLI-02 | Phase 8 | Pending |
-| CLI-03 | Phase 8 | Pending |
-| CLI-04 | Phase 8 | Pending |
-| CLI-05 | Phase 8 | Pending |
-| CLI-06 | Phase 8 | Pending |
-| CLI-07 | Phase 8 | Pending |
-| CLI-08 | Phase 9 | Pending |
-| CLI-09 | Phase 9 | Pending |
-| CLI-10 | Phase 8 | Pending |
-| CLI-11 | Phase 8 | Pending |
-| RC-01 | Phase 11 | Pending |
-| RC-02 | Phase 11 | Pending |
-| RC-03 | Phase 11 | Pending |
-| RC-04 | Phase 11 | Pending |
-| RC-05 | Phase 11 | Pending |
-| RC-06 | Phase 11 | Pending |
-| RC-07 | Phase 11 | Pending |
-| TELE-01 | Phase 9 | Pending |
-| TELE-02 | Phase 9 | Pending |
-| PROF-01 | Phase 10 | Pending |
-| PROF-02 | Phase 10 | Pending |
-| PROF-03 | Phase 10 | Pending |
-| PROF-04 | Phase 10 | Pending |
-| PROF-05 | Phase 10 | Pending |
-| PROF-06 | Phase 10 | Pending |
+| BRDG-08 | Phase 8 | Complete |
+| BRDG-09 | Phase 8 | Complete |
+| CLI-01 | Phase 8 | Complete |
+| CLI-02 | Phase 8 | Complete |
+| CLI-03 | Phase 8 | Complete |
+| CLI-04 | Phase 8 | Complete |
+| CLI-05 | Phase 8 | Complete |
+| CLI-06 | Phase 8 | Complete |
+| CLI-07 | Phase 8 | Complete |
+| CLI-08 | Phase 8 | Complete |
+| CLI-09 | Phase 8 | Complete |
+| CLI-10 | Phase 8 | Complete |
+| CLI-11 | Phase 8 | Complete |
+| RC-01 | Phase 10 | Pending |
+| RC-02 | Phase 10 | Pending |
+| RC-03 | Phase 10 | Pending |
+| RC-04 | Phase 10 | Pending |
+| RC-05 | Phase 10 | Pending |
+| RC-06 | Phase 10 | Pending |
+| RC-07 | Phase 10 | Pending |
+| TELE-01 | Phase 8 | Complete |
+| TELE-02 | Phase 8 | Complete |
+| PROF-01 | Phase 9 | Pending |
+| PROF-02 | Phase 9 | Pending |
+| PROF-03 | Phase 9 | Pending |
+| PROF-04 | Phase 9 | Pending |
+| PROF-05 | Phase 9 | Pending |
+| PROF-06 | Phase 9 | Pending |
 
 **Coverage:**
 - v0.07 requirements: 34 total
@@ -154,4 +154,4 @@ Which phases cover which requirements. Updated during roadmap creation.
 
 ---
 *Requirements defined: 2026-03-08*
-*Last updated: 2026-03-08 after roadmap creation -- traceability complete*
+*Last updated: 2026-03-08 after Phase 8/9 merge -- renumbered 10→9, 11→10*

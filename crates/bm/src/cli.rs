@@ -69,6 +69,14 @@ pub enum Command {
         /// Formation to deploy with (default: local)
         #[arg(long)]
         formation: Option<String>,
+
+        /// Skip bridge start even if configured
+        #[arg(long)]
+        no_bridge: bool,
+
+        /// Start bridge only, do not launch members
+        #[arg(long)]
+        bridge_only: bool,
     },
 
     /// Stop all members
@@ -160,6 +168,12 @@ pub enum Command {
         /// Filter by scope: team, project, member, or member-project
         #[arg(long)]
         scope: Option<String>,
+    },
+
+    /// Bridge service management
+    Bridge {
+        #[command(subcommand)]
+        command: BridgeCommand,
     },
 
     /// Event-driven daemon management
@@ -392,6 +406,102 @@ pub enum DaemonCommand {
 
     /// Show daemon status
     Status {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BridgeCommand {
+    /// Start the bridge service
+    Start {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Stop the bridge service
+    Stop {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Show bridge status
+    Status {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Bridge identity management
+    Identity {
+        #[command(subcommand)]
+        command: BridgeIdentityCommand,
+    },
+
+    /// Bridge room management
+    Room {
+        #[command(subcommand)]
+        command: BridgeRoomCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BridgeIdentityCommand {
+    /// Add a new identity to the bridge
+    Add {
+        /// Username to onboard
+        username: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Rotate credentials for an identity
+    Rotate {
+        /// Username to rotate credentials for
+        username: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Remove an identity from the bridge
+    Remove {
+        /// Username to remove
+        username: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// List registered identities
+    List {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum BridgeRoomCommand {
+    /// Create a new room
+    Create {
+        /// Room name
+        name: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// List rooms
+    List {
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,

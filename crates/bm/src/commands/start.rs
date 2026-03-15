@@ -5,14 +5,20 @@ use std::time::Duration;
 
 use anyhow::{bail, Context, Result};
 
+use crate::bridge;
 use crate::config::{self, TeamEntry};
 use crate::formation;
 use crate::profile;
 use crate::state::{self, MemberRuntime, RuntimeState};
 use crate::topology::{self, Endpoint, MemberTopology, Topology};
 
-/// Handles `bm start [-t team] [--formation <name>]`.
-pub fn run(team_flag: Option<&str>, formation_flag: Option<&str>) -> Result<()> {
+/// Handles `bm start [-t team] [--formation <name>] [--no-bridge] [--bridge-only]`.
+pub fn run(
+    team_flag: Option<&str>,
+    formation_flag: Option<&str>,
+    no_bridge: bool,
+    bridge_only: bool,
+) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
     let team_repo = team.path.join("team");
@@ -50,6 +56,47 @@ pub fn run(team_flag: Option<&str>, formation_flag: Option<&str>) -> Result<()> 
                 return run_formation_manager(team, &team_repo, &formation_cfg, &cfg.workzone);
             }
         }
+    }
+
+    // Bridge auto-start (before members)
+    if !no_bridge {
+        if let Some(bridge_dir) = bridge::discover(&team_repo, &team.name)? {
+            let manifest = bridge::load_manifest(&bridge_dir)?;
+            if manifest.spec.bridge_type == "local" {
+                if let Some(lifecycle) = &manifest.spec.lifecycle {
+                    if which::which("just").is_err() {
+                        eprintln!(
+                            "Warning: 'just' not found. Skipping bridge start. \
+                             Install: https://just.systems/"
+                        );
+                    } else {
+                        println!("Starting bridge '{}'...", manifest.metadata.name);
+                        bridge::invoke_recipe(&bridge_dir, &lifecycle.start, &[], &team.name)?;
+                        bridge::invoke_recipe(&bridge_dir, &lifecycle.health, &[], &team.name)?;
+
+                        let state_path = bridge::state_path(&cfg.workzone, &team.name);
+                        let mut bstate = bridge::load_state(&state_path)?;
+                        bstate.bridge_name = Some(manifest.metadata.name.clone());
+                        bstate.bridge_type = Some(manifest.spec.bridge_type.clone());
+                        bstate.status = "running".to_string();
+                        bstate.started_at = Some(chrono::Utc::now().to_rfc3339());
+                        bstate.last_health_check = Some(chrono::Utc::now().to_rfc3339());
+                        bridge::save_state(&state_path, &bstate)?;
+                        println!("Bridge '{}' started.", manifest.metadata.name);
+                    }
+                }
+            }
+            if manifest.spec.bridge_type == "external" {
+                println!(
+                    "Bridge '{}' is external (managed externally).",
+                    manifest.metadata.name
+                );
+            }
+        }
+    }
+
+    if bridge_only {
+        return Ok(());
     }
 
     // Prerequisite: ralph must be installed

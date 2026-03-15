@@ -26,4 +26,8 @@ spec:
     rotate-credentials: rotate
     remove: remove
 
+  room:
+    create: room-create
+    list: room-list
+
   configDir: "$BRIDGE_CONFIG_DIR"

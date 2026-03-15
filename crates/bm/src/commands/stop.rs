@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 
+use crate::bridge;
 use crate::config;
 use crate::state;
 use crate::topology;
@@ -28,64 +29,85 @@ pub fn run(team_flag: Option<&str>, force: bool) -> Result<()> {
         .map(|(key, rt)| (key.clone(), rt.pid, rt.workspace.clone()))
         .collect();
 
-    if running.is_empty() {
-        println!("No members running for team '{}'.", team_name);
-        return Ok(());
-    }
+    if !running.is_empty() {
+        let mut stopped = 0u32;
+        let mut errors = 0u32;
 
-    let mut stopped = 0u32;
-    let mut errors = 0u32;
+        for (key, pid, workspace) in &running {
+            let member_name = key.strip_prefix(&team_prefix).unwrap_or(key);
 
-    for (key, pid, workspace) in &running {
-        let member_name = key.strip_prefix(&team_prefix).unwrap_or(key);
+            if !state::is_alive(*pid) {
+                eprint!("{}... already exited", member_name);
+                eprintln!();
+                runtime_state.members.remove(key);
+                state::save(&runtime_state)?;
+                stopped += 1;
+                continue;
+            }
 
-        if !state::is_alive(*pid) {
-            eprint!("{}... already exited", member_name);
-            eprintln!();
-            runtime_state.members.remove(key);
-            state::save(&runtime_state)?;
-            stopped += 1;
-            continue;
-        }
-
-        if force {
-            eprint!("Stopping {} (force)... ", member_name);
-            force_stop(*pid);
-            runtime_state.members.remove(key);
-            state::save(&runtime_state)?;
-            eprintln!("done");
-            stopped += 1;
-        } else {
-            eprint!("Stopping {}... ", member_name);
-            match graceful_stop(workspace, *pid) {
-                Ok(()) => {
-                    runtime_state.members.remove(key);
-                    state::save(&runtime_state)?;
-                    eprintln!("done");
-                    stopped += 1;
-                }
-                Err(e) => {
-                    eprintln!("failed: {}", e);
-                    eprintln!(
-                        "  Hint: try `bm stop -f` to force-kill, or check workspace at {}",
-                        workspace.display()
-                    );
-                    errors += 1;
+            if force {
+                eprint!("Stopping {} (force)... ", member_name);
+                force_stop(*pid);
+                runtime_state.members.remove(key);
+                state::save(&runtime_state)?;
+                eprintln!("done");
+                stopped += 1;
+            } else {
+                eprint!("Stopping {}... ", member_name);
+                match graceful_stop(workspace, *pid) {
+                    Ok(()) => {
+                        runtime_state.members.remove(key);
+                        state::save(&runtime_state)?;
+                        eprintln!("done");
+                        stopped += 1;
+                    }
+                    Err(e) => {
+                        eprintln!("failed: {}", e);
+                        eprintln!(
+                            "  Hint: try `bm stop -f` to force-kill, or check workspace at {}",
+                            workspace.display()
+                        );
+                        errors += 1;
+                    }
                 }
             }
         }
+
+        println!(
+            "\nStopped {} member(s), {} error(s).",
+            stopped, errors
+        );
+
+        if errors > 0 {
+            bail!(
+                "Some members could not be stopped gracefully. \
+                 Use `bm stop -f` to force-kill."
+            );
+        }
+    } else {
+        println!("No members running for team '{}'.", team_name);
     }
 
-    println!(
-        "\nStopped {} member(s), {} error(s).",
-        stopped, errors
-    );
-
-    if errors > 0 {
-        bail!(
-            "Some members could not be stopped gracefully. \
-             Use `bm stop -f` to force-kill."
-        );
+    // Stop bridge if configured and running (always attempt, even if no members)
+    let team_repo = team.path.join("team");
+    if let Some(bridge_dir) = bridge::discover(&team_repo, team_name)? {
+        let manifest = bridge::load_manifest(&bridge_dir)?;
+        if manifest.spec.bridge_type == "local" {
+            if let Some(lifecycle) = &manifest.spec.lifecycle {
+                if which::which("just").is_ok() {
+                    let state_path = bridge::state_path(&cfg.workzone, team_name);
+                    let bstate = bridge::load_state(&state_path)?;
+                    if bstate.status == "running" {
+                        println!("Stopping bridge '{}'...", manifest.metadata.name);
+                        bridge::invoke_recipe(&bridge_dir, &lifecycle.stop, &[], team_name)?;
+                        let mut bstate = bstate;
+                        bstate.status = "stopped".to_string();
+                        bridge::save_state(&state_path, &bstate)?;
+                        println!("Bridge '{}' stopped.", manifest.metadata.name);
+                    }
+                }
+            }
+        }
     }
 
     // Remove topology file after all members stopped

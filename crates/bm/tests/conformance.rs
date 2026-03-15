@@ -19,6 +19,11 @@ fn stub_dir() -> std::path::PathBuf {
     examples_dir().join("stub")
 }
 
+/// Returns the path to a profile's bridge directory.
+fn profile_bridge_dir(profile: &str, bridge: &str) -> std::path::PathBuf {
+    workspace_root().join(format!("profiles/{}/bridges/{}", profile, bridge))
+}
+
 /// Reads and parses a YAML file into a serde_yml::Value.
 fn read_yaml(path: &Path) -> serde_yml::Value {
     let contents = std::fs::read_to_string(path)
@@ -265,4 +270,168 @@ fn stub_bridge_has_required_files() {
         stub.join("Justfile").exists(),
         "stub/Justfile must exist"
     );
+}
+
+// ── Telegram bridge conformance (profile bridges) ───────────────────
+
+#[test]
+fn telegram_bridge_yml_has_required_fields() {
+    // Validate both scrum-compact and scrum profile copies
+    for profile in ["scrum-compact", "scrum"] {
+        let path = profile_bridge_dir(profile, "telegram").join("bridge.yml");
+        let val = read_yaml(&path);
+
+        assert_eq!(
+            val["apiVersion"].as_str(),
+            Some("botminter.dev/v1alpha1"),
+            "{}/telegram: apiVersion must be 'botminter.dev/v1alpha1'",
+            profile
+        );
+
+        assert_eq!(
+            val["kind"].as_str(),
+            Some("Bridge"),
+            "{}/telegram: kind must be 'Bridge'",
+            profile
+        );
+
+        let name = val["metadata"]["name"].as_str();
+        assert_eq!(
+            name,
+            Some("telegram"),
+            "{}/telegram: metadata.name must be 'telegram'",
+            profile
+        );
+
+        assert_eq!(
+            val["spec"]["type"].as_str(),
+            Some("external"),
+            "{}/telegram: spec.type must be 'external'",
+            profile
+        );
+
+        assert!(
+            val["spec"]["configSchema"].is_string(),
+            "{}/telegram: spec.configSchema must be a string",
+            profile
+        );
+
+        assert!(
+            val["spec"]["configDir"].is_string(),
+            "{}/telegram: spec.configDir must be a string",
+            profile
+        );
+    }
+}
+
+#[test]
+fn telegram_bridge_has_no_lifecycle() {
+    for profile in ["scrum-compact", "scrum"] {
+        let path = profile_bridge_dir(profile, "telegram").join("bridge.yml");
+        let val = read_yaml(&path);
+
+        // External bridge MUST NOT have lifecycle section
+        assert!(
+            val["spec"]["lifecycle"].is_null(),
+            "{}/telegram: external bridge must not have spec.lifecycle",
+            profile
+        );
+    }
+}
+
+#[test]
+fn telegram_bridge_has_identity_commands() {
+    for profile in ["scrum-compact", "scrum"] {
+        let path = profile_bridge_dir(profile, "telegram").join("bridge.yml");
+        let val = read_yaml(&path);
+
+        assert!(
+            val["spec"]["identity"]["onboard"].is_string(),
+            "{}/telegram: spec.identity.onboard must be a string",
+            profile
+        );
+
+        assert!(
+            val["spec"]["identity"]["rotate-credentials"].is_string(),
+            "{}/telegram: spec.identity.rotate-credentials must be a string",
+            profile
+        );
+
+        assert!(
+            val["spec"]["identity"]["remove"].is_string(),
+            "{}/telegram: spec.identity.remove must be a string",
+            profile
+        );
+    }
+}
+
+#[test]
+fn telegram_schema_json_has_bot_token() {
+    for profile in ["scrum-compact", "scrum"] {
+        let path = profile_bridge_dir(profile, "telegram").join("schema.json");
+        let val = read_json(&path);
+
+        assert!(
+            val["$schema"].is_string(),
+            "{}/telegram: $schema must be a string",
+            profile
+        );
+
+        assert_eq!(
+            val["type"].as_str(),
+            Some("object"),
+            "{}/telegram: type must be 'object'",
+            profile
+        );
+
+        assert!(
+            val["properties"].is_object(),
+            "{}/telegram: properties must be an object",
+            profile
+        );
+
+        // Telegram-specific: must have bot_token property
+        assert!(
+            val["properties"]["bot_token"].is_object(),
+            "{}/telegram: properties.bot_token must be defined",
+            profile
+        );
+
+        // bot_token must be required
+        let required = val["required"].as_array();
+        assert!(
+            required.is_some(),
+            "{}/telegram: required array must be present",
+            profile
+        );
+        let required = required.unwrap();
+        assert!(
+            required.iter().any(|v| v.as_str() == Some("bot_token")),
+            "{}/telegram: bot_token must be in required array",
+            profile
+        );
+    }
+}
+
+#[test]
+fn telegram_bridge_has_required_files() {
+    for profile in ["scrum-compact", "scrum"] {
+        let dir = profile_bridge_dir(profile, "telegram");
+
+        assert!(
+            dir.join("bridge.yml").exists(),
+            "{}/telegram/bridge.yml must exist",
+            profile
+        );
+        assert!(
+            dir.join("schema.json").exists(),
+            "{}/telegram/schema.json must exist",
+            profile
+        );
+        assert!(
+            dir.join("Justfile").exists(),
+            "{}/telegram/Justfile must exist",
+            profile
+        );
+    }
 }

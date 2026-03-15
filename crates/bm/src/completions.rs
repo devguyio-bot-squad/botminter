@@ -410,8 +410,9 @@ projects:
     #[test]
     fn all_commands_covered_by_completions() {
         use crate::cli::{
-            Command, DaemonCommand, KnowledgeCommand, MembersCommand, ProfilesCommand,
-            ProjectsCommand, RolesCommand, TeamsCommand,
+            BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Command, DaemonCommand,
+            KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand, RolesCommand,
+            TeamsCommand,
         };
 
         // This exhaustive match ensures that if a new Command variant is
@@ -453,6 +454,21 @@ projects:
                     Some(KnowledgeCommand::List { .. }) => {}
                     Some(KnowledgeCommand::Show { .. }) => {}
                     None => {}
+                },
+                Command::Bridge { command } => match command {
+                    BridgeCommand::Start { .. } => {}
+                    BridgeCommand::Stop { .. } => {}
+                    BridgeCommand::Status { .. } => {}
+                    BridgeCommand::Identity { command } => match command {
+                        BridgeIdentityCommand::Add { .. } => {}
+                        BridgeIdentityCommand::Rotate { .. } => {}
+                        BridgeIdentityCommand::Remove { .. } => {}
+                        BridgeIdentityCommand::List { .. } => {}
+                    },
+                    BridgeCommand::Room { command } => match command {
+                        BridgeRoomCommand::Create { .. } => {}
+                        BridgeRoomCommand::List { .. } => {}
+                    },
                 },
                 Command::Daemon { command } => match command {
                     DaemonCommand::Start { .. } => {}

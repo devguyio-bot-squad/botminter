@@ -2733,3 +2733,534 @@ fn init_non_interactive_fails_on_duplicate_team_dir() {
         stderr
     );
 }
+
+// ── Bridge CLI tests ─────────────────────────────────────────────────
+
+/// Sets up a minimal team with a stub bridge for bridge CLI tests.
+/// Returns (home_dir, team_name, workzone_path, team_dir_path).
+fn setup_bridge_test() -> (tempfile::TempDir, String, PathBuf, PathBuf) {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let team_name = "bridge-team";
+    let workzone = home.join("workspaces");
+    let team_dir = workzone.join(team_name);
+    let team_repo = team_dir.join("team");
+
+    // Create team repo directory structure
+    fs::create_dir_all(&team_repo).unwrap();
+
+    // Create botminter.yml with bridge configured
+    fs::write(
+        team_repo.join("botminter.yml"),
+        "schema_version: '1.0'\nprofile: scrum-compact\nbridge: stub\n",
+    )
+    .unwrap();
+
+    // Copy stub bridge fixture into team repo
+    let stub_src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join(".planning")
+        .join("specs")
+        .join("bridge")
+        .join("examples")
+        .join("stub");
+    let stub_dst = team_repo.join("bridges").join("stub");
+    fs::create_dir_all(&stub_dst).unwrap();
+    for entry in fs::read_dir(&stub_src).unwrap() {
+        let entry = entry.unwrap();
+        let src_path = entry.path();
+        let dst_path = stub_dst.join(entry.file_name());
+        fs::copy(&src_path, &dst_path).unwrap();
+    }
+
+    // Create config
+    let config = BotminterConfig {
+        workzone: workzone.clone(),
+        default_team: Some(team_name.to_string()),
+        teams: vec![TeamEntry {
+            name: team_name.to_string(),
+            path: team_dir.clone(),
+            profile: "scrum-compact".to_string(),
+            github_repo: String::new(),
+            credentials: Credentials::default(),
+            coding_agent: None,
+            project_number: None,
+        }],
+    };
+
+    let config_path = home.join(".botminter").join("config.yml");
+    bm::config::save_to(&config_path, &config).unwrap();
+
+    (tmp, team_name.to_string(), workzone, team_dir)
+}
+
+/// Sets up a team without any bridge configured.
+fn setup_no_bridge_test() -> (tempfile::TempDir, String) {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let team_name = "nobridge-team";
+    let workzone = home.join("workspaces");
+    let team_dir = workzone.join(team_name);
+    let team_repo = team_dir.join("team");
+
+    fs::create_dir_all(&team_repo).unwrap();
+    fs::write(
+        team_repo.join("botminter.yml"),
+        "schema_version: \"1.0.0\"\nprofile: scrum-compact\n",
+    )
+    .unwrap();
+
+    let config = BotminterConfig {
+        workzone: workzone.clone(),
+        default_team: Some(team_name.to_string()),
+        teams: vec![TeamEntry {
+            name: team_name.to_string(),
+            path: team_dir,
+            profile: "scrum-compact".to_string(),
+            github_repo: String::new(),
+            credentials: Credentials::default(),
+            coding_agent: None,
+            project_number: None,
+        }],
+    };
+
+    let config_path = home.join(".botminter").join("config.yml");
+    bm::config::save_to(&config_path, &config).unwrap();
+
+    (tmp, team_name.to_string())
+}
+
+/// Sets up a team with an external bridge (no lifecycle).
+fn setup_external_bridge_test() -> (tempfile::TempDir, String) {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    let team_name = "ext-team";
+    let workzone = home.join("workspaces");
+    let team_dir = workzone.join(team_name);
+    let team_repo = team_dir.join("team");
+
+    fs::create_dir_all(&team_repo).unwrap();
+    fs::write(
+        team_repo.join("botminter.yml"),
+        "schema_version: \"1.0.0\"\nprofile: scrum-compact\nbridge: telegram\n",
+    )
+    .unwrap();
+
+    let bridge_dir = team_repo.join("bridges").join("telegram");
+    fs::create_dir_all(&bridge_dir).unwrap();
+    fs::write(
+        bridge_dir.join("bridge.yml"),
+        r#"apiVersion: botminter.dev/v1alpha1
+kind: Bridge
+metadata:
+  name: telegram
+  displayName: "Telegram"
+spec:
+  type: external
+  configSchema: schema.json
+  identity:
+    onboard: onboard
+    rotate-credentials: rotate
+    remove: remove
+  configDir: "$BRIDGE_CONFIG_DIR"
+"#,
+    )
+    .unwrap();
+
+    // Create a minimal Justfile for identity commands
+    fs::write(
+        bridge_dir.join("Justfile"),
+        r#"onboard username:
+    @mkdir -p "$BRIDGE_CONFIG_DIR"
+    @echo '{"username": "{{username}}", "user_id": "tg-id", "token": "tg-token"}' > "$BRIDGE_CONFIG_DIR/config.json"
+
+rotate username:
+    @mkdir -p "$BRIDGE_CONFIG_DIR"
+    @echo '{"username": "{{username}}", "user_id": "tg-id", "token": "tg-rotated-token"}' > "$BRIDGE_CONFIG_DIR/config.json"
+
+remove username:
+    @echo "telegram: removed {{username}}" >&2
+"#,
+    )
+    .unwrap();
+
+    let config = BotminterConfig {
+        workzone: workzone.clone(),
+        default_team: Some(team_name.to_string()),
+        teams: vec![TeamEntry {
+            name: team_name.to_string(),
+            path: team_dir,
+            profile: "scrum-compact".to_string(),
+            github_repo: String::new(),
+            credentials: Credentials::default(),
+            coding_agent: None,
+            project_number: None,
+        }],
+    };
+
+    let config_path = home.join(".botminter").join("config.yml");
+    bm::config::save_to(&config_path, &config).unwrap();
+
+    (tmp, team_name.to_string())
+}
+
+/// Reads and parses bridge-state.json from the team directory.
+fn read_bridge_state(team_dir: &Path) -> bm::bridge::BridgeState {
+    let state_path = team_dir.join("bridge-state.json");
+    bm::bridge::load_state(&state_path).unwrap()
+}
+
+#[test]
+fn bridge_start() {
+    let (tmp, _team_name, _workzone, team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    let output = bm_run(home, &["bridge", "start"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("started"),
+        "Should print started message, got: {}",
+        stdout
+    );
+
+    let state = read_bridge_state(&team_dir);
+    assert_eq!(state.status, "running");
+    assert!(state.service_url.is_some(), "Should have service_url");
+    assert!(state.started_at.is_some(), "Should have started_at");
+    assert_eq!(state.bridge_name.as_deref(), Some("stub"));
+}
+
+#[test]
+fn bridge_stop() {
+    let (tmp, _team_name, _workzone, team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    // Start first
+    bm_run(home, &["bridge", "start"]);
+    // Then stop
+    let output = bm_run(home, &["bridge", "stop"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("stopped"),
+        "Should print stopped message, got: {}",
+        stdout
+    );
+
+    let state = read_bridge_state(&team_dir);
+    assert_eq!(state.status, "stopped");
+    assert!(state.started_at.is_none(), "started_at should be cleared");
+}
+
+#[test]
+fn bridge_status() {
+    let (tmp, _team_name, _workzone, _team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    // Start first so there's something to report
+    bm_run(home, &["bridge", "start"]);
+
+    let output = bm_run(home, &["bridge", "status"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("stub"),
+        "Should show bridge name, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("running"),
+        "Should show running status, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn bridge_identity_add() {
+    let (tmp, _team_name, _workzone, team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    let output = bm_run(home, &["bridge", "identity", "add", "testuser"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("testuser"),
+        "Should mention username, got: {}",
+        stdout
+    );
+
+    let state = read_bridge_state(&team_dir);
+    assert!(state.identities.contains_key("testuser"));
+    let identity = state.identities.get("testuser").unwrap();
+    assert_eq!(identity.username, "testuser");
+    assert_eq!(identity.user_id, "stub-id");
+    assert_eq!(identity.token, "stub-token");
+}
+
+#[test]
+fn bridge_identity_rotate() {
+    let (tmp, _team_name, _workzone, team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    // Add first
+    bm_run(home, &["bridge", "identity", "add", "testuser"]);
+    // Rotate
+    let output = bm_run(home, &["bridge", "identity", "rotate", "testuser"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("rotated"),
+        "Should print rotated message, got: {}",
+        stdout
+    );
+
+    let state = read_bridge_state(&team_dir);
+    let identity = state.identities.get("testuser").unwrap();
+    assert_eq!(
+        identity.token, "rotated-stub-token",
+        "Token should be rotated"
+    );
+}
+
+#[test]
+fn bridge_identity_list() {
+    let (tmp, _team_name, _workzone, _team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    // Add first
+    bm_run(home, &["bridge", "identity", "add", "testuser"]);
+    // List
+    let output = bm_run(home, &["bridge", "identity", "list"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("testuser"),
+        "Should list the username, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn bridge_identity_remove() {
+    let (tmp, _team_name, _workzone, team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    // Add first
+    bm_run(home, &["bridge", "identity", "add", "testuser"]);
+    // Remove
+    let output = bm_run(home, &["bridge", "identity", "remove", "testuser"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("removed"),
+        "Should print removed message, got: {}",
+        stdout
+    );
+
+    let state = read_bridge_state(&team_dir);
+    assert!(
+        !state.identities.contains_key("testuser"),
+        "Identity should be removed"
+    );
+}
+
+#[test]
+fn bridge_room_create() {
+    let (tmp, _team_name, _workzone, team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    let output = bm_run(home, &["bridge", "room", "create", "general"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("general"),
+        "Should mention room name, got: {}",
+        stdout
+    );
+
+    let state = read_bridge_state(&team_dir);
+    assert!(!state.rooms.is_empty(), "Should have at least one room");
+    assert_eq!(state.rooms[0].name, "general");
+    assert_eq!(state.rooms[0].room_id.as_deref(), Some("stub-room-id"));
+}
+
+#[test]
+fn bridge_room_list() {
+    let (tmp, _team_name, _workzone, _team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    // Create first
+    bm_run(home, &["bridge", "room", "create", "general"]);
+    // List
+    let output = bm_run(home, &["bridge", "room", "list"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("general"),
+        "Should list room name, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn bridge_external_start() {
+    let (tmp, _team_name) = setup_external_bridge_test();
+    let home = tmp.path();
+
+    let output = bm_run(home, &["bridge", "start"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("external"),
+        "Should mention external, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("managed externally"),
+        "Should say managed externally, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn bridge_no_bridge() {
+    let (tmp, _team_name) = setup_no_bridge_test();
+    let home = tmp.path();
+
+    let output = bm_run(home, &["bridge", "start"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("No bridge configured"),
+        "Should say no bridge configured, got: {}",
+        stdout
+    );
+}
+
+// ── Bridge lifecycle integration (bm start/stop with bridge) ──────────
+
+#[test]
+fn start_bridge_only() {
+    let (tmp, _team_name, _workzone, team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    // Extract profiles so schema version check passes
+    bm_run(home, &["profiles", "init", "--force"]);
+
+    // --bridge-only should start bridge without launching members
+    let output = bm_run(home, &["start", "--bridge-only"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Bridge 'stub' started"),
+        "Should show bridge started message, got: {}",
+        stdout
+    );
+
+    let state = read_bridge_state(&team_dir);
+    assert_eq!(state.status, "running");
+    assert_eq!(state.bridge_name.as_deref(), Some("stub"));
+}
+
+#[test]
+fn start_no_bridge_flag() {
+    let (tmp, _team_name, _workzone, team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    // Extract profiles so schema version check passes
+    bm_run(home, &["profiles", "init", "--force"]);
+
+    // --no-bridge --bridge-only: skip bridge (no-bridge takes precedence), then return early
+    let output = bm_run(home, &["start", "--no-bridge", "--bridge-only"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        !stdout.contains("Bridge"),
+        "Should not mention bridge with --no-bridge, got: {}",
+        stdout
+    );
+
+    // Bridge state should not exist or be default
+    let state = read_bridge_state(&team_dir);
+    assert_eq!(
+        state.status, "unknown",
+        "Bridge state should be default (unknown) when --no-bridge used"
+    );
+}
+
+#[test]
+fn stop_stops_bridge() {
+    let (tmp, _team_name, _workzone, team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    // Extract profiles so schema version check passes
+    bm_run(home, &["profiles", "init", "--force"]);
+
+    // Start bridge first
+    bm_run(home, &["start", "--bridge-only"]);
+    let state = read_bridge_state(&team_dir);
+    assert_eq!(state.status, "running");
+
+    // Stop should stop bridge (no members running, so member stop is a no-op)
+    let output = bm_run(home, &["stop"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("Bridge 'stub' stopped"),
+        "Should show bridge stopped message, got: {}",
+        stdout
+    );
+
+    let state = read_bridge_state(&team_dir);
+    assert_eq!(state.status, "stopped");
+}
+
+#[test]
+fn status_shows_bridge() {
+    let (tmp, _team_name, _workzone, _team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    // Extract profiles so schema version check passes
+    bm_run(home, &["profiles", "init", "--force"]);
+
+    // Add an identity to have something to display
+    bm_run(home, &["bridge", "identity", "add", "testbot"]);
+
+    // Start bridge so status is "running"
+    bm_run(home, &["start", "--bridge-only"]);
+
+    // Create members dir so status doesn't bail
+    let team_repo = tmp.path().join("workspaces").join("bridge-team").join("team");
+    let members_dir = team_repo.join("members").join("dummy");
+    fs::create_dir_all(&members_dir).unwrap();
+    fs::write(members_dir.join("botminter.yml"), "role: dev\n").unwrap();
+
+    let output = bm_run(home, &["status"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    assert!(
+        stdout.contains("Bridge: stub"),
+        "Status should show bridge name, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("running"),
+        "Status should show bridge status, got: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("testbot"),
+        "Status should show bridge identity mapping, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn status_no_bridge_shows_normal() {
+    let (tmp, _team_name) = setup_no_bridge_test();
+    let home = tmp.path();
+
+    // Create members dir so status doesn't bail early
+    let team_repo = tmp.path().join("workspaces").join("nobridge-team").join("team");
+    let members_dir = team_repo.join("members").join("dummy");
+    fs::create_dir_all(&members_dir).unwrap();
+    fs::write(members_dir.join("botminter.yml"), "role: dev\n").unwrap();
+
+    let output = bm_run(home, &["status"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    // Should show normal team info without any bridge section
+    assert!(
+        !stdout.contains("Bridge:"),
+        "Status should not show bridge section when no bridge configured, got: {}",
+        stdout
+    );
+}
