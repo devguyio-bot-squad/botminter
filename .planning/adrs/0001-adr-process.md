@@ -1,86 +1,73 @@
-# Use MADR 4.0.0 for Architecture Decision Records
-
 ---
 status: accepted
-date: 2026-03-08
-decision-makers: [BotMinter maintainers]
+date: 2026-03-13
+decision-makers: operator (ahmed), claude
 ---
 
-## Context and Problem Statement
+# ADR Format: Spotify-style with Anti-patterns
 
-BotMinter needs a systematic way to document architectural decisions so future contributors understand the rationale behind design choices. As the project grows through milestones, decisions accumulate -- without a record, the "why" behind the codebase becomes tribal knowledge that is easily lost.
+## Problem
 
-How should we record architectural decisions?
+BotMinter needs a systematic way to document architectural decisions. The codebase is primarily developed by LLM coding agents (Claude Code via Ralph Orchestrator), which lose context across sessions and tend to re-propose rejected approaches. How should ADRs be structured so LLM agents comply with past decisions instead of re-deriving them?
 
-## Decision Drivers
+## Constraints
 
-* Decisions must be discoverable alongside the code (not in a wiki or external tool)
-* Format must be lightweight -- plain markdown, no special tooling required
+* Decisions must live alongside the code in `.planning/adrs/`, not in a wiki
+* Plain markdown, no special tooling required
 * Must support a decision lifecycle (proposed, accepted, deprecated, superseded)
-* Should encourage capturing alternatives considered, not just the final choice
+* LLM agents must be able to quickly determine: what was decided, what was rejected, and what mistakes to avoid
+* Format must be self-contained — no "see other document for context"
 
-## Considered Options
+## Decision
 
-* MADR 4.0.0 (Markdown Any Decision Record)
-* Nygard-style ADR (original 2011 format)
-* Y-statements (one-sentence decision records)
-* No formal ADR practice
+Use a Spotify-inspired ADR format with three additions optimized for LLM consumption:
 
-## Decision Outcome
+1. **Constraints section** — hard requirements stated upfront, before the decision. LLMs treat these as invariants.
+2. **Rejected Alternatives** — explicitly state what was NOT chosen and WHY. Prevents LLMs from re-proposing rejected approaches.
+3. **Anti-patterns** — specific mistakes to avoid. The single most impactful section for LLMs — without it, a future session will propose the exact approach that was tried and failed.
 
-Chosen option: "MADR 4.0.0", because it provides structured sections (Decision Drivers, Considered Options with Pros/Cons, Consequences, Confirmation) that make decisions self-documenting without requiring external context.
-
-### Consequences
-
-* Good, because MADR 4.0.0 is the most widely adopted ADR template with active maintenance
-* Good, because optional sections allow lightweight ADRs for simple decisions while supporting thorough analysis for complex ones
-* Good, because YAML front matter enables machine-readable status and date tracking
-* Neutral, because the template is slightly more verbose than Nygard-style (mitigated by optional sections)
-* Bad, because team members need to learn the format (mitigated by the template file at `adr-template.md`)
-
-### Confirmation
-
-The existence of this ADR (0001) and subsequent ADRs using the MADR format confirms adoption. The ADR index in `README.md` tracks all records.
-
-## Pros and Cons of the Options
-
-### MADR 4.0.0
-
-* Good, because structured sections guide thorough analysis
-* Good, because YAML front matter supports tooling integration
-* Good, because widely adopted across the industry
-* Neutral, because more verbose than minimal formats
-* Bad, because template has many optional sections that could feel heavyweight for simple decisions
-
-### Nygard-style ADR
-
-* Good, because extremely simple (Title, Status, Context, Decision, Consequences)
-* Good, because the original ADR format with broad recognition
-* Bad, because no structured space for alternatives considered
-* Bad, because no YAML front matter for machine-readable metadata
-
-### Y-statements
-
-* Good, because ultra-concise (one sentence per decision)
-* Bad, because too terse to capture meaningful rationale
-* Bad, because no standard template or community tooling
-
-### No formal ADR practice
-
-* Good, because zero overhead
-* Bad, because architectural decisions become tribal knowledge
-* Bad, because new contributors cannot understand design rationale
-* Bad, because decisions get relitigated without record of prior analysis
-
-## More Information
+The decision appears early in the document (after Problem and Constraints), not after pages of options analysis. LLMs scanning quickly get the answer immediately.
 
 ### Conventions
 
 - **Numbering:** Sequential integers, four-digit zero-padded (`0001`, `0002`, ...). Never reuse a number.
 - **File naming:** `NNNN-kebab-case-title.md` (e.g., `0001-adr-process.md`)
 - **Location:** `.planning/adrs/`
-- **Immutability:** Accepted ADRs are not edited. If a decision changes, write a new ADR that supersedes the old one (set the old ADR's status to `superseded by [ADR-NNNN](NNNN-title.md)`).
-- **When to write an ADR:** Any architectural decision with long-term impact -- technology choices, structural patterns, interface contracts, process conventions. When in doubt, write one; they are cheap.
-- **Status lifecycle:** `proposed` -> `accepted` -> optionally `deprecated` or `superseded by [ADR-NNNN]`
+- **Immutability:** Accepted ADRs are not edited for content. If a decision changes, write a new ADR that supersedes the old one.
+- **When to write an ADR:** Any architectural decision with long-term impact — technology choices, structural patterns, interface contracts, process conventions. When in doubt, write one; they are cheap.
+- **Status lifecycle:** `proposed` → `accepted` → optionally `deprecated` or `superseded by [ADR-NNNN]`
 - **Index:** Update `README.md` whenever an ADR is added or its status changes.
-- **Template:** Use `adr-template.md` as the starting point for new ADRs.
+- **Template:** Use `adr-template.md` as the starting point.
+
+## Rejected Alternatives
+
+### MADR 4.0.0
+
+Rejected because: balanced pros/cons per option invites LLMs to re-evaluate instead of comply.
+
+* Good structured sections, but the decision is buried after options analysis
+* "Decision Drivers" are weaker than explicit Constraints — LLMs treat drivers as suggestions, constraints as rules
+* No anti-patterns section — the most important section for LLM compliance
+
+### Nygard-style ADR
+
+Rejected because: no space for rejected alternatives or anti-patterns.
+
+* Simple (Context → Decision → Consequences) but too terse
+* LLMs cannot learn what NOT to do from a Nygard ADR
+
+### Y-statements
+
+Rejected because: one sentence per decision leaves no room for rationale or anti-patterns.
+
+## Consequences
+
+* ADRs are slightly longer than Nygard-style but shorter than MADR (no per-option pros/cons tables)
+* LLM agents can grep for "Anti-patterns" or "Rejected" to quickly find guardrails
+* Existing ADRs (0002-0004) are ported to the new format
+
+## Anti-patterns
+
+* **Do NOT** use balanced pros/cons tables for each option — LLMs re-evaluate them instead of accepting the decision. State the decision, then list rejections with reasons.
+* **Do NOT** omit the Anti-patterns section — it is the primary mechanism for preventing LLMs from repeating known mistakes.
+* **Do NOT** reference external documents for critical context — LLMs lose cross-document references across sessions. Each ADR must be self-contained.

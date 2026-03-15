@@ -197,7 +197,7 @@ All coordination flows through GitHub issues — there are no side channels betw
 - Team members coordinate **exclusively** through GitHub issues and the `gh` skill
 - No direct member-to-member communication
 - Status label transitions are the primary coordination mechanism
-- The human-assistant is the only interface to the human (via Telegram in `scrum`, via GitHub comments in `scrum-compact`)
+- The human-assistant is the only interface to the human (via configured bridge or GitHub comments)
 
 ## Process evolution
 

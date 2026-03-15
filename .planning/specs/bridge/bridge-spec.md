@@ -200,12 +200,14 @@ hardcoded command names in the contract -- bridges choose their own recipe names
 
 - MUST start the bridge service.
 - MUST write service configuration to `$BRIDGE_CONFIG_DIR/config.json` on success.
-- The output JSON MUST include at minimum a `url` field with the service endpoint.
+- The output JSON MUST include at minimum a `service_url` field with the service endpoint
+  and an `admin_user_id` field with the bridge admin account's user ID.
 
 **Expected output** (`$BRIDGE_CONFIG_DIR/config.json`):
 ````json
 {
-  "url": "http://localhost:3000",
+  "service_url": "http://localhost:3000",
+  "admin_user_id": "admin123",
   "status": "running"
 }
 ````
@@ -356,7 +358,7 @@ Each command category produces a specific JSON shape:
 
 | Command | Required Fields | Optional Fields |
 |---------|----------------|-----------------|
-| `start` | `url` | `status`, bridge-specific fields |
+| `start` | `service_url`, `admin_user_id` | `status`, bridge-specific fields |
 | `onboard` | `username`, `user_id`, `token` | bridge-specific fields |
 | `rotate-credentials` | `username`, `user_id`, `token` | bridge-specific fields |
 | `room create` | `name`, `room_id` | bridge-specific fields |
@@ -372,8 +374,10 @@ command:
 
 | Variable | Description |
 |----------|------------|
-| `$BRIDGE_CONFIG_DIR` | Directory where commands MUST write `config.json` output. Set by BotMinter. |
+| `$BRIDGE_CONFIG_DIR` | Directory where commands MUST write `config.json` output. Set by BotMinter. This is a temporary directory created per invocation -- bridges MUST NOT use it for persistent storage. |
+| `$BM_BRIDGE_DIR` | The bridge implementation directory (containing `bridge.yml`, `Justfile`, etc.). Set by BotMinter. Bridges MAY use this path to anchor persistent state files (e.g., password stores) that must survive across recipe invocations. |
 | `$BM_TEAM_NAME` | The team name, providing context for multi-team setups. Set by BotMinter. |
+| `$BM_KEYRING_DBUS` | D-Bus session address for keyring/Secret Service operations. When set, BotMinter's `LocalCredentialStore` temporarily switches `DBUS_SESSION_BUS_ADDRESS` to this value for keyring calls. This is an internal mechanism — bridge recipes do NOT need to handle it. The inherited `DBUS_SESSION_BUS_ADDRESS` always points to the correct bus for general use (including container runtimes). |
 
 Bridge-specific environment variables (e.g., API keys, service URLs) are
 defined in the bridge's `schema.json` and resolved by BotMinter from team

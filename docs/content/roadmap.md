@@ -14,7 +14,8 @@ BotMinter is developed through incremental milestones. Each milestone builds on 
 | Architect + First Epic | **Complete** | Second member, epic lifecycle, two-member coordination |
 | GitHub Integration | **Complete** | Replaced file-based coordination with real GitHub via `gh` CLI |
 | `bm` CLI | **Complete** | Rust CLI, single operator interface, workzone model |
-| Minty and Friends | Planned | Team Manager role, profile externalization, Minty assistant |
+| Minty and Friends | **Complete** | Team Manager role, profile externalization, Minty assistant |
+| Team Bridge | **In Progress** | Bridge plugin system, Telegram + Rocket.Chat + Matrix bridges |
 | Full Team + First Story | Future | Dev, QE, reviewer members, full story kanban, TDD flow |
 | Eval/Confidence System | Future | Formalized eval framework, scored confidence, HIL graduation |
 
@@ -79,21 +80,41 @@ Replaced Justfile-based tooling with a Rust CLI binary (`bm`):
 
 **Proved**: CLI-driven team management works. Versioned profile model enables future upgrades. Workzone model provides discoverability.
 
+### Minty and Friends
+
+Multiple UX enhancements to improve the operator experience:
+
+- **Team Manager role** — a new team-scoped role for process improvement tasks, operating independently from dev workflow
+- **Profile externalization** — profiles extracted to disk on first use, editable and customizable without rebuilding the binary
+- **Workspace repository model** — dedicated git repo per agent with submodules for team repo and project forks, replacing the earlier embedded workspace model
+- **Minty** — BotMinter's interactive assistant persona with composable skills
+- **Coding-agent-agnostic cleanup** — abstracted Claude Code-specific assumptions from profiles and CLI
+
+**Proved**: Role-as-skill pattern works. Skill-driven architecture viable. Disk-based profiles enable operator customization. Stack is coding-agent-agnostic end-to-end.
+
 ---
 
-## Planned
+## In Progress
 
-### Minty and Friends [RAPID]
+### Team Bridge
 
-Multiple UX enhancements to improve the operator experience at both the BotMinter and team layers:
+!!! warning "Experimental"
+    Bridges are an experimental feature. The plugin contract and CLI commands may change between releases.
 
-- **Team Manager role** — a new team-scoped role for process improvement tasks, operating independently from dev workflow. First experiment with the role-as-skill pattern (invokable from Claude Code or via GitHub issues).
-- **Profile externalization** — extract baked-in profiles to disk on first use. All subsequent operations use disk-stored profiles, making them editable and customizable without rebuilding the binary.
-- **Workspace repository model** — replace embedded `.botminter/` workspace with a dedicated git repo per agent, using submodules for team repo and project forks. Enables multi-project agents and eliminates nested-repo confusion.
-- **Minty** — BotMinter's interactive assistant persona. A coding agent session injected with a system prompt and loaded with composable skills that provide all BotMinter knowledge and capabilities.
-- **Coding-agent-agnostic cleanup** — audit and abstract hard-coded Claude Code-specific assumptions. Profiles, team repos, and CLI output should not couple to a single coding agent product.
+Bridge plugin system for connecting team members to messaging platforms:
 
-**Proves**: Role-as-skill pattern works. Skill-driven architecture is viable for both team-level and BotMinter-level interactions. Disk-based profiles enable operator customization. Stack is coding-agent-agnostic end-to-end.
+- **Bridge plugin contract** — Knative-style resource format (bridge.yml + schema.json + Justfile), no Rust code needed for new bridges
+- **Telegram bridge** (external) — operator-managed bot tokens, per-member identity
+- **Rocket.Chat bridge** (local) — Podman pod with RC + MongoDB, auto-provisioned bot accounts
+- **Matrix / Tuwunel bridge** (local) — single Podman container with Tuwunel homeserver, UIAA registration
+- **Bridge CLI** — `bm bridge start/stop/status`, `bm bridge identity add/show/rotate/remove`, `bm bridge room create/list`
+- **Per-member start/stop** — `bm start <member>` and `bm stop <member>` for individual member lifecycle
+- **Credential storage** — system keyring with env var fallback, formation-aware via CredentialStore trait
+- **E2E test coverage** — operator journey scenarios for Telegram and Rocket.Chat bridges
+
+**Proving**: Bridge plugin model is extensible. Local bridges can self-provision. Credential management works across formation types.
+
+---
 
 ## Future
 
@@ -129,3 +150,4 @@ Formalizes the distributed eval framework:
 
 - [Architecture](concepts/architecture.md) — profile-based generation model and two-layer runtime
 - [Member Roles](reference/member-roles.md) — current and planned role definitions
+- [Bridges](concepts/bridges.md) — bridge types and plugin contract

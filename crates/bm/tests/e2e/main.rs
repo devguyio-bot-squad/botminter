@@ -10,10 +10,12 @@
 //!   --progressive-reset [SUITE]  Clean up persisted progressive state
 
 mod helpers;
+mod test_env;
 
 mod github;
 mod rocketchat;
 mod telegram;
+mod tuwunel;
 
 mod isolated;
 mod scenarios;

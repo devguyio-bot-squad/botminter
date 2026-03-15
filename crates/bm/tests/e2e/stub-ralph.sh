@@ -12,6 +12,10 @@ case "$1" in
       curl -s "${RALPH_TELEGRAM_API_URL}/bot${RALPH_TELEGRAM_BOT_TOKEN}/getUpdates" \
         > "$PWD/.ralph-stub-tg-response" 2>&1
     fi
+    if [ -n "$RALPH_MATRIX_ACCESS_TOKEN" ] && [ -n "$RALPH_MATRIX_HOMESERVER_URL" ]; then
+      curl -s "${RALPH_MATRIX_HOMESERVER_URL}/_matrix/client/versions" \
+        > "$PWD/.ralph-stub-matrix-response" 2>&1
+    fi
     env | grep -E '^(RALPH_|GH_TOKEN)' | sort > "$PWD/.ralph-stub-env"
     if [ -f "$PWD/.ralph-stub-ignore-sigterm" ]; then
       echo "$(date -u +%FT%TZ) SIGTERM trap set to ignore" >> "$PWD/.ralph-stub-sigterm.log"

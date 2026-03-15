@@ -32,8 +32,8 @@ All profiles share the same knowledge scoping, constraint system, workspace layo
 
 | | Roles | Communication |
 |---|---|---|
-| **`scrum-compact`** | Single agent - PO, architect, dev, QE | GitHub Issues (optional Telegram bridge) |
-| **`scrum`** | Separate agent per role, parallel handoffs | GitHub Issues (optional Telegram bridge) |
+| **`scrum-compact`** | Single agent - PO, architect, dev, QE | GitHub Issues (optional bridge: Telegram, Rocket.Chat, or Matrix) |
+| **`scrum`** | Separate agent per role, parallel handoffs | GitHub Issues (optional bridge: Telegram, Rocket.Chat, or Matrix) |
 
 Everything is customizable after init - add roles, redefine pipeline phases, change gate criteria, or extend the workspace layout.
 

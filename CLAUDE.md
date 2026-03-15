@@ -234,3 +234,8 @@ Key rules:
 - There is a local checked out version under /opt/workspace/ralph-orchestrator
 - The checked out version has a local commit that we created to support setting a custom Telegram URL which is needed to run a Telegram mock server in e2e tests
 
+## GUIARDRAILS / INVARIANTS / MUST COMPLY
+- You MUST use just test to validate any changes at least once before the task is done.
+- You MUST fix any failures even if they're unrelated to your changes. You CAN present the user the situation before you fix such irrelevant failures.
+- You MUST focus on improving the quality of the code and you SHOULD leave the code better than you found it.
+- You SHOULD suggest any improvement or enhancements to the code or to CLAUDE.md whenever an improvement presents itself.

@@ -3,7 +3,7 @@
 
 start:
     @mkdir -p "$BRIDGE_CONFIG_DIR"
-    @echo '{"url": "http://localhost:0", "status": "stub"}' > "$BRIDGE_CONFIG_DIR/config.json"
+    @echo '{"service_url": "http://localhost:0", "admin_user_id": "stub-admin", "status": "stub"}' > "$BRIDGE_CONFIG_DIR/config.json"
 
 stop:
     @echo "stub: stop (no-op)" >&2

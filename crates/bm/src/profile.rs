@@ -222,6 +222,18 @@ pub struct ProfileManifest {
     /// The selected bridge for this team (set during `bm init`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bridge: Option<String>,
+    /// Operator identity (set during `bm init --bridge` for local bridges).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub operator: Option<OperatorDef>,
+}
+
+/// Operator identity configuration.
+///
+/// Defines who the human operator is in bridge contexts (e.g., the admin user
+/// that created the bridge server). Set during `bm init --bridge` for local bridges.
+#[derive(Debug, Serialize, Deserialize, Clone, Default)]
+pub struct OperatorDef {
+    pub bridge_username: String,
 }
 
 /// A bridge declaration in the profile manifest.
@@ -1380,6 +1392,7 @@ mod tests {
             credentials: Default::default(),
             coding_agent: None,
             project_number: None,
+            bridge_lifecycle: Default::default(),
         };
         let agent = resolve_coding_agent(&team, &manifest).unwrap();
         assert_eq!(agent.name, "claude-code");
@@ -1398,6 +1411,7 @@ mod tests {
             credentials: Default::default(),
             coding_agent: Some("claude-code".into()),
             project_number: None,
+            bridge_lifecycle: Default::default(),
         };
         let agent = resolve_coding_agent(&team, &manifest).unwrap();
         assert_eq!(agent.name, "claude-code");
@@ -1569,6 +1583,7 @@ mod tests {
             credentials: Default::default(),
             coding_agent: Some("nonexistent-agent".into()),
             project_number: None,
+            bridge_lifecycle: Default::default(),
         };
         let result = resolve_coding_agent(&team, &manifest);
         assert!(result.is_err());

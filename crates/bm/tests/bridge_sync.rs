@@ -47,13 +47,20 @@ fn setup_team_repo_with_bridge(tmp: &Path) -> PathBuf {
     team_repo
 }
 
-// ── provision_bridge tests ─────────────────────────────────────────────
+/// Helper: create a Bridge instance for testing.
+fn make_test_bridge(team_repo: &Path, workzone: &Path) -> bm::bridge::Bridge {
+    let bridge_dir = bm::bridge::discover(team_repo, "test-team").unwrap().unwrap();
+    let state_path = bm::bridge::state_path(workzone, "test-team");
+    bm::bridge::Bridge::new(bridge_dir, state_path, "test-team".to_string()).unwrap()
+}
+
+// ── provision tests ─────────────────────────────────────────────
 
 #[cfg(test)]
 mod provision_bridge {
     use super::*;
     use bm::bridge::{
-        self, load_state, save_state, BridgeIdentity, BridgeState,
+        self, load_state, save_state, BridgeIdentity, BridgeMember, BridgeState,
         CredentialStore, InMemoryCredentialStore,
     };
 
@@ -61,20 +68,19 @@ mod provision_bridge {
     fn sync_bridge_managed_invokes_onboard_and_stores_identity() {
         let tmp = tempfile::tempdir().unwrap();
         let team_repo = setup_team_repo_with_bridge(tmp.path());
-        let state_path = bridge::state_path(tmp.path(), "test-team");
 
         let cred_store = InMemoryCredentialStore::new();
+        let members = vec![
+            BridgeMember { name: "alice".to_string(), is_operator: false },
+            BridgeMember { name: "bob".to_string(), is_operator: false },
+        ];
 
-        bridge::provision_bridge(
-            &team_repo,
-            "test-team",
-            tmp.path(),
-            &["alice".to_string(), "bob".to_string()],
-            &cred_store,
-        )
-        .unwrap();
+        let mut bridge = make_test_bridge(&team_repo, tmp.path());
+        bridge.provision(&members, &cred_store).unwrap();
+        bridge.save().unwrap();
 
         // Verify identities were created in state
+        let state_path = bridge::state_path(tmp.path(), "test-team");
         let state = load_state(&state_path).unwrap();
         assert!(
             state.identities.contains_key("alice"),
@@ -111,6 +117,7 @@ mod provision_bridge {
                 user_id: "existing-id".to_string(),
                 token: None,
                 created_at: "2026-01-01T00:00:00Z".to_string(),
+                is_operator: false,
             },
         );
         let state = BridgeState {
@@ -120,15 +127,14 @@ mod provision_bridge {
         save_state(&state_path, &state).unwrap();
 
         let cred_store = InMemoryCredentialStore::new();
+        let members = vec![
+            BridgeMember { name: "alice".to_string(), is_operator: false },
+            BridgeMember { name: "bob".to_string(), is_operator: false },
+        ];
 
-        bridge::provision_bridge(
-            &team_repo,
-            "test-team",
-            tmp.path(),
-            &["alice".to_string(), "bob".to_string()],
-            &cred_store,
-        )
-        .unwrap();
+        let mut bridge = make_test_bridge(&team_repo, tmp.path());
+        bridge.provision(&members, &cred_store).unwrap();
+        bridge.save().unwrap();
 
         // alice should still have original user_id (not re-provisioned)
         let state = load_state(&state_path).unwrap();
@@ -152,15 +158,13 @@ mod provision_bridge {
         let state_path = bridge::state_path(tmp.path(), "test-team");
 
         let cred_store = InMemoryCredentialStore::new();
+        let members = vec![
+            BridgeMember { name: "alice".to_string(), is_operator: false },
+        ];
 
-        bridge::provision_bridge(
-            &team_repo,
-            "test-team",
-            tmp.path(),
-            &["alice".to_string()],
-            &cred_store,
-        )
-        .unwrap();
+        let mut bridge = make_test_bridge(&team_repo, tmp.path());
+        bridge.provision(&members, &cred_store).unwrap();
+        bridge.save().unwrap();
 
         let state = load_state(&state_path).unwrap();
         assert!(
@@ -187,15 +191,13 @@ mod provision_bridge {
         save_state(&state_path, &state).unwrap();
 
         let cred_store = InMemoryCredentialStore::new();
+        let members = vec![
+            BridgeMember { name: "alice".to_string(), is_operator: false },
+        ];
 
-        bridge::provision_bridge(
-            &team_repo,
-            "test-team",
-            tmp.path(),
-            &["alice".to_string()],
-            &cred_store,
-        )
-        .unwrap();
+        let mut bridge = make_test_bridge(&team_repo, tmp.path());
+        bridge.provision(&members, &cred_store).unwrap();
+        bridge.save().unwrap();
 
         let state = load_state(&state_path).unwrap();
         assert_eq!(state.rooms.len(), 1, "room count should not change");
@@ -247,17 +249,16 @@ spec:
         fs::create_dir_all(team_repo.join("members").join("alice")).unwrap();
 
         let cred_store = InMemoryCredentialStore::new();
+        let members = vec![
+            BridgeMember { name: "alice".to_string(), is_operator: false },
+        ];
 
-        bridge::provision_bridge(
-            &team_repo,
-            "test-team",
-            tmp.path(),
-            &["alice".to_string()],
-            &cred_store,
-        )
-        .unwrap();
-
+        let ext_bridge_dir = bridge::discover(&team_repo, "test-team").unwrap().unwrap();
         let state_path = bridge::state_path(tmp.path(), "test-team");
+        let mut bridge = bridge::Bridge::new(ext_bridge_dir, state_path.clone(), "test-team".to_string()).unwrap();
+        bridge.provision(&members, &cred_store).unwrap();
+        bridge.save().unwrap();
+
         let state = load_state(&state_path).unwrap();
         assert!(
             !state.identities.contains_key("alice"),

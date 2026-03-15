@@ -118,13 +118,9 @@ pub fn show(name: Option<&str>, team_flag: Option<&str>) -> Result<()> {
 
     // Show bridge configuration
     if let Ok(Some(bridge_dir)) = bridge::discover(&team_repo, &team.name) {
-        if let Ok(manifest) = bridge::load_manifest(&bridge_dir) {
-            let display = manifest
-                .metadata
-                .display_name
-                .as_deref()
-                .unwrap_or(&manifest.metadata.name);
-            println!("Bridge: {} [{}]", display, manifest.spec.bridge_type);
+        let state_path = bridge::state_path(&cfg.workzone, &team.name);
+        if let Ok(b) = bridge::Bridge::new(bridge_dir, state_path, team.name.clone()) {
+            println!("Bridge: {} [{}]", b.display_name(), b.bridge_type());
         }
     }
 
@@ -261,36 +257,59 @@ pub fn sync(repos: bool, bridge_flag: bool, verbose: bool, team_flag: Option<&st
     let bridge_dir = bridge::discover(&team_repo, &team.name)?;
     if bridge_flag {
         if let Some(ref bdir) = bridge_dir {
-            // Discover members first so we can pass them to provision_bridge
+            // Discover members first so we can pass them to provision
             let members_dir_pb = team_repo.join("members");
-            let mut bridge_members: Vec<String> = Vec::new();
+            let mut bridge_members: Vec<bridge::BridgeMember> = Vec::new();
             if members_dir_pb.is_dir() {
                 for entry in fs::read_dir(&members_dir_pb)? {
                     let entry = entry?;
                     if entry.file_type()?.is_dir() {
-                        bridge_members.push(entry.file_name().to_string_lossy().to_string());
+                        bridge_members.push(bridge::BridgeMember {
+                            name: entry.file_name().to_string_lossy().to_string(),
+                            is_operator: false,
+                        });
                     }
                 }
             }
-            bridge_members.sort();
+            // Add operator to bridge members (if configured and local bridge)
+            if let Some(op) = manifest.operator.as_ref() {
+                if !bridge_members.iter().any(|m| m.name == op.bridge_username) {
+                    bridge_members.push(bridge::BridgeMember {
+                        name: op.bridge_username.clone(),
+                        is_operator: true,
+                    });
+                }
+            }
+
+            bridge_members.sort_by(|a, b| a.name.cmp(&b.name));
+
+            let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
+            let mut b = bridge::Bridge::new(bdir.clone(), bstate_path.clone(), team.name.clone())?;
 
             // Set up credential store
-            let bridge_manifest = bridge::load_manifest(bdir)?;
-            let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
             let cred_store = bridge::LocalCredentialStore::new(
                 &team.name,
-                &bridge_manifest.metadata.name,
+                b.bridge_name(),
                 bstate_path,
             ).with_collection(cfg.keyring_collection.clone());
 
+            // Auto-start local bridge if stopped (provisioning needs a running server)
+            if b.is_local() && !b.is_running() {
+                if which::which("just").is_err() {
+                    eprintln!(
+                        "Warning: 'just' not found. Cannot start bridge for provisioning. \
+                         Install: https://just.systems/"
+                    );
+                } else {
+                    println!("Starting bridge '{}' for provisioning...", b.bridge_name());
+                    b.start()?;
+                    b.save()?;
+                }
+            }
+
             println!("Provisioning bridge identities...");
-            bridge::provision_bridge(
-                &team_repo,
-                &team.name,
-                &cfg.workzone,
-                &bridge_members,
-                &cred_store,
-            )?;
+            b.provision(&bridge_members, &cred_store)?;
+            b.save()?;
         } else {
             println!("No bridge configured -- skipping bridge provisioning");
         }
@@ -333,19 +352,18 @@ pub fn sync(repos: bool, bridge_flag: bool, verbose: bool, team_flag: Option<&st
         .map(|p| (p.name.as_str(), p.fork_url.as_str()))
         .collect();
 
-    // Set up credential store and bridge metadata for RObot injection (only if bridge is configured)
-    let (robot_cred_store, robot_bridge_type, robot_bridge_state) = if let Some(ref bdir) = bridge_dir {
-        let bridge_manifest = bridge::load_manifest(bdir)?;
+    // Set up credential store and bridge for RObot injection (only if bridge is configured)
+    let (robot_cred_store, robot_bridge) = if let Some(ref bdir) = bridge_dir {
         let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
-        let bstate = bridge::load_state(&bstate_path)?;
+        let b = bridge::Bridge::new(bdir.clone(), bstate_path.clone(), team.name.clone())?;
         let store = bridge::LocalCredentialStore::new(
             &team.name,
-            &bridge_manifest.metadata.name,
+            b.bridge_name(),
             bstate_path,
         ).with_collection(cfg.keyring_collection.clone());
-        (Some(store), Some(bridge_manifest.metadata.name.clone()), Some(bstate))
+        (Some(store), Some(b))
     } else {
-        (None, None, None)
+        (None, None)
     };
 
     for member_dir_name in &members {
@@ -399,28 +417,31 @@ pub fn sync(repos: bool, bridge_flag: bool, verbose: bool, team_flag: Option<&st
                 .is_some();
 
                 // Build bridge config from bridge state for RC bridges
-                let bridge_config = if robot_bridge_type.as_deref() == Some("rocketchat") {
-                    if let Some(ref bstate) = robot_bridge_state {
-                        let bot_user_id = bstate
-                            .identities
-                            .get(member_dir_name)
-                            .map(|id| id.user_id.clone())
+                let bridge_config = if let Some(ref b) = robot_bridge {
+                    let bname = b.bridge_name();
+                    if bname == "rocketchat" || bname == "tuwunel" {
+                        let bot_user_id = b
+                            .member_user_id(member_dir_name)
                             .unwrap_or_default();
-                        let room_id = bstate
-                            .rooms
-                            .first()
-                            .and_then(|r| r.room_id.clone())
-                            .unwrap_or_default();
-                        let server_url = bstate
-                            .service_url
-                            .clone()
-                            .unwrap_or_default();
+                        let room_id = b
+                            .default_room_id()
+                            .unwrap_or_default()
+                            .to_string();
+                        let server_url = b
+                            .service_url()
+                            .unwrap_or_default()
+                            .to_string();
+
+                        let operator_id = manifest
+                            .operator
+                            .as_ref()
+                            .and_then(|op| b.member_user_id(&op.bridge_username));
 
                         Some(workspace::RobotBridgeConfig {
                             bot_user_id,
                             room_id,
                             server_url,
-                            operator_id: None,
+                            operator_id,
                         })
                     } else {
                         None
@@ -429,10 +450,11 @@ pub fn sync(repos: bool, bridge_flag: bool, verbose: bool, team_flag: Option<&st
                     None
                 };
 
+                let bridge_type_name = robot_bridge.as_ref().map(|b| b.bridge_name().to_string());
                 workspace::inject_robot_config(
                     &ralph_yml,
                     has_cred,
-                    robot_bridge_type.as_deref(),
+                    bridge_type_name.as_deref(),
                     bridge_config.as_ref(),
                 )?;
                 if verbose {

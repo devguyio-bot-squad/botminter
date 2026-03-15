@@ -322,23 +322,28 @@ bm teams sync [--repos] [--bridge] [--all|-a] [-v] [-t <team>]
 
 ### `bm start`
 
-Launch all members.
+Launch members (all, or a specific one).
 
 ```bash
-bm start [-t <team>] [--formation <name>]
+bm start [<member>] [-t <team>] [--formation <name>] [--no-bridge] [--bridge-only]
 # Alias:
-bm up [-t <team>] [--formation <name>]
+bm up [<member>] [-t <team>] [--formation <name>]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
+| `<member>` | No | Start only this member (starts all if omitted) |
 | `--formation <name>` | No | Formation name (default: `local`) |
+| `--no-bridge` | No | Skip bridge auto-start |
+| `--bridge-only` | No | Start bridge only, do not launch members |
 | `-t <team>` | No | Team to operate on |
 
 **Behavior:**
 
+- For local bridges: auto-starts the bridge if not already running (skipped when starting a single member)
+- If bridge is already running, verifies health and skips restart
 - Checks for `ralph` binary prerequisite
-- Maps credentials from config to environment variables
+- Resolves per-member credentials from keyring or environment variables
 - Discovers member workspaces
 - Launches `ralph run -p PROMPT.md` as background process per member
 - Records PIDs in `state.json` with atomic writes
@@ -348,14 +353,15 @@ bm up [-t <team>] [--formation <name>]
 
 ### `bm stop`
 
-Stop all members.
+Stop members (all, or a specific one).
 
 ```bash
-bm stop [-t <team>] [--force]
+bm stop [<member>] [-t <team>] [--force]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
+| `<member>` | No | Stop only this member (stops all if omitted) |
 | `--force` | No | Send SIGTERM instead of graceful stop |
 | `-t <team>` | No | Team to operate on |
 
@@ -365,6 +371,8 @@ bm stop [-t <team>] [--force]
 - Force mode (`--force`): sends SIGTERM immediately
 - Cleans state.json entries
 - Suggests `bm stop -f` on graceful failure
+- When stopping a single member, bridge lifecycle is not affected
+- When stopping all members, also stops local bridges if running
 
 ### `bm status`
 
@@ -506,6 +514,39 @@ bm knowledge [-t <team>] [--scope <scope>]
 
 ## Bridge management
 
+!!! warning "Experimental"
+    Bridge commands are experimental and may change between releases.
+
+### `bm bridge start`
+
+Start a local bridge service.
+
+```bash
+bm bridge start [-t <team>]
+```
+
+**Behavior:**
+
+- Starts the bridge's Podman container(s) via the Justfile `start` recipe
+- Runs a health check after start
+- Saves bridge state (service URL, status) to `bridge-state.json`
+- Idempotent: if the bridge is already running and healthy, skips the start
+- Only applies to local bridges (Rocket.Chat, Tuwunel). External bridges print a message and exit.
+
+### `bm bridge stop`
+
+Stop a local bridge service.
+
+```bash
+bm bridge stop [-t <team>]
+```
+
+**Behavior:**
+
+- Stops the bridge's Podman container(s) via the Justfile `stop` recipe
+- Updates bridge state to "stopped"
+- Data is preserved for restart (Podman volumes / pods are not deleted)
+
 ### `bm bridge status`
 
 Show the current bridge state for the team.
@@ -537,6 +578,26 @@ bm bridge identity add <username> [-t <team>]
 - Prompts for a bridge token (external bridges) or auto-provisions (local bridges)
 - Stores the credential in the system keyring
 - Updates `bridge-state.json` with the identity record
+
+### `bm bridge identity show`
+
+Show stored credentials for a bridge identity.
+
+```bash
+bm bridge identity show <username> [--reveal] [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<username>` | Yes | Member name (e.g., `superman-01`) |
+| `--reveal` | No | Show full token (default: masked) |
+| `-t <team>` | No | Team to operate on |
+
+**Behavior:**
+
+- Displays username, user ID, and creation timestamp from `bridge-state.json`
+- Retrieves the token from the system keyring and displays it (masked by default, full with `--reveal`)
+- If no token is in the keyring, shows the environment variable name to use as fallback
 
 ### `bm bridge identity rotate`
 

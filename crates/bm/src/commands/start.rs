@@ -13,12 +13,13 @@ use crate::state::{self, MemberRuntime, RuntimeState};
 use crate::topology::{self, Endpoint, MemberTopology, Topology};
 use crate::workspace;
 
-/// Handles `bm start [-t team] [--formation <name>] [--no-bridge] [--bridge-only]`.
+/// Handles `bm start [member] [-t team] [--formation <name>] [--no-bridge] [--bridge-only]`.
 pub fn run(
     team_flag: Option<&str>,
     formation_flag: Option<&str>,
     no_bridge: bool,
     bridge_only: bool,
+    member_filter: Option<&str>,
 ) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
@@ -59,38 +60,26 @@ pub fn run(
         }
     }
 
-    // Bridge auto-start (before members)
-    if !no_bridge {
+    // Bridge auto-start (before members) — skip when starting a single member
+    if !no_bridge && member_filter.is_none() && team.bridge_lifecycle.start_on_up {
         if let Some(bridge_dir) = bridge::discover(&team_repo, &team.name)? {
-            let manifest = bridge::load_manifest(&bridge_dir)?;
-            if manifest.spec.bridge_type == "local" {
-                if let Some(lifecycle) = &manifest.spec.lifecycle {
-                    if which::which("just").is_err() {
-                        eprintln!(
-                            "Warning: 'just' not found. Skipping bridge start. \
-                             Install: https://just.systems/"
-                        );
-                    } else {
-                        println!("Starting bridge '{}'...", manifest.metadata.name);
-                        bridge::invoke_recipe(&bridge_dir, &lifecycle.start, &[], &team.name)?;
-                        bridge::invoke_recipe(&bridge_dir, &lifecycle.health, &[], &team.name)?;
-
-                        let state_path = bridge::state_path(&cfg.workzone, &team.name);
-                        let mut bstate = bridge::load_state(&state_path)?;
-                        bstate.bridge_name = Some(manifest.metadata.name.clone());
-                        bstate.bridge_type = Some(manifest.spec.bridge_type.clone());
-                        bstate.status = "running".to_string();
-                        bstate.started_at = Some(chrono::Utc::now().to_rfc3339());
-                        bstate.last_health_check = Some(chrono::Utc::now().to_rfc3339());
-                        bridge::save_state(&state_path, &bstate)?;
-                        println!("Bridge '{}' started.", manifest.metadata.name);
-                    }
+            let state_path = bridge::state_path(&cfg.workzone, &team.name);
+            let mut b = bridge::Bridge::new(bridge_dir, state_path, team.name.clone())?;
+            if b.is_local() {
+                if which::which("just").is_err() {
+                    eprintln!(
+                        "Warning: 'just' not found. Skipping bridge start. \
+                         Install: https://just.systems/"
+                    );
+                } else {
+                    b.start()?;
+                    b.save()?;
                 }
             }
-            if manifest.spec.bridge_type == "external" {
+            if b.is_external() {
                 println!(
                     "Bridge '{}' is external (managed externally).",
-                    manifest.metadata.name
+                    b.bridge_name()
                 );
             }
         }
@@ -112,27 +101,19 @@ pub fn run(
     // Each Ralph instance gets its own credential, not a team-wide token.
     // Bridge-type-aware: dispatches RALPH_ROCKETCHAT_AUTH_TOKEN for RC,
     // RALPH_TELEGRAM_BOT_TOKEN for Telegram.
-    let (credential_store, _bridge_type, bridge_service_url) = if let Some(ref dir) = bridge::discover(&team_repo, &team.name)? {
-        let manifest = bridge::load_manifest(dir)?;
+    let (credential_store, bridge_type_name, bridge_service_url) = if let Some(ref dir) = bridge::discover(&team_repo, &team.name)? {
         let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
-        let bstate = bridge::load_state(&bstate_path)?;
+        let b = bridge::Bridge::new(dir.clone(), bstate_path.clone(), team.name.clone())?;
         let store = bridge::LocalCredentialStore::new(
             &team.name,
-            &manifest.metadata.name,
+            b.bridge_name(),
             bstate_path,
         ).with_collection(cfg.keyring_collection.clone());
-        let btype = Some(manifest.spec.bridge_type.clone());
-        let surl = bstate.service_url.clone();
-        (Some(store), btype, surl)
+        let bname = Some(b.bridge_name().to_string());
+        let surl = b.service_url().map(|s| s.to_string());
+        (Some(store), bname, surl)
     } else {
         (None, None, None)
-    };
-    // Resolve bridge_type name from manifest for env var dispatch
-    let bridge_type_name = if let Some(ref dir) = bridge::discover(&team_repo, &team.name)? {
-        let manifest = bridge::load_manifest(dir)?;
-        Some(manifest.metadata.name.clone())
-    } else {
-        None
     };
 
     // Discover members
@@ -141,10 +122,24 @@ pub fn run(
         bail!("No members hired. Run `bm hire <role>` first.");
     }
 
-    let member_dirs = workspace::list_member_dirs(&members_dir)?;
-    if member_dirs.is_empty() {
+    let all_member_dirs = workspace::list_member_dirs(&members_dir)?;
+    if all_member_dirs.is_empty() {
         bail!("No members hired. Run `bm hire <role>` first.");
     }
+
+    // Filter to a single member if requested
+    let member_dirs = if let Some(target) = member_filter {
+        if !all_member_dirs.iter().any(|d| d == target) {
+            bail!(
+                "Member '{}' not found. Available: {}",
+                target,
+                all_member_dirs.join(", ")
+            );
+        }
+        vec![target.to_string()]
+    } else {
+        all_member_dirs
+    };
 
     // Load state, clean up stale entries
     let mut state = state::load()?;
@@ -306,6 +301,12 @@ fn launch_ralph(
                     cmd.env("RALPH_ROCKETCHAT_SERVER_URL", url);
                 }
             }
+            Some("tuwunel") => {
+                cmd.env("RALPH_MATRIX_ACCESS_TOKEN", token);
+                if let Some(url) = service_url {
+                    cmd.env("RALPH_MATRIX_HOMESERVER_URL", url);
+                }
+            }
             _ => {
                 cmd.env("RALPH_TELEGRAM_BOT_TOKEN", token);
             }
@@ -463,6 +464,9 @@ fn run_formation_manager(
         match team_bridge_type.as_deref() {
             Some("rocketchat") => {
                 env_vars.push(("RALPH_ROCKETCHAT_AUTH_TOKEN".to_string(), token.clone()));
+            }
+            Some("tuwunel") => {
+                env_vars.push(("RALPH_MATRIX_ACCESS_TOKEN".to_string(), token.clone()));
             }
             _ => {
                 env_vars.push(("RALPH_TELEGRAM_BOT_TOKEN".to_string(), token.clone()));
@@ -663,6 +667,7 @@ mod tests {
             },
             coding_agent: None,
             project_number: None,
+            bridge_lifecycle: Default::default(),
         };
         let token = require_gh_token(&team).unwrap();
         assert_eq!(token, "ghp_test123");
@@ -682,6 +687,7 @@ mod tests {
             },
             coding_agent: None,
             project_number: None,
+            bridge_lifecycle: Default::default(),
         };
         let err = require_gh_token(&team).unwrap_err();
         let msg = format!("{}", err);

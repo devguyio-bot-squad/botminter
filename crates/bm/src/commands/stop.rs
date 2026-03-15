@@ -12,8 +12,8 @@ use crate::topology;
 /// Maximum seconds to wait for graceful stop before giving up per member.
 const GRACEFUL_TIMEOUT_SECS: u64 = 60;
 
-/// Handles `bm stop [-t team] [--force]`.
-pub fn run(team_flag: Option<&str>, force: bool) -> Result<()> {
+/// Handles `bm stop [member] [-t team] [--force] [--bridge]`.
+pub fn run(team_flag: Option<&str>, force: bool, member_filter: Option<&str>, bridge_flag: bool) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
     let team_name = &team.name;
@@ -22,12 +22,25 @@ pub fn run(team_flag: Option<&str>, force: bool) -> Result<()> {
 
     // Find running members for this team
     let team_prefix = format!("{}/", team_name);
-    let running: Vec<(String, u32, std::path::PathBuf)> = runtime_state
+    let all_running: Vec<(String, u32, std::path::PathBuf)> = runtime_state
         .members
         .iter()
         .filter(|(key, _)| key.starts_with(&team_prefix))
         .map(|(key, rt)| (key.clone(), rt.pid, rt.workspace.clone()))
         .collect();
+
+    // Filter to a single member if requested
+    let running: Vec<_> = if let Some(target) = member_filter {
+        let target_key = format!("{}/{}", team_name, target);
+        let filtered: Vec<_> = all_running.into_iter().filter(|(k, _, _)| *k == target_key).collect();
+        if filtered.is_empty() {
+            println!("Member '{}' is not running for team '{}'.", target, team_name);
+            return Ok(());
+        }
+        filtered
+    } else {
+        all_running
+    };
 
     if !running.is_empty() {
         let mut stopped = 0u32;
@@ -88,25 +101,26 @@ pub fn run(team_flag: Option<&str>, force: bool) -> Result<()> {
         println!("No members running for team '{}'.", team_name);
     }
 
-    // Stop bridge if configured and running (always attempt, even if no members)
+    // Bridge lifecycle: stop only if explicitly requested or configured
+    // Skip when stopping a single member
+    if member_filter.is_some() {
+        return Ok(());
+    }
+    let should_stop_bridge = bridge_flag || team.bridge_lifecycle.stop_on_down;
     let team_repo = team.path.join("team");
     if let Some(bridge_dir) = bridge::discover(&team_repo, team_name)? {
-        let manifest = bridge::load_manifest(&bridge_dir)?;
-        if manifest.spec.bridge_type == "local" {
-            if let Some(lifecycle) = &manifest.spec.lifecycle {
-                if which::which("just").is_ok() {
-                    let state_path = bridge::state_path(&cfg.workzone, team_name);
-                    let bstate = bridge::load_state(&state_path)?;
-                    if bstate.status == "running" {
-                        println!("Stopping bridge '{}'...", manifest.metadata.name);
-                        bridge::invoke_recipe(&bridge_dir, &lifecycle.stop, &[], team_name)?;
-                        let mut bstate = bstate;
-                        bstate.status = "stopped".to_string();
-                        bridge::save_state(&state_path, &bstate)?;
-                        println!("Bridge '{}' stopped.", manifest.metadata.name);
-                    }
-                }
+        let state_path = bridge::state_path(&cfg.workzone, team_name);
+        let mut b = bridge::Bridge::new(bridge_dir, state_path, team_name.to_string())?;
+        if should_stop_bridge {
+            if b.is_local() && b.is_running() && which::which("just").is_ok() {
+                b.stop()?;
+                b.save()?;
             }
+        } else if b.is_local() && b.is_running() {
+            println!(
+                "Bridge '{}' left running. Use `bm stop --bridge` to stop it.",
+                b.bridge_name()
+            );
         }
     }
 

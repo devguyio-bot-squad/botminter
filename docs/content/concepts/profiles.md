@@ -19,7 +19,7 @@ Profiles live on disk at `~/.config/botminter/profiles/<profile-name>/`. The `bm
       invariants/
       roles/
       ...
-    scrum-compact/                  # Single-agent "superman" profile (optional Telegram bridge)
+    scrum-compact/                  # Single-agent "superman" profile (optional bridge)
       ...
   minty/                            # Minty interactive assistant config
     prompt.md                       # Persona prompt

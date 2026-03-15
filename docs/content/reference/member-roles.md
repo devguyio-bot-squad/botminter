@@ -32,7 +32,7 @@ When no `status/po:*` issues are found, the coordinator publishes `LOOP_COMPLETE
 
 All gates present artifacts to the human for decision. The HIL channel depends on the profile:
 
-- **With Telegram bridge** — Telegram (`human.interact`), blocking (available on any profile via `--bridge telegram`)
+- **With bridge** — messaging platform (`human.interact`), blocking (available on any profile with a configured bridge)
 - **Without bridge** — GitHub issue comments, non-blocking (agent posts review request, checks for response on next scan)
 
 | Gate | What is presented | Human action |

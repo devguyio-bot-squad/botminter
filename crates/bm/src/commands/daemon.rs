@@ -719,6 +719,12 @@ fn launch_ralph_oneshot(
                     cmd.env("RALPH_ROCKETCHAT_SERVER_URL", url);
                 }
             }
+            Some("tuwunel") => {
+                cmd.env("RALPH_MATRIX_ACCESS_TOKEN", token);
+                if let Some(url) = service_url {
+                    cmd.env("RALPH_MATRIX_HOMESERVER_URL", url);
+                }
+            }
             _ => {
                 cmd.env("RALPH_TELEGRAM_BOT_TOKEN", token);
             }

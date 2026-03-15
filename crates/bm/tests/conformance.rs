@@ -435,3 +435,178 @@ fn telegram_bridge_has_required_files() {
         );
     }
 }
+
+// ── Tuwunel bridge conformance ──────────────────────────────────────
+
+#[test]
+fn tuwunel_bridge_yml_has_required_fields() {
+    for profile in ["scrum-compact", "scrum"] {
+        let path = profile_bridge_dir(profile, "tuwunel").join("bridge.yml");
+        let val = read_yaml(&path);
+
+        assert_eq!(
+            val["apiVersion"].as_str(),
+            Some("botminter.dev/v1alpha1"),
+            "{}/tuwunel: apiVersion must be 'botminter.dev/v1alpha1'",
+            profile
+        );
+
+        assert_eq!(
+            val["kind"].as_str(),
+            Some("Bridge"),
+            "{}/tuwunel: kind must be 'Bridge'",
+            profile
+        );
+
+        assert_eq!(
+            val["metadata"]["name"].as_str(),
+            Some("tuwunel"),
+            "{}/tuwunel: metadata.name must be 'tuwunel'",
+            profile
+        );
+
+        assert_eq!(
+            val["spec"]["type"].as_str(),
+            Some("local"),
+            "{}/tuwunel: spec.type must be 'local'",
+            profile
+        );
+
+        assert!(
+            val["spec"]["configSchema"].is_string(),
+            "{}/tuwunel: spec.configSchema must be a string",
+            profile
+        );
+
+        assert!(
+            val["spec"]["configDir"].is_string(),
+            "{}/tuwunel: spec.configDir must be a string",
+            profile
+        );
+    }
+}
+
+#[test]
+fn tuwunel_bridge_has_lifecycle_commands() {
+    for profile in ["scrum-compact", "scrum"] {
+        let path = profile_bridge_dir(profile, "tuwunel").join("bridge.yml");
+        let val = read_yaml(&path);
+
+        assert!(
+            val["spec"]["lifecycle"]["start"].is_string(),
+            "{}/tuwunel: lifecycle.start must be a string",
+            profile
+        );
+        assert!(
+            val["spec"]["lifecycle"]["stop"].is_string(),
+            "{}/tuwunel: lifecycle.stop must be a string",
+            profile
+        );
+        assert!(
+            val["spec"]["lifecycle"]["health"].is_string(),
+            "{}/tuwunel: lifecycle.health must be a string",
+            profile
+        );
+    }
+}
+
+#[test]
+fn tuwunel_bridge_has_identity_commands() {
+    for profile in ["scrum-compact", "scrum"] {
+        let path = profile_bridge_dir(profile, "tuwunel").join("bridge.yml");
+        let val = read_yaml(&path);
+
+        assert!(
+            val["spec"]["identity"]["onboard"].is_string(),
+            "{}/tuwunel: identity.onboard must be a string",
+            profile
+        );
+        assert!(
+            val["spec"]["identity"]["rotate-credentials"].is_string(),
+            "{}/tuwunel: identity.rotate-credentials must be a string",
+            profile
+        );
+        assert!(
+            val["spec"]["identity"]["remove"].is_string(),
+            "{}/tuwunel: identity.remove must be a string",
+            profile
+        );
+    }
+}
+
+#[test]
+fn tuwunel_bridge_has_room_commands() {
+    for profile in ["scrum-compact", "scrum"] {
+        let path = profile_bridge_dir(profile, "tuwunel").join("bridge.yml");
+        let val = read_yaml(&path);
+
+        assert!(
+            val["spec"]["room"]["create"].is_string(),
+            "{}/tuwunel: room.create must be a string",
+            profile
+        );
+        assert!(
+            val["spec"]["room"]["list"].is_string(),
+            "{}/tuwunel: room.list must be a string",
+            profile
+        );
+    }
+}
+
+#[test]
+fn tuwunel_schema_json_has_host() {
+    for profile in ["scrum-compact", "scrum"] {
+        let path = profile_bridge_dir(profile, "tuwunel").join("schema.json");
+        let contents = std::fs::read_to_string(&path)
+            .unwrap_or_else(|_| panic!("Could not read {}", path.display()));
+        let val: serde_json::Value = serde_json::from_str(&contents)
+            .unwrap_or_else(|_| panic!("Invalid JSON in {}", path.display()));
+
+        assert!(
+            val["$schema"].is_string(),
+            "{}/tuwunel: schema.json must have $schema",
+            profile
+        );
+        assert_eq!(
+            val["type"].as_str(),
+            Some("object"),
+            "{}/tuwunel: schema.json type must be 'object'",
+            profile
+        );
+        assert!(
+            val["properties"]["host"].is_object(),
+            "{}/tuwunel: schema.json must have properties.host",
+            profile
+        );
+        let required = val["required"].as_array()
+            .expect(&format!("{}/tuwunel: schema.json must have required array", profile));
+        assert!(
+            required.iter().any(|v| v.as_str() == Some("host")),
+            "{}/tuwunel: schema.json required must include 'host'",
+            profile
+        );
+    }
+}
+
+#[test]
+fn tuwunel_bridge_has_required_files() {
+    for profile in ["scrum-compact", "scrum"] {
+        let dir = profile_bridge_dir(profile, "tuwunel");
+
+        assert!(
+            dir.join("bridge.yml").exists(),
+            "{}/tuwunel/bridge.yml must exist",
+            profile
+        );
+        assert!(
+            dir.join("schema.json").exists(),
+            "{}/tuwunel/schema.json must exist",
+            profile
+        );
+        assert!(
+            dir.join("Justfile").exists(),
+            "{}/tuwunel/Justfile must exist",
+            profile
+        );
+    }
+}

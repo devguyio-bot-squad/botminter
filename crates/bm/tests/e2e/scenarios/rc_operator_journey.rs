@@ -6,17 +6,16 @@
 //! Requires Podman to be available. The suite is skipped if Podman is not installed.
 
 use std::fs;
-use std::process::Command;
 
 use libtest_mimic::Trial;
 
 use super::super::helpers::{
-    assert_cmd_success, bm_cmd, bootstrap_profiles_to_tmp,
-    install_stub_ralph, path_with_stub, setup_git_auth,
-    E2eConfig, GithubSuite, SuiteCtx,
+    cleanup_project_boards, find_free_port,
+    E2eConfig, GithubSuite,
 };
 use super::super::rocketchat::RcPodGuard;
 use super::super::telegram;
+use super::super::test_env::TestEnv;
 
 // ── Constants ─────────────────────────────────────────────────────────
 
@@ -26,54 +25,34 @@ const ROLE: &str = "superman";
 const MEMBER_NAME: &str = "bot-alice";
 const MEMBER_DIR: &str = "superman-bot-alice";
 
-// ── Helpers ──────────────────────────────────────────────────────────
-
-/// Apply the real (pre-keyring-isolation) D-Bus and XDG_RUNTIME_DIR env vars
-/// to a command so podman can talk to systemd for cgroup management.
-fn apply_real_dbus_env(cmd: &mut Command, home: &std::path::Path) {
-    if let Ok(addr) = fs::read_to_string(home.join(".rc-real-dbus-addr")) {
-        cmd.env("DBUS_SESSION_BUS_ADDRESS", addr.trim());
-    }
-    if let Ok(xdg) = fs::read_to_string(home.join(".rc-real-xdg-runtime")) {
-        cmd.env("XDG_RUNTIME_DIR", xdg.trim());
-    }
-}
-
 // ── Reusable case functions ───────────────────────────────────────────
 
 fn init_with_rc_bridge_fn(
     gh_org: String,
-    gh_token: String,
-) -> impl Fn(&SuiteCtx) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
-    move |ctx| {
-        let workzone = ctx.home.join("workspaces");
-        let repo_name = ctx.repo_full_name.split('/').next_back().unwrap();
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let workzone = env.home.join("workspaces");
+        let repo_name = env.repo_full_name.split('/').next_back().unwrap();
 
-        let mut cmd = bm_cmd();
-        cmd.args([
-            "init",
-            "--non-interactive",
-            "--profile",
-            PROFILE,
-            "--team-name",
-            TEAM_NAME,
-            "--org",
-            &gh_org,
-            "--repo",
-            repo_name,
-            "--bridge",
-            "rocketchat",
-            "--workzone",
-            &workzone.to_string_lossy(),
-        ])
-        .env("HOME", &ctx.home)
-        .env("GH_TOKEN", &gh_token)
-        .env("GIT_AUTHOR_NAME", "BM E2E")
-        .env("GIT_AUTHOR_EMAIL", "e2e@botminter.test")
-        .env("GIT_COMMITTER_NAME", "BM E2E")
-        .env("GIT_COMMITTER_EMAIL", "e2e@botminter.test");
-        let stdout = assert_cmd_success(&mut cmd);
-        eprintln!("init: {}", stdout.trim());
+        env.command("bm")
+            .args([
+                "init",
+                "--non-interactive",
+                "--profile",
+                PROFILE,
+                "--team-name",
+                TEAM_NAME,
+                "--org",
+                &gh_org,
+                "--repo",
+                repo_name,
+                "--bridge",
+                "rocketchat",
+                "--workzone",
+                &workzone.to_string_lossy(),
+            ])
+            .run();
 
         let team_repo = workzone.join(TEAM_NAME).join("team");
         assert!(
@@ -101,24 +80,16 @@ fn init_with_rc_bridge_fn(
             manifest.contains("bridge: rocketchat"),
             "botminter.yml should declare rocketchat bridge"
         );
-
-        setup_git_auth(&ctx.home);
     }
 }
 
 fn hire_member_fn(
-    gh_token: String,
-) -> impl Fn(&SuiteCtx) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
-    move |ctx| {
-        let mut cmd = bm_cmd();
-        cmd.args(["hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME])
-            .env("HOME", &ctx.home)
-            .env("GH_TOKEN", &gh_token)
-            .env("GIT_AUTHOR_NAME", "BM E2E")
-            .env("GIT_AUTHOR_EMAIL", "e2e@botminter.test")
-            .env("GIT_COMMITTER_NAME", "BM E2E")
-            .env("GIT_COMMITTER_EMAIL", "e2e@botminter.test");
-        let stdout = assert_cmd_success(&mut cmd);
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let stdout = env.command("bm")
+            .args(["hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME])
+            .run();
         assert!(
             stdout.contains(MEMBER_DIR) || stdout.contains(MEMBER_NAME),
             "hire output should mention member"
@@ -127,27 +98,23 @@ fn hire_member_fn(
 }
 
 fn bridge_start_fn(
-    gh_token: String,
-) -> impl Fn(&SuiteCtx) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
-    move |ctx| {
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
         // Find a free port for RC
-        let port = super::super::helpers::find_free_port();
+        let port = find_free_port();
         eprintln!("RC bridge will use port {}", port);
 
         // Save port for subsequent cases
-        fs::write(ctx.home.join(".rc-port"), port.to_string()).unwrap();
+        env.export("rc_port", &port.to_string());
 
-        let mut cmd = bm_cmd();
-        cmd.args(["bridge", "start", "-t", TEAM_NAME])
-            .env("HOME", &ctx.home)
-            .env("GH_TOKEN", &gh_token)
-            .env("RC_PORT", port.to_string());
-        apply_real_dbus_env(&mut cmd, &ctx.home);
-        let stdout = assert_cmd_success(&mut cmd);
-        eprintln!("bridge start: {}", stdout.trim());
+        env.command("bm")
+            .args(["bridge", "start", "-t", TEAM_NAME])
+            .env("RC_PORT", &port.to_string())
+            .run();
 
         // Verify bridge-state.json
-        let bstate_path = ctx
+        let bstate_path = env
             .home
             .join("workspaces")
             .join(TEAM_NAME)
@@ -168,41 +135,52 @@ fn bridge_start_fn(
         let pod_name = format!("bm-rc-{}", TEAM_NAME);
         let guard = RcPodGuard::new(pod_name.clone(), port);
 
-        // Save guard info to files for progressive mode and subsequent cases
-        fs::write(ctx.home.join(".rc-pod-name"), &pod_name).unwrap();
+        // Save guard info for progressive mode and subsequent cases
+        env.export("rc_pod_name", &pod_name);
 
         // Forget guard -- it will be consumed in the stop case
-        // For now, save parts so we can recreate on resume
         let (name, p) = guard.into_parts();
-        fs::write(ctx.home.join(".rc-guard-name"), &name).unwrap();
-        fs::write(ctx.home.join(".rc-guard-port"), p.to_string()).unwrap();
+        env.export("rc_guard_name", &name);
+        env.export("rc_guard_port", &p.to_string());
+    }
+}
+
+fn bridge_start_idempotent_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let port = env.get_export("rc_port").expect("rc_port not set").to_string();
+
+        // Bridge is already running from the previous step. Starting again should skip.
+        let stdout = env.command("bm")
+            .args(["bridge", "start", "-t", TEAM_NAME])
+            .env("RC_PORT", &port)
+            .run();
+        assert!(
+            stdout.contains("already running"),
+            "re-starting a running bridge should say 'already running', got: {}",
+            stdout
+        );
     }
 }
 
 fn identity_add_fn(
-    gh_token: String,
-) -> impl Fn(&SuiteCtx) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
-    move |ctx| {
-        let port = fs::read_to_string(ctx.home.join(".rc-port"))
-            .unwrap()
-            .trim()
-            .to_string();
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let port = env.get_export("rc_port").expect("rc_port not set").to_string();
 
-        let mut cmd = bm_cmd();
-        cmd.args(["bridge", "identity", "add", MEMBER_DIR, "-t", TEAM_NAME])
-            .env("HOME", &ctx.home)
-            .env("GH_TOKEN", &gh_token)
-            .env("RC_PORT", &port);
-        apply_real_dbus_env(&mut cmd, &ctx.home);
-        let stdout = assert_cmd_success(&mut cmd);
-        eprintln!("identity add: {}", stdout.trim());
+        let stdout = env.command("bm")
+            .args(["bridge", "identity", "add", MEMBER_DIR, "-t", TEAM_NAME])
+            .env("RC_PORT", &port)
+            .run();
         assert!(
             stdout.contains(MEMBER_DIR),
             "identity add output should mention member"
         );
 
         // Verify bridge-state.json has identity
-        let bstate_path = ctx
+        let bstate_path = env
             .home
             .join("workspaces")
             .join(TEAM_NAME)
@@ -218,32 +196,25 @@ fn identity_add_fn(
 }
 
 fn room_create_fn(
-    gh_token: String,
-) -> impl Fn(&SuiteCtx) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
-    move |ctx| {
-        let port = fs::read_to_string(ctx.home.join(".rc-port"))
-            .unwrap()
-            .trim()
-            .to_string();
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let port = env.get_export("rc_port").expect("rc_port not set").to_string();
 
-        let mut cmd = bm_cmd();
-        cmd.args([
-            "bridge",
-            "room",
-            "create",
-            "e2e-team",
-            "-t",
-            TEAM_NAME,
-        ])
-        .env("HOME", &ctx.home)
-        .env("GH_TOKEN", &gh_token)
-        .env("RC_PORT", &port);
-        apply_real_dbus_env(&mut cmd, &ctx.home);
-        let stdout = assert_cmd_success(&mut cmd);
-        eprintln!("room create: {}", stdout.trim());
+        env.command("bm")
+            .args([
+                "bridge",
+                "room",
+                "create",
+                "e2e-team",
+                "-t",
+                TEAM_NAME,
+            ])
+            .env("RC_PORT", &port)
+            .run();
 
         // Verify bridge-state.json has room
-        let bstate_path = ctx
+        let bstate_path = env
             .home
             .join("workspaces")
             .join(TEAM_NAME)
@@ -259,29 +230,22 @@ fn room_create_fn(
 }
 
 fn sync_bridge_fn(
-    gh_token: String,
-) -> impl Fn(&SuiteCtx) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
-    move |ctx| {
-        let port = fs::read_to_string(ctx.home.join(".rc-port"))
-            .unwrap()
-            .trim()
-            .to_string();
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let port = env.get_export("rc_port").expect("rc_port not set").to_string();
 
-        let mut cmd = bm_cmd();
-        cmd.args(["teams", "sync", "--bridge", "-t", TEAM_NAME])
-            .env("HOME", &ctx.home)
-            .env("GH_TOKEN", &gh_token)
+        env.command("bm")
+            .args(["teams", "sync", "--bridge", "-t", TEAM_NAME])
             .env("RC_PORT", &port)
             // Ensure credential is resolved via env var rather than keyring.
             // The keyring may not be accessible when using the real D-Bus
             // (needed for podman) instead of the isolated test D-Bus.
-            .env("BM_BRIDGE_TOKEN_SUPERMAN_BOT_ALICE", "rc-e2e-token");
-        apply_real_dbus_env(&mut cmd, &ctx.home);
-        let stdout = assert_cmd_success(&mut cmd);
-        eprintln!("sync bridge: {}", stdout.trim());
+            .env("BM_BRIDGE_TOKEN_SUPERMAN_BOT_ALICE", "rc-e2e-token")
+            .run();
 
         // Verify workspace was created and ralph.yml has RObot.rocketchat config
-        let ws = ctx
+        let ws = env
             .home
             .join("workspaces")
             .join(TEAM_NAME)
@@ -331,16 +295,12 @@ fn sync_bridge_fn(
 }
 
 fn bridge_health_fn(
-    gh_token: String,
-) -> impl Fn(&SuiteCtx) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
-    move |ctx| {
-        let mut cmd = bm_cmd();
-        cmd.args(["bridge", "status", "-t", TEAM_NAME])
-            .env("HOME", &ctx.home)
-            .env("GH_TOKEN", &gh_token);
-        apply_real_dbus_env(&mut cmd, &ctx.home);
-        let stdout = assert_cmd_success(&mut cmd);
-        eprintln!("bridge status: {}", stdout.trim());
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let stdout = env.command("bm")
+            .args(["bridge", "status", "-t", TEAM_NAME])
+            .run();
         assert!(
             stdout.contains("running") || stdout.contains("healthy"),
             "bridge status should show running or healthy"
@@ -349,31 +309,19 @@ fn bridge_health_fn(
 }
 
 fn bridge_stop_fn(
-    gh_token: String,
-) -> impl Fn(&SuiteCtx) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
-    move |ctx| {
-        let port = fs::read_to_string(ctx.home.join(".rc-port"))
-            .unwrap()
-            .trim()
-            .to_string();
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let port = env.get_export("rc_port").expect("rc_port not set").to_string();
 
-        let mut cmd = bm_cmd();
-        cmd.args(["bridge", "stop", "-t", TEAM_NAME])
-            .env("HOME", &ctx.home)
-            .env("GH_TOKEN", &gh_token)
-            .env("RC_PORT", &port);
-        apply_real_dbus_env(&mut cmd, &ctx.home);
-        let stdout = assert_cmd_success(&mut cmd);
-        eprintln!("bridge stop: {}", stdout.trim());
+        env.command("bm")
+            .args(["bridge", "stop", "-t", TEAM_NAME])
+            .env("RC_PORT", &port)
+            .run();
 
         // Recreate guard from saved state, then consume it to prevent Drop cleanup
-        let guard_name = fs::read_to_string(ctx.home.join(".rc-guard-name"))
-            .unwrap()
-            .trim()
-            .to_string();
-        let guard_port: u16 = fs::read_to_string(ctx.home.join(".rc-guard-port"))
-            .unwrap()
-            .trim()
+        let guard_name = env.get_export("rc_guard_name").expect("rc_guard_name not set").to_string();
+        let guard_port: u16 = env.get_export("rc_guard_port").expect("rc_guard_port not set")
             .parse()
             .unwrap();
         let guard = RcPodGuard::from_existing(guard_name, guard_port);
@@ -381,7 +329,7 @@ fn bridge_stop_fn(
         let _ = guard.into_parts();
 
         // Verify bridge-state.json shows stopped
-        let bstate_path = ctx
+        let bstate_path = env
             .home
             .join("workspaces")
             .join(TEAM_NAME)
@@ -407,32 +355,10 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
 
     GithubSuite::new_self_managed("scenario_rc_operator_journey", &repo_full_name)
         .setup({
-            move |ctx| {
-                install_stub_ralph(&ctx.home);
-                bootstrap_profiles_to_tmp(&ctx.home);
-                setup_git_auth(&ctx.home);
-
+            move |_env: &mut TestEnv| {
                 // Verify podman is available
                 if !telegram::podman_available() {
                     panic!("SKIP: podman not available -- RC bridge requires Podman");
-                }
-
-                // Save real D-Bus/XDG env vars BEFORE keyring isolation replaces them.
-                // Podman needs the real systemd D-Bus to manage cgroups.
-                if let Ok(addr) = std::env::var("DBUS_SESSION_BUS_ADDRESS") {
-                    fs::write(ctx.home.join(".rc-real-dbus-addr"), &addr).unwrap();
-                } else {
-                    // Compute from XDG_RUNTIME_DIR or /run/user/{uid}
-                    let uid = unsafe { libc::getuid() };
-                    let addr = format!("unix:path=/run/user/{}/bus", uid);
-                    fs::write(ctx.home.join(".rc-real-dbus-addr"), &addr).unwrap();
-                }
-                if let Ok(xdg) = std::env::var("XDG_RUNTIME_DIR") {
-                    fs::write(ctx.home.join(".rc-real-xdg-runtime"), &xdg).unwrap();
-                } else {
-                    let uid = unsafe { libc::getuid() };
-                    let xdg = format!("/run/user/{}", uid);
-                    fs::write(ctx.home.join(".rc-real-xdg-runtime"), &xdg).unwrap();
                 }
             }
         })
@@ -442,6 +368,7 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         )
         .case("02_hire_member", hire_member_fn(gh_token.clone()))
         .case("03_bridge_start", bridge_start_fn(gh_token.clone()))
+        .case("03b_bridge_start_idempotent", bridge_start_idempotent_fn(gh_token.clone()))
         .case("04_identity_add", identity_add_fn(gh_token.clone()))
         .case("05_room_create", room_create_fn(gh_token.clone()))
         .case("06_sync_bridge", sync_bridge_fn(gh_token.clone()))
@@ -451,30 +378,28 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         .case("cleanup", {
             let gh_org_c = gh_org.clone();
             let gh_token_c = gh_token.clone();
-            move |ctx| {
+            move |env: &mut TestEnv| {
                 eprintln!("RC journey cleanup...");
 
                 // Force-remove RC pod if it's still around
                 let pod_name = format!("bm-rc-{}", TEAM_NAME);
-                let _ = Command::new("podman")
+                let _ = env.command("podman")
                     .args(["pod", "rm", "-f", &pod_name])
                     .output();
 
                 // Delete team repo
-                let _ = Command::new("gh")
-                    .args(["repo", "delete", &ctx.repo_full_name, "--yes"])
-                    .env("GH_TOKEN", &gh_token_c)
+                let _ = env.command("gh")
+                    .args(["repo", "delete", &env.repo_full_name, "--yes"])
                     .output();
 
                 // Delete workspace repo
                 let ws_repo = format!("{}/{}-{}", gh_org_c, TEAM_NAME, MEMBER_DIR);
-                let _ = Command::new("gh")
+                let _ = env.command("gh")
                     .args(["repo", "delete", &ws_repo, "--yes"])
-                    .env("GH_TOKEN", &gh_token_c)
                     .output();
 
                 // Clean up project boards
-                super::super::helpers::cleanup_project_boards(
+                cleanup_project_boards(
                     &gh_org_c,
                     &gh_token_c,
                     TEAM_NAME,

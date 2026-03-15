@@ -1,97 +1,65 @@
-# Shell Script Bridge with YAML Manifest
-
 ---
 status: accepted
 date: 2026-03-08
 decision-makers: [BotMinter maintainers]
 ---
 
-## Context and Problem Statement
+# Shell Script Bridge with YAML Manifest
 
-BotMinter needs pluggable communication bridges so operators can connect their agentic teams to different chat platforms (Telegram, Rocket.Chat, future services). The bridge mechanism must support both self-hosted ("local") services and external SaaS platforms, without requiring recompilation of the `bm` binary for each new bridge.
+## Problem
 
-How should BotMinter define the bridge plugin contract?
+BotMinter needs pluggable communication bridges so operators can connect agentic teams to different chat platforms (Telegram, Rocket.Chat, Matrix). The mechanism must support both self-hosted ("local") services and external SaaS platforms, without recompiling the `bm` binary for each new bridge.
 
-## Decision Drivers
+## Constraints
 
-* Operators self-host their infrastructure -- bridges must work in diverse environments
-* No vendor lock-in -- adding a new bridge should not require changes to BotMinter core
-* Existing Justfile recipe pattern is already established in BotMinter profiles
-* Bridge authors need a clear, self-contained contract they can implement independently
-* Must support two bridge categories: local (full lifecycle management) and external (identity-only)
+* No vendor lock-in — adding a new bridge must not require changes to BotMinter core
+* Must work in diverse self-hosted environments (operators own their infrastructure)
+* Must support two categories: local bridges (full lifecycle) and external bridges (identity-only)
+* Bridge authors must be able to implement the contract without knowing Rust or BotMinter internals
+* Credential exchange must not corrupt stdout (diagnostic output, shell init scripts)
 
-## Considered Options
+## Decision
 
-* Shell script bridge with YAML manifest (`bridge.yml` + `schema.json` + Justfile recipes)
-* Rust trait plugin system (compiled bridge plugins)
-* gRPC bridge protocol (network-based bridge communication)
-* REST API bridge protocol (HTTP-based bridge communication)
+Bridges are directories containing three files: `bridge.yml` (YAML manifest declaring capabilities), `schema.json` (config schema), and a `Justfile` (recipe implementations). BotMinter invokes Justfile recipes by name, exchanges data via `$BRIDGE_CONFIG_DIR/config.json` (file-based, never stdout), and stores credentials through the active formation's credential backend.
 
-## Decision Outcome
+Key design points:
+- **Bridge types:** `local` bridges manage full lifecycle (start, stop, health) and identity. `external` bridges manage identity only.
+- **Provisioning model:** Local bridges auto-provision identities (create bot users + tokens). External bridges accept operator-supplied tokens via `BM_BRIDGE_TOKEN_{USERNAME}` env vars.
+- **Per-member identity:** Each hired team member gets their own bot user/token for per-agent traceability.
+- **File-based config exchange:** Bridge commands write output to `$BRIDGE_CONFIG_DIR/config.json`, not stdout.
+- **Formation-aware credential storage:** BotMinter stores credentials through the formation's backend (keyring for local, K8s Secrets for Kubernetes). Credentials are injected as env vars at `bm start` time, never written to `ralph.yml`.
+- **API versioning:** `apiVersion: botminter.dev/v1alpha1` follows Kubernetes convention.
 
-Chosen option: "Shell script bridge with YAML manifest", because it requires no recompilation, leverages the existing Justfile recipe pattern, and provides a clear file-based contract that bridge authors can implement without knowing Rust or BotMinter internals.
-
-### Consequences
-
-* Good, because no recompilation needed when adding new bridges
-* Good, because leverages the existing Justfile recipe pattern from BotMinter profiles
-* Good, because bridge authors only need to know shell scripting and the YAML contract
-* Good, because file-based config exchange (`$BRIDGE_CONFIG_DIR/config.json`) avoids stdout corruption issues
-* Neutral, because less type safety than a Rust trait system (mitigated by `schema.json` validation and conformance tests)
-* Bad, because shell scripts are harder to unit test than Rust code (mitigated by conformance tests validating contract structure)
-
-### Confirmation
-
-The bridge spec document (`.planning/specs/bridge/`) and conformance tests validate the contract. A stub/no-op bridge implementation serves as the reference fixture.
-
-## Pros and Cons of the Options
-
-### Shell script bridge with YAML manifest
-
-* Good, because zero compilation -- bridges are directories with YAML, JSON, and a Justfile
-* Good, because Justfile recipes are already used in BotMinter profiles (`formations/`)
-* Good, because bridge authors do not need Rust knowledge
-* Good, because `bridge.yml` is declarative and inspectable
-* Neutral, because `schema.json` provides config validation but not runtime type checking
-* Bad, because shell scripts can have platform-specific behavior
+## Rejected Alternatives
 
 ### Rust trait plugin system
 
-* Good, because full type safety at compile time
-* Good, because IDE support for implementing the trait
-* Bad, because requires recompilation for every new bridge
-* Bad, because bridge authors must know Rust
-* Bad, because dynamic loading (dylib) adds significant complexity
+Rejected because: requires recompilation for every new bridge and forces bridge authors to know Rust.
+
+* Full type safety is nice but the cost (compile-time coupling, Rust knowledge requirement) outweighs the benefit for a plugin system
+* Dynamic loading (dylib) would avoid recompilation but adds significant complexity
 
 ### gRPC bridge protocol
 
-* Good, because language-agnostic bridge implementations
-* Good, because strong typing via protobuf
-* Bad, because requires running a gRPC server for each bridge -- heavy for simple integrations
-* Bad, because adds protobuf/gRPC dependency to BotMinter
+Rejected because: running a gRPC server per bridge is too heavy for simple integrations.
+
+* Adds protobuf/gRPC dependency to BotMinter
+* Good for language-agnostic bridges but overkill when shell scripts suffice
 
 ### REST API bridge protocol
 
-* Good, because widely understood protocol
-* Good, because language-agnostic
-* Bad, because requires running an HTTP server for each bridge
-* Bad, because loose typing without additional schema enforcement
+Rejected because: running an HTTP server per bridge has the same overhead problem as gRPC with weaker typing.
 
-## More Information
+## Consequences
 
-### Key Design Decisions
+* Bridge authors only need shell scripting knowledge and the YAML contract
+* Less type safety than Rust traits, mitigated by `schema.json` validation and conformance tests
+* Shell scripts can have platform-specific behavior — mitigated by testing on Linux (the target platform)
+* The bridge spec (`.planning/specs/bridge/`) is the canonical contract reference
 
-- **Bridge types:** `local` bridges manage full lifecycle (start, stop, health) and identity. `external` bridges manage identity only (the service runs elsewhere).
-- **Provisioning model per type:** The bridge type determines who creates credentials. Local (managed) bridges auto-provision identities — the bridge creates bot users and generates tokens without operator input. External bridges accept pre-existing operator-supplied tokens — the bridge validates and registers them but does not create accounts on the external platform. This distinction is reflected in the `onboard` recipe semantics: local bridges create users, external bridges accept tokens via `BM_BRIDGE_TOKEN_{USERNAME}` env vars.
-- **Per-member identity:** Each hired team member gets their own bot user/token on the bridge, regardless of bridge type. This enables per-agent traceability in chat channels.
-- **File-based config exchange:** Bridge commands write output to `$BRIDGE_CONFIG_DIR/config.json`, not stdout. This avoids stdout corruption from diagnostic output, logging, or shell initialization scripts.
-- **Identity commands:** `onboard` (create or register bot user), `rotate-credentials` (refresh tokens), `remove` (delete bot user). These are per-agent operations.
-- **Lifecycle commands:** `start`, `stop`, `health` (local bridges only). These manage the chat service instance.
-- **Formation-aware credential storage:** After BotMinter receives credentials from config exchange, it stores them through the active formation's credential backend (system keyring for local, K8s Secrets for Kubernetes). Credentials are NOT written to ralph.yml — they are injected as environment variables at `bm start` time. This keeps secrets out of committed files.
-- **API versioning:** `apiVersion: botminter.dev/v1alpha1` follows Kubernetes/Knative convention for future evolution.
-- **Commands are Justfile recipe names:** The contract specifies recipe names, not hardcoded shell commands. This decouples the contract from implementation details.
+## Anti-patterns
 
-### Related
-
-- ADR-0003: Ralph robot backend decisions (how bridge credentials map to Ralph's robot abstraction)
-- Bridge spec: `.planning/specs/bridge/` (the full contract specification)
+* **Do NOT** write bridge output to stdout — use `$BRIDGE_CONFIG_DIR/config.json`. Stdout gets corrupted by shell init scripts, diagnostic output, and `set -x` debugging.
+* **Do NOT** store credentials in `ralph.yml` — they must go through the formation's credential backend and be injected as env vars at launch time.
+* **Do NOT** hardcode recipe commands in BotMinter — the contract specifies recipe names from `bridge.yml`, not shell commands. Bridge authors choose their implementation.
+* **Do NOT** make bridges Ralph-aware — bridges output generic credentials (JSON), BotMinter translates to Ralph config. See ADR-0003.

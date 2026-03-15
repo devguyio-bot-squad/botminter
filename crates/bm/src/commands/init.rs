@@ -15,16 +15,22 @@ enum ProjectChoice {
 }
 
 /// Formats the "next steps" message shown after `bm init` completes.
-fn next_steps_message(team_name: &str, team_dir: &Path, team_repo: &Path) -> String {
+fn next_steps_message(team_name: &str, team_dir: &Path, team_repo: &Path, bridge_selected: bool) -> String {
+    let sync_cmd = if bridge_selected {
+        "bm teams sync --all     Push team repo, provision workspaces and bridge"
+    } else {
+        "bm teams sync --repos   Push team repo and provision workspaces"
+    };
     format!(
         "Team '{}' created at {}\n\
          {}\n\
          Next steps:\n  \
-         1. bm teams sync --repos  Push team repo and provision workspaces\n  \
+         1. {}\n  \
          2. bm projects sync       Sync project repos into workspaces",
         team_name,
         team_dir.display(),
         teams::format_team_summary(team_repo),
+        sync_cmd,
     )
 }
 
@@ -171,7 +177,7 @@ pub fn run_non_interactive(
 
         // Record bridge selection in team botminter.yml
         if let Some(ref bridge_name) = selected_bridge {
-            record_bridge_in_manifest(&team_repo, bridge_name)?;
+            record_bridge_in_manifest(&team_repo, bridge_name, &manifest.bridges)?;
         }
 
         fs::create_dir_all(team_repo.join("members")).context("Failed to create members/ dir")?;
@@ -218,6 +224,7 @@ pub fn run_non_interactive(
         },
         coding_agent: None,
         project_number: None,
+        bridge_lifecycle: Default::default(),
     };
     cfg.teams.push(team_entry);
 
@@ -256,7 +263,7 @@ pub fn run_non_interactive(
         }
     }
 
-    eprintln!("{}", next_steps_message(&team_name, &team_dir, &team_repo));
+    eprintln!("{}", next_steps_message(&team_name, &team_dir, &team_repo, selected_bridge.is_some()));
 
     Ok(())
 }
@@ -487,7 +494,7 @@ pub fn run() -> Result<()> {
 
         // Record bridge selection in team botminter.yml
         if let Some(ref bridge_name) = selected_bridge {
-            record_bridge_in_manifest(&team_repo, bridge_name)?;
+            record_bridge_in_manifest(&team_repo, bridge_name, &manifest.bridges)?;
         }
 
         fs::create_dir_all(team_repo.join("members")).context("Failed to create members/ dir")?;
@@ -543,6 +550,7 @@ pub fn run() -> Result<()> {
         },
         coding_agent: None,
         project_number: None,
+        bridge_lifecycle: Default::default(),
     };
     cfg.teams.push(team_entry);
 
@@ -628,7 +636,7 @@ pub fn run() -> Result<()> {
     }
 
     spinner.stop("Done!");
-    cliclack::log::info(next_steps_message(&team_name, &team_dir, &team_repo))?;
+    cliclack::log::info(next_steps_message(&team_name, &team_dir, &team_repo, selected_bridge.is_some()))?;
     cliclack::outro("Ready to go!")?;
 
     Ok(())
@@ -1578,7 +1586,15 @@ fn validate_bridge_selection(bridge_name: &str, bridges: &[profile::BridgeDef]) 
 }
 
 /// Records the selected bridge in the team's botminter.yml.
-fn record_bridge_in_manifest(team_repo: &Path, bridge_name: &str) -> Result<()> {
+///
+/// For local bridges, also records the operator identity with the default
+/// admin username (`bmadmin`). External bridges don't have managed admin
+/// accounts, so the operator section is skipped.
+fn record_bridge_in_manifest(
+    team_repo: &Path,
+    bridge_name: &str,
+    bridges: &[profile::BridgeDef],
+) -> Result<()> {
     let manifest_path = team_repo.join("botminter.yml");
     let contents = fs::read_to_string(&manifest_path)
         .context("Failed to read team botminter.yml for bridge recording")?;
@@ -1590,6 +1606,22 @@ fn record_bridge_in_manifest(team_repo: &Path, bridge_name: &str) -> Result<()> 
             serde_yml::Value::String("bridge".to_string()),
             serde_yml::Value::String(bridge_name.to_string()),
         );
+
+        // For local bridges, set operator identity with default admin username
+        let is_local = bridges
+            .iter()
+            .any(|b| b.name == bridge_name && b.bridge_type == "local");
+        if is_local {
+            let mut op_map = serde_yml::Mapping::new();
+            op_map.insert(
+                serde_yml::Value::String("bridge_username".to_string()),
+                serde_yml::Value::String("bmadmin".to_string()),
+            );
+            map.insert(
+                serde_yml::Value::String("operator".to_string()),
+                serde_yml::Value::Mapping(op_map),
+            );
+        }
     }
 
     let updated = serde_yml::to_string(&doc)

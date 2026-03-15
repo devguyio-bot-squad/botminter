@@ -97,6 +97,7 @@ fn setup_team(tmp: &Path, team_name: &str, profile_name: &str) -> PathBuf {
             credentials: Credentials::default(),
             coding_agent: None,
             project_number: None,
+            bridge_lifecycle: Default::default(),
         }],
         keyring_collection: None,
     };
@@ -142,6 +143,7 @@ fn add_team_to_config(
         credentials: Credentials::default(),
         coding_agent: None,
         project_number: None,
+        bridge_lifecycle: Default::default(),
     });
 
     if make_default {
@@ -2789,6 +2791,7 @@ fn setup_bridge_test() -> (tempfile::TempDir, String, PathBuf, PathBuf) {
             credentials: Credentials::default(),
             coding_agent: None,
             project_number: None,
+            bridge_lifecycle: Default::default(),
         }],
         keyring_collection: None,
     };
@@ -2826,6 +2829,7 @@ fn setup_no_bridge_test() -> (tempfile::TempDir, String) {
             credentials: Credentials::default(),
             coding_agent: None,
             project_number: None,
+            bridge_lifecycle: Default::default(),
         }],
         keyring_collection: None,
     };
@@ -2901,6 +2905,7 @@ remove username:
             credentials: Credentials::default(),
             coding_agent: None,
             project_number: None,
+            bridge_lifecycle: Default::default(),
         }],
         keyring_collection: None,
     };
@@ -3186,7 +3191,7 @@ fn start_no_bridge_flag() {
 }
 
 #[test]
-fn stop_stops_bridge() {
+fn stop_leaves_bridge_running_by_default() {
     let (tmp, _team_name, _workzone, team_dir) = setup_bridge_test();
     let home = tmp.path();
 
@@ -3198,8 +3203,34 @@ fn stop_stops_bridge() {
     let state = read_bridge_state(&team_dir);
     assert_eq!(state.status, "running");
 
-    // Stop should stop bridge (no members running, so member stop is a no-op)
+    // Stop without --bridge should leave bridge running and print hint
     let output = bm_run(home, &["stop"]);
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("left running"),
+        "Should show bridge left-running hint, got: {}",
+        stdout
+    );
+
+    let state = read_bridge_state(&team_dir);
+    assert_eq!(state.status, "running", "Bridge should still be running");
+}
+
+#[test]
+fn stop_bridge_flag_stops_bridge() {
+    let (tmp, _team_name, _workzone, team_dir) = setup_bridge_test();
+    let home = tmp.path();
+
+    // Extract profiles so schema version check passes
+    bm_run(home, &["profiles", "init", "--force"]);
+
+    // Start bridge first
+    bm_run(home, &["start", "--bridge-only"]);
+    let state = read_bridge_state(&team_dir);
+    assert_eq!(state.status, "running");
+
+    // Stop with --bridge should stop bridge
+    let output = bm_run(home, &["stop", "--bridge"]);
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("Bridge 'stub' stopped"),

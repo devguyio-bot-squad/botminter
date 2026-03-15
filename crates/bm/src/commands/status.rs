@@ -166,37 +166,37 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
     }
 
     // Bridge status section
-    let bridge_state_path = bridge::state_path(&cfg.workzone, team_name);
-    let bridge_state = bridge::load_state(&bridge_state_path)?;
+    if let Ok(Some(bridge_dir)) = bridge::discover(&team_repo, team_name) {
+        let state_path = bridge::state_path(&cfg.workzone, team_name);
+        if let Ok(b) = bridge::Bridge::new(bridge_dir, state_path, team_name.to_string()) {
+            if b.is_active() {
+                println!();
+                println!("Bridge: {} ({})", b.bridge_name(), b.bridge_type());
+                println!("Status: {}", b.status());
+                if let Some(url) = b.service_url() {
+                    println!("URL: {}", url);
+                }
 
-    if let Some(bridge_name) = &bridge_state.bridge_name {
-        println!();
-        println!(
-            "Bridge: {} ({})",
-            bridge_name,
-            bridge_state.bridge_type.as_deref().unwrap_or("unknown")
-        );
-        println!("Status: {}", bridge_state.status);
-        if let Some(url) = &bridge_state.service_url {
-            println!("URL: {}", url);
-        }
-
-        if !bridge_state.identities.is_empty() {
-            println!();
-            let mut bridge_table = Table::new();
-            bridge_table
-                .load_preset(UTF8_FULL_CONDENSED)
-                .apply_modifier(UTF8_ROUND_CORNERS)
-                .set_content_arrangement(ContentArrangement::DynamicFullWidth)
-                .set_header(vec!["Member", "Bridge User", "User ID"]);
-            for (username, identity) in &bridge_state.identities {
-                bridge_table.add_row(vec![
-                    username,
-                    &identity.username,
-                    &identity.user_id,
-                ]);
+                if !b.identities().is_empty() {
+                    println!();
+                    let mut bridge_table = Table::new();
+                    bridge_table
+                        .load_preset(UTF8_FULL_CONDENSED)
+                        .apply_modifier(UTF8_ROUND_CORNERS)
+                        .set_content_arrangement(ContentArrangement::DynamicFullWidth)
+                        .set_header(vec!["Member", "Bridge User", "User ID"]);
+                    let mut entries: Vec<_> = b.identities().iter().collect();
+                    entries.sort_by_key(|(k, _)| (*k).clone());
+                    for (username, identity) in entries {
+                        bridge_table.add_row(vec![
+                            username,
+                            &identity.username,
+                            &identity.user_id,
+                        ]);
+                    }
+                    println!("{bridge_table}");
+                }
             }
-            println!("{bridge_table}");
         }
     }
 

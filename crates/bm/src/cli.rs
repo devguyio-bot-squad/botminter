@@ -63,9 +63,12 @@ pub enum Command {
         team: Option<String>,
     },
 
-    /// Start all members
+    /// Start members (all, or a specific one)
     #[command(alias = "up")]
     Start {
+        /// Optional member to start (starts all if omitted)
+        member: Option<String>,
+
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,
@@ -83,8 +86,11 @@ pub enum Command {
         bridge_only: bool,
     },
 
-    /// Stop all members
+    /// Stop members (all, or a specific one)
     Stop {
+        /// Optional member to stop (stops all if omitted)
+        member: Option<String>,
+
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,
@@ -92,6 +98,10 @@ pub enum Command {
         /// Force-kill via SIGTERM instead of graceful stop
         #[arg(short, long)]
         force: bool,
+
+        /// Also stop the bridge service
+        #[arg(long)]
+        bridge: bool,
     },
 
     /// Status dashboard
@@ -445,6 +455,10 @@ pub enum BridgeCommand {
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,
+
+        /// Show sensitive information (operator credentials)
+        #[arg(long)]
+        reveal: bool,
     },
 
     /// Bridge identity management
@@ -486,6 +500,20 @@ pub enum BridgeIdentityCommand {
     Remove {
         /// Username to remove
         username: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Show stored credentials for an identity
+    Show {
+        /// Username to show credentials for
+        username: String,
+
+        /// Show full token (default: masked)
+        #[arg(long)]
+        reveal: bool,
 
         /// Team to operate on
         #[arg(short, long)]

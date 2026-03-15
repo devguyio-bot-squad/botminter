@@ -23,6 +23,10 @@ bridges:
     display_name: "Rocket.Chat"
     description: "Rocket.Chat bridge for team communication (local Podman Pod)"
     type: local
+  - name: tuwunel
+    display_name: "Matrix (Tuwunel)"
+    description: "Matrix bridge via Tuwunel homeserver (local Podman container)"
+    type: local
 
 roles:
   - name: architect

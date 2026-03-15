@@ -39,11 +39,13 @@ impl RcPodGuard {
     }
 
     /// Returns the host port the RC pod is mapped to.
+    #[allow(dead_code)]
     pub fn port(&self) -> u16 {
         self.port
     }
 
     /// Returns the pod name.
+    #[allow(dead_code)]
     pub fn pod_name(&self) -> &str {
         &self.pod_name
     }

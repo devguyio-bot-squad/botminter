@@ -571,8 +571,11 @@ pub fn inject_robot_config(
         doc["RObot"] = serde_yml::Value::Mapping(serde_yml::Mapping::new());
     }
 
-    // Set RObot.enabled
+    // Set RObot.enabled and timeout_seconds
     doc["RObot"]["enabled"] = serde_yml::Value::Bool(member_has_credentials);
+    if member_has_credentials && !doc["RObot"].get("timeout_seconds").is_some_and(|v| v.is_number()) {
+        doc["RObot"]["timeout_seconds"] = serde_yml::Value::Number(serde_yml::Number::from(600u64));
+    }
 
     // For rocketchat bridge with credentials, inject bridge-specific config
     if bridge_type == Some("rocketchat") && member_has_credentials {
@@ -587,6 +590,26 @@ pub fn inject_robot_config(
             doc["RObot"]["rocketchat"]["room_id"] =
                 serde_yml::Value::String(config.room_id.clone());
             doc["RObot"]["rocketchat"]["server_url"] =
+                serde_yml::Value::String(config.server_url.clone());
+
+            if let Some(ref op_id) = config.operator_id {
+                doc["RObot"]["operator_id"] = serde_yml::Value::String(op_id.clone());
+            }
+        }
+    }
+
+    // For tuwunel bridge with credentials, inject Matrix-specific config
+    if bridge_type == Some("tuwunel") && member_has_credentials {
+        if let Some(config) = bridge_config {
+            if !doc["RObot"].get("matrix").is_some_and(|v| v.is_mapping()) {
+                doc["RObot"]["matrix"] = serde_yml::Value::Mapping(serde_yml::Mapping::new());
+            }
+
+            doc["RObot"]["matrix"]["bot_user_id"] =
+                serde_yml::Value::String(config.bot_user_id.clone());
+            doc["RObot"]["matrix"]["room_id"] =
+                serde_yml::Value::String(config.room_id.clone());
+            doc["RObot"]["matrix"]["homeserver_url"] =
                 serde_yml::Value::String(config.server_url.clone());
 
             if let Some(ref op_id) = config.operator_id {
@@ -1918,11 +1941,60 @@ mod tests {
             doc["RObot"]["operator_id"].as_str(),
             Some("op789")
         );
+        assert_eq!(
+            doc["RObot"]["timeout_seconds"].as_u64(),
+            Some(600),
+            "timeout_seconds should be set to 600 when enabling RObot"
+        );
 
         // Verify NO auth_token in YAML
         assert!(
             !contents.contains("auth_token"),
             "auth_token must NOT appear in ralph.yml"
+        );
+    }
+
+    #[test]
+    fn inject_robot_config_tuwunel_writes_matrix_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ralph_yml = tmp.path().join("ralph.yml");
+        fs::write(&ralph_yml, "preset: feature-development\n").unwrap();
+
+        let config = RobotBridgeConfig {
+            bot_user_id: "@bot:localhost".to_string(),
+            room_id: "!room123:localhost".to_string(),
+            server_url: "http://127.0.0.1:8008".to_string(),
+            operator_id: None,
+        };
+
+        inject_robot_config(&ralph_yml, true, Some("tuwunel"), Some(&config)).unwrap();
+
+        let contents = fs::read_to_string(&ralph_yml).unwrap();
+        let doc: serde_yml::Value = serde_yml::from_str(&contents).unwrap();
+
+        assert_eq!(doc["RObot"]["enabled"].as_bool(), Some(true));
+        assert_eq!(
+            doc["RObot"]["matrix"]["bot_user_id"].as_str(),
+            Some("@bot:localhost")
+        );
+        assert_eq!(
+            doc["RObot"]["matrix"]["room_id"].as_str(),
+            Some("!room123:localhost")
+        );
+        assert_eq!(
+            doc["RObot"]["matrix"]["homeserver_url"].as_str(),
+            Some("http://127.0.0.1:8008")
+        );
+        assert_eq!(
+            doc["RObot"]["timeout_seconds"].as_u64(),
+            Some(600),
+            "timeout_seconds should be set to 600 when enabling RObot"
+        );
+
+        // Verify NO token in YAML
+        assert!(
+            !contents.contains("access_token"),
+            "access_token must NOT appear in ralph.yml"
         );
     }
 

@@ -28,7 +28,7 @@ start:
 
     # Idempotency: if pod exists and is running, just save state and exit
     if podman pod exists "${POD_NAME}" 2>/dev/null; then
-        POD_STATUS=$(podman pod inspect "${POD_NAME}" --format '{{{{.State}}}}' 2>/dev/null || echo "unknown")
+        POD_STATUS=$(podman pod inspect "${POD_NAME}" --format '{{{{.State}}' 2>/dev/null || echo "unknown")
         if [ "$POD_STATUS" = "Running" ]; then
             echo >&2 "[rc-bridge] Pod ${POD_NAME} already running on port ${RC_PORT}"
             # Re-login to get admin token for state file
@@ -44,9 +44,37 @@ start:
     ENDJSON
             exit 0
         fi
-        # Pod exists but not running -- remove and recreate
-        podman pod stop "${POD_NAME}" 2>/dev/null || true
-        podman pod rm "${POD_NAME}" 2>/dev/null || true
+        # Pod exists but stopped -- restart it to preserve data
+        echo >&2 "[rc-bridge] Pod ${POD_NAME} exists but is ${POD_STATUS}. Restarting..."
+        podman pod start "${POD_NAME}"
+
+        # Wait for Rocket.Chat to become healthy after restart
+        echo >&2 "[rc-bridge] Waiting for Rocket.Chat to become healthy after restart..."
+        for i in $(seq 1 60); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${RC_URL}/api/info" 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" = "200" ]; then
+                echo >&2 "[rc-bridge] Rocket.Chat is healthy."
+                break
+            fi
+            if [ "$i" -eq 60 ]; then
+                echo >&2 "[rc-bridge] FATAL: Rocket.Chat did not become healthy within 180s after restart."
+                exit 1
+            fi
+            sleep 3
+        done
+
+        # Re-login to get admin token for state file
+        LOGIN_RESP=$(curl -sf -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"user\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASS}\"}" \
+            "${RC_URL}/api/v1/login" || echo '{}')
+        ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.data.authToken // empty')
+        ADMIN_USER_ID=$(echo "$LOGIN_RESP" | jq -r '.data.userId // empty')
+        mkdir -p "$BRIDGE_CONFIG_DIR"
+        cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"service_url": "${RC_URL}", "admin_user_id": "${ADMIN_USER_ID}", "admin_auth_token": "${ADMIN_TOKEN}", "container_id": "${POD_NAME}", "status": "running"}
+    ENDJSON
+        exit 0
     fi
 
     echo >&2 "[rc-bridge] Creating Podman Pod: ${POD_NAME} (port ${RC_PORT}:3000)..."
@@ -131,7 +159,7 @@ start:
 
     echo >&2 "[rc-bridge] Bridge started."
 
-# Stop and remove the Podman Pod.
+# Stop the Podman Pod (preserves data for restart).
 stop:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -140,7 +168,6 @@ stop:
 
     echo >&2 "[rc-bridge] Stopping pod ${POD_NAME}..."
     podman pod stop "${POD_NAME}" 2>/dev/null || true
-    podman pod rm "${POD_NAME}" 2>/dev/null || true
 
     mkdir -p "$BRIDGE_CONFIG_DIR"
     cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON

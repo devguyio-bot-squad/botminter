@@ -308,6 +308,7 @@ mod tests {
                         credentials: Credentials::default(),
                         coding_agent: None,
                         project_number: None,
+                        bridge_lifecycle: Default::default(),
                     },
                     TeamEntry {
                         name: "beta".into(),
@@ -317,6 +318,7 @@ mod tests {
                         credentials: Credentials::default(),
                         coding_agent: None,
                         project_number: None,
+                        bridge_lifecycle: Default::default(),
                     },
                 ],
                 keyring_collection: None,
@@ -342,6 +344,7 @@ mod tests {
                 credentials: Credentials::default(),
                 coding_agent: None,
                 project_number: None,
+                bridge_lifecycle: Default::default(),
             }),
             team_repo: None,
         };
@@ -468,6 +471,7 @@ projects:
                         BridgeIdentityCommand::Add { .. } => {}
                         BridgeIdentityCommand::Rotate { .. } => {}
                         BridgeIdentityCommand::Remove { .. } => {}
+                        BridgeIdentityCommand::Show { .. } => {}
                         BridgeIdentityCommand::List { .. } => {}
                     },
                     BridgeCommand::Room { command } => match command {

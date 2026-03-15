@@ -1,10 +1,15 @@
 pub mod operator_journey;
 pub mod rc_operator_journey;
+pub mod tg_operator_journey;
 
 use super::helpers::{E2eConfig, ProgressiveMode};
 use libtest_mimic::Trial;
 
-const ALL_SUITES: &[&str] = &["scenario_operator_journey", "scenario_rc_operator_journey"];
+const ALL_SUITES: &[&str] = &[
+    "scenario_operator_journey",
+    "scenario_rc_operator_journey",
+    "scenario_tg_operator_journey",
+];
 
 pub fn tests(config: &E2eConfig) -> Vec<Trial> {
     match &config.progressive {
@@ -12,6 +17,7 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
             vec![
                 operator_journey::scenario(config),
                 rc_operator_journey::scenario(config),
+                tg_operator_journey::scenario(config),
             ]
         }
         Some(ProgressiveMode::Step(suite_filter)) => {
@@ -57,6 +63,7 @@ fn build_progressive_suite(name: &str, config: &E2eConfig) -> Option<Trial> {
     let trial = match name {
         "scenario_operator_journey" => operator_journey::scenario_progressive(config),
         "scenario_rc_operator_journey" => rc_operator_journey::scenario_progressive(config),
+        "scenario_tg_operator_journey" => tg_operator_journey::scenario_progressive(config),
         _ => unreachable!(),
     };
     Some(trial)

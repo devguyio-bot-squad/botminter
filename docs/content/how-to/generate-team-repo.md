@@ -125,7 +125,7 @@ Use `bm profiles list` to see all available profiles:
 | `scrum` | Scrum-style team with pull-based kanban, status labels, conventional commits |
 | `scrum-compact` | Single-agent "superman" profile with GitHub comment-based human review |
 
-Both profiles support an optional Telegram bridge for real-time notifications. Select it during `bm init` or add `--bridge telegram` in non-interactive mode.
+Both profiles support optional communication bridges: Telegram (external), Rocket.Chat (local), or Matrix via Tuwunel (local). Select one during `bm init` or use `--bridge <name>` in non-interactive mode. See the [Bridge Setup Guide](bridge-setup.md) for details.
 
 Use `bm profiles describe <name>` for detailed information about roles and labels.
 

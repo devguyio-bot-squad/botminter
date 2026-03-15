@@ -1,0 +1,502 @@
+# Tuwunel (Matrix) bridge -- lifecycle, identity, and room recipes
+# Local bridge: single Podman container with embedded RocksDB
+
+set positional-arguments
+
+CONTAINER_NAME := "bm-tuwunel-" + env("BM_TEAM_NAME", "default")
+VOLUME_NAME := CONTAINER_NAME + "-data"
+MATRIX_PORT := env("TUWUNEL_PORT", "8008")
+MATRIX_URL := "http://127.0.0.1:" + MATRIX_PORT
+TUWUNEL_IMAGE := env("TUWUNEL_IMAGE", "ghcr.io/matrix-construct/tuwunel:latest")
+SERVER_NAME := env("TUWUNEL_SERVER_NAME", "localhost")
+REG_TOKEN := env("TUWUNEL_REG_TOKEN", "bm-tuwunel-reg-default")
+ADMIN_USER := env("TUWUNEL_ADMIN_USER", "bmadmin")
+ADMIN_PASS := env("TUWUNEL_ADMIN_PASS", "bmadmin-pass-default")
+PASSWORDS_FILE := env("BM_BRIDGE_DIR", env("BRIDGE_CONFIG_DIR", "/tmp")) + "/tuwunel-passwords.json"
+
+# Boot Tuwunel homeserver in a Podman container, wait for health, register admin.
+start:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    CONTAINER_NAME="{{CONTAINER_NAME}}"
+    VOLUME_NAME="{{VOLUME_NAME}}"
+    MATRIX_PORT="{{MATRIX_PORT}}"
+    MATRIX_URL="{{MATRIX_URL}}"
+    SERVER_NAME="{{SERVER_NAME}}"
+    REG_TOKEN="{{REG_TOKEN}}"
+    ADMIN_USER="{{ADMIN_USER}}"
+    ADMIN_PASS="{{ADMIN_PASS}}"
+    TUWUNEL_IMAGE="{{TUWUNEL_IMAGE}}"
+
+    # Idempotency: if container exists and is running, re-login admin and exit
+    if podman container exists "${CONTAINER_NAME}" 2>/dev/null; then
+        CONTAINER_STATUS=$(podman inspect "${CONTAINER_NAME}" --format '{{{{.State.Status}}' 2>/dev/null || echo "unknown")
+        if [ "$CONTAINER_STATUS" = "running" ]; then
+            echo >&2 "[tuwunel-bridge] Container ${CONTAINER_NAME} already running on port ${MATRIX_PORT}"
+
+            # Login admin to get fresh token
+            LOGIN_RESP=$(curl -sf -X POST \
+                -H "Content-Type: application/json" \
+                -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
+                "${MATRIX_URL}/_matrix/client/v3/login" || echo '{}')
+            ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // empty')
+            ADMIN_USER_ID=$(echo "$LOGIN_RESP" | jq -r '.user_id // empty')
+
+            mkdir -p "$BRIDGE_CONFIG_DIR"
+            cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"service_url": "${MATRIX_URL}", "admin_user_id": "${ADMIN_USER_ID}", "admin_access_token": "${ADMIN_TOKEN}", "container_id": "${CONTAINER_NAME}", "status": "running"}
+    ENDJSON
+            exit 0
+        fi
+
+        # Container exists but stopped -- restart it
+        echo >&2 "[tuwunel-bridge] Container ${CONTAINER_NAME} exists but is ${CONTAINER_STATUS}. Restarting..."
+        podman start "${CONTAINER_NAME}"
+
+        echo >&2 "[tuwunel-bridge] Waiting for Tuwunel to become healthy after restart..."
+        for i in $(seq 1 60); do
+            HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${MATRIX_URL}/_matrix/client/versions" 2>/dev/null || echo "000")
+            if [ "$HTTP_CODE" = "200" ]; then
+                echo >&2 "[tuwunel-bridge] Tuwunel is healthy."
+                break
+            fi
+            if [ "$i" -eq 60 ]; then
+                echo >&2 "[tuwunel-bridge] FATAL: Tuwunel did not become healthy within 120s after restart."
+                exit 1
+            fi
+            sleep 2
+        done
+
+        # Re-login admin
+        LOGIN_RESP=$(curl -sf -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
+            "${MATRIX_URL}/_matrix/client/v3/login" || echo '{}')
+        ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // empty')
+        ADMIN_USER_ID=$(echo "$LOGIN_RESP" | jq -r '.user_id // empty')
+
+        mkdir -p "$BRIDGE_CONFIG_DIR"
+        cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"service_url": "${MATRIX_URL}", "admin_user_id": "${ADMIN_USER_ID}", "admin_access_token": "${ADMIN_TOKEN}", "container_id": "${CONTAINER_NAME}", "status": "running"}
+    ENDJSON
+        exit 0
+    fi
+
+    # Create volume for data persistence
+    if ! podman volume exists "${VOLUME_NAME}" 2>/dev/null; then
+        echo >&2 "[tuwunel-bridge] Creating volume ${VOLUME_NAME}..."
+        podman volume create "${VOLUME_NAME}"
+    fi
+
+    echo >&2 "[tuwunel-bridge] Starting Tuwunel container: ${CONTAINER_NAME} (port ${MATRIX_PORT}:8008)..."
+    podman run -d --name "${CONTAINER_NAME}" \
+        -p "${MATRIX_PORT}:8008" \
+        -v "${VOLUME_NAME}:/database" \
+        "${TUWUNEL_IMAGE}" \
+        -Oserver_name=\"${SERVER_NAME}\" \
+        -Odatabase_path=\"/database\" \
+        -Oaddress=\"0.0.0.0\" \
+        -Oport=8008 \
+        -Oallow_registration=true \
+        -Oregistration_token=\"${REG_TOKEN}\" \
+        -Oallow_federation=false \
+        -Olog_filter=\"warn\"
+
+    # Health check loop
+    echo >&2 "[tuwunel-bridge] Waiting for Tuwunel to become healthy (up to 120s)..."
+    for i in $(seq 1 60); do
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "${MATRIX_URL}/_matrix/client/versions" 2>/dev/null || echo "000")
+        if [ "$HTTP_CODE" = "200" ]; then
+            echo >&2 "[tuwunel-bridge] Tuwunel is healthy."
+            break
+        fi
+        if [ "$i" -eq 60 ]; then
+            echo >&2 "[tuwunel-bridge] FATAL: Tuwunel did not become healthy within 120s."
+            podman logs "${CONTAINER_NAME}" 2>&1 | tail -20 >&2
+            exit 1
+        fi
+        sleep 2
+    done
+
+    # Register admin user (first user gets admin privileges)
+    echo >&2 "[tuwunel-bridge] Registering admin user '${ADMIN_USER}'..."
+
+    # Step 1: Get UIAA session
+    REGISTER_RESP=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASS}\"}" \
+        "${MATRIX_URL}/_matrix/client/v3/register" || echo '{}')
+
+    SESSION=$(echo "$REGISTER_RESP" | jq -r '.session // empty')
+    if [ -z "$SESSION" ]; then
+        # User may already exist (fresh container shouldn't, but handle it)
+        if echo "$REGISTER_RESP" | jq -r '.errcode // empty' | grep -q 'M_USER_IN_USE'; then
+            echo >&2 "[tuwunel-bridge] Admin user already exists, logging in..."
+        else
+            echo >&2 "[tuwunel-bridge] FATAL: Could not get registration session."
+            echo >&2 "$REGISTER_RESP"
+            exit 1
+        fi
+    else
+        # Step 2: Complete registration with token
+        REGISTER_RESP=$(curl -sf -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASS}\",\"auth\":{\"type\":\"m.login.registration_token\",\"token\":\"${REG_TOKEN}\",\"session\":\"${SESSION}\"}}" \
+            "${MATRIX_URL}/_matrix/client/v3/register")
+
+        ADMIN_USER_ID=$(echo "$REGISTER_RESP" | jq -r '.user_id // empty')
+        if [ -z "$ADMIN_USER_ID" ]; then
+            echo >&2 "[tuwunel-bridge] FATAL: Admin registration failed."
+            echo >&2 "$REGISTER_RESP"
+            exit 1
+        fi
+        echo >&2 "[tuwunel-bridge] Admin registered: ${ADMIN_USER_ID}"
+    fi
+
+    # Login to get access token
+    LOGIN_RESP=$(curl -sf -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
+        "${MATRIX_URL}/_matrix/client/v3/login")
+
+    ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
+    ADMIN_USER_ID=$(echo "$LOGIN_RESP" | jq -r '.user_id')
+
+    if [ "$ADMIN_TOKEN" = "null" ] || [ -z "$ADMIN_TOKEN" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: Admin login failed."
+        echo >&2 "$LOGIN_RESP"
+        exit 1
+    fi
+    echo >&2 "[tuwunel-bridge] Admin login successful. userId=${ADMIN_USER_ID}"
+
+    # Store admin password
+    PASSWORDS_FILE="{{PASSWORDS_FILE}}"
+    mkdir -p "$(dirname "$PASSWORDS_FILE")"
+    if [ -f "$PASSWORDS_FILE" ]; then
+        jq --arg user "$ADMIN_USER" --arg pass "$ADMIN_PASS" \
+            '. + {($user): $pass}' "$PASSWORDS_FILE" > "${PASSWORDS_FILE}.tmp"
+        mv "${PASSWORDS_FILE}.tmp" "$PASSWORDS_FILE"
+    else
+        jq -n --arg user "$ADMIN_USER" --arg pass "$ADMIN_PASS" \
+            '{($user): $pass}' > "$PASSWORDS_FILE"
+    fi
+    chmod 0600 "$PASSWORDS_FILE"
+
+    # Write config exchange output
+    mkdir -p "$BRIDGE_CONFIG_DIR"
+    cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"service_url": "${MATRIX_URL}", "admin_user_id": "${ADMIN_USER_ID}", "admin_access_token": "${ADMIN_TOKEN}", "container_id": "${CONTAINER_NAME}", "status": "running"}
+    ENDJSON
+
+    echo >&2 "[tuwunel-bridge] Bridge started."
+
+# Stop the Tuwunel container (preserves data via volume).
+stop:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    CONTAINER_NAME="{{CONTAINER_NAME}}"
+
+    echo >&2 "[tuwunel-bridge] Stopping container ${CONTAINER_NAME}..."
+    podman stop "${CONTAINER_NAME}" 2>/dev/null || true
+
+    mkdir -p "$BRIDGE_CONFIG_DIR"
+    cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"status": "stopped"}
+    ENDJSON
+
+    echo >&2 "[tuwunel-bridge] Bridge stopped."
+
+# Health check -- exit 0 if healthy, exit 1 if not.
+health:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    MATRIX_URL="{{MATRIX_URL}}"
+    HTTP_CODE=$(curl -sf -o /dev/null -w "%{http_code}" "${MATRIX_URL}/_matrix/client/versions" 2>/dev/null || echo "000")
+    if [ "$HTTP_CODE" = "200" ]; then
+        echo >&2 "[tuwunel-bridge] Health check: OK"
+        exit 0
+    else
+        echo >&2 "[tuwunel-bridge] Health check: FAILED (HTTP ${HTTP_CODE})"
+        exit 1
+    fi
+
+# Register a bot user on the Tuwunel homeserver via Matrix CS API.
+onboard username:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    MATRIX_URL="{{MATRIX_URL}}"
+    SERVER_NAME="{{SERVER_NAME}}"
+    ADMIN_USER="{{ADMIN_USER}}"
+    ADMIN_PASS="{{ADMIN_PASS}}"
+    REG_TOKEN="{{REG_TOKEN}}"
+    USERNAME="{{username}}"
+    PASSWORDS_FILE="{{PASSWORDS_FILE}}"
+
+    # Generate random password for this bot user
+    BOT_PASS=$(openssl rand -hex 16)
+
+    # Try to register via UIAA first. If the user already exists we get
+    # M_USER_IN_USE and fall back to stored password.
+    # NOTE: We cannot use login-first detection because Matrix servers
+    # return M_FORBIDDEN for both "user not found" and "wrong password"
+    # (to prevent user enumeration).
+    echo >&2 "[tuwunel-bridge] Registering user ${USERNAME}..."
+
+    # Step 1: Get UIAA session
+    REG_RESP=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"username\":\"${USERNAME}\",\"password\":\"${BOT_PASS}\"}" \
+        "${MATRIX_URL}/_matrix/client/v3/register" || echo '{}')
+
+    SESSION=$(echo "$REG_RESP" | jq -r '.session // empty')
+    REG_ERRCODE=$(echo "$REG_RESP" | jq -r '.errcode // empty')
+
+    if [ -n "$SESSION" ]; then
+        # Step 2: Complete registration with token
+        REG_RESP=$(curl -sf -X POST \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"${USERNAME}\",\"password\":\"${BOT_PASS}\",\"auth\":{\"type\":\"m.login.registration_token\",\"token\":\"${REG_TOKEN}\",\"session\":\"${SESSION}\"}}" \
+            "${MATRIX_URL}/_matrix/client/v3/register")
+
+        REG_USER_ID=$(echo "$REG_RESP" | jq -r '.user_id // empty')
+        if [ -z "$REG_USER_ID" ]; then
+            echo >&2 "[tuwunel-bridge] FATAL: User registration failed."
+            echo >&2 "$REG_RESP"
+            exit 1
+        fi
+        echo >&2 "[tuwunel-bridge] User ${USERNAME} registered: ${REG_USER_ID}"
+
+        # Store password
+        mkdir -p "$(dirname "$PASSWORDS_FILE")"
+        if [ -f "$PASSWORDS_FILE" ]; then
+            jq --arg user "$USERNAME" --arg pass "$BOT_PASS" \
+                '. + {($user): $pass}' "$PASSWORDS_FILE" > "${PASSWORDS_FILE}.tmp"
+            mv "${PASSWORDS_FILE}.tmp" "$PASSWORDS_FILE"
+        else
+            jq -n --arg user "$USERNAME" --arg pass "$BOT_PASS" \
+                '{($user): $pass}' > "$PASSWORDS_FILE"
+        fi
+        chmod 0600 "$PASSWORDS_FILE"
+    elif [ "$REG_ERRCODE" = "M_USER_IN_USE" ]; then
+        # User already exists -- read stored password
+        echo >&2 "[tuwunel-bridge] User ${USERNAME} already exists, using stored password..."
+        if [ -f "$PASSWORDS_FILE" ]; then
+            STORED_PASS=$(jq -r --arg user "$USERNAME" '.[$user] // empty' "$PASSWORDS_FILE")
+            if [ -n "$STORED_PASS" ]; then
+                BOT_PASS="$STORED_PASS"
+            else
+                echo >&2 "[tuwunel-bridge] FATAL: No stored password for ${USERNAME}."
+                exit 1
+            fi
+        else
+            echo >&2 "[tuwunel-bridge] FATAL: Passwords file not found and user already exists."
+            exit 1
+        fi
+    else
+        echo >&2 "[tuwunel-bridge] FATAL: Could not get registration session."
+        echo >&2 "$REG_RESP"
+        exit 1
+    fi
+
+    # Login to get access token
+    LOGIN_RESP=$(curl -sf -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${USERNAME}\"},\"password\":\"${BOT_PASS}\"}" \
+        "${MATRIX_URL}/_matrix/client/v3/login")
+
+    BOT_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
+    BOT_USER_ID=$(echo "$LOGIN_RESP" | jq -r '.user_id')
+
+    if [ "$BOT_TOKEN" = "null" ] || [ -z "$BOT_TOKEN" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: Login failed for ${USERNAME}."
+        echo >&2 "$LOGIN_RESP"
+        exit 1
+    fi
+    echo >&2 "[tuwunel-bridge] Access token generated for ${USERNAME}."
+
+    mkdir -p "$BRIDGE_CONFIG_DIR"
+    cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"username": "${USERNAME}", "user_id": "${BOT_USER_ID}", "token": "${BOT_TOKEN}"}
+    ENDJSON
+
+# Rotate credentials -- login with stored password to get a fresh access token.
+rotate username:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    MATRIX_URL="{{MATRIX_URL}}"
+    USERNAME="{{username}}"
+    PASSWORDS_FILE="{{PASSWORDS_FILE}}"
+
+    if [ ! -f "$PASSWORDS_FILE" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: Passwords file not found."
+        exit 1
+    fi
+
+    BOT_PASS=$(jq -r --arg user "$USERNAME" '.[$user] // empty' "$PASSWORDS_FILE")
+    if [ -z "$BOT_PASS" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: No stored password for ${USERNAME}."
+        exit 1
+    fi
+
+    LOGIN_RESP=$(curl -sf -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${USERNAME}\"},\"password\":\"${BOT_PASS}\"}" \
+        "${MATRIX_URL}/_matrix/client/v3/login")
+
+    BOT_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
+    BOT_USER_ID=$(echo "$LOGIN_RESP" | jq -r '.user_id')
+
+    if [ "$BOT_TOKEN" = "null" ] || [ -z "$BOT_TOKEN" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: Token rotation failed for ${USERNAME}."
+        echo >&2 "$LOGIN_RESP"
+        exit 1
+    fi
+    echo >&2 "[tuwunel-bridge] Token rotated for ${USERNAME}."
+
+    mkdir -p "$BRIDGE_CONFIG_DIR"
+    cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"username": "${USERNAME}", "user_id": "${BOT_USER_ID}", "token": "${BOT_TOKEN}"}
+    ENDJSON
+
+# Remove a bot user -- deactivate via Matrix CS API.
+remove username:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    MATRIX_URL="{{MATRIX_URL}}"
+    USERNAME="{{username}}"
+    PASSWORDS_FILE="{{PASSWORDS_FILE}}"
+
+    if [ ! -f "$PASSWORDS_FILE" ]; then
+        echo >&2 "[tuwunel-bridge] User ${USERNAME} not found (no passwords file), nothing to remove."
+        exit 0
+    fi
+
+    BOT_PASS=$(jq -r --arg user "$USERNAME" '.[$user] // empty' "$PASSWORDS_FILE")
+    if [ -z "$BOT_PASS" ]; then
+        echo >&2 "[tuwunel-bridge] User ${USERNAME} not found in passwords file, nothing to remove."
+        exit 0
+    fi
+
+    # Login as the user to deactivate their own account
+    LOGIN_RESP=$(curl -s -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${USERNAME}\"},\"password\":\"${BOT_PASS}\"}" \
+        "${MATRIX_URL}/_matrix/client/v3/login" || echo '{}')
+
+    BOT_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // empty')
+    if [ -n "$BOT_TOKEN" ]; then
+        # Deactivate account
+        curl -s -X POST \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${BOT_TOKEN}" \
+            -d '{"auth":{"type":"m.login.password","identifier":{"type":"m.id.user","user":"'"${USERNAME}"'"},"password":"'"${BOT_PASS}"'"}}' \
+            "${MATRIX_URL}/_matrix/client/v3/account/deactivate" > /dev/null 2>&1 || true
+    fi
+
+    # Remove from passwords file
+    jq --arg user "$USERNAME" 'del(.[$user])' "$PASSWORDS_FILE" > "${PASSWORDS_FILE}.tmp"
+    mv "${PASSWORDS_FILE}.tmp" "$PASSWORDS_FILE"
+
+    echo >&2 "[tuwunel-bridge] User ${USERNAME} removed."
+
+# Create a room on the Tuwunel homeserver.
+room-create name:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    MATRIX_URL="{{MATRIX_URL}}"
+    ADMIN_USER="{{ADMIN_USER}}"
+    ADMIN_PASS="{{ADMIN_PASS}}"
+    ROOM_NAME="{{name}}"
+
+    # Login as admin
+    LOGIN_RESP=$(curl -sf -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
+        "${MATRIX_URL}/_matrix/client/v3/login")
+
+    ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
+
+    if [ "$ADMIN_TOKEN" = "null" ] || [ -z "$ADMIN_TOKEN" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: Admin login failed."
+        exit 1
+    fi
+
+    # Check if room alias already exists
+    ALIAS_RESP=$(curl -s \
+        "${MATRIX_URL}/_matrix/client/v3/directory/room/%23${ROOM_NAME}:{{SERVER_NAME}}" 2>/dev/null || echo '{}')
+
+    EXISTING_ROOM_ID=$(echo "$ALIAS_RESP" | jq -r '.room_id // empty')
+    if [ -n "$EXISTING_ROOM_ID" ]; then
+        echo >&2 "[tuwunel-bridge] Room #${ROOM_NAME} already exists (${EXISTING_ROOM_ID})."
+        mkdir -p "$BRIDGE_CONFIG_DIR"
+        cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"name": "${ROOM_NAME}", "room_id": "${EXISTING_ROOM_ID}"}
+    ENDJSON
+        exit 0
+    fi
+
+    # Collect bot user IDs from bridge state for invitation
+    INVITE_JSON="[]"
+    BRIDGE_STATE_PATH="${BRIDGE_CONFIG_DIR}/../../bridge-state.json"
+    if [ -f "$BRIDGE_STATE_PATH" ]; then
+        INVITE_JSON=$(jq -r '[.identities | to_entries[].value.user_id]' "$BRIDGE_STATE_PATH" 2>/dev/null || echo "[]")
+    fi
+
+    # Create room
+    CREATE_RESP=$(curl -sf -X POST \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+        -d "{\"name\":\"${ROOM_NAME}\",\"room_alias_name\":\"${ROOM_NAME}\",\"preset\":\"public_chat\",\"invite\":${INVITE_JSON}}" \
+        "${MATRIX_URL}/_matrix/client/v3/createRoom")
+
+    ROOM_ID=$(echo "$CREATE_RESP" | jq -r '.room_id')
+    if [ "$ROOM_ID" = "null" ] || [ -z "$ROOM_ID" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: Room creation failed."
+        echo >&2 "$CREATE_RESP"
+        exit 1
+    fi
+    echo >&2 "[tuwunel-bridge] Room #${ROOM_NAME} created. roomId=${ROOM_ID}"
+
+    mkdir -p "$BRIDGE_CONFIG_DIR"
+    cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"name": "${ROOM_NAME}", "room_id": "${ROOM_ID}"}
+    ENDJSON
+
+# List rooms on the Tuwunel homeserver.
+room-list:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    MATRIX_URL="{{MATRIX_URL}}"
+    ADMIN_USER="{{ADMIN_USER}}"
+    ADMIN_PASS="{{ADMIN_PASS}}"
+
+    # Login as admin
+    LOGIN_RESP=$(curl -sf -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
+        "${MATRIX_URL}/_matrix/client/v3/login")
+
+    ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
+
+    if [ "$ADMIN_TOKEN" = "null" ] || [ -z "$ADMIN_TOKEN" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: Admin login failed."
+        exit 1
+    fi
+
+    ROOMS_RESP=$(curl -sf \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+        "${MATRIX_URL}/_matrix/client/v3/joined_rooms")
+
+    ROOMS=$(echo "$ROOMS_RESP" | jq '[.joined_rooms[] | {name: ., room_id: .}]')
+
+    mkdir -p "$BRIDGE_CONFIG_DIR"
+    echo "$ROOMS" > "$BRIDGE_CONFIG_DIR/config.json"
+
+    echo >&2 "[tuwunel-bridge] Listed $(echo "$ROOMS" | jq length) room(s)."

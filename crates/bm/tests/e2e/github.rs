@@ -11,6 +11,7 @@ pub struct TempRepo {
 impl TempRepo {
     /// Wraps an already-existing GitHub repo by name, without creating anything.
     /// Used by progressive mode to reconnect to a repo from a previous run.
+    #[allow(dead_code)]
     pub fn from_existing(full_name: &str) -> Self {
         eprintln!("TempRepo from_existing: {}", full_name);
         TempRepo {

@@ -1,8 +1,19 @@
 # Bridges
 
+!!! warning "Experimental Feature"
+    Bridges are experimental. The bridge plugin contract, CLI commands, and credential storage model may change between releases. Rocket.Chat and Matrix (Tuwunel) bridges are newer and less tested than the Telegram bridge.
+
 A **bridge** is a pluggable communication integration that connects your team members to a messaging platform. Each bridge is a self-contained directory with a YAML manifest, JSON config schema, and Justfile recipes -- no Rust code or recompilation needed.
 
 Bridges give your agents presence on a chat platform. Each team member gets their own bot user and token, so messages in the team channel are attributable to individual agents.
+
+## Available bridges
+
+| Bridge | Type | Service | Status |
+|--------|------|---------|--------|
+| **Telegram** | External | SaaS (Telegram Bot API) | Stable |
+| **Rocket.Chat** | Local | Self-hosted (Podman pod: RC + MongoDB) | Experimental |
+| **Matrix (Tuwunel)** | Local | Self-hosted (Podman container: Tuwunel) | Experimental |
 
 ## Bridge types
 
@@ -12,7 +23,7 @@ BotMinter supports two categories of bridges:
 
 An external bridge integrates with a SaaS messaging platform that runs independently. BotMinter manages identity only -- it does not start, stop, or monitor the service.
 
-**Example:** Telegram. The operator creates bot users via @BotFather, supplies tokens during `bm hire`, and BotMinter injects those credentials at launch time.
+**Example:** Telegram. The operator creates bot users via @BotFather, supplies tokens during `bm bridge identity add`, and BotMinter injects those credentials at launch time.
 
 External bridges:
 
@@ -24,25 +35,31 @@ External bridges:
 
 A local bridge manages the full service lifecycle. BotMinter starts the service, provisions identities automatically, and monitors health. The operator supplies no tokens -- the bridge creates them.
 
-**Example:** Rocket.Chat (self-hosted). BotMinter starts the service, creates bot accounts, generates tokens, and monitors health.
+**Examples:**
+
+- **Rocket.Chat** -- BotMinter starts a Podman pod (RC + MongoDB), creates bot accounts via RC's REST API, generates auth tokens, and monitors health.
+- **Matrix (Tuwunel)** -- BotMinter starts a single Podman container (`bm-tuwunel-{team}`) with a persistent volume (`bm-tuwunel-{team}-data`) running the Tuwunel homeserver (embedded RocksDB). It registers users via the standard Matrix client-server API and obtains access tokens via login.
 
 Local bridges:
 
 - Auto-provision per-member identities (create user, generate token)
 - Manage service lifecycle (start, stop, health check)
 - Run on the same infrastructure as BotMinter
+- Require Podman (or Docker with podman alias)
+
+**Admin accounts:** Local bridges create an admin account during `bm bridge start` to manage bot users and rooms. For Rocket.Chat the admin is `rcadmin`; for Tuwunel it is `bmadmin`. The admin account is used internally by bridge recipes and can also be used by operators to observe agent conversations via a client (e.g., Element for Matrix, or the RC web UI). Default admin credentials are not secret -- override them via environment variables (`TUWUNEL_ADMIN_PASS`, `RC_ADMIN_PASS`) on shared or network-accessible hosts.
 
 ## Per-member identity model
 
 Every hired team member gets their own bot user and token on the bridge, regardless of bridge type. This enables per-agent traceability in chat channels -- you can see which agent posted which message.
 
-For external bridges, the operator creates one bot per member (e.g., one Telegram bot per agent via @BotFather). For local bridges, BotMinter creates the bot accounts automatically during `bm teams sync --bridge`.
+For external bridges, the operator creates one bot per member (e.g., one Telegram bot per agent via @BotFather). For local bridges, BotMinter creates the bot accounts automatically during `bm teams sync --bridge`. All provisioned bots are automatically invited to rooms created via `bm bridge room create` and to the default `{team}-general` room created during initial provisioning.
 
 ## Credential flow
 
 Credentials follow a strict path from collection to runtime injection:
 
-1. **Collection** -- During `bm hire` (external bridges: operator provides token) or `bm teams sync --bridge` (local bridges: auto-provisioned)
+1. **Collection** -- During `bm bridge identity add` (external bridges: operator provides token) or `bm teams sync --bridge` (local bridges: auto-provisioned)
 2. **Config exchange** -- Bridge recipes write credentials to `$BRIDGE_CONFIG_DIR/config.json` (file-based, never stdout)
 3. **Storage** -- BotMinter stores credentials in the system keyring (local formations) via the CredentialStore trait
 4. **Injection** -- At `bm start`, credentials are resolved from the keyring and injected as environment variables to each member's Ralph process
@@ -80,8 +97,16 @@ Profiles declare supported bridges in their `botminter.yml` manifest:
 bridges:
   - name: telegram
     display_name: Telegram
-    description: "Telegram bot integration (external service)"
+    description: "Telegram Bot API for team communication"
     type: external
+  - name: rocketchat
+    display_name: "Rocket.Chat"
+    description: "Rocket.Chat bridge for team communication (local Podman Pod)"
+    type: local
+  - name: tuwunel
+    display_name: "Matrix (Tuwunel)"
+    description: "Matrix bridge via Tuwunel homeserver (local Podman container)"
+    type: local
 ```
 
 The bridge implementation files live in `profiles/{profile}/bridges/{bridge}/`:
@@ -93,6 +118,14 @@ profiles/scrum-compact/
       bridge.yml       # Bridge manifest (Knative-style resource format)
       schema.json      # Config schema (JSON Schema)
       Justfile         # Command recipes
+    rocketchat/
+      bridge.yml
+      schema.json
+      Justfile
+    tuwunel/
+      bridge.yml
+      schema.json
+      Justfile
 ```
 
 Operators select a bridge (or none) during `bm init`. The selected bridge name is recorded in the team's `botminter.yml`.
@@ -103,6 +136,7 @@ Operators select a bridge (or none) during `bm init`. The selected bridge name i
 - **Environment variables** are visible to the Ralph process and its children -- this is the injection mechanism, consistent with standard secret management practices
 - **Keyring entries are machine-local** -- after migrating to a new machine, re-provision bridge credentials with `bm bridge identity add`
 - **bridge-state.json** tracks provisioning state (usernames, user IDs, room IDs) but never contains tokens or secrets
+- **Matrix (Tuwunel) passwords** -- Because Matrix access tokens can expire but passwords persist, the Tuwunel bridge stores per-user passwords in `tuwunel-passwords.json` (located in the bridge directory at `team/bridges/tuwunel/`, with `0600` permissions). The file is a JSON object mapping usernames to passwords (e.g., `{"bmadmin": "bmadmin-pass-default", "superman-01": "a1b2c3..."}`). It is required for credential rotation (`bm bridge identity rotate`) and idempotent re-onboarding. If this file is lost, existing bot users cannot be re-authenticated and must be recreated. These are passwords for bot accounts on a local-only homeserver, not operator credentials.
 
 ## Bridge spec
 

@@ -36,6 +36,33 @@ pub struct TeamEntry {
     /// GitHub Project board number (stored during init).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_number: Option<u64>,
+    /// Bridge lifecycle configuration.
+    #[serde(default, skip_serializing_if = "BridgeLifecycle::is_default")]
+    pub bridge_lifecycle: BridgeLifecycle,
+}
+
+/// Controls bridge lifecycle relative to member start/stop.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BridgeLifecycle {
+    /// Start bridge automatically during `bm start`. Default: true.
+    pub start_on_up: bool,
+    /// Stop bridge automatically during `bm stop`. Default: false.
+    pub stop_on_down: bool,
+}
+
+impl Default for BridgeLifecycle {
+    fn default() -> Self {
+        Self {
+            start_on_up: true,
+            stop_on_down: false,
+        }
+    }
+}
+
+impl BridgeLifecycle {
+    fn is_default(&self) -> bool {
+        self.start_on_up && !self.stop_on_down
+    }
 }
 
 /// Stored credentials for a team (tokens).
@@ -185,6 +212,7 @@ mod tests {
                 },
                 coding_agent: None,
                 project_number: None,
+                bridge_lifecycle: Default::default(),
             }],
             keyring_collection: None,
         };
@@ -246,6 +274,7 @@ mod tests {
                     credentials: Credentials::default(),
                     coding_agent: None,
                     project_number: None,
+                    bridge_lifecycle: Default::default(),
                 },
                 TeamEntry {
                     name: "other".to_string(),
@@ -255,6 +284,7 @@ mod tests {
                     credentials: Credentials::default(),
                     coding_agent: None,
                     project_number: None,
+                    bridge_lifecycle: Default::default(),
                 },
             ],
             keyring_collection: None,
@@ -279,6 +309,7 @@ mod tests {
                 credentials: Credentials::default(),
                 coding_agent: None,
                 project_number: None,
+                bridge_lifecycle: Default::default(),
             }],
             keyring_collection: None,
         };
@@ -315,6 +346,7 @@ mod tests {
                 credentials: Credentials::default(),
                 coding_agent: None,
                 project_number: None,
+                bridge_lifecycle: Default::default(),
             }],
             keyring_collection: None,
         };

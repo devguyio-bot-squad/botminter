@@ -100,6 +100,26 @@ impl LocalCredentialStore {
         self.collection = collection;
         self
     }
+
+    /// Run a closure with `BM_KEYRING_DBUS` as `DBUS_SESSION_BUS_ADDRESS` if set.
+    ///
+    /// This allows keyring operations to use an isolated D-Bus session while
+    /// the process-wide `DBUS_SESSION_BUS_ADDRESS` points to the real system bus
+    /// (needed by podman). Since `bm` is single-threaded, this is safe.
+    fn with_keyring_dbus<T, F: FnOnce() -> T>(&self, f: F) -> T {
+        if let Ok(dbus) = std::env::var("BM_KEYRING_DBUS") {
+            let original = std::env::var("DBUS_SESSION_BUS_ADDRESS").ok();
+            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &dbus);
+            let result = f();
+            match original {
+                Some(v) => std::env::set_var("DBUS_SESSION_BUS_ADDRESS", v),
+                None => std::env::remove_var("DBUS_SESSION_BUS_ADDRESS"),
+            }
+            result
+        } else {
+            f()
+        }
+    }
 }
 
 /// Connects to Secret Service and finds a collection by label.
@@ -254,99 +274,106 @@ fn dss_delete(service: &str, member_name: &str, collection_name: &str) -> Result
 
 impl CredentialStore for LocalCredentialStore {
     fn store(&self, member_name: &str, token: &str) -> Result<()> {
-        if let Some(ref coll) = self.collection {
-            // Custom collection via dbus-secret-service
-            dss_store(&self.service, member_name, token, coll)?;
-        } else {
-            // Default: keyring::Entry → login collection
-            check_keyring_unlocked()?;
+        self.with_keyring_dbus(|| {
+            if let Some(ref coll) = self.collection {
+                // Custom collection via dbus-secret-service
+                dss_store(&self.service, member_name, token, coll)?;
+            } else {
+                // Default: keyring::Entry → login collection
+                check_keyring_unlocked()?;
 
-            match keyring::Entry::new(&self.service, member_name) {
-                Ok(entry) => {
-                    entry.set_password(token).map_err(|e| {
-                        anyhow::anyhow!(
-                            "Failed to store credential in system keyring. \
+                match keyring::Entry::new(&self.service, member_name) {
+                    Ok(entry) => {
+                        entry.set_password(token).map_err(|e| {
+                            anyhow::anyhow!(
+                                "Failed to store credential in system keyring. \
+                                 Set BM_BRIDGE_TOKEN_{} environment variable instead. ({})",
+                                env_var_suffix(member_name),
+                                e
+                            )
+                        })?;
+                    }
+                    Err(e) => {
+                        return Err(anyhow::anyhow!(
+                            "Failed to create keyring entry. \
                              Set BM_BRIDGE_TOKEN_{} environment variable instead. ({})",
                             env_var_suffix(member_name),
                             e
-                        )
-                    })?;
-                }
-                Err(e) => {
-                    return Err(anyhow::anyhow!(
-                        "Failed to create keyring entry. \
-                         Set BM_BRIDGE_TOKEN_{} environment variable instead. ({})",
-                        env_var_suffix(member_name),
-                        e
-                    ));
+                        ));
+                    }
                 }
             }
-        }
 
-        // Record member in bridge-state.json identities (metadata only, no token)
-        let mut state = load_state(&self.state_path)?;
-        if !state.identities.contains_key(member_name) {
-            state.identities.insert(
-                member_name.to_string(),
-                BridgeIdentity {
-                    username: member_name.to_string(),
-                    user_id: String::new(),
-                    token: None,
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                },
-            );
-            save_state(&self.state_path, &state)?;
-        }
+            // Record member in bridge-state.json identities (metadata only, no token)
+            let mut state = load_state(&self.state_path)?;
+            if !state.identities.contains_key(member_name) {
+                state.identities.insert(
+                    member_name.to_string(),
+                    BridgeIdentity {
+                        username: member_name.to_string(),
+                        user_id: String::new(),
+                        token: None,
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                        is_operator: false,
+                    },
+                );
+                save_state(&self.state_path, &state)?;
+            }
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn retrieve(&self, member_name: &str) -> Result<Option<String>> {
-        if let Some(ref coll) = self.collection {
-            return dss_retrieve(&self.service, member_name, coll);
-        }
+        self.with_keyring_dbus(|| {
+            if let Some(ref coll) = self.collection {
+                return dss_retrieve(&self.service, member_name, coll);
+            }
 
-        let entry = match keyring::Entry::new(&self.service, member_name) {
-            Ok(e) => e,
-            Err(_) => {
-                // Keyring not available — fall back to env var resolution
-                return Ok(None);
+            let entry = match keyring::Entry::new(&self.service, member_name) {
+                Ok(e) => e,
+                Err(_) => {
+                    // Keyring not available — fall back to env var resolution
+                    return Ok(None);
+                }
+            };
+            match entry.get_password() {
+                Ok(password) => Ok(Some(password)),
+                Err(keyring::Error::NoEntry) => Ok(None),
+                Err(e) => {
+                    eprintln!(
+                        "Warning: System keyring error ({}). \
+                         Falling back to BM_BRIDGE_TOKEN_{} env var.",
+                        e,
+                        env_var_suffix(member_name)
+                    );
+                    Ok(None)
+                }
             }
-        };
-        match entry.get_password() {
-            Ok(password) => Ok(Some(password)),
-            Err(keyring::Error::NoEntry) => Ok(None),
-            Err(e) => {
-                eprintln!(
-                    "Warning: System keyring error ({}). \
-                     Falling back to BM_BRIDGE_TOKEN_{} env var.",
-                    e,
-                    env_var_suffix(member_name)
-                );
-                Ok(None)
-            }
-        }
+        })
     }
 
     fn remove(&self, member_name: &str) -> Result<()> {
-        if let Some(ref coll) = self.collection {
-            dss_delete(&self.service, member_name, coll)?;
-        } else if let Ok(entry) = keyring::Entry::new(&self.service, member_name) {
-            match entry.delete_credential() {
-                Ok(()) => {}
-                Err(keyring::Error::NoEntry) => {} // Already gone
-                Err(e) => {
-                    eprintln!("Warning: Could not remove credential from keyring: {}", e);
+        self.with_keyring_dbus(|| {
+            if let Some(ref coll) = self.collection {
+                dss_delete(&self.service, member_name, coll)?;
+            } else if let Ok(entry) = keyring::Entry::new(&self.service, member_name) {
+                match entry.delete_credential() {
+                    Ok(()) => {}
+                    Err(keyring::Error::NoEntry) => {} // Already gone
+                    Err(e) => {
+                        eprintln!("Warning: Could not remove credential from keyring: {}", e);
+                    }
                 }
             }
-        }
 
-        // Remove from bridge-state.json identities
-        let mut state = load_state(&self.state_path)?;
-        state.identities.remove(member_name);
-        save_state(&self.state_path, &state)?;
+            // Remove from bridge-state.json identities
+            let mut state = load_state(&self.state_path)?;
+            state.identities.remove(member_name);
+            save_state(&self.state_path, &state)?;
 
-        Ok(())
+            Ok(())
+        })
     }
 
     fn list(&self) -> Result<Vec<String>> {
@@ -450,6 +477,8 @@ pub struct BridgeState {
     pub started_at: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_health_check: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub admin_user_id: Option<String>,
     #[serde(default)]
     pub identities: HashMap<String, BridgeIdentity>,
     #[serde(default)]
@@ -469,6 +498,13 @@ pub struct BridgeIdentity {
     #[serde(default, skip_serializing)]
     pub token: Option<String>,
     pub created_at: String,
+    /// Whether this identity is the operator (human) rather than a bot member.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub is_operator: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !v
 }
 
 /// A room on the bridge.
@@ -490,6 +526,7 @@ impl Default for BridgeState {
             status: "unknown".to_string(),
             started_at: None,
             last_health_check: None,
+            admin_user_id: None,
             identities: HashMap::new(),
             rooms: Vec::new(),
         }
@@ -604,7 +641,16 @@ pub fn invoke_recipe(
         .args(args)
         .current_dir(bridge_dir)
         .env("BRIDGE_CONFIG_DIR", &config_dir_path)
+        .env("BM_BRIDGE_DIR", bridge_dir)
         .env("BM_TEAM_NAME", team_name);
+
+    // If BM_BRIDGE_HOME is set, override HOME for bridge recipes.
+    // This allows test environments to use a different HOME for bm config
+    // while bridge recipes (which spawn podman) use the real HOME for
+    // container storage. Absent = no-op (production behavior unchanged).
+    if let Ok(bridge_home) = std::env::var("BM_BRIDGE_HOME") {
+        cmd.env("HOME", bridge_home);
+    }
 
     let output = cmd
         .output()
@@ -632,143 +678,404 @@ pub fn invoke_recipe(
     }
 }
 
-/// Provisions bridge identities for team members during `bm teams sync --bridge`.
+
+// ── Bridge struct ────────────────────────────────────────────────────
+
+/// A member to provision on the bridge.
+pub struct BridgeMember {
+    pub name: String,
+    pub is_operator: bool,
+}
+
+/// Encapsulates bridge state: manifest, persisted state, and bridge directory.
 ///
-/// For each member NOT already in `bridge-state.json`:
-/// - **Local (managed) bridges:** invoke the onboard recipe directly (creates user + returns token).
-/// - **External bridges:** check if a credential exists in `credential_store`; skip with warning if not.
-///
-/// After provisioning identities, creates a team room if `state.rooms` is empty and
-/// the manifest has a room spec. Saves bridge state at the end.
-pub fn provision_bridge(
-    team_repo: &Path,
-    team_name: &str,
-    workzone: &Path,
-    members: &[String],
-    credential_store: &dyn CredentialStore,
-) -> Result<()> {
-    // Discover bridge
-    let bridge_dir = match discover(team_repo, team_name)? {
-        Some(dir) => dir,
-        None => {
-            println!("No bridge configured -- skipping");
+/// Provides methods for lifecycle management (start/stop/health), provisioning,
+/// and querying bridge state. Callers should prefer Bridge methods over direct
+/// BridgeState field access.
+pub struct Bridge {
+    bridge_dir: PathBuf,
+    state_path: PathBuf,
+    team_name: String,
+    manifest: BridgeManifest,
+    state: BridgeState,
+}
+
+impl Bridge {
+    /// Creates a new Bridge by loading the manifest and state from disk.
+    pub fn new(bridge_dir: PathBuf, state_path: PathBuf, team_name: String) -> Result<Self> {
+        let manifest = load_manifest(&bridge_dir)?;
+        let state = load_state(&state_path)?;
+        Ok(Self {
+            bridge_dir,
+            state_path,
+            team_name,
+            manifest,
+            state,
+        })
+    }
+
+    // ── Lifecycle ────────────────────────────────────────────────────
+
+    /// Invokes a Just recipe from the bridge directory.
+    pub fn invoke_recipe(&self, recipe: &str, args: &[&str]) -> Result<Option<serde_json::Value>> {
+        invoke_recipe(&self.bridge_dir, recipe, args, &self.team_name)
+    }
+
+    /// Starts the bridge: invokes start recipe, health check, and updates state.
+    ///
+    /// For external bridges, prints a message and returns Ok(()).
+    /// For local bridges without a lifecycle section, returns an error.
+    /// If the bridge is already running and healthy, updates the health check timestamp.
+    pub fn start(&mut self) -> Result<()> {
+        if self.is_external() {
+            println!(
+                "Bridge '{}' is external -- lifecycle commands are not available. The service is managed externally.",
+                self.bridge_name()
+            );
             return Ok(());
         }
-    };
 
-    let manifest = load_manifest(&bridge_dir)?;
-    let state_path = state_path(workzone, team_name);
-    let mut state = load_state(&state_path)?;
+        let lifecycle = self.manifest.spec.lifecycle.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Bridge '{}' is local but has no lifecycle section in bridge.yml",
+                self.bridge_name()
+            )
+        })?;
 
-    // Provision identities for members not yet in state
-    for member in members {
-        if state.identities.contains_key(member) {
-            println!("  {}: already provisioned -- skipping", member);
-            continue;
+        let start_recipe = lifecycle.start.clone();
+        let health_recipe = lifecycle.health.clone();
+
+        // Skip start if bridge is already running and healthy
+        if self.state.status == "running" {
+            if self.invoke_recipe(&health_recipe, &[]).is_ok() {
+                self.state.last_health_check = Some(chrono::Utc::now().to_rfc3339());
+                println!("Bridge '{}' already running.", self.bridge_name());
+                return Ok(());
+            }
+            println!("Bridge '{}' health check failed, restarting...", self.bridge_name());
+        } else {
+            println!("Starting bridge '{}'...", self.bridge_name());
         }
 
-        if manifest.spec.bridge_type == "external" {
-            // External bridge: operator must have pre-supplied a token
-            let has_cred = resolve_credential_from_store(member, credential_store)?;
-            if has_cred.is_none() {
-                eprintln!(
-                    "  {}: no bridge credentials -- skipping. Use `bm bridge identity add` to add later.",
-                    member
-                );
+        let start_result = self.invoke_recipe(&start_recipe, &[])?;
+        self.invoke_recipe(&health_recipe, &[])?;
+
+        let now = chrono::Utc::now().to_rfc3339();
+        self.state.bridge_name = Some(self.manifest.metadata.name.clone());
+        self.state.bridge_type = Some(self.manifest.spec.bridge_type.clone());
+        self.state.status = "running".to_string();
+        self.state.started_at = Some(now.clone());
+        self.state.last_health_check = Some(now);
+
+        if let Some(val) = start_result {
+            if let Some(url) = val.get("service_url").and_then(|u| u.as_str()) {
+                self.state.service_url = Some(url.to_string());
+            }
+            if let Some(uid) = val.get("admin_user_id").and_then(|u| u.as_str()) {
+                self.state.admin_user_id = Some(uid.to_string());
+            }
+        }
+
+        println!("Bridge '{}' started.", self.bridge_name());
+        Ok(())
+    }
+
+    /// Stops the bridge: invokes stop recipe and updates state.
+    pub fn stop(&mut self) -> Result<()> {
+        if self.is_external() {
+            println!(
+                "Bridge '{}' is external -- lifecycle commands are not available. The service is managed externally.",
+                self.bridge_name()
+            );
+            return Ok(());
+        }
+
+        let lifecycle = self.manifest.spec.lifecycle.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Bridge '{}' is local but has no lifecycle section in bridge.yml",
+                self.bridge_name()
+            )
+        })?;
+
+        let stop_recipe = lifecycle.stop.clone();
+        self.invoke_recipe(&stop_recipe, &[])?;
+
+        self.state.status = "stopped".to_string();
+        self.state.started_at = None;
+
+        println!("Bridge '{}' stopped.", self.bridge_name());
+        Ok(())
+    }
+
+    /// Runs a health check and updates `last_health_check` in state.
+    pub fn health(&mut self) -> Result<()> {
+        let lifecycle = self.manifest.spec.lifecycle.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Bridge '{}' has no lifecycle section in bridge.yml",
+                self.bridge_name()
+            )
+        })?;
+        let health_recipe = lifecycle.health.clone();
+        self.invoke_recipe(&health_recipe, &[])?;
+        self.state.last_health_check = Some(chrono::Utc::now().to_rfc3339());
+        Ok(())
+    }
+
+    // ── Provisioning ─────────────────────────────────────────────────
+
+    /// Provisions bridge identities for team members.
+    ///
+    /// For each member NOT already in state:
+    /// - **Local bridges:** invoke the onboard recipe (creates user + returns token).
+    /// - **External bridges:** check for existing credential; skip with warning if absent.
+    ///
+    /// After provisioning, creates a team room if `rooms` is empty and the manifest
+    /// has a room spec. Caller must call `save()` to persist state changes.
+    pub fn provision(&mut self, members: &[BridgeMember], cred_store: &dyn CredentialStore) -> Result<()> {
+        for member in members {
+            if self.state.identities.contains_key(&member.name) {
+                println!("  {}: already provisioned -- skipping", member.name);
                 continue;
             }
-            // Set env var for recipe to use
-            let env_key = format!("BM_BRIDGE_TOKEN_{}", env_var_suffix(member));
-            std::env::set_var(&env_key, has_cred.as_ref().unwrap());
-        }
 
-        // Invoke onboard recipe
-        let recipe_result = invoke_recipe(
-            &bridge_dir,
-            &manifest.spec.identity.onboard,
-            &[member.as_str()],
-            team_name,
-        )?;
-
-        // Process recipe output
-        if let Some(config) = recipe_result {
-            let username = config["username"]
-                .as_str()
-                .unwrap_or(member.as_str())
-                .to_string();
-            let user_id = config["user_id"]
-                .as_str()
-                .unwrap_or("")
-                .to_string();
-            let token = config["token"].as_str().map(|s| s.to_string());
-
-            // Store identity metadata in state (no token)
-            state.identities.insert(
-                member.clone(),
-                BridgeIdentity {
-                    username,
-                    user_id,
-                    token: None,
-                    created_at: chrono::Utc::now().to_rfc3339(),
-                },
-            );
-
-            // Store token in credential store (system keyring)
-            if let Some(ref tok) = token {
-                if let Err(e) = credential_store.store(member, tok) {
+            if self.manifest.spec.bridge_type == "external" {
+                let has_cred = resolve_credential_from_store(&member.name, cred_store)?;
+                if has_cred.is_none() {
                     eprintln!(
-                        "Warning: Could not store credential for {} in keyring: {}. \
-                         Set BM_BRIDGE_TOKEN_{} env var instead.",
-                        member,
-                        e,
-                        env_var_suffix(member)
+                        "  {}: no bridge credentials -- skipping. Use `bm bridge identity add` to add later.",
+                        member.name
                     );
+                    continue;
                 }
+                let env_key = format!("BM_BRIDGE_TOKEN_{}", env_var_suffix(&member.name));
+                std::env::set_var(&env_key, has_cred.as_ref().unwrap());
             }
 
-            println!("  {}: provisioned", member);
-        } else {
-            println!("  {}: onboard recipe returned no config", member);
-        }
-
-        // Clean up env var if we set it for external bridge
-        if manifest.spec.bridge_type == "external" {
-            let env_key = format!("BM_BRIDGE_TOKEN_{}", env_var_suffix(member));
-            std::env::remove_var(&env_key);
-        }
-    }
-
-    // Create team room if rooms are empty and manifest has room spec
-    if state.rooms.is_empty() {
-        if let Some(ref room_spec) = manifest.spec.room {
-            let room_name = format!("{}-general", team_name);
-            let room_result = invoke_recipe(
-                &bridge_dir,
-                &room_spec.create,
-                &[&room_name],
-                team_name,
+            let recipe_result = self.invoke_recipe(
+                &self.manifest.spec.identity.onboard.clone(),
+                &[member.name.as_str()],
             )?;
 
-            let room_id = room_result
-                .as_ref()
-                .and_then(|v| v["room_id"].as_str())
-                .map(|s| s.to_string());
+            if let Some(config) = recipe_result {
+                let username = config["username"]
+                    .as_str()
+                    .unwrap_or(member.name.as_str())
+                    .to_string();
+                let user_id = config["user_id"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_string();
+                let token = config["token"].as_str().map(|s| s.to_string());
 
-            state.rooms.push(BridgeRoom {
-                name: room_name.clone(),
-                room_id,
-                created_at: chrono::Utc::now().to_rfc3339(),
-            });
-            println!("  Created team room: {}", room_name);
+                self.state.identities.insert(
+                    member.name.clone(),
+                    BridgeIdentity {
+                        username,
+                        user_id,
+                        token: None,
+                        created_at: chrono::Utc::now().to_rfc3339(),
+                        is_operator: member.is_operator,
+                    },
+                );
+
+                if let Some(ref tok) = token {
+                    if let Err(e) = cred_store.store(&member.name, tok) {
+                        eprintln!(
+                            "Warning: Could not store credential for {} in keyring: {}. \
+                             Set BM_BRIDGE_TOKEN_{} env var instead.",
+                            member.name,
+                            e,
+                            env_var_suffix(&member.name)
+                        );
+                    }
+                }
+
+                println!("  {}: provisioned", member.name);
+            } else {
+                println!("  {}: onboard recipe returned no config", member.name);
+            }
+
+            if self.manifest.spec.bridge_type == "external" {
+                let env_key = format!("BM_BRIDGE_TOKEN_{}", env_var_suffix(&member.name));
+                std::env::remove_var(&env_key);
+            }
+        }
+
+        // Create team room if rooms are empty and manifest has room spec
+        if self.state.rooms.is_empty() {
+            if let Some(ref room_spec) = self.manifest.spec.room {
+                let room_name = format!("{}-general", self.team_name);
+                let create_recipe = room_spec.create.clone();
+                let room_result = self.invoke_recipe(
+                    &create_recipe,
+                    &[&room_name],
+                )?;
+
+                let room_id = room_result
+                    .as_ref()
+                    .and_then(|v| v["room_id"].as_str())
+                    .map(|s| s.to_string());
+
+                self.state.rooms.push(BridgeRoom {
+                    name: room_name.clone(),
+                    room_id,
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                });
+                println!("  Created team room: {}", room_name);
+            }
+        }
+
+        self.state.bridge_name = Some(self.manifest.metadata.name.clone());
+        self.state.bridge_type = Some(self.manifest.spec.bridge_type.clone());
+
+        Ok(())
+    }
+
+    // ── Query methods ────────────────────────────────────────────────
+
+    /// Returns the user_id for a member by their username key in identities.
+    pub fn member_user_id(&self, username: &str) -> Option<String> {
+        self.state
+            .identities
+            .get(username)
+            .map(|id| id.user_id.clone())
+    }
+
+    /// Returns the admin user ID (captured from start recipe output).
+    pub fn admin_user_id(&self) -> Option<&str> {
+        self.state.admin_user_id.as_deref()
+    }
+
+    /// Returns the first room's ID, which is the team's default room.
+    pub fn default_room_id(&self) -> Option<&str> {
+        self.state
+            .rooms
+            .first()
+            .and_then(|r| r.room_id.as_deref())
+    }
+
+    /// Returns the bridge service URL.
+    pub fn service_url(&self) -> Option<&str> {
+        self.state.service_url.as_deref()
+    }
+
+    /// Returns the bridge type (e.g., "local", "external").
+    pub fn bridge_type(&self) -> &str {
+        &self.manifest.spec.bridge_type
+    }
+
+    /// Returns the bridge name from the manifest metadata.
+    pub fn bridge_name(&self) -> &str {
+        &self.manifest.metadata.name
+    }
+
+    /// Returns the display name, falling back to the bridge name.
+    pub fn display_name(&self) -> &str {
+        self.manifest
+            .metadata
+            .display_name
+            .as_deref()
+            .unwrap_or(&self.manifest.metadata.name)
+    }
+
+    /// Returns the bridge status from persisted state.
+    pub fn status(&self) -> &str {
+        &self.state.status
+    }
+
+    /// Returns when the bridge was started.
+    pub fn started_at(&self) -> Option<&str> {
+        self.state.started_at.as_deref()
+    }
+
+    /// Returns true if the bridge status is "running".
+    pub fn is_running(&self) -> bool {
+        self.state.status == "running"
+    }
+
+    /// Returns true if the bridge type is "local".
+    pub fn is_local(&self) -> bool {
+        self.manifest.spec.bridge_type == "local"
+    }
+
+    /// Returns true if the bridge type is "external".
+    pub fn is_external(&self) -> bool {
+        self.manifest.spec.bridge_type == "external"
+    }
+
+    /// Returns the registered identities.
+    pub fn identities(&self) -> &HashMap<String, BridgeIdentity> {
+        &self.state.identities
+    }
+
+    /// Returns the registered rooms.
+    pub fn rooms(&self) -> &[BridgeRoom] {
+        &self.state.rooms
+    }
+
+    /// Returns true if bridge state has been initialized (has a bridge name).
+    pub fn is_active(&self) -> bool {
+        self.state.bridge_name.is_some()
+    }
+
+    /// Returns the operator's username, if one is marked in identities.
+    pub fn operator_username(&self) -> Option<&str> {
+        self.state
+            .identities
+            .values()
+            .find(|id| id.is_operator)
+            .map(|id| id.username.as_str())
+    }
+
+    /// Returns true if an identity with the given name exists.
+    pub fn has_identity(&self, username: &str) -> bool {
+        self.state.identities.contains_key(username)
+    }
+
+    // ── State mutations ─────────────────────────────────────────────
+
+    /// Adds an identity to the bridge state. Sets bridge metadata if not yet set.
+    pub fn add_identity(&mut self, key: String, identity: BridgeIdentity) {
+        self.ensure_bridge_metadata();
+        self.state.identities.insert(key, identity);
+    }
+
+    /// Updates the user_id of an existing identity.
+    pub fn update_identity_user_id(&mut self, username: &str, user_id: &str) {
+        if let Some(identity) = self.state.identities.get_mut(username) {
+            identity.user_id = user_id.to_string();
         }
     }
 
-    // Save bridge state
-    state.bridge_name = Some(manifest.metadata.name.clone());
-    state.bridge_type = Some(manifest.spec.bridge_type.clone());
-    save_state(&state_path, &state)?;
+    /// Removes an identity from the bridge state.
+    pub fn remove_identity(&mut self, username: &str) {
+        self.state.identities.remove(username);
+    }
 
-    Ok(())
+    /// Adds a room to the bridge state.
+    pub fn add_room(&mut self, room: BridgeRoom) {
+        self.state.rooms.push(room);
+    }
+
+    /// Returns a reference to the manifest.
+    pub fn manifest(&self) -> &BridgeManifest {
+        &self.manifest
+    }
+
+    /// Ensures bridge name/type metadata is set on state.
+    fn ensure_bridge_metadata(&mut self) {
+        if self.state.bridge_name.is_none() {
+            self.state.bridge_name = Some(self.manifest.metadata.name.clone());
+            self.state.bridge_type = Some(self.manifest.spec.bridge_type.clone());
+        }
+    }
+
+    // ── State persistence ────────────────────────────────────────────
+
+    /// Saves the current bridge state to disk.
+    pub fn save(&self) -> Result<()> {
+        save_state(&self.state_path, &self.state)
+    }
 }
 
 /// Normalizes a name into a valid env var suffix: uppercased, hyphens replaced with underscores.
@@ -888,6 +1195,7 @@ spec:
                 user_id: "u123".to_string(),
                 token: None,
                 created_at: "2026-03-08T00:00:00Z".to_string(),
+                is_operator: false,
             },
         );
 
@@ -899,6 +1207,7 @@ spec:
             status: "running".to_string(),
             started_at: Some("2026-03-08T00:00:00Z".to_string()),
             last_health_check: Some("2026-03-08T00:01:00Z".to_string()),
+            admin_user_id: None,
             identities,
             rooms: vec![BridgeRoom {
                 name: "general".to_string(),
@@ -1049,6 +1358,7 @@ spec:
                 user_id: "u1".to_string(),
                 token: Some("state-token".to_string()),
                 created_at: "2026-01-01T00:00:00Z".to_string(),
+                is_operator: false,
             },
         );
 
@@ -1078,6 +1388,7 @@ spec:
                 user_id: "u2".to_string(),
                 token: Some("state-token-fb".to_string()),
                 created_at: "2026-01-01T00:00:00Z".to_string(),
+                is_operator: false,
             },
         );
 
@@ -1243,7 +1554,7 @@ spec:
         let result = invoke_recipe(&bridge_dir, "start", &[], "test-team").unwrap();
         assert!(result.is_some());
         let val = result.unwrap();
-        assert_eq!(val["url"], "http://localhost:0");
+        assert_eq!(val["service_url"], "http://localhost:0");
         assert_eq!(val["status"], "stub");
     }
 

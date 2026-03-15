@@ -2,7 +2,8 @@
 
 use libtest_mimic::Trial;
 
-use super::helpers::{run_test, KeyringGuard, reset_keyring, E2eConfig};
+use super::helpers::{run_test, E2eConfig};
+use super::test_env::TestEnv;
 
 pub fn tests(config: &E2eConfig) -> Vec<Trial> {
     let cfg = config.clone();
@@ -85,11 +86,31 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
                 run_test(|| {
                     use bm::bridge::CredentialStore;
 
-                    // KeyringGuard creates isolated D-Bus + gnome-keyring-daemon
-                    let _guard = KeyringGuard::new();
+                    // TestEnv creates isolated D-Bus + gnome-keyring-daemon
+                    let env = TestEnv::fresh(&cfg.gh_token, &cfg.gh_org, "");
 
-                    let state_dir = tempfile::tempdir().unwrap();
-                    let state_path = state_dir.path().join("bridge-state.json");
+                    let state_path = env.home().join("bridge-state.json");
+
+                    // LocalCredentialStore reads BM_KEYRING_DBUS from the process env.
+                    // Since this test calls Rust API in-process (not via subprocess),
+                    // we must set it for the current process. Known deviation from
+                    // ADR-005's no-process-wide-env rule, necessary because the store
+                    // API is called in-process rather than via CLI subprocess.
+                    let resolved = env.resolved_env("bm");
+                    let dbus_addr = resolved.get("BM_KEYRING_DBUS")
+                        .expect("BM_KEYRING_DBUS should be in resolved env for bm");
+
+                    // Safety: tests run single-threaded (--test-threads=1).
+                    // RAII guard ensures cleanup even if assertions panic
+                    // (run_test uses catch_unwind).
+                    struct EnvGuard;
+                    impl Drop for EnvGuard {
+                        fn drop(&mut self) {
+                            unsafe { std::env::remove_var("BM_KEYRING_DBUS"); }
+                        }
+                    }
+                    unsafe { std::env::set_var("BM_KEYRING_DBUS", dbus_addr); }
+                    let _env_guard = EnvGuard;
 
                     let store = bm::bridge::LocalCredentialStore::new(
                         "e2e-keyring-test", "telegram", state_path,
@@ -103,7 +124,7 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
                     assert_eq!(token.as_deref(), Some("secret-token-123"), "token mismatch");
 
                     // Reset keyring (simulates reset_home)
-                    reset_keyring();
+                    env.reset_keyring();
 
                     // After reset, credential should be gone
                     let after = store.retrieve("test-member").expect("retrieve after reset failed");
