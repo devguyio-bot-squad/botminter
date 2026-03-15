@@ -3,6 +3,21 @@ use std::process::{Command, ExitStatus};
 
 use anyhow::{bail, Context, Result};
 
+/// Runs a ralph CLI command in the given workspace and returns stdout.
+pub fn run_ralph_cmd(workspace: &Path, args: &[&str]) -> Result<String> {
+    let output = Command::new("ralph")
+        .args(args)
+        .current_dir(workspace)
+        .output()
+        .with_context(|| format!("Failed to run ralph {}", args.join(" ")))?;
+
+    if !output.status.success() {
+        bail!("ralph {} failed", args.join(" "));
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 /// Launch an interactive Claude Code session with a skill.
 ///
 /// Spawns `claude` with the skill path, inheriting stdin/stdout/stderr

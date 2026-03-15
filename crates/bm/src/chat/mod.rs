@@ -1,4 +1,13 @@
+pub(crate) mod config;
+pub(crate) mod skills;
+
 use std::collections::BTreeMap;
+use std::path::Path;
+
+use anyhow::{bail, Context, Result};
+
+pub use config::{read_member_info, RalphConfig};
+pub use skills::scan_skills;
 
 /// A skill available for loading on demand during a chat session.
 #[derive(Debug, Clone)]
@@ -20,6 +29,120 @@ pub struct MetaPromptParams<'a> {
     pub reference_dir: &'a str,
     pub hat: Option<&'a str>,
     pub skills: &'a [SkillInfo],
+}
+
+/// All data needed to launch or render a chat session.
+pub struct ChatSession {
+    /// The assembled meta-prompt markdown.
+    pub meta_prompt: String,
+    /// Path to the member's workspace.
+    pub ws_path: std::path::PathBuf,
+}
+
+/// Prepares all data for a `bm chat` session: validates the member and
+/// workspace exist, reads ralph.yml and PROMPT.md, validates hat flags,
+/// scans skills, and builds the meta-prompt.
+pub fn prepare_chat_session(
+    team_repo: &Path,
+    team_name: &str,
+    team_path: &Path,
+    member: &str,
+    hat: Option<&str>,
+) -> Result<ChatSession> {
+    // Verify member exists
+    let member_dir = team_repo.join("members").join(member);
+    if !member_dir.is_dir() {
+        bail!(
+            "Member '{}' not found in team '{}'. \
+             Run `bm members list` to see hired members.",
+            member, team_name
+        );
+    }
+
+    // Find workspace
+    let ws_path = team_path.join(member);
+    if !ws_path.join(".botminter.workspace").exists() {
+        bail!(
+            "No workspace found for member '{}'. \
+             Run `bm teams sync` first.",
+            member
+        );
+    }
+
+    // Read ralph.yml
+    let ralph_yml_path = ws_path.join("ralph.yml");
+    let ralph_contents = std::fs::read_to_string(&ralph_yml_path)
+        .with_context(|| format!("Failed to read {}", ralph_yml_path.display()))?;
+    let ralph_config: RalphConfig = serde_yml::from_str(&ralph_contents)
+        .with_context(|| format!("Failed to parse {}", ralph_yml_path.display()))?;
+
+    // Read PROMPT.md
+    let prompt_md_path = ws_path.join("PROMPT.md");
+    let prompt_md_content = std::fs::read_to_string(&prompt_md_path)
+        .with_context(|| format!("Failed to read {}", prompt_md_path.display()))?;
+
+    // Read member info
+    let (role_name, display_name) = read_member_info(&member_dir, member)?;
+
+    // Extract hat instructions and validate --hat flag
+    let hat_instructions: BTreeMap<String, String> = ralph_config
+        .hats
+        .into_iter()
+        .filter_map(|(name, h)| h.instructions.map(|instr| (name, instr)))
+        .collect();
+
+    if let Some(hat_name) = hat {
+        if !hat_instructions.contains_key(hat_name) {
+            if hat_instructions.is_empty() {
+                bail!(
+                    "Hat '{}' not found for member '{}'. \
+                     No hats with instructions found in ralph.yml",
+                    hat_name, member
+                );
+            } else {
+                let mut available: Vec<&str> =
+                    hat_instructions.keys().map(|k| k.as_str()).collect();
+                available.sort();
+                bail!(
+                    "Hat '{}' not found for member '{}'. Available hats: {}",
+                    hat_name, member, available.join(", ")
+                );
+            }
+        }
+    }
+
+    // Load manifest for role description
+    let manifest = crate::profile::read_team_repo_manifest(team_repo)?;
+    let role_description = manifest
+        .roles
+        .iter()
+        .find(|r| r.name == role_name)
+        .map(|r| r.description.as_str())
+        .unwrap_or("");
+
+    // Scan skills
+    let skills = if ralph_config.skills.enabled {
+        scan_skills(&ws_path, &ralph_config.skills.dirs)
+    } else {
+        Vec::new()
+    };
+
+    // Build meta-prompt
+    let params = MetaPromptParams {
+        member_name: &display_name,
+        role_name: &role_name,
+        role_description,
+        team_name,
+        guardrails: &ralph_config.core.guardrails,
+        hat_instructions: &hat_instructions,
+        prompt_md_content: &prompt_md_content,
+        reference_dir: "team/ralph-prompts/reference/",
+        hat,
+        skills: &skills,
+    };
+    let meta_prompt = build_meta_prompt(&params);
+
+    Ok(ChatSession { meta_prompt, ws_path })
 }
 
 /// Builds a meta-prompt for an interactive `bm chat` session.

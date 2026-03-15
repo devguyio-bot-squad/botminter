@@ -36,21 +36,21 @@ E2E tests run commands against real infrastructure (GitHub, podman, system keyri
 Like a shell, `TestEnv` supports two scopes for setting env vars:
 
 * **`env.export("KEY", val)`** — in-memory. All future commands in this run get it. Like `export KEY=val` in a shell.
-* **`env.command("bm").env("KEY", val)`** — one-shot. Only this command gets it. Like `KEY=val bm start` in a shell.
+* **`env.bm().env("KEY", val)`** — one-shot. Only this command gets it. Like `KEY=val bm start` in a shell.
 
 ### Construction and state snapshots
 
 `TestEnv` has two constructors:
 
-* **`TestEnv::fresh(gh_token, gh_org, repo)`** — creates a tempdir for HOME, sets up the full test environment (profiles, stub ralph, git auth, isolated dbus + keyring), and deletes any existing snapshot. TestEnv owns the tempdir — Drop cleans it up.
-* **`TestEnv::resume(home, gh_token, gh_org, repo)`** — reuses an existing HOME directory. Same setup (dbus, keyring, etc.) but loads exports from a previous snapshot. TestEnv does not own the HOME dir — Drop leaves it alone but still cleans up dbus.
+* **`TestEnv::fresh(home, gh_token)`** — starts clean. Deletes any existing snapshot. Used for the first pass or after `reset_home`.
+* **`TestEnv::resume(home, gh_token)`** — loads a previous snapshot if it exists, restoring all exports from the prior run. Used in progressive mode to continue from where the last run left off.
 
 State snapshot operations:
 
 * **`env.save()`** — snapshots all current exports to a state file in HOME.
 * **`env.clear()`** — deletes the snapshot. Idempotent — safe to call whether or not a snapshot exists.
 
-`TestEnv` is a living environment — its state evolves over the test lifecycle as cases call `export()`. The constructor sets up the complete environment in one shot (tempdir, profiles, dbus, keyring, base vars, includes, overrides). Commands produced at any point get the current environment state including all exports set so far.
+`TestEnv` is a living environment — its state evolves over the test lifecycle. Before keyring isolation starts, `BM_KEYRING_DBUS` isn't available. After the isolated keyring is created, it's added to `bm`'s includes. Commands produced at any point get the correct environment for that moment.
 
 ### Known per-binary rules
 
@@ -66,20 +66,19 @@ State snapshot operations:
 
 * `.args()` — add command arguments
 * `.env("KEY", val)` — one-shot env var for this command only
-* `.current_dir(path)` — set working directory for this command
 * `.run()` — execute, assert success, return stdout
 * `.run_fail()` — execute, assert failure, return stderr
 * `.output()` — raw output without assertions
 
-The underlying `Command` is never exposed. `.current_dir()` is allowed because it sets the working directory without bypassing env var layers. Other `Command` methods like `.stdin()` are not exposed.
+The underlying `Command` is never exposed. This prevents test cases from calling `.current_dir()`, `.stdin()`, or other `Command` methods that bypass `TestEnv`'s control.
 
 ### `TestEnv` owns setup and teardown
 
 `TestEnv` manages the full test lifecycle:
 
-* **Setup** (in constructor) — creates tempdir (HOME), captures real system env for overrides, bootstraps profiles, installs stub ralph, sets up git auth, starts isolated dbus-daemon + gnome-keyring-daemon, builds base environment and per-binary rules. No pre-setup phase needed — there is no process-wide isolation to work around.
+* **Setup** — starts isolated daemons (dbus, gnome-keyring), captures real system values for overrides, builds the base environment and per-binary rules.
 * **Command execution** — produces `TestCommand` instances with base + includes + overrides + one-shot vars applied.
-* **Teardown** (`Drop`) — kills dbus-daemon. For `fresh`: also deletes the tempdir (TestEnv owns it). For `resume`: leaves HOME alone (persists across progressive runs).
+* **Teardown** — kills daemons, cleans temp directories.
 
 ### Cross-case state persistence
 
@@ -123,7 +122,7 @@ Rejected because: env var logic leaks into test cases. `gh` calls manually set `
 
 ### Returning raw `std::process::Command`
 
-Rejected because: exposing the full `Command` API tempts callers to bypass `TestEnv` with `.stdin()` or direct `.env()` calls that skip the include/override layers. `TestCommand` exposes only the operations test cases need: `.args()`, `.env()` (one-shot), `.current_dir()`, `.run()`, `.run_fail()`, `.output()`.
+Rejected because: exposing the full `Command` API tempts callers to bypass `TestEnv` with `.current_dir()`, `.stdin()`, or direct `.env()` calls that skip the include/override layers. `TestCommand` exposes only the operations test cases need.
 
 ## Consequences
 
@@ -138,7 +137,7 @@ Rejected because: exposing the full `Command` API tempts callers to bypass `Test
 
 * **Do NOT** replace process-wide env vars for any test purpose — isolation, HOME redirection, or otherwise. It breaks other tools that depend on the real values.
 * **Do NOT** set `XDG_DATA_HOME`, `XDG_RUNTIME_DIR`, or similar directory env vars process-wide in tests. Other tools (podman, systemd) use them and create state there.
-* **Do NOT** construct `std::process::Command` directly in E2E test cases. Use `TestEnv::command()` which returns `TestCommand`. Direct `Command::new()` is only acceptable in panic-safety Drop implementations (guard cleanup).
+* **Do NOT** construct `std::process::Command` directly in E2E test cases. Use `TestEnv::command()` or `TestEnv::bm()` which return `TestCommand`. Direct `Command::new()` is only acceptable in panic-safety Drop implementations (guard cleanup).
 * **Do NOT** use thread-locals or process-wide env mutation to pass test context to commands. `TestEnv` sets env vars explicitly on each `TestCommand` instance.
 * **Do NOT** rely on `TestEnv` exports persisting across progressive mode runs without calling `env.save()`. Exports are in-memory by default.
 * **Do NOT** write state files directly for cross-case persistence. Use `env.export()` + `env.save()` — `TestEnv` manages its own snapshot file.

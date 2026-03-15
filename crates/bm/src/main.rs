@@ -8,10 +8,9 @@ use bm::cli::{
     TeamsCommand,
 };
 use bm::commands;
-use bm::completions;
 
 fn main() -> Result<()> {
-    CompleteEnv::with_factory(completions::build_cli_with_completions).complete();
+    CompleteEnv::with_factory(commands::completions::build_cli_with_completions).complete();
 
     let cli = Cli::parse();
 

@@ -95,10 +95,17 @@ fn profile_manifest_without_operator_defaults_to_none() {
 
 #[test]
 fn workspace_rs_has_no_stale_push_flag_references() {
-    let workspace_src =
-        std::fs::read_to_string("src/workspace.rs").expect("should read workspace.rs");
-    assert!(
-        !workspace_src.contains("--push"),
-        "workspace.rs should not contain stale '--push' flag references"
-    );
+    let workspace_dir = std::path::Path::new("src/workspace");
+    for entry in std::fs::read_dir(workspace_dir).expect("should read workspace/ directory") {
+        let path = entry.expect("valid dir entry").path();
+        if path.extension().is_some_and(|e| e == "rs") {
+            let content = std::fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("should read {}: {e}", path.display()));
+            assert!(
+                !content.contains("--push"),
+                "{} should not contain stale '--push' flag references",
+                path.display()
+            );
+        }
+    }
 }

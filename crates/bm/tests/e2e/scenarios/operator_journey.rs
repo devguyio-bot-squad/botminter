@@ -140,7 +140,7 @@ fn projects_add_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEnv) +
             format!("https://github.com/{}.git", full_name)
         };
 
-        let project_name = bm::commands::init::derive_project_name(&project_url);
+        let project_name = bm::git::derive_project_name(&project_url);
 
         env.command("bm")
             .args(["projects", "add", &project_url, "-t", TEAM_NAME])
@@ -419,7 +419,7 @@ fn projects_sync_fn(gh_org: String, gh_token: String) -> impl Fn(&mut TestEnv) +
             .run();
         assert!(stdout.contains("Status field synced"));
 
-        let _projects = bm::commands::init::list_gh_projects(&gh_token, &gh_org)
+        let _projects = bm::git::list_projects(&gh_token, &gh_org)
             .expect("list_gh_projects should succeed");
 
         // Idempotency

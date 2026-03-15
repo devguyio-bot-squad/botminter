@@ -1,11 +1,12 @@
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
 use crate::commands::teams;
-use crate::config::{self, BotminterConfig, Credentials, TeamEntry};
+use crate::config;
+use crate::formation;
+use crate::git;
 use crate::profile;
 
 /// Whether to create a new GitHub Project board or use an existing one.
@@ -29,7 +30,7 @@ fn next_steps_message(team_name: &str, team_dir: &Path, team_repo: &Path, bridge
          2. bm projects sync       Sync project repos into workspaces",
         team_name,
         team_dir.display(),
-        teams::format_team_summary(team_repo),
+        teams::format_team_summary(&profile::gather_team_summary(team_repo)),
         sync_cmd,
     )
 }
@@ -41,7 +42,7 @@ fn next_steps_message(team_name: &str, team_dir: &Path, team_repo: &Path, bridge
 /// making it suitable for automated testing without network access.
 #[allow(clippy::too_many_arguments)]
 pub fn run_non_interactive(
-    profile: Option<String>,
+    profile_name: Option<String>,
     team_name: Option<String>,
     org: Option<String>,
     repo: Option<String>,
@@ -51,7 +52,7 @@ pub fn run_non_interactive(
     workzone_override: Option<String>,
 ) -> Result<()> {
     let selected_profile =
-        profile.ok_or_else(|| anyhow::anyhow!("--profile is required with --non-interactive"))?;
+        profile_name.ok_or_else(|| anyhow::anyhow!("--profile is required with --non-interactive"))?;
     let team_name =
         team_name.ok_or_else(|| anyhow::anyhow!("--team-name is required with --non-interactive"))?;
     let github_org =
@@ -59,7 +60,6 @@ pub fn run_non_interactive(
     let repo_name =
         repo.ok_or_else(|| anyhow::anyhow!("--repo is required with --non-interactive"))?;
 
-    // Validate team name
     if team_name.is_empty() {
         bail!("Team name cannot be empty");
     }
@@ -67,23 +67,18 @@ pub fn run_non_interactive(
         bail!("Team name cannot contain '/' or spaces");
     }
 
-    // Ensure profiles are on disk (first-run auto-init)
-    profile::ensure_profiles_initialized()?;
+    super::ensure_profiles(false)?;
 
-    // Prerequisite checks (git, gh)
     if !skip_github {
-        check_prerequisites()?;
-    } else {
-        // Only require git when skipping GitHub
-        if which::which("git").is_err() {
-            bail!("Missing required tool: git — https://git-scm.com/");
-        }
+        config::check_prerequisites()?;
+    } else if which::which("git").is_err() {
+        bail!("Missing required tool: git — https://git-scm.com/");
     }
 
     let workzone = if let Some(wz) = workzone_override {
-        expand_tilde(&wz)
+        config::expand_tilde(&wz)
     } else {
-        default_workzone_path()
+        config::default_workzone_path()
     };
 
     let team_dir = workzone.join(&team_name);
@@ -96,7 +91,6 @@ pub fn run_non_interactive(
 
     let github_repo = format!("{}/{}", github_org, repo_name);
 
-    // Validate profile exists
     let profiles = profile::list_profiles()?;
     if !profiles.contains(&selected_profile) {
         bail!(
@@ -108,145 +102,73 @@ pub fn run_non_interactive(
 
     let manifest = profile::read_manifest(&selected_profile)?;
 
-    // Validate bridge selection (if provided)
     let selected_bridge = if let Some(ref bridge_name) = bridge {
-        validate_bridge_selection(bridge_name, &manifest.bridges)?;
+        profile::validate_bridge_selection(bridge_name, &manifest.bridges)?;
         Some(bridge_name.clone())
     } else {
         None
     };
 
-    // GitHub token handling
     let gh_token = if skip_github {
         None
     } else {
-        let token = detect_gh_token_non_interactive()?;
-        validate_gh_token(&token)?;
+        let token = git::detect_token_non_interactive()?;
+        git::validate_token(&token)?;
         Some(token)
     };
 
     eprintln!(
         "Creating team '{}' with profile '{}' at {}",
-        team_name,
-        selected_profile,
-        team_dir.display()
+        team_name, selected_profile, team_dir.display()
     );
 
-    // Create workzone + team dirs
     fs::create_dir_all(&workzone)
         .with_context(|| format!("Failed to create workzone at {}", workzone.display()))?;
     fs::create_dir_all(&team_dir)
         .with_context(|| format!("Failed to create team directory at {}", team_dir.display()))?;
 
-    // Check if repo already exists on GitHub
     let is_new_repo = if skip_github {
         true
     } else {
-        !repo_exists(&github_repo, gh_token.as_deref())?
+        !git::repo_exists(&github_repo, gh_token.as_deref())?
     };
 
     let team_repo = team_dir.join("team");
 
     if is_new_repo {
-        // New repo: init locally, extract profile, commit, push
-        fs::create_dir_all(&team_repo).context("Failed to create team repo directory")?;
-        run_git(&team_repo, &["init", "-b", "main"])?;
-
-        let coding_agent = manifest
-            .coding_agents
-            .get(&manifest.default_coding_agent)
-            .with_context(|| {
-                format!(
-                    "Profile '{}' default coding agent '{}' not found in coding_agents map",
-                    selected_profile, manifest.default_coding_agent
-                )
-            })?;
-        profile::extract_profile_to(&selected_profile, &team_repo, coding_agent)?;
-
-        // Handle optional project
-        let projects_to_add: Vec<(String, String)> = if let Some(ref proj_url) = project {
-            let name = derive_project_name(proj_url);
-            vec![(name, proj_url.clone())]
-        } else {
-            Vec::new()
-        };
-
-        if !projects_to_add.is_empty() {
-            augment_manifest_with_projects(&team_repo, &projects_to_add)?;
-        }
-
-        // Record bridge selection in team botminter.yml
-        if let Some(ref bridge_name) = selected_bridge {
-            record_bridge_in_manifest(&team_repo, bridge_name, &manifest.bridges)?;
-        }
-
-        fs::create_dir_all(team_repo.join("members")).context("Failed to create members/ dir")?;
-        fs::create_dir_all(team_repo.join("projects")).context("Failed to create projects/ dir")?;
-        fs::write(team_repo.join("members/.gitkeep"), "").ok();
-        fs::write(team_repo.join("projects/.gitkeep"), "").ok();
-
-        for (proj_name, _url) in &projects_to_add {
-            let proj_dir = team_repo.join("projects").join(proj_name);
-            fs::create_dir_all(proj_dir.join("knowledge"))
-                .with_context(|| format!("Failed to create projects/{}/knowledge/", proj_name))?;
-            fs::create_dir_all(proj_dir.join("invariants"))
-                .with_context(|| format!("Failed to create projects/{}/invariants/", proj_name))?;
-            fs::write(proj_dir.join("knowledge/.gitkeep"), "").ok();
-            fs::write(proj_dir.join("invariants/.gitkeep"), "").ok();
-        }
-
-        // Initial commit
-        run_git(&team_repo, &["add", "-A"])?;
-        let commit_msg = format!("feat: initialize team repo ({} profile)", selected_profile);
-        run_git(&team_repo, &["commit", "-m", &commit_msg])?;
+        formation::setup_new_team_repo(
+            &team_repo, &selected_profile, &manifest,
+            &[], // no members in non-interactive
+            &project.map(|url| {
+                let name = git::derive_project_name(&url);
+                vec![(name, url)]
+            }).unwrap_or_default(),
+            selected_bridge.as_deref(),
+        )?;
 
         if !skip_github {
-            create_github_repo(&team_repo, &github_repo, gh_token.as_deref())?;
+            git::create_repo_and_push(&team_repo, &github_repo, gh_token.as_deref())?;
         }
     } else {
-        // Existing repo: clone it
         eprintln!("Repository '{}' already exists — cloning it.", github_repo);
-        clone_existing_repo(&team_dir, &github_repo, gh_token.as_deref())?;
+        git::clone_repo(&team_dir, &github_repo, gh_token.as_deref())?;
     }
 
-    // Register in config
-    let mut cfg = load_or_default_config();
-
-    let team_entry = TeamEntry {
-        name: team_name.clone(),
-        path: team_dir.clone(),
-        profile: selected_profile.clone(),
-        github_repo: github_repo.clone(),
-        credentials: Credentials {
-            gh_token: gh_token.clone(),
-            telegram_bot_token: None,
-            webhook_secret: None,
-        },
-        coding_agent: None,
-        project_number: None,
-        bridge_lifecycle: Default::default(),
-    };
-    cfg.teams.push(team_entry);
-
-    if cfg.teams.len() == 1 {
-        cfg.default_team = Some(team_name.clone());
-    }
-    cfg.workzone = workzone.clone();
-
-    config::save(&cfg)?;
+    formation::register_team(
+        &team_name, &team_dir, &selected_profile, &github_repo,
+        gh_token.clone(), None, &workzone,
+    )?;
 
     if !skip_github {
-        // Bootstrap labels
-        if let Err(e) = bootstrap_labels(&github_repo, &manifest.labels, gh_token.as_deref()) {
+        if let Err(e) = git::bootstrap_labels(&github_repo, &manifest.labels, gh_token.as_deref()) {
             bail!(
                 "Failed to bootstrap labels: {}. Run `bm init` interactively for recovery steps.",
                 e
             );
         }
 
-        // Create GitHub Project board
         let owner = github_repo.split('/').next().unwrap_or(&github_org);
-        match create_github_project(owner, &team_name, &manifest.statuses, gh_token.as_deref()) {
+        match git::create_project(owner, &team_name, &manifest.statuses, gh_token.as_deref()) {
             Ok(project_number) => {
                 let mut cfg = config::load()?;
                 if let Some(entry) = cfg.teams.iter_mut().find(|t| t.name == team_name) {
@@ -268,47 +190,19 @@ pub fn run_non_interactive(
     Ok(())
 }
 
-/// Detects GH_TOKEN from environment or `gh auth token` (no interactive prompt).
-fn detect_gh_token_non_interactive() -> Result<String> {
-    if let Ok(token) = std::env::var("GH_TOKEN") {
-        if !token.is_empty() {
-            return Ok(token);
-        }
-    }
-
-    let output = Command::new("gh")
-        .args(["auth", "token"])
-        .output()
-        .ok()
-        .filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|t| !t.is_empty());
-
-    match output {
-        Some(token) => Ok(token),
-        None => bail!(
-            "No GitHub token found. Set GH_TOKEN or run `gh auth login` before using --non-interactive."
-        ),
-    }
-}
-
 /// Runs the `bm init` interactive wizard.
 pub fn run() -> Result<()> {
-    // Ensure profiles are on disk (first-run auto-init)
-    profile::ensure_profiles_initialized()?;
+    super::ensure_profiles(false)?;
+    config::check_prerequisites()?;
 
-    // Prerequisite checks
-    check_prerequisites()?;
-
-    // --- Wizard ---
     cliclack::intro("botminter — create a new team")?;
 
     // Workzone location
-    let default_workzone = default_workzone_path();
+    let default_workzone = config::default_workzone_path();
     let workzone: String = cliclack::input("Where should teams live? (workzone directory)")
         .default_input(&default_workzone.to_string_lossy())
         .interact()?;
-    let workzone = expand_tilde(&workzone);
+    let workzone = config::expand_tilde(&workzone);
 
     // Team name
     let team_name: String = cliclack::input("Team name")
@@ -324,7 +218,6 @@ pub fn run() -> Result<()> {
         })
         .interact()?;
 
-    // Check idempotency: fail if team dir exists
     let team_dir = workzone.join(&team_name);
     if team_dir.exists() {
         bail!(
@@ -340,11 +233,7 @@ pub fn run() -> Result<()> {
         .iter()
         .map(|name| {
             let manifest = profile::read_manifest(name).unwrap();
-            (
-                name.clone(),
-                manifest.display_name.clone(),
-                manifest.description.clone(),
-            )
+            (name.clone(), manifest.display_name.clone(), manifest.description.clone())
         })
         .collect();
 
@@ -358,35 +247,28 @@ pub fn run() -> Result<()> {
         .interact()
         .map(|s: &str| s.to_string())?;
 
-    // GitHub integration — detect token, browse orgs/repos
+    // GitHub integration
     let token = detect_or_prompt_gh_token()?;
-    validate_gh_token(&token)?;
+    let token_info = git::validate_token(&token)?;
+    cliclack::log::info(format!("Authenticated as: {}", token_info.login))?;
 
     let github_org = select_github_org(&token)?;
     let (github_repo, is_new_repo) = select_or_create_repo(&token, &github_org, &team_name)?;
 
-    // Select or create a GitHub Project board
     let github_owner = github_repo.split('/').next().unwrap_or(&github_org);
     let project_choice = select_or_create_project(&token, github_owner, &team_name)?;
 
     let gh_token = Some(token);
-
     let telegram_bot_token: Option<String> = None;
-
     let manifest = profile::read_manifest(&selected_profile)?;
 
-    // Bridge selection (interactive)
+    // Bridge selection
     let selected_bridge: Option<String> = if !manifest.bridges.is_empty() {
         let mut bridge_items: Vec<(String, String, String)> = manifest
-            .bridges
-            .iter()
+            .bridges.iter()
             .map(|b| (b.name.clone(), b.display_name.clone(), b.description.clone()))
             .collect();
-        bridge_items.push((
-            "none".to_string(),
-            "No bridge".to_string(),
-            "Skip bridge configuration".to_string(),
-        ));
+        bridge_items.push(("none".to_string(), "No bridge".to_string(), "Skip bridge configuration".to_string()));
 
         let items_ref: Vec<(&str, &str, &str)> = bridge_items
             .iter()
@@ -403,7 +285,7 @@ pub fn run() -> Result<()> {
         None
     };
 
-    // Hire members and add projects (only for new repos — existing repos already have content)
+    // Members and projects (only for new repos)
     let (members_to_hire, projects_to_add) = if is_new_repo {
         let role_names: Vec<String> = manifest.roles.iter().map(|r| r.name.clone()).collect();
         let members = collect_members(&role_names)?;
@@ -419,18 +301,12 @@ pub fn run() -> Result<()> {
     // Summary
     let mut summary = format!(
         "Team: {}\nProfile: {}\nWorkzone: {}",
-        team_name,
-        selected_profile,
-        workzone.display()
+        team_name, selected_profile, workzone.display()
     );
     summary.push_str(&format!("\nGitHub: {}", github_repo));
     match &project_choice {
-        ProjectChoice::CreateNew => {
-            summary.push_str(&format!("\nProject board: new ({} Board)", team_name));
-        }
-        ProjectChoice::UseExisting(n) => {
-            summary.push_str(&format!("\nProject board: existing (#{n})"));
-        }
+        ProjectChoice::CreateNew => summary.push_str(&format!("\nProject board: new ({} Board)", team_name)),
+        ProjectChoice::UseExisting(n) => summary.push_str(&format!("\nProject board: existing (#{n})")),
     }
     if let Some(ref bridge_name) = selected_bridge {
         summary.push_str(&format!("\nBridge: {}", bridge_name));
@@ -460,137 +336,59 @@ pub fn run() -> Result<()> {
     let spinner = cliclack::spinner();
     spinner.start("Creating team...");
 
-    // 1. Create workzone + team dirs
     fs::create_dir_all(&workzone)
         .with_context(|| format!("Failed to create workzone at {}", workzone.display()))?;
     fs::create_dir_all(&team_dir)
         .with_context(|| format!("Failed to create team directory at {}", team_dir.display()))?;
 
-    // 2. Set up team repo (new: init + extract + push, existing: clone)
     let team_repo = team_dir.join("team");
 
     if is_new_repo {
-        fs::create_dir_all(&team_repo).context("Failed to create team repo directory")?;
-
         spinner.start("Initializing git repository...");
-        run_git(&team_repo, &["init", "-b", "main"])?;
-
-        spinner.start("Extracting profile content...");
-        let manifest = profile::read_manifest(&selected_profile)?;
-        let coding_agent = manifest
-            .coding_agents
-            .get(&manifest.default_coding_agent)
-            .with_context(|| {
-                format!(
-                    "Profile '{}' default coding agent '{}' not found in coding_agents map",
-                    selected_profile, manifest.default_coding_agent
-                )
-            })?;
-        profile::extract_profile_to(&selected_profile, &team_repo, coding_agent)?;
-
-        if !projects_to_add.is_empty() {
-            augment_manifest_with_projects(&team_repo, &projects_to_add)?;
-        }
-
-        // Record bridge selection in team botminter.yml
-        if let Some(ref bridge_name) = selected_bridge {
-            record_bridge_in_manifest(&team_repo, bridge_name, &manifest.bridges)?;
-        }
-
-        fs::create_dir_all(team_repo.join("members")).context("Failed to create members/ dir")?;
-        fs::create_dir_all(team_repo.join("projects")).context("Failed to create projects/ dir")?;
-        fs::write(team_repo.join("members/.gitkeep"), "").ok();
-        fs::write(team_repo.join("projects/.gitkeep"), "").ok();
-
-        for (role, name) in &members_to_hire {
-            let member_dir_name = format!("{}-{}", role, name);
-            let member_dir = team_repo.join("members").join(&member_dir_name);
-            fs::create_dir_all(&member_dir)
-                .with_context(|| format!("Failed to create member dir {}", member_dir.display()))?;
-            profile::extract_member_to(&selected_profile, role, &member_dir, coding_agent)?;
-            finalize_member_manifest(&member_dir, name)?;
-        }
-
-        for (proj_name, _url) in &projects_to_add {
-            let proj_dir = team_repo.join("projects").join(proj_name);
-            fs::create_dir_all(proj_dir.join("knowledge"))
-                .with_context(|| format!("Failed to create projects/{}/knowledge/", proj_name))?;
-            fs::create_dir_all(proj_dir.join("invariants"))
-                .with_context(|| format!("Failed to create projects/{}/invariants/", proj_name))?;
-            fs::write(proj_dir.join("knowledge/.gitkeep"), "").ok();
-            fs::write(proj_dir.join("invariants/.gitkeep"), "").ok();
-        }
-
-        spinner.start("Creating initial commit...");
-        run_git(&team_repo, &["add", "-A"])?;
-        let commit_msg = format!("feat: initialize team repo ({} profile)", selected_profile);
-        run_git(&team_repo, &["commit", "-m", &commit_msg])?;
+        formation::setup_new_team_repo(
+            &team_repo, &selected_profile, &manifest,
+            &members_to_hire, &projects_to_add,
+            selected_bridge.as_deref(),
+        )?;
 
         spinner.start("Creating GitHub repository...");
-        create_github_repo(&team_repo, &github_repo, gh_token.as_deref())?;
+        git::create_repo_and_push(&team_repo, &github_repo, gh_token.as_deref())?;
     } else {
         spinner.start("Cloning existing repository...");
-        clone_existing_repo(&team_dir, &github_repo, gh_token.as_deref())?;
+        git::clone_repo(&team_dir, &github_repo, gh_token.as_deref())?;
     }
 
-    // 3. Register in config (early — before GitHub metadata ops so a failure
-    //    in labels/project doesn't leave ~/.botminter in a broken state)
     spinner.start("Registering team...");
-    let mut cfg = load_or_default_config();
+    formation::register_team(
+        &team_name, &team_dir, &selected_profile, &github_repo,
+        gh_token.clone(), telegram_bot_token.clone(), &workzone,
+    )?;
 
-    let team_entry = TeamEntry {
-        name: team_name.clone(),
-        path: team_dir.clone(),
-        profile: selected_profile.clone(),
-        github_repo: github_repo.clone(),
-        credentials: Credentials {
-            gh_token: gh_token.clone(),
-            telegram_bot_token: telegram_bot_token.clone(),
-            webhook_secret: None,
-        },
-        coding_agent: None,
-        project_number: None,
-        bridge_lifecycle: Default::default(),
-    };
-    cfg.teams.push(team_entry);
-
-    if cfg.teams.len() == 1 {
-        cfg.default_team = Some(team_name.clone());
-    }
-    cfg.workzone = workzone.clone();
-
-    config::save(&cfg)?;
-
-    // 4. Bootstrap labels (idempotent via --force)
+    // Bootstrap labels
     spinner.start("Bootstrapping labels...");
-    if let Err(e) = bootstrap_labels(&github_repo, &manifest.labels, gh_token.as_deref()) {
+    if let Err(e) = git::bootstrap_labels(&github_repo, &manifest.labels, gh_token.as_deref()) {
         spinner.stop("Label bootstrap failed");
         let label_cmds: Vec<String> = manifest
-            .labels
-            .iter()
-            .map(|l| {
-                format!(
-                    "gh label create '{}' --color '{}' --description '{}' --force --repo {}",
-                    l.name, l.color, l.description, github_repo,
-                )
-            })
+            .labels.iter()
+            .map(|l| format!(
+                "gh label create '{}' --color '{}' --description '{}' --force --repo {}",
+                l.name, l.color, l.description, github_repo,
+            ))
             .collect();
         bail!(
             "Failed to bootstrap labels: {}\n\n\
              To fix, run these commands manually:\n  {}\n\n\
              Make sure your token has Issues (Write) permission.",
-            e,
-            label_cmds.join("\n  "),
+            e, label_cmds.join("\n  "),
         );
     }
 
-    // 5. Create or sync GitHub Project board
+    // Create or sync project board
     let owner = github_repo.split('/').next().unwrap_or(&github_repo);
     let project_number = match project_choice {
         ProjectChoice::CreateNew => {
             spinner.start("Creating GitHub Project board...");
-            match create_github_project(owner, &team_name, &manifest.statuses, gh_token.as_deref())
-            {
+            match git::create_project(owner, &team_name, &manifest.statuses, gh_token.as_deref()) {
                 Ok(n) => {
                     spinner.stop("GitHub Project board created");
                     n
@@ -611,13 +409,13 @@ pub fn run() -> Result<()> {
         }
         ProjectChoice::UseExisting(n) => {
             spinner.start("Syncing project board statuses...");
-            sync_project_status_field(owner, n, &manifest.statuses, gh_token.as_deref())?;
+            git::sync_project_status_field(owner, n, &manifest.statuses, gh_token.as_deref())?;
             spinner.stop("Project board statuses synced");
             n
         }
     };
 
-    // Save project number to config
+    // Save project number
     {
         let mut cfg = config::load()?;
         if let Some(entry) = cfg.teams.iter_mut().find(|t| t.name == team_name) {
@@ -626,12 +424,8 @@ pub fn run() -> Result<()> {
         config::save(&cfg)?;
     }
 
-    // Print view setup instructions if the profile defines views
     if !manifest.views.is_empty() {
-        let project_url = format!(
-            "https://github.com/orgs/{}/projects/{}",
-            owner, project_number
-        );
+        let project_url = format!("https://github.com/orgs/{}/projects/{}", owner, project_number);
         cliclack::log::info(format!("Board: {}", project_url))?;
     }
 
@@ -642,59 +436,141 @@ pub fn run() -> Result<()> {
     Ok(())
 }
 
-/// Checks that `git` is available. Errors if not found.
-fn check_prerequisites() -> Result<()> {
-    let mut missing = Vec::new();
-    if which::which("git").is_err() {
-        missing.push("git — https://git-scm.com/");
-    }
-    if which::which("gh").is_err() {
-        missing.push("gh — https://cli.github.com/");
-    }
-    if !missing.is_empty() {
-        bail!(
-            "Missing required tools:\n  {}\n\nInstall them and try again.",
-            missing.join("\n  "),
-        );
-    }
-    Ok(())
-}
+// ── Domain-calling helpers (interactive prompts) ──────────────────
 
-/// Default workzone path: ~/.botminter/workspaces
-fn default_workzone_path() -> PathBuf {
-    dirs::home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".botminter")
-        .join("workspaces")
-}
-
-/// Expands `~` at the start of a path to the home directory.
-fn expand_tilde(path: &str) -> PathBuf {
-    if path.starts_with("~/") || path == "~" {
-        if let Some(home) = dirs::home_dir() {
-            return home.join(&path[2..]);
+/// Detects an existing GH_TOKEN or prompts the user for one.
+fn detect_or_prompt_gh_token() -> Result<String> {
+    if let Some(existing) = git::detect_token() {
+        let masked = git::mask_token(&existing);
+        let use_existing: bool =
+            cliclack::confirm(format!("GitHub token detected ({}). Use it?", masked))
+                .initial_value(true)
+                .interact()?;
+        if use_existing {
+            return Ok(existing);
         }
     }
-    PathBuf::from(path)
+    prompt_gh_token()
 }
 
-/// Run a git command in the given directory.
-pub(crate) fn run_git(dir: &Path, args: &[&str]) -> Result<()> {
-    let output = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .with_context(|| format!("Failed to run git {}", args.join(" ")))?;
+/// Prompts for a GitHub token manually.
+fn prompt_gh_token() -> Result<String> {
+    let token: String = cliclack::input("GitHub token (GH_TOKEN)")
+        .placeholder("ghp_... or github_pat_...")
+        .validate(|input: &String| {
+            if input.is_empty() {
+                Err("GitHub token is required when a GitHub repo is specified")
+            } else {
+                Ok(())
+            }
+        })
+        .interact()?;
+    Ok(token)
+}
 
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "git {} failed: {}",
-            args.join(" "),
-            stderr.trim()
-        );
+/// Lists the user's GitHub orgs + personal account, returns selected org login.
+fn select_github_org(gh_token: &str) -> Result<String> {
+    let user_login = git::get_user_login(gh_token)?;
+    let orgs = git::list_user_orgs(gh_token)?;
+
+    let personal_label = format!("{} (personal)", user_login);
+    let mut select_items: Vec<(String, String, String)> = vec![
+        (user_login.clone(), personal_label, "Your personal GitHub account".to_string()),
+    ];
+    for org in &orgs {
+        select_items.push((org.clone(), org.clone(), "Organization".to_string()));
     }
-    Ok(())
+    select_items.push((
+        "__other__".to_string(), "Other (type org name)".to_string(),
+        "Enter an org name not listed above".to_string(),
+    ));
+
+    let items_ref: Vec<(&str, &str, &str)> = select_items
+        .iter()
+        .map(|(v, l, d)| (v.as_str(), l.as_str(), d.as_str()))
+        .collect();
+
+    let selected: &str = cliclack::select("GitHub owner (type to filter)")
+        .items(&items_ref)
+        .filter_mode()
+        .interact()?;
+
+    if selected == "__other__" {
+        let org: String = cliclack::input("Organization name")
+            .placeholder("my-org")
+            .validate(|input: &String| {
+                if input.is_empty() { Err("Organization name cannot be empty") } else { Ok(()) }
+            })
+            .interact()?;
+        Ok(org)
+    } else {
+        Ok(selected.to_string())
+    }
+}
+
+/// Lists repos for an org/user, lets the user select or create. Returns `(owner/repo, is_new)`.
+fn select_or_create_repo(gh_token: &str, owner: &str, team_name: &str) -> Result<(String, bool)> {
+    let repos = git::list_repos(gh_token, owner)?;
+    let default_name = format!("{}-team", team_name);
+    let create_label = format!("Create new repo ({})", default_name);
+
+    let mut select_items: Vec<(String, String, String)> = vec![
+        ("__create__".to_string(), create_label, "Create a new private repository".to_string()),
+    ];
+    for repo in &repos {
+        select_items.push((repo.clone(), repo.clone(), String::new()));
+    }
+
+    let items_ref: Vec<(&str, &str, &str)> = select_items
+        .iter()
+        .map(|(v, l, d)| (v.as_str(), l.as_str(), d.as_str()))
+        .collect();
+
+    let selected: &str = cliclack::select("Team repo (type to filter)")
+        .items(&items_ref)
+        .filter_mode()
+        .interact()?;
+
+    if selected == "__create__" {
+        let repo_name: String = cliclack::input("New repo name")
+            .default_input(&default_name)
+            .interact()?;
+        Ok((format!("{}/{}", owner, repo_name), true))
+    } else {
+        Ok((format!("{}/{}", owner, selected), false))
+    }
+}
+
+/// Lists GitHub Projects, lets the user select or create a new one.
+fn select_or_create_project(gh_token: &str, owner: &str, team_name: &str) -> Result<ProjectChoice> {
+    let projects = git::list_projects(gh_token, owner)?;
+    let default_title = format!("{} Board", team_name);
+    let create_label = format!("Create new board ({})", default_title);
+
+    let mut select_items: Vec<(String, String, String)> = vec![(
+        "__create__".to_string(), create_label,
+        "Create a new GitHub Project board".to_string(),
+    )];
+    for (number, title) in &projects {
+        select_items.push((number.to_string(), format!("{} (#{number})", title), String::new()));
+    }
+
+    let items_ref: Vec<(&str, &str, &str)> = select_items
+        .iter()
+        .map(|(v, l, d)| (v.as_str(), l.as_str(), d.as_str()))
+        .collect();
+
+    let selected: &str = cliclack::select("Project board (type to filter)")
+        .items(&items_ref)
+        .filter_mode()
+        .interact()?;
+
+    if selected == "__create__" {
+        Ok(ProjectChoice::CreateNew)
+    } else {
+        let number: u64 = selected.parse().context("Failed to parse project number")?;
+        Ok(ProjectChoice::UseExisting(number))
+    }
 }
 
 /// Collect members to hire during init (optional).
@@ -746,11 +622,7 @@ fn collect_members(roles: &[String]) -> Result<Vec<(String, String)>> {
 }
 
 /// Collect projects to add during init (optional).
-/// When `gh_token` and `org` are provided, offers interactive repo selection.
-fn collect_projects(
-    gh_token: Option<&str>,
-    org: Option<&str>,
-) -> Result<Vec<(String, String)>> {
+fn collect_projects(gh_token: Option<&str>, org: Option<&str>) -> Result<Vec<(String, String)>> {
     let add_projects: bool = cliclack::confirm("Add projects now?")
         .initial_value(false)
         .interact()?;
@@ -767,7 +639,7 @@ fn collect_projects(
             prompt_project_url()?
         };
 
-        let name = derive_project_name(&url);
+        let name = git::derive_project_name(&url);
         cliclack::log::info(format!("Project name: {}", name))?;
 
         projects.push((name, url));
@@ -783,7 +655,7 @@ fn collect_projects(
     Ok(projects)
 }
 
-/// Prompts for a project fork URL manually (fallback when no token/org).
+/// Prompts for a project fork URL manually.
 fn prompt_project_url() -> Result<String> {
     let url: String = cliclack::input("Project fork URL (must be HTTPS)")
         .placeholder("https://github.com/org/repo.git")
@@ -800,461 +672,9 @@ fn prompt_project_url() -> Result<String> {
     Ok(url)
 }
 
-/// Derives the project name from a git URL (basename minus .git suffix).
-pub fn derive_project_name(url: &str) -> String {
-    let url = url.trim_end_matches('/');
-    let basename = url.rsplit('/').next().unwrap_or(url);
-    basename.trim_end_matches(".git").to_string()
-}
-
-/// Verifies that a fork URL is a remote URL and is reachable.
-///
-/// Rejects local paths — workspace repos need remote URLs so they can be cloned
-/// on any machine. Runs `gh repo view` to verify the repo exists and is accessible.
-pub(crate) fn verify_fork_url(url: &str, gh_token: Option<&str>) -> Result<()> {
-    if url.starts_with("file://") {
-        // file:// URI — check the local path exists and is a git repo
-        let path_str = url.strip_prefix("file://").unwrap();
-        let path = Path::new(path_str);
-        if !path.join(".git").is_dir() {
-            bail!(
-                "Repository '{}' not found or is not a git repository.",
-                url
-            );
-        }
-        return Ok(());
-    }
-
-    if !url.starts_with("https://") && !url.starts_with("git@") {
-        bail!(
-            "Project URL must use a URI scheme (https://, git@, or file://), got: {}\n\
-             Bare local paths are not supported — use file:// for local repos.",
-            url
-        );
-    }
-
-    let mut cmd = Command::new("gh");
-    cmd.args(["repo", "view", url, "--json", "name"]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
-    let output = cmd.output().context("Failed to run `gh repo view`")?;
-    if !output.status.success() {
-        bail!(
-            "Repository '{}' not found or not accessible.\n\
-             Check the URL and ensure your token has access.\n\
-             To verify manually:  gh repo view {}",
-            url, url
-        );
-    }
-    Ok(())
-}
-
-/// Augments the botminter.yml in the team repo with a projects section.
-fn augment_manifest_with_projects(
-    team_repo: &Path,
-    projects: &[(String, String)],
-) -> Result<()> {
-    let manifest_path = team_repo.join("botminter.yml");
-    let mut manifest: profile::ProfileManifest = {
-        let contents = fs::read_to_string(&manifest_path)
-            .context("Failed to read botminter.yml from team repo")?;
-        serde_yml::from_str(&contents).context("Failed to parse botminter.yml")?
-    };
-
-    manifest.projects = projects
-        .iter()
-        .map(|(name, url)| profile::ProjectDef {
-            name: name.clone(),
-            fork_url: url.clone(),
-        })
-        .collect();
-
-    let contents = serde_yml::to_string(&manifest)
-        .context("Failed to serialize augmented botminter.yml")?;
-    fs::write(&manifest_path, contents)
-        .context("Failed to write augmented botminter.yml")?;
-
-    Ok(())
-}
-
-/// Reads the .botminter.yml template, augments with the member name, and
-/// writes as botminter.yml (without the dot prefix).
-pub(crate) fn finalize_member_manifest(member_dir: &Path, name: &str) -> Result<()> {
-    let template_path = member_dir.join(".botminter.yml");
-    if template_path.exists() {
-        let contents = fs::read_to_string(&template_path)
-            .context("Failed to read .botminter.yml template")?;
-
-        // Parse, augment with name, write back
-        let mut value: serde_yml::Value =
-            serde_yml::from_str(&contents).context("Failed to parse .botminter.yml")?;
-
-        if let serde_yml::Value::Mapping(ref mut map) = value {
-            map.insert(
-                serde_yml::Value::String("name".to_string()),
-                serde_yml::Value::String(name.to_string()),
-            );
-        }
-
-        let augmented =
-            serde_yml::to_string(&value).context("Failed to serialize member manifest")?;
-
-        // Write as botminter.yml (no dot prefix)
-        let manifest_path = member_dir.join("botminter.yml");
-        fs::write(&manifest_path, augmented)
-            .context("Failed to write member botminter.yml")?;
-
-        // Remove the template (.botminter.yml)
-        fs::remove_file(&template_path).ok();
-    }
-
-    Ok(())
-}
-
-/// Creates a GitHub repo and pushes the team repo.
-/// Checks if a GitHub repository exists and is accessible.
-fn repo_exists(repo_name: &str, gh_token: Option<&str>) -> Result<bool> {
-    let mut cmd = Command::new("gh");
-    cmd.args(["repo", "view", repo_name, "--json", "name"]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
-    let output = cmd.output().context("Failed to run `gh repo view`")?;
-    Ok(output.status.success())
-}
-
-fn create_github_repo(team_repo: &Path, repo_name: &str, gh_token: Option<&str>) -> Result<()> {
-    let mut cmd = Command::new("gh");
-    cmd.args([
-        "repo",
-        "create",
-        repo_name,
-        "--private",
-        "--source",
-        ".",
-        "--push",
-    ])
-    .current_dir(team_repo);
-
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
-
-    let output = cmd.output().context("Failed to run `gh repo create`")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "gh repo create failed: {}\n\n\
-             To fix, run manually:\n  \
-             gh repo create {} --private --source . --push",
-            stderr.trim(),
-            repo_name,
-        );
-    }
-
-    Ok(())
-}
-
-/// Clones an existing GitHub repo into `{team_dir}/team/`.
-pub fn clone_existing_repo(
-    team_dir: &Path,
-    repo_name: &str,
-    gh_token: Option<&str>,
-) -> Result<()> {
-    let target = team_dir.join("team");
-    let mut cmd = Command::new("gh");
-    cmd.args([
-        "repo",
-        "clone",
-        repo_name,
-        &target.to_string_lossy(),
-    ]);
-
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
-
-    let output = cmd.output().context("Failed to run `gh repo clone`")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "Failed to clone repo '{}': {}\n\n\
-             To fix, run manually:\n  \
-             gh repo clone {} {}",
-            repo_name,
-            stderr.trim(),
-            repo_name,
-            target.display(),
-        );
-    }
-
-    Ok(())
-}
-
-/// Prompts the user to enter a GitHub token manually.
-fn prompt_gh_token() -> Result<String> {
-    let token: String = cliclack::input("GitHub token (GH_TOKEN)")
-        .placeholder("ghp_... or github_pat_...")
-        .validate(|input: &String| {
-            if input.is_empty() {
-                Err("GitHub token is required when a GitHub repo is specified")
-            } else {
-                Ok(())
-            }
-        })
-        .interact()?;
-    Ok(token)
-}
-
-/// Masks a token for display: shows first 4 and last 4 characters.
-fn mask_token(token: &str) -> String {
-    if token.len() <= 12 {
-        return "****".to_string();
-    }
-    format!("{}...{}", &token[..4], &token[token.len() - 4..])
-}
-
-/// Validates that a GitHub token works by calling `gh api user`.
-fn validate_gh_token(token: &str) -> Result<()> {
-    let output = Command::new("gh")
-        .args(["api", "user", "--jq", ".login"])
-        .env("GH_TOKEN", token)
-        .output()
-        .context("Failed to run `gh api user` for token validation")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "GitHub token validation failed: {}\n\n\
-             Make sure your token is valid and not expired.\n\
-             To create a new token, visit: https://github.com/settings/tokens\n\
-             Required permissions: Contents (Write), Issues (Write), Projects (Admin)",
-            stderr.trim(),
-        );
-    }
-
-    let login = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    cliclack::log::info(format!("Authenticated as: {}", login))?;
-    Ok(())
-}
-
-/// Detects an existing GH_TOKEN or prompts the user for one.
-fn detect_or_prompt_gh_token() -> Result<String> {
-    let detected = std::env::var("GH_TOKEN")
-        .ok()
-        .filter(|t| !t.is_empty())
-        .or_else(|| {
-            Command::new("gh")
-                .args(["auth", "token"])
-                .output()
-                .ok()
-                .filter(|o| o.status.success())
-                .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-                .filter(|t| !t.is_empty())
-        });
-
-    if let Some(existing) = detected {
-        let masked = mask_token(&existing);
-        let use_existing: bool =
-            cliclack::confirm(format!("GitHub token detected ({}). Use it?", masked))
-                .initial_value(true)
-                .interact()?;
-        if use_existing {
-            return Ok(existing);
-        }
-    }
-    prompt_gh_token()
-}
-
-/// Lists the user's GitHub orgs + personal account via `gh api`, returns selected org login.
-/// Falls back to manual input if no orgs are discovered (common with fine-grained PATs
-/// that lack the Organization: Read permission).
-fn select_github_org(gh_token: &str) -> Result<String> {
-    // Get the authenticated user's login
-    let user_output = Command::new("gh")
-        .args(["api", "user", "--jq", ".login"])
-        .env("GH_TOKEN", gh_token)
-        .output()
-        .context("Failed to get GitHub user")?;
-    let user_login = String::from_utf8_lossy(&user_output.stdout).trim().to_string();
-
-    // Try to discover orgs (may return empty if token lacks org:read scope)
-    let org_output = Command::new("gh")
-        .args(["api", "user/orgs", "--jq", ".[].login"])
-        .env("GH_TOKEN", gh_token)
-        .output()
-        .context("Failed to list GitHub orgs")?;
-    let org_stdout = String::from_utf8_lossy(&org_output.stdout);
-    let orgs: Vec<String> = org_stdout.lines().filter(|l| !l.is_empty()).map(String::from).collect();
-
-    // Build selection: personal account + discovered orgs + manual entry option
-    let personal_label = format!("{} (personal)", user_login);
-    let mut select_items: Vec<(String, String, String)> = vec![
-        (user_login.clone(), personal_label, "Your personal GitHub account".to_string()),
-    ];
-    for org in &orgs {
-        select_items.push((org.clone(), org.clone(), "Organization".to_string()));
-    }
-    select_items.push((
-        "__other__".to_string(),
-        "Other (type org name)".to_string(),
-        "Enter an org name not listed above".to_string(),
-    ));
-
-    let items_ref: Vec<(&str, &str, &str)> = select_items
-        .iter()
-        .map(|(v, l, d)| (v.as_str(), l.as_str(), d.as_str()))
-        .collect();
-
-    let selected: &str = cliclack::select("GitHub owner (type to filter)")
-        .items(&items_ref)
-        .filter_mode()
-        .interact()?;
-
-    if selected == "__other__" {
-        let org: String = cliclack::input("Organization name")
-            .placeholder("my-org")
-            .validate(|input: &String| {
-                if input.is_empty() {
-                    Err("Organization name cannot be empty")
-                } else {
-                    Ok(())
-                }
-            })
-            .interact()?;
-        Ok(org)
-    } else {
-        Ok(selected.to_string())
-    }
-}
-
-/// Lists repos for an org/user and lets the user select one or create a new one.
-/// Returns `(owner/repo, is_new)` — `is_new` is true when the user chose to create a new repo.
-fn select_or_create_repo(gh_token: &str, owner: &str, team_name: &str) -> Result<(String, bool)> {
-    let repos = list_gh_repos(gh_token, owner)?;
-
-    let default_name = format!("{}-team", team_name);
-    let create_label = format!("Create new repo ({})", default_name);
-
-    let mut select_items: Vec<(String, String, String)> = vec![
-        ("__create__".to_string(), create_label.clone(), "Create a new private repository".to_string()),
-    ];
-    for repo in &repos {
-        select_items.push((repo.clone(), repo.clone(), String::new()));
-    }
-
-    let items_ref: Vec<(&str, &str, &str)> = select_items
-        .iter()
-        .map(|(v, l, d)| (v.as_str(), l.as_str(), d.as_str()))
-        .collect();
-
-    let selected: &str = cliclack::select("Team repo (type to filter)")
-        .items(&items_ref)
-        .filter_mode()
-        .interact()?;
-
-    if selected == "__create__" {
-        let repo_name: String = cliclack::input("New repo name")
-            .default_input(&default_name)
-            .interact()?;
-        Ok((format!("{}/{}", owner, repo_name), true))
-    } else {
-        Ok((format!("{}/{}", owner, selected), false))
-    }
-}
-
-/// Lists GitHub Project boards for an owner and lets the user select one or create a new one.
-/// Returns `ProjectChoice::CreateNew` or `ProjectChoice::UseExisting(number)`.
-fn select_or_create_project(
-    gh_token: &str,
-    owner: &str,
-    team_name: &str,
-) -> Result<ProjectChoice> {
-    let projects = list_gh_projects(gh_token, owner)?;
-
-    let default_title = format!("{} Board", team_name);
-    let create_label = format!("Create new board ({})", default_title);
-
-    let mut select_items: Vec<(String, String, String)> = vec![(
-        "__create__".to_string(),
-        create_label,
-        "Create a new GitHub Project board".to_string(),
-    )];
-    for (number, title) in &projects {
-        select_items.push((
-            number.to_string(),
-            format!("{} (#{number})", title),
-            String::new(),
-        ));
-    }
-
-    let items_ref: Vec<(&str, &str, &str)> = select_items
-        .iter()
-        .map(|(v, l, d)| (v.as_str(), l.as_str(), d.as_str()))
-        .collect();
-
-    let selected: &str = cliclack::select("Project board (type to filter)")
-        .items(&items_ref)
-        .filter_mode()
-        .interact()?;
-
-    if selected == "__create__" {
-        Ok(ProjectChoice::CreateNew)
-    } else {
-        let number: u64 = selected
-            .parse()
-            .context("Failed to parse project number")?;
-        Ok(ProjectChoice::UseExisting(number))
-    }
-}
-
-/// Lists GitHub Project boards for a given owner. Returns `(number, title)` pairs.
-pub fn list_gh_projects(gh_token: &str, owner: &str) -> Result<Vec<(u64, String)>> {
-    let output = Command::new("gh")
-        .args([
-            "project",
-            "list",
-            "--owner",
-            owner,
-            "--format",
-            "json",
-        ])
-        .env("GH_TOKEN", gh_token)
-        .output()
-        .context("Failed to run `gh project list`")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "Failed to list projects for '{}': {}",
-            owner,
-            stderr.trim()
-        );
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value =
-        serde_json::from_str(stdout.trim()).context("Could not parse project list JSON")?;
-
-    Ok(json["projects"]
-        .as_array()
-        .unwrap_or(&vec![])
-        .iter()
-        .filter_map(|p| {
-            let number = p["number"].as_u64()?;
-            let title = p["title"].as_str()?.to_string();
-            Some((number, title))
-        })
-        .collect())
-}
-
 /// Lists repos for an org/user and lets the user select one as a project fork.
-/// Returns the HTTPS clone URL.
 fn select_project_repo(gh_token: &str, org: &str) -> Result<String> {
-    let repos = list_gh_repos(gh_token, org)?;
+    let repos = git::list_repos(gh_token, org)?;
 
     if repos.is_empty() {
         cliclack::log::warning(format!("No repos found in '{}'. Enter URL manually.", org))?;
@@ -1274,551 +694,15 @@ fn select_project_repo(gh_token: &str, org: &str) -> Result<String> {
     Ok(format!("https://github.com/{}/{}.git", org, selected))
 }
 
-/// Lists repository names for a given GitHub owner (org or user).
-fn list_gh_repos(gh_token: &str, owner: &str) -> Result<Vec<String>> {
-    let output = Command::new("gh")
-        .args([
-            "repo", "list", owner,
-            "--limit", "50",
-            "--json", "name",
-            "--jq", ".[].name",
-        ])
-        .env("GH_TOKEN", gh_token)
-        .output()
-        .context("Failed to list repos")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("Failed to list repos for '{}': {}", owner, stderr.trim());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.lines().filter(|l| !l.is_empty()).map(String::from).collect())
-}
-
-/// Bootstraps labels on the GitHub repo from the profile manifest.
-fn bootstrap_labels(
-    repo: &str,
-    labels: &[profile::LabelDef],
-    gh_token: Option<&str>,
-) -> Result<()> {
-    for label in labels {
-        let mut cmd = Command::new("gh");
-        cmd.args([
-            "label",
-            "create",
-            &label.name,
-            "--color",
-            &label.color,
-            "--description",
-            &label.description,
-            "--force",
-            "--repo",
-            repo,
-        ]);
-
-        if let Some(token) = gh_token {
-            cmd.env("GH_TOKEN", token);
-        }
-
-        let output = cmd.output().with_context(|| {
-            format!("Failed to create label '{}'", label.name)
-        })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(
-                "Failed to create label '{}': {}",
-                label.name,
-                stderr.trim(),
-            );
-        }
-    }
-    Ok(())
-}
-
-/// Creates a single label on a GitHub repo. Idempotent (uses --force).
-pub fn create_github_label(
-    repo: &str,
-    name: &str,
-    color: &str,
-    description: &str,
-    gh_token: Option<&str>,
-) -> Result<()> {
-    let mut cmd = Command::new("gh");
-    cmd.args([
-        "label",
-        "create",
-        name,
-        "--color",
-        color,
-        "--description",
-        description,
-        "--force",
-        "--repo",
-        repo,
-    ]);
-
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
-
-    let output = cmd.output().with_context(|| {
-        format!("Failed to create label '{}'", name)
-    })?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "Failed to create label '{}': {}",
-            name,
-            stderr.trim(),
-        );
-    }
-
-    Ok(())
-}
-
-/// Creates a GitHub Project (v2), syncs the Status field options, and returns the project number.
-/// Uses the `updateProjectV2Field` GraphQL mutation to replace the built-in
-/// Status field's default options with the profile's status definitions.
-fn create_github_project(
-    owner: &str,
-    team_name: &str,
-    statuses: &[profile::StatusDef],
-    gh_token: Option<&str>,
-) -> Result<u64> {
-    // 1. Create project
-    let mut cmd = Command::new("gh");
-    cmd.args([
-        "project",
-        "create",
-        "--owner",
-        owner,
-        "--title",
-        &format!("{} Board", team_name),
-        "--format",
-        "json",
-    ]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
-    let output = cmd
-        .output()
-        .context("Failed to run `gh project create`")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("gh project create failed: {}", stderr.trim());
-    }
-
-    // Parse project number from JSON output
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let project_json: serde_json::Value = serde_json::from_str(stdout.trim())
-        .context("Could not parse JSON from `gh project create` output")?;
-    let project_number = project_json["number"]
-        .as_u64()
-        .context("Could not find 'number' field in gh project create output")?;
-
-    // 2. Sync Status field options
-    sync_project_status_field(owner, project_number, statuses, gh_token)?;
-
-    Ok(project_number)
-}
-
-/// Finds the built-in Status field ID and updates its options via GraphQL.
-/// This replaces the default (Todo/In Progress/Done) with profile-defined statuses.
-pub fn sync_project_status_field(
-    owner: &str,
-    project_number: u64,
-    statuses: &[profile::StatusDef],
-    gh_token: Option<&str>,
-) -> Result<()> {
-    let num_str = project_number.to_string();
-
-    // 1. Find the Status field ID
-    let mut cmd = Command::new("gh");
-    cmd.args([
-        "project",
-        "field-list",
-        &num_str,
-        "--owner",
-        owner,
-        "--format",
-        "json",
-    ]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
-    let output = cmd
-        .output()
-        .context("Failed to run `gh project field-list`")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("gh project field-list failed: {}", stderr.trim());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let fields_json: serde_json::Value = serde_json::from_str(stdout.trim())
-        .context("Could not parse field-list JSON")?;
-
-    let field_id = fields_json["fields"]
-        .as_array()
-        .and_then(|fields| {
-            fields
-                .iter()
-                .find(|f| f["name"].as_str() == Some("Status"))
-                .and_then(|f| f["id"].as_str())
-        })
-        .context("Could not find Status field in project")?
-        .to_string();
-
-    // 2. Build the GraphQL mutation to update Status field options
-    //    Assign colors by role prefix for visual grouping.
-    let options_json: Vec<String> = statuses
-        .iter()
-        .map(|s| {
-            let color = color_for_status(&s.name);
-            format!(
-                "{{name:\"{}\",color:{},description:\"\"}}",
-                s.name, color
-            )
-        })
-        .collect();
-
-    let mutation = format!(
-        "mutation {{ updateProjectV2Field(input: {{ fieldId: \"{}\", \
-         singleSelectOptions: [{}] }}) {{ projectV2Field {{ \
-         ... on ProjectV2SingleSelectField {{ name options {{ name id }} }} }} }} }}",
-        field_id,
-        options_json.join(",")
-    );
-
-    let mut cmd = Command::new("gh");
-    cmd.args(["api", "graphql", "-f", &format!("query={}", mutation)]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
-    let output = cmd
-        .output()
-        .context("Failed to run GraphQL updateProjectV2Field")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("Failed to sync Status field: {}", stderr.trim());
-    }
-
-    Ok(())
-}
-
-/// Maps a status name prefix to a GitHub Project color for visual grouping.
-fn color_for_status(name: &str) -> &'static str {
-    match name.split(':').next().unwrap_or("") {
-        "po" => "BLUE",
-        "arch" => "PURPLE",
-        "dev" => "YELLOW",
-        "qe" => "PINK",
-        "lead" => "ORANGE",
-        "sre" => "GRAY",
-        "cw" => "ORANGE",
-        "mgr" => "PURPLE",
-        "error" => "RED",
-        "done" => "GREEN",
-        _ => "GRAY",
-    }
-}
-
-/// Finds a GitHub Project by title for the given owner. Returns the project number.
-pub fn find_project_number(
-    owner: &str,
-    team_name: &str,
-    gh_token: Option<&str>,
-) -> Result<u64> {
-    let board_title = format!("{} Board", team_name);
-    let mut cmd = Command::new("gh");
-    cmd.args([
-        "project",
-        "list",
-        "--owner",
-        owner,
-        "--format",
-        "json",
-    ]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
-    let output = cmd
-        .output()
-        .context("Failed to run `gh project list`")?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("gh project list failed: {}", stderr.trim());
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let json: serde_json::Value =
-        serde_json::from_str(stdout.trim()).context("Could not parse project list JSON")?;
-
-    json["projects"]
-        .as_array()
-        .and_then(|projects| {
-            projects
-                .iter()
-                .find(|p| p["title"].as_str() == Some(&board_title))
-                .and_then(|p| p["number"].as_u64())
-        })
-        .with_context(|| format!("No project named '{}' found for owner '{}'", board_title, owner))
-}
-
-/// Validates that a bridge name exists in the profile's bridges list.
-/// Returns Ok(()) if valid, Err with available bridges list if not.
-fn validate_bridge_selection(bridge_name: &str, bridges: &[profile::BridgeDef]) -> Result<()> {
-    if bridges.is_empty() {
-        bail!("Profile has no bridges available. Remove the --bridge flag.");
-    }
-    if !bridges.iter().any(|b| b.name == bridge_name) {
-        let available: Vec<&str> = bridges.iter().map(|b| b.name.as_str()).collect();
-        bail!(
-            "Bridge '{}' not found in profile. Available bridges: {}",
-            bridge_name,
-            available.join(", ")
-        );
-    }
-    Ok(())
-}
-
-/// Records the selected bridge in the team's botminter.yml.
-///
-/// For local bridges, also records the operator identity with the default
-/// admin username (`bmadmin`). External bridges don't have managed admin
-/// accounts, so the operator section is skipped.
-fn record_bridge_in_manifest(
-    team_repo: &Path,
-    bridge_name: &str,
-    bridges: &[profile::BridgeDef],
-) -> Result<()> {
-    let manifest_path = team_repo.join("botminter.yml");
-    let contents = fs::read_to_string(&manifest_path)
-        .context("Failed to read team botminter.yml for bridge recording")?;
-    let mut doc: serde_yml::Value =
-        serde_yml::from_str(&contents).context("Failed to parse team botminter.yml")?;
-
-    if let serde_yml::Value::Mapping(ref mut map) = doc {
-        map.insert(
-            serde_yml::Value::String("bridge".to_string()),
-            serde_yml::Value::String(bridge_name.to_string()),
-        );
-
-        // For local bridges, set operator identity with default admin username
-        let is_local = bridges
-            .iter()
-            .any(|b| b.name == bridge_name && b.bridge_type == "local");
-        if is_local {
-            let mut op_map = serde_yml::Mapping::new();
-            op_map.insert(
-                serde_yml::Value::String("bridge_username".to_string()),
-                serde_yml::Value::String("bmadmin".to_string()),
-            );
-            map.insert(
-                serde_yml::Value::String("operator".to_string()),
-                serde_yml::Value::Mapping(op_map),
-            );
-        }
-    }
-
-    let updated = serde_yml::to_string(&doc)
-        .context("Failed to serialize team botminter.yml with bridge")?;
-    fs::write(&manifest_path, updated)
-        .context("Failed to write team botminter.yml with bridge")?;
-
-    Ok(())
-}
-
-/// Loads the existing config or returns a fresh default.
-fn load_or_default_config() -> BotminterConfig {
-    config::load().unwrap_or_else(|_| BotminterConfig {
-        workzone: default_workzone_path(),
-        default_team: None,
-        teams: Vec::new(),
-        keyring_collection: None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    // ── check_prerequisites ───────────────────────────────────
-
-    #[test]
-    fn check_prerequisites_passes_when_tools_present() {
-        // Both git and gh are available in the test environment
-        assert!(check_prerequisites().is_ok());
-    }
-
-    // ── mask_token ──────────────────────────────────────────────
-
-    #[test]
-    fn mask_token_normal() {
-        assert_eq!(mask_token("github_pat_abc123xyz789"), "gith...z789");
-    }
-
-    #[test]
-    fn mask_token_short_token_returns_stars() {
-        assert_eq!(mask_token("abc"), "****");
-    }
-
-    #[test]
-    fn mask_token_exactly_12_returns_stars() {
-        assert_eq!(mask_token("123456789012"), "****");
-    }
-
-    #[test]
-    fn mask_token_13_chars_shows_ends() {
-        assert_eq!(mask_token("1234567890123"), "1234...0123");
-    }
-
-    // ── project number JSON parsing ─────────────────────────────
-
-    #[test]
-    fn parse_project_number_from_json() {
-        let json_output = r#"{"number":42,"title":"test Board","url":"https://github.com/orgs/test/projects/42"}"#;
-        let parsed: serde_json::Value = serde_json::from_str(json_output).unwrap();
-        let number = parsed["number"].as_u64().unwrap();
-        assert_eq!(number, 42);
-    }
-
-    #[test]
-    fn parse_project_number_missing_field() {
-        let json_output = r#"{"title":"test Board"}"#;
-        let parsed: serde_json::Value = serde_json::from_str(json_output).unwrap();
-        assert!(parsed["number"].as_u64().is_none());
-    }
-
-    // ── list_gh_repos parsing ───────────────────────────────────
-
-    #[test]
-    fn parse_repo_names_from_gh_output() {
-        let output = "repo-one\nrepo-two\nrepo-three\n";
-        let repos: Vec<String> = output
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(String::from)
-            .collect();
-        assert_eq!(repos, vec!["repo-one", "repo-two", "repo-three"]);
-    }
-
-    #[test]
-    fn parse_repo_names_empty_output() {
-        let output = "";
-        let repos: Vec<String> = output
-            .lines()
-            .filter(|l| !l.is_empty())
-            .map(String::from)
-            .collect();
-        assert!(repos.is_empty());
-    }
-
-    // ── project URL construction ────────────────────────────────
-
-    #[test]
-    fn project_url_constructed_correctly() {
-        let org = "my-org";
-        let repo = "my-repo";
-        let url = format!("https://github.com/{}/{}.git", org, repo);
-        assert_eq!(url, "https://github.com/my-org/my-repo.git");
-        assert_eq!(derive_project_name(&url), "my-repo");
-    }
-
-    // ── bridge selection validation ─────────────────────────────
-
-    #[test]
-    fn init_bridge_valid_name_accepted() {
-        let bridges = vec![
-            profile::BridgeDef {
-                name: "telegram".to_string(),
-                display_name: "Telegram".to_string(),
-                description: "Telegram bot".to_string(),
-                bridge_type: "external".to_string(),
-            },
-        ];
-        let result = validate_bridge_selection("telegram", &bridges);
-        assert!(result.is_ok());
-    }
-
-    #[test]
-    fn init_bridge_invalid_name_rejected() {
-        let bridges = vec![
-            profile::BridgeDef {
-                name: "telegram".to_string(),
-                display_name: "Telegram".to_string(),
-                description: "Telegram bot".to_string(),
-                bridge_type: "external".to_string(),
-            },
-        ];
-        let result = validate_bridge_selection("slack", &bridges);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("telegram"), "Error should list available bridges: {}", err);
-    }
-
-    #[test]
-    fn init_bridge_empty_bridges_rejects() {
-        let bridges: Vec<profile::BridgeDef> = Vec::new();
-        let result = validate_bridge_selection("telegram", &bridges);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("no bridges"), "Error should say no bridges available: {}", err);
-    }
-
     #[test]
     fn init_no_bridge_with_no_bridges_ok() {
-        // When no --bridge flag is passed and profile has no bridges, nothing to validate
+        // When no --bridge flag is passed and profile has no bridges, nothing to validate.
+        // validate_bridge_selection is only called when --bridge is provided.
         let bridges: Vec<profile::BridgeDef> = Vec::new();
-        // validate_bridge_selection is only called when --bridge is provided
-        // This test documents the expected behavior: no call = no error
         assert!(bridges.is_empty());
-    }
-
-    // ── verify_fork_url rejects bare local paths ──────────────
-
-    #[test]
-    fn verify_fork_url_rejects_bare_local_path() {
-        let result = verify_fork_url("/tmp/some-repo", None);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("must use a URI scheme"), "{}", err);
-    }
-
-    #[test]
-    fn verify_fork_url_rejects_relative_path() {
-        let result = verify_fork_url("../my-project", None);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("must use a URI scheme"), "{}", err);
-    }
-
-    #[test]
-    fn verify_fork_url_rejects_dot_path() {
-        let result = verify_fork_url("./local-repo", None);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("must use a URI scheme"), "{}", err);
-    }
-
-    #[test]
-    fn verify_fork_url_accepts_file_uri() {
-        let tmp = tempfile::tempdir().unwrap();
-        let repo = tmp.path().join("test-repo");
-        std::fs::create_dir_all(&repo).unwrap();
-        Command::new("git").args(["init", "-b", "main"]).current_dir(&repo).output().unwrap();
-        let url = format!("file://{}", repo.to_string_lossy());
-        assert!(verify_fork_url(&url, None).is_ok());
-    }
-
-    #[test]
-    fn verify_fork_url_rejects_nonexistent_file_uri() {
-        let result = verify_fork_url("file:///tmp/does-not-exist-repo-xyz", None);
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("not found") || err.contains("not a git repository"), "{}", err);
     }
 }

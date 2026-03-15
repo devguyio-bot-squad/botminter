@@ -5,7 +5,7 @@ use crate::profile;
 
 /// Handles `bm profiles list` — displays a table of all embedded profiles.
 pub fn list() -> Result<()> {
-    profile::ensure_profiles_initialized()?;
+    super::ensure_profiles(false)?;
     let names = profile::list_profiles()?;
 
     let mut table = Table::new();
@@ -33,7 +33,7 @@ pub fn list() -> Result<()> {
 /// Handles `bm profiles describe <profile>` — shows full profile details.
 /// When `show_tags` is true, appends a summary of agent-tagged files.
 pub fn describe(name: &str, show_tags: bool) -> Result<()> {
-    profile::ensure_profiles_initialized()?;
+    super::ensure_profiles(false)?;
     let manifest = profile::read_manifest(name)?;
 
     println!("Profile: {}", manifest.name);

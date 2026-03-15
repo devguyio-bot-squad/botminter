@@ -6,7 +6,7 @@ use crate::profile;
 
 /// Handles `bm roles list [-t team]`.
 pub fn list(team_flag: Option<&str>) -> Result<()> {
-    profile::ensure_profiles_initialized()?;
+    super::ensure_profiles(false)?;
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
 

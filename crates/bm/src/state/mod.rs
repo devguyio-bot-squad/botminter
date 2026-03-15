@@ -1,3 +1,10 @@
+mod dashboard;
+
+pub use dashboard::{
+    gather_status, BridgeDisplay, BridgeIdentityRow, DaemonDisplay, MemberRow,
+    RalphMemberInfo, StatusInfo, SubmoduleRow, VerboseDisplay, WorkspaceVerbose,
+};
+
 use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -72,6 +79,49 @@ pub fn save_to(path: &Path, state: &RuntimeState) -> Result<()> {
 pub fn is_alive(pid: u32) -> bool {
     // Safety: kill with signal 0 only checks existence, sends no signal.
     unsafe { libc::kill(pid as i32, 0) == 0 }
+}
+
+/// Status of a team member process.
+#[derive(Debug)]
+pub enum MemberStatus {
+    Running { pid: u32, started_at: String },
+    Crashed { pid: u32, started_at: String },
+    Stopped,
+}
+
+impl MemberStatus {
+    pub fn label(&self) -> &'static str {
+        match self {
+            MemberStatus::Running { .. } => "running",
+            MemberStatus::Crashed { .. } => "crashed",
+            MemberStatus::Stopped => "stopped",
+        }
+    }
+}
+
+/// Resolves state for display/inspection by external callers.
+pub fn resolve_member_status(
+    state: &RuntimeState,
+    team_name: &str,
+    member_dir_name: &str,
+) -> MemberStatus {
+    let key = format!("{}/{}", team_name, member_dir_name);
+    match state.members.get(&key) {
+        Some(rt) => {
+            if is_alive(rt.pid) {
+                MemberStatus::Running {
+                    pid: rt.pid,
+                    started_at: rt.started_at.clone(),
+                }
+            } else {
+                MemberStatus::Crashed {
+                    pid: rt.pid,
+                    started_at: rt.started_at.clone(),
+                }
+            }
+        }
+        None => MemberStatus::Stopped,
+    }
 }
 
 /// Removes entries for dead processes from state. Returns the keys that were cleaned.
@@ -180,5 +230,79 @@ mod tests {
         assert!(stale.contains(&"dead-member".to_string()));
         assert_eq!(state.members.len(), 1);
         assert!(state.members.contains_key("alive-member"));
+    }
+
+    // ── resolve_member_status ─────────────────────────────────────
+
+    #[test]
+    fn resolve_member_status_running() {
+        let mut state = RuntimeState::default();
+        let alive_pid = std::process::id(); // current process, guaranteed alive
+        state.members.insert(
+            "team/member".to_string(),
+            MemberRuntime {
+                pid: alive_pid,
+                started_at: "2026-02-21T10:00:00Z".to_string(),
+                workspace: PathBuf::from("/tmp/ws"),
+            },
+        );
+
+        let status = resolve_member_status(&state, "team", "member");
+        assert_eq!(status.label(), "running");
+        match status {
+            MemberStatus::Running { pid, .. } => assert_eq!(pid, alive_pid),
+            other => panic!("Expected Running, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolve_member_status_crashed() {
+        let mut state = RuntimeState::default();
+        let dead_pid = 4_000_000u32; // unlikely to exist
+        state.members.insert(
+            "team/member".to_string(),
+            MemberRuntime {
+                pid: dead_pid,
+                started_at: "2026-02-21T10:00:00Z".to_string(),
+                workspace: PathBuf::from("/tmp/ws"),
+            },
+        );
+
+        let status = resolve_member_status(&state, "team", "member");
+        assert_eq!(status.label(), "crashed");
+        match status {
+            MemberStatus::Crashed { pid, .. } => assert_eq!(pid, dead_pid),
+            other => panic!("Expected Crashed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn resolve_member_status_stopped() {
+        let state = RuntimeState::default(); // empty — no entries
+        let status = resolve_member_status(&state, "team", "member");
+        assert_eq!(status.label(), "stopped");
+    }
+
+    // ── MemberStatus::label ───────────────────────────────────────
+
+    #[test]
+    fn member_status_labels() {
+        assert_eq!(
+            MemberStatus::Running {
+                pid: 1,
+                started_at: String::new()
+            }
+            .label(),
+            "running"
+        );
+        assert_eq!(
+            MemberStatus::Crashed {
+                pid: 1,
+                started_at: String::new()
+            }
+            .label(),
+            "crashed"
+        );
+        assert_eq!(MemberStatus::Stopped.label(), "stopped");
     }
 }

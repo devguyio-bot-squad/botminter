@@ -1,0 +1,127 @@
+use std::fs;
+use std::process::Command;
+
+use anyhow::{Context, Result};
+
+/// Launches `ralph run -p PROMPT.md` in the given workspace directory.
+/// Returns the child PID.
+pub fn launch_ralph(
+    workspace: &std::path::Path,
+    gh_token: &str,
+    member_token: Option<&str>,
+    bridge_type: Option<&str>,
+    service_url: Option<&str>,
+) -> Result<u32> {
+    let mut cmd = Command::new("ralph");
+    cmd.args(["run", "-p", "PROMPT.md"])
+        .current_dir(workspace)
+        .env("GH_TOKEN", gh_token)
+        // Unset CLAUDECODE to avoid nested-Claude issues
+        .env_remove("CLAUDECODE");
+
+    if let Some(token) = member_token {
+        match bridge_type {
+            Some("rocketchat") => {
+                cmd.env("RALPH_ROCKETCHAT_AUTH_TOKEN", token);
+                if let Some(url) = service_url {
+                    cmd.env("RALPH_ROCKETCHAT_SERVER_URL", url);
+                }
+            }
+            Some("tuwunel") => {
+                cmd.env("RALPH_MATRIX_ACCESS_TOKEN", token);
+                if let Some(url) = service_url {
+                    cmd.env("RALPH_MATRIX_HOMESERVER_URL", url);
+                }
+            }
+            _ => {
+                cmd.env("RALPH_TELEGRAM_BOT_TOKEN", token);
+            }
+        }
+    }
+
+    // Detach from current process group
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    let child = cmd.spawn().with_context(|| {
+        format!("Failed to spawn ralph in {}", workspace.display())
+    })?;
+
+    Ok(child.id())
+}
+
+/// Checks if a member has a credential but RObot.enabled is false in ralph.yml.
+///
+/// Returns `true` if there is a mismatch (credential present but RObot disabled),
+/// meaning the user should run `bm teams sync` to update.
+pub fn check_robot_enabled_mismatch(
+    ralph_yml_path: &std::path::Path,
+    has_credential: bool,
+) -> bool {
+    if !has_credential {
+        return false;
+    }
+    if !ralph_yml_path.exists() {
+        return false;
+    }
+    let contents = match fs::read_to_string(ralph_yml_path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let doc: serde_yml::Value = match serde_yml::from_str(&contents) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+
+    // Check if RObot.enabled is explicitly false
+    match doc
+        .get("RObot")
+        .and_then(|r| r.get("enabled"))
+        .and_then(|e| e.as_bool())
+    {
+        Some(false) => true,  // Mismatch: has cred but disabled
+        _ => false,           // Either enabled or not set at all
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn launch_ralph_receives_per_member_credential() {
+        // This test verifies that launch_ralph correctly accepts bridge-type-aware
+        // parameters. We can't test actual process spawning, but we verify the
+        // function signature accepts the new bridge_type + service_url parameters.
+        //
+        // The real test is that `bm start` resolves credentials per-member
+        // via resolve_credential_from_store() in the member loop.
+
+        // Verify launch_ralph compiles with bridge-type-aware parameters
+        let _: fn(&std::path::Path, &str, Option<&str>, Option<&str>, Option<&str>) -> Result<u32> =
+            launch_ralph;
+    }
+
+    #[test]
+    fn check_robot_enabled_diagnostic() {
+        // Test the diagnostic warning logic: when a member has a credential
+        // but RObot.enabled is false, a warning should be emitted.
+        // This validates the function exists and works correctly.
+        let tmp = tempfile::tempdir().unwrap();
+        let ralph_yml = tmp.path().join("ralph.yml");
+        fs::write(
+            &ralph_yml,
+            "preset: feature-development\nRObot:\n  enabled: false\n",
+        )
+        .unwrap();
+
+        let has_credential = true;
+        let robot_enabled = check_robot_enabled_mismatch(&ralph_yml, has_credential);
+        assert!(
+            robot_enabled,
+            "should return true when credential exists but RObot.enabled is false"
+        );
+    }
+}

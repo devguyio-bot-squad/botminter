@@ -65,10 +65,11 @@ hats:
 
       5. **COMMIT** — One task, one commit
 
-      6. **INVARIANT AUDIT** — Self-check before publishing
-         - Re-read every file in `invariants/`.
-         - For each invariant, confirm your changes comply. If any invariant is violated, go back and fix it before publishing. Do NOT publish `build.completed` with invariant violations.
-         - Log your compliance check in the scratchpad: list each invariant file and whether it applies, and if so, how you satisfied it.
+      6. **FRESH POST-COMMIT INVARIANT AUDIT** — Self-check before publishing
+         - You MUST spin agents after committing to peroform ivariants audit:
+           a) Each agent must must audit ONE file in `invariants/`.
+           b) If any invariant is violated, go back and fix it before publishing. Do NOT publish `build.completed` with invariant violations.
+           c) Log your compliance check in the scratchpad: list each invariant file, the compliance, and the fixes if any.
 
       ### If triggered by review.changes_requested
       Read the reviewer's feedback, fix the specific issues, re-verify, re-publish.
@@ -138,3 +139,4 @@ skills:
 RObot:
   enabled: true
   timeout_seconds: 120
+  telegram: {}

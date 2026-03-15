@@ -1,118 +1,51 @@
-use std::fs;
-use std::process::Command;
+use anyhow::Result;
+use comfy_table::{
+    ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table,
+};
 
-use anyhow::{Context, Result};
-use comfy_table::{ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
-use serde::Deserialize;
-
-use crate::bridge;
-use crate::commands::daemon;
-use crate::commands::start::{resolve_member_status, MemberStatus};
 use crate::config;
-use crate::profile;
-use crate::state;
-use crate::topology;
-use crate::workspace;
-
-/// Minimal member manifest for reading role.
-#[derive(Debug, Deserialize)]
-struct MemberManifest {
-    #[serde(default)]
-    role: Option<String>,
-}
+use crate::state::{self, MemberStatus};
 
 /// Handles `bm status [-t team] [-v]`.
 pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
-    let team_repo = team.path.join("team");
-    let team_name = &team.name;
 
-    // Check for topology file (formation info)
-    let topo_path = topology::topology_path(&cfg.workzone, team_name);
-    let topo = topology::load(&topo_path)?;
+    let info = state::gather_status(team, &cfg, verbose)?;
 
-    println!("Team: {}", team_name);
-    if let Some(ref t) = topo {
-        println!("Formation: {}", t.formation);
+    // Header
+    println!("Team: {}", team.name);
+    if let Some(f) = &info.formation {
+        println!("Formation: {}", f);
     }
     println!("Profile: {}", team.profile);
     if !team.github_repo.is_empty() {
         println!("GitHub: {}", team.github_repo);
     }
-
-    // Show projects from botminter.yml
-    let manifest_path = team_repo.join("botminter.yml");
-    if let Ok(contents) = fs::read_to_string(&manifest_path) {
-        if let Ok(manifest) = serde_yml::from_str::<profile::ProfileManifest>(&contents) {
-            if !manifest.projects.is_empty() {
-                let names: Vec<&str> =
-                    manifest.projects.iter().map(|p| p.name.as_str()).collect();
-                println!("Projects: {}", names.join(", "));
-            }
-        }
+    if !info.project_names.is_empty() {
+        println!("Projects: {}", info.project_names.join(", "));
     }
-
-    // Show daemon status if running
-    if let Ok(pid_file) = daemon::pid_path(team_name) {
-        if pid_file.exists() {
-            if let Ok(pid_str) = fs::read_to_string(&pid_file) {
-                if let Ok(pid) = pid_str.trim().parse::<u32>() {
-                    if state::is_alive(pid) {
-                        if let Ok(cfg_file) = daemon::config_path(team_name) {
-                            if let Ok(contents) = fs::read_to_string(&cfg_file) {
-                                if let Ok(dcfg) =
-                                    serde_json::from_str::<daemon::DaemonConfig>(&contents)
-                                {
-                                    match dcfg.mode.as_str() {
-                                        "webhook" => println!(
-                                            "Daemon: running (PID {}, webhook mode, port {})",
-                                            pid, dcfg.port
-                                        ),
-                                        "poll" => println!(
-                                            "Daemon: running (PID {}, poll mode, interval {}s)",
-                                            pid, dcfg.interval_secs
-                                        ),
-                                        _ => println!("Daemon: running (PID {})", pid),
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+    if let Some(d) = &info.daemon {
+        match d.mode.as_str() {
+            "webhook" => println!(
+                "Daemon: running (PID {}, webhook mode, port {})",
+                d.pid, d.port
+            ),
+            "poll" => println!(
+                "Daemon: running (PID {}, poll mode, interval {}s)",
+                d.pid, d.interval_secs
+            ),
+            _ => println!("Daemon: running (PID {})", d.pid),
         }
     }
     println!();
 
-    // Read members
-    let members_dir = team_repo.join("members");
-    if !members_dir.is_dir() {
+    // Members
+    if !info.has_members {
         println!("No members hired yet.");
         return Ok(());
     }
 
-    let mut member_dirs: Vec<String> = Vec::new();
-    for entry in fs::read_dir(&members_dir)? {
-        let entry = entry?;
-        if !entry.file_type()?.is_dir() {
-            continue;
-        }
-        let name = entry.file_name().to_string_lossy().to_string();
-        if !name.starts_with('.') {
-            member_dirs.push(name);
-        }
-    }
-    member_dirs.sort();
-
-    if member_dirs.is_empty() {
-        println!("No members hired yet.");
-        return Ok(());
-    }
-
-    let mut runtime_state = state::load()?;
-
-    // Build table
     let mut table = Table::new();
     table
         .load_preset(UTF8_FULL_CONDENSED)
@@ -120,137 +53,64 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
         .set_content_arrangement(ContentArrangement::DynamicFullWidth)
         .set_header(vec!["Member", "Role", "Status", "Branch", "Started", "PID"]);
 
-    let mut crashed_keys: Vec<String> = Vec::new();
-
-    for member_dir_name in &member_dirs {
-        let role = read_member_role(&members_dir, member_dir_name);
-        let status = resolve_member_status(&runtime_state, team_name, member_dir_name);
-
-        // Query workspace branch if workspace exists
-        let ws_path = team.path.join(member_dir_name);
-        let branch = if ws_path.join(".botminter.workspace").exists() {
-            workspace::workspace_git_branch(&ws_path)
-        } else {
-            "—".to_string()
-        };
-
-        let (status_label, started, pid_str) = match &status {
+    for m in &info.members {
+        let (label, started, pid_str) = match &m.status {
             MemberStatus::Running { pid, started_at } => {
                 ("running", format_timestamp(started_at), pid.to_string())
             }
             MemberStatus::Crashed { pid, started_at } => {
-                crashed_keys.push(format!("{}/{}", team_name, member_dir_name));
                 ("crashed", format_timestamp(started_at), pid.to_string())
             }
             MemberStatus::Stopped => ("stopped", "—".to_string(), "—".to_string()),
         };
-
         table.add_row(vec![
-            member_dir_name.as_str(),
-            &role,
-            status_label,
-            &branch,
+            m.name.as_str(),
+            &m.role,
+            label,
+            &m.branch,
             &started,
             &pid_str,
         ]);
     }
-
     println!("{table}");
 
-    // Clean up crashed entries
-    if !crashed_keys.is_empty() {
-        for key in &crashed_keys {
-            runtime_state.members.remove(key);
+    // Bridge
+    if let Some(b) = &info.bridge {
+        println!();
+        println!("Bridge: {} ({})", b.name, b.bridge_type);
+        println!("Status: {}", b.status);
+        if let Some(url) = &b.url {
+            println!("URL: {}", url);
         }
-        state::save(&runtime_state)?;
-    }
-
-    // Bridge status section
-    if let Ok(Some(bridge_dir)) = bridge::discover(&team_repo, team_name) {
-        let state_path = bridge::state_path(&cfg.workzone, team_name);
-        if let Ok(b) = bridge::Bridge::new(bridge_dir, state_path, team_name.to_string()) {
-            if b.is_active() {
-                println!();
-                println!("Bridge: {} ({})", b.bridge_name(), b.bridge_type());
-                println!("Status: {}", b.status());
-                if let Some(url) = b.service_url() {
-                    println!("URL: {}", url);
-                }
-
-                if !b.identities().is_empty() {
-                    println!();
-                    let mut bridge_table = Table::new();
-                    bridge_table
-                        .load_preset(UTF8_FULL_CONDENSED)
-                        .apply_modifier(UTF8_ROUND_CORNERS)
-                        .set_content_arrangement(ContentArrangement::DynamicFullWidth)
-                        .set_header(vec!["Member", "Bridge User", "User ID"]);
-                    let mut entries: Vec<_> = b.identities().iter().collect();
-                    entries.sort_by_key(|(k, _)| (*k).clone());
-                    for (username, identity) in entries {
-                        bridge_table.add_row(vec![
-                            username,
-                            &identity.username,
-                            &identity.user_id,
-                        ]);
-                    }
-                    println!("{bridge_table}");
-                }
+        if !b.identities.is_empty() {
+            println!();
+            let mut bt = Table::new();
+            bt.load_preset(UTF8_FULL_CONDENSED)
+                .apply_modifier(UTF8_ROUND_CORNERS)
+                .set_content_arrangement(ContentArrangement::DynamicFullWidth)
+                .set_header(vec!["Member", "Bridge User", "User ID"]);
+            for id in &b.identities {
+                bt.add_row(vec![&id.member, &id.bridge_user, &id.user_id]);
             }
+            println!("{bt}");
         }
     }
 
-    // Verbose mode: show workspace and Ralph runtime details
-    if verbose {
-        // Show submodule status for all workspace-enabled members
-        for member_dir_name in &member_dirs {
-            let ws_path = team.path.join(member_dir_name);
-            if !ws_path.join(".botminter.workspace").exists() {
-                continue;
-            }
-
-            let submodules = workspace::workspace_submodule_status(&ws_path);
-            if !submodules.is_empty() {
-                println!("\n── {} workspace ──", member_dir_name);
-                println!("  Submodules:");
-                for sub in &submodules {
-                    println!("    {}: {}", sub.name, sub.status.label());
-                }
+    // Verbose
+    if let Some(v) = &info.verbose {
+        for ws in &v.workspaces {
+            println!("\n── {} workspace ──", ws.member);
+            println!("  Submodules:");
+            for s in &ws.submodules {
+                println!("    {}: {}", s.name, s.status_label);
             }
         }
-
-        // Show Ralph runtime details for running members
-        let runtime_state = state::load()?; // reload after cleanup
-        let team_prefix = format!("{}/", team_name);
-
-        for (key, rt) in &runtime_state.members {
-            if !key.starts_with(&team_prefix) {
-                continue;
-            }
-            if !state::is_alive(rt.pid) {
-                continue;
-            }
-
-            let member_name = key.strip_prefix(&team_prefix).unwrap_or(key);
-            println!("\n── {} (PID {}) ──", member_name, rt.pid);
-
-            // Run Ralph CLI commands from the workspace, skipping unavailable ones
-            for (label, args) in &[
-                ("Hats", vec!["hats"]),
-                ("Loops", vec!["loops", "list"]),
-                ("Events", vec!["events"]),
-                ("Bot", vec!["bot", "status"]),
-            ] {
-                match run_ralph_cmd(&rt.workspace, args) {
-                    Ok(output) => {
-                        println!("\n  {}:", label);
-                        for line in output.lines() {
-                            println!("    {}", line);
-                        }
-                    }
-                    Err(_) => {
-                        // Skip unavailable commands gracefully
-                    }
+        for ri in &v.ralph_sections {
+            println!("\n── {} (PID {}) ──", ri.member, ri.pid);
+            for (label, output) in &ri.sections {
+                println!("\n  {}:", label);
+                for line in output.lines() {
+                    println!("    {}", line);
                 }
             }
         }
@@ -259,42 +119,8 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
     Ok(())
 }
 
-/// Reads the role from a member's botminter.yml, falling back to dir-name inference.
-fn read_member_role(members_dir: &std::path::Path, member_dir_name: &str) -> String {
-    let manifest_path = members_dir.join(member_dir_name).join("botminter.yml");
-    if let Ok(contents) = fs::read_to_string(&manifest_path) {
-        if let Ok(manifest) = serde_yml::from_str::<MemberManifest>(&contents) {
-            if let Some(role) = manifest.role {
-                return role;
-            }
-        }
-    }
-    // Infer from dir name
-    member_dir_name
-        .split('-')
-        .next()
-        .unwrap_or("unknown")
-        .to_string()
-}
-
-/// Runs a ralph command in the given workspace and returns stdout.
-fn run_ralph_cmd(workspace: &std::path::Path, args: &[&str]) -> Result<String> {
-    let output = Command::new("ralph")
-        .args(args)
-        .current_dir(workspace)
-        .output()
-        .with_context(|| format!("Failed to run ralph {}", args.join(" ")))?;
-
-    if !output.status.success() {
-        anyhow::bail!("ralph {} failed", args.join(" "));
-    }
-
-    Ok(String::from_utf8_lossy(&output.stdout).to_string())
-}
-
 /// Formats an ISO 8601 timestamp for display, stripping sub-seconds.
 fn format_timestamp(ts: &str) -> String {
-    // Try to parse and reformat for display
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
         dt.format("%Y-%m-%d %H:%M:%S").to_string()
     } else {
@@ -305,64 +131,6 @@ fn format_timestamp(ts: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    // ── read_member_role ──────────────────────────────────────────
-
-    #[test]
-    fn read_member_role_from_yaml() {
-        let tmp = tempfile::tempdir().unwrap();
-        let member_dir = tmp.path().join("architect-alice");
-        fs::create_dir(&member_dir).unwrap();
-        fs::write(
-            member_dir.join("botminter.yml"),
-            "role: architect\n",
-        )
-        .unwrap();
-
-        let role = read_member_role(tmp.path(), "architect-alice");
-        assert_eq!(role, "architect");
-    }
-
-    #[test]
-    fn read_member_role_yaml_with_extra_fields() {
-        let tmp = tempfile::tempdir().unwrap();
-        let member_dir = tmp.path().join("po-bob");
-        fs::create_dir(&member_dir).unwrap();
-        fs::write(
-            member_dir.join("botminter.yml"),
-            "role: product-owner\nschema_version: '0.3'\n",
-        )
-        .unwrap();
-
-        let role = read_member_role(tmp.path(), "po-bob");
-        assert_eq!(role, "product-owner");
-    }
-
-    #[test]
-    fn read_member_role_fallback_no_yaml() {
-        let tmp = tempfile::tempdir().unwrap();
-        // Dir exists but no botminter.yml
-        fs::create_dir(tmp.path().join("architect-alice")).unwrap();
-
-        let role = read_member_role(tmp.path(), "architect-alice");
-        assert_eq!(role, "architect");
-    }
-
-    #[test]
-    fn read_member_role_fallback_no_role_field() {
-        let tmp = tempfile::tempdir().unwrap();
-        let member_dir = tmp.path().join("po-bob");
-        fs::create_dir(&member_dir).unwrap();
-        // YAML exists but has no 'role' field
-        fs::write(
-            member_dir.join("botminter.yml"),
-            "schema_version: '0.3'\n",
-        )
-        .unwrap();
-
-        let role = read_member_role(tmp.path(), "po-bob");
-        assert_eq!(role, "po");
-    }
 
     // ── format_timestamp ──────────────────────────────────────────
 

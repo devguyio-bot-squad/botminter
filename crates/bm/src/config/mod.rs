@@ -102,9 +102,6 @@ pub fn load_from(path: &Path) -> Result<BotminterConfig> {
         bail!("No teams configured. Run `bm init` first.");
     }
 
-    // Check file permissions and warn if not 0600
-    check_permissions(path);
-
     let contents =
         fs::read_to_string(path).context("Failed to read config file")?;
 
@@ -112,6 +109,24 @@ pub fn load_from(path: &Path) -> Result<BotminterConfig> {
         serde_yml::from_str(&contents).context("Failed to parse config file")?;
 
     Ok(config)
+}
+
+/// Checks config file permissions and returns a warning message if not 0600.
+pub fn check_permissions_warning(path: &Path) -> Option<String> {
+    if let Ok(metadata) = fs::metadata(path) {
+        let mode = metadata.permissions().mode() & 0o777;
+        if mode != CONFIG_PERMISSIONS {
+            return Some(format!(
+                "Config file {} has permissions {:04o} (expected {:04o}). \
+                 This file contains secrets — consider running: chmod 600 {}",
+                path.display(),
+                mode,
+                CONFIG_PERMISSIONS,
+                path.display()
+            ));
+        }
+    }
+    None
 }
 
 /// Saves the config to disk with 0600 permissions.
@@ -134,6 +149,66 @@ pub fn save_to(path: &Path, config: &BotminterConfig) -> Result<()> {
     fs::set_permissions(path, perms)
         .context("Failed to set config file permissions to 0600")?;
 
+    Ok(())
+}
+
+/// Extracts GH_TOKEN from team credentials, erroring if missing.
+pub fn require_gh_token(team: &TeamEntry) -> Result<String> {
+    team.credentials
+        .gh_token
+        .clone()
+        .with_context(|| {
+            format!(
+                "No GH token configured for team '{}'. \
+                 Run `bm init` or edit `~/.botminter/config.yml`.",
+                team.name
+            )
+        })
+}
+
+/// Loads the existing config or returns a fresh default.
+pub fn load_or_default() -> BotminterConfig {
+    load().unwrap_or_else(|_| BotminterConfig {
+        workzone: default_workzone_path(),
+        default_team: None,
+        teams: Vec::new(),
+        keyring_collection: None,
+    })
+}
+
+/// Default workzone path: ~/.botminter/workspaces
+pub fn default_workzone_path() -> PathBuf {
+    dirs::home_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".botminter")
+        .join("workspaces")
+}
+
+/// Expands `~` at the start of a path to the home directory.
+pub fn expand_tilde(path: &str) -> PathBuf {
+    if path.starts_with("~/") || path == "~" {
+        if let Some(home) = dirs::home_dir() {
+            return home.join(&path[2..]);
+        }
+    }
+    PathBuf::from(path)
+}
+
+/// Checks that `git` and `gh` CLI tools are available. Errors if either is missing.
+pub fn check_prerequisites() -> Result<()> {
+    let mut missing = Vec::new();
+    if which::which("git").is_err() {
+        missing.push("git — https://git-scm.com/");
+    }
+    if which::which("gh").is_err() {
+        missing.push("gh — https://cli.github.com/");
+    }
+    if !missing.is_empty() {
+        bail!(
+            "Missing required tools:\n  {}\n\nInstall them and try again.",
+            missing.join("\n  "),
+        );
+    }
     Ok(())
 }
 
@@ -166,22 +241,6 @@ pub fn resolve_team<'a>(
         })
 }
 
-/// Checks config file permissions and prints a warning if not 0600.
-fn check_permissions(path: &Path) {
-    if let Ok(metadata) = fs::metadata(path) {
-        let mode = metadata.permissions().mode() & 0o777;
-        if mode != CONFIG_PERMISSIONS {
-            eprintln!(
-                "Warning: Config file {} has permissions {:04o} (expected {:04o}). \
-                 This file contains secrets — consider running: chmod 600 {}",
-                path.display(),
-                mode,
-                CONFIG_PERMISSIONS,
-                path.display()
-            );
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -331,6 +390,37 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("No default team"));
+    }
+
+    #[test]
+    fn default_workzone_path_under_home() {
+        let path = default_workzone_path();
+        let path_str = path.to_string_lossy();
+        assert!(
+            path_str.contains(".botminter") && path_str.contains("workspaces"),
+            "default_workzone_path should be under .botminter/workspaces: {}",
+            path_str
+        );
+    }
+
+    #[test]
+    fn expand_tilde_home_prefix() {
+        let result = expand_tilde("~/projects");
+        let result_str = result.to_string_lossy();
+        assert!(!result_str.starts_with("~"), "Should expand ~: {}", result_str);
+        assert!(result_str.ends_with("projects"), "Should keep suffix: {}", result_str);
+    }
+
+    #[test]
+    fn expand_tilde_no_tilde() {
+        let result = expand_tilde("/absolute/path");
+        assert_eq!(result, PathBuf::from("/absolute/path"));
+    }
+
+    #[test]
+    fn check_prerequisites_passes_when_tools_present() {
+        // Both git and gh are available in the dev environment
+        assert!(check_prerequisites().is_ok());
     }
 
     #[test]
