@@ -2992,7 +2992,8 @@ fn bridge_identity_add() {
     let identity = state.identities.get("testuser").unwrap();
     assert_eq!(identity.username, "testuser");
     assert_eq!(identity.user_id, "stub-id");
-    assert_eq!(identity.token, "stub-token");
+    // Token is now stored in keyring, not in bridge-state.json
+    assert!(identity.token.is_none(), "Token should not be stored in bridge-state.json");
 }
 
 #[test]
@@ -3013,9 +3014,10 @@ fn bridge_identity_rotate() {
 
     let state = read_bridge_state(&team_dir);
     let identity = state.identities.get("testuser").unwrap();
-    assert_eq!(
-        identity.token, "rotated-stub-token",
-        "Token should be rotated"
+    // Token is now stored in keyring, not in bridge-state.json
+    assert!(
+        identity.token.is_none(),
+        "Token should not be stored in bridge-state.json after rotation"
     );
 }
 
@@ -3262,5 +3264,143 @@ fn status_no_bridge_shows_normal() {
         !stdout.contains("Bridge:"),
         "Status should not show bridge section when no bridge configured, got: {}",
         stdout
+    );
+}
+
+// ── Init bridge selection (non-interactive) ──────────────────────────
+
+/// Sets up git global config for a test HOME so `bm init` can commit.
+fn setup_git_config(home: &Path) {
+    let git_config = home.join(".gitconfig");
+    fs::write(
+        &git_config,
+        "[user]\n    email = test@botminter.test\n    name = BM Test\n",
+    )
+    .unwrap();
+}
+
+#[test]
+fn init_bridge_records_in_manifest() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    setup_git_config(home);
+
+    // Pre-populate profiles
+    let profiles_path = profile::profiles_dir_for(home);
+    fs::create_dir_all(&profiles_path).unwrap();
+    profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
+    let output = bm_cmd(home)
+        .args([
+            "init",
+            "--non-interactive",
+            "--profile", "scrum-compact",
+            "--team-name", "bridge-init-test",
+            "--org", "testorg",
+            "--repo", "testrepo",
+            "--bridge", "telegram",
+            "--skip-github",
+            "--workzone", &home.join("workspaces").to_string_lossy(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "init with --bridge should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    // Verify bridge key in team's botminter.yml
+    let manifest_path = home
+        .join("workspaces")
+        .join("bridge-init-test")
+        .join("team")
+        .join("botminter.yml");
+    let contents = fs::read_to_string(&manifest_path).unwrap();
+    let value: serde_yml::Value = serde_yml::from_str(&contents).unwrap();
+    assert_eq!(
+        value.get("bridge").and_then(|v| v.as_str()),
+        Some("telegram"),
+        "botminter.yml should contain bridge: telegram after init, contents:\n{}",
+        contents
+    );
+}
+
+#[test]
+fn init_no_bridge_has_no_bridge_key() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    setup_git_config(home);
+
+    let profiles_path = profile::profiles_dir_for(home);
+    fs::create_dir_all(&profiles_path).unwrap();
+    profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
+    let output = bm_cmd(home)
+        .args([
+            "init",
+            "--non-interactive",
+            "--profile", "scrum-compact",
+            "--team-name", "no-bridge-test",
+            "--org", "testorg",
+            "--repo", "testrepo",
+            "--skip-github",
+            "--workzone", &home.join("workspaces").to_string_lossy(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "init without --bridge should succeed, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let manifest_path = home
+        .join("workspaces")
+        .join("no-bridge-test")
+        .join("team")
+        .join("botminter.yml");
+    let contents = fs::read_to_string(&manifest_path).unwrap();
+    let value: serde_yml::Value = serde_yml::from_str(&contents).unwrap();
+    assert!(
+        value.get("bridge").is_none(),
+        "botminter.yml should NOT contain bridge key without --bridge, contents:\n{}",
+        contents
+    );
+}
+
+#[test]
+fn init_bridge_invalid_name_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = tmp.path();
+    setup_git_config(home);
+
+    let profiles_path = profile::profiles_dir_for(home);
+    fs::create_dir_all(&profiles_path).unwrap();
+    profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
+    let output = bm_cmd(home)
+        .args([
+            "init",
+            "--non-interactive",
+            "--profile", "scrum-compact",
+            "--team-name", "bad-bridge-test",
+            "--org", "testorg",
+            "--repo", "testrepo",
+            "--bridge", "nonexistent",
+            "--skip-github",
+            "--workzone", &home.join("workspaces").to_string_lossy(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        !output.status.success(),
+        "init with invalid --bridge should fail"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("not found") || stderr.contains("telegram"),
+        "Error should mention the bridge issue, stderr: {}",
+        stderr
     );
 }

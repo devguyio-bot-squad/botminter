@@ -19,7 +19,7 @@ bm status                         # See what's running
 
 ### What makes it work
 
-- **Profiles** - opinionated convention packages (ships with `scrum`, `scrum-compact`, `scrum-compact-telegram`) that define roles, process, knowledge, and invariants
+- **Profiles** - opinionated convention packages (ships with `scrum` and `scrum-compact`) that define roles, process, knowledge, and invariants. Telegram is available as an optional bridge on any profile.
 - **Layered knowledge scoping** - define a convention once at the team level, override it per project or per member without forking the config (team > project > member > member+project)
 - **GitHub as coordination fabric** - agents pull work from GitHub issues, decisions are traceable on a project board
 

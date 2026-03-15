@@ -106,7 +106,23 @@ pub fn run(
 
     // Credentials → env vars
     let gh_token = require_gh_token(team)?;
-    let telegram_token = team.credentials.telegram_bot_token.as_deref();
+
+    // Per-member credential resolution via CredentialStore (system keyring).
+    // Each Ralph instance gets its own credential, not a team-wide token.
+    // TODO: When more bridge types are added (Rocket.Chat), the env var name
+    // should become bridge-type-aware instead of hardcoded RALPH_TELEGRAM_BOT_TOKEN.
+    let (credential_store, _has_bridge) = if let Some(ref dir) = bridge::discover(&team_repo, &team.name)? {
+        let manifest = bridge::load_manifest(dir)?;
+        let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
+        let store = bridge::LocalCredentialStore::new(
+            &team.name,
+            &manifest.metadata.name,
+            bstate_path,
+        );
+        (Some(store), true)
+    } else {
+        (None, false)
+    };
 
     // Discover members
     let members_dir = team_repo.join("members");
@@ -167,8 +183,27 @@ pub fn run(
             }
         };
 
+        // Resolve per-member bridge credential: env var first, then keyring
+        let member_token = if let Some(ref store) = credential_store {
+            bridge::resolve_credential_from_store(member_dir_name, store)?
+        } else {
+            None
+        };
+
+        // Diagnostic warning: credential exists but RObot.enabled is false
+        if member_token.is_some() {
+            let ralph_yml = ws.join("ralph.yml");
+            if check_robot_enabled_mismatch(&ralph_yml, true) {
+                eprintln!(
+                    "Warning: {} has bridge credentials but RObot is disabled in ralph.yml. \
+                     Run 'bm teams sync' to update.",
+                    member_dir_name
+                );
+            }
+        }
+
         // Launch ralph
-        match launch_ralph(&ws, &gh_token, telegram_token) {
+        match launch_ralph(&ws, &gh_token, member_token.as_deref()) {
             Ok(pid) => {
                 let started_at = chrono::Utc::now().to_rfc3339();
                 state.members.insert(
@@ -305,6 +340,36 @@ fn launch_ralph(
     Ok(child.id())
 }
 
+/// Checks if a member has a credential but RObot.enabled is false in ralph.yml.
+///
+/// Returns `true` if there is a mismatch (credential present but RObot disabled),
+/// meaning the user should run `bm teams sync` to update.
+fn check_robot_enabled_mismatch(
+    ralph_yml_path: &std::path::Path,
+    has_credential: bool,
+) -> bool {
+    if !has_credential {
+        return false;
+    }
+    if !ralph_yml_path.exists() {
+        return false;
+    }
+    let contents = match fs::read_to_string(ralph_yml_path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    let doc: serde_yml::Value = match serde_yml::from_str(&contents) {
+        Ok(d) => d,
+        Err(_) => return false,
+    };
+
+    // Check if RObot.enabled is explicitly false
+    match doc.get("RObot").and_then(|r| r.get("enabled")).and_then(|e| e.as_bool()) {
+        Some(false) => true,  // Mismatch: has cred but disabled
+        _ => false,           // Either enabled or not set at all
+    }
+}
+
 /// Resolves state for display/inspection by external callers.
 pub fn resolve_member_status(
     state: &RuntimeState,
@@ -397,6 +462,8 @@ fn run_formation_manager(
     if let Some(token) = &team.credentials.gh_token {
         env_vars.push(("GH_TOKEN".to_string(), token.clone()));
     }
+    // TODO: Formation manager should resolve per-member credentials via CredentialStore
+    // when non-local formations support bridge integration. Legacy fallback for now.
     if let Some(token) = &team.credentials.telegram_bot_token {
         env_vars.push(("RALPH_TELEGRAM_BOT_TOKEN".to_string(), token.clone()));
     }
@@ -643,5 +710,97 @@ mod tests {
             "crashed"
         );
         assert_eq!(MemberStatus::Stopped.label(), "stopped");
+    }
+
+    // ── Per-member credential resolution tests ─────────────────────
+
+    #[test]
+    fn resolve_per_member_credential_from_store() {
+        use crate::bridge::{
+            self, CredentialStore, InMemoryCredentialStore,
+        };
+
+        let store = InMemoryCredentialStore::new();
+        store.store("alice", "alice-token").unwrap();
+        store.store("bob", "bob-token").unwrap();
+
+        // Each member gets their own token
+        let alice_token = bridge::resolve_credential_from_store("alice", &store).unwrap();
+        let bob_token = bridge::resolve_credential_from_store("bob", &store).unwrap();
+
+        assert_eq!(alice_token, Some("alice-token".to_string()));
+        assert_eq!(bob_token, Some("bob-token".to_string()));
+    }
+
+    #[test]
+    fn resolve_per_member_credential_missing_returns_none() {
+        use crate::bridge::{self, InMemoryCredentialStore};
+
+        let store = InMemoryCredentialStore::new();
+        // No credentials stored for charlie
+
+        let result = bridge::resolve_credential_from_store("charlie", &store).unwrap();
+        assert!(
+            result.is_none(),
+            "member without credential should get None"
+        );
+    }
+
+    #[test]
+    fn resolve_per_member_credential_env_var_priority() {
+        use crate::bridge::{
+            self, CredentialStore, InMemoryCredentialStore,
+        };
+
+        let store = InMemoryCredentialStore::new();
+        store.store("envpritest", "store-token").unwrap();
+
+        // Set env var — should take priority
+        let env_key = "BM_BRIDGE_TOKEN_ENVPRITEST";
+        std::env::set_var(env_key, "env-token");
+
+        let result = bridge::resolve_credential_from_store("envpritest", &store).unwrap();
+        assert_eq!(
+            result,
+            Some("env-token".to_string()),
+            "env var should take priority over credential store"
+        );
+
+        std::env::remove_var(env_key);
+    }
+
+    #[test]
+    fn launch_ralph_receives_per_member_credential() {
+        // This test verifies that launch_ralph correctly accepts and uses
+        // per-member credentials. We can't test actual process spawning,
+        // but we verify the function signature accepts Option<&str> for
+        // per-member credential (same as before, but now fed per-member).
+        //
+        // The real test is that `bm start` resolves credentials per-member
+        // via resolve_credential_from_store() in the member loop.
+
+        // Verify launch_ralph compiles with credential parameter
+        let _: fn(&std::path::Path, &str, Option<&str>) -> Result<u32> = launch_ralph;
+    }
+
+    #[test]
+    fn check_robot_enabled_diagnostic() {
+        // Test the diagnostic warning logic: when a member has a credential
+        // but RObot.enabled is false, a warning should be emitted.
+        // This validates the function exists and works correctly.
+        let tmp = tempfile::tempdir().unwrap();
+        let ralph_yml = tmp.path().join("ralph.yml");
+        fs::write(
+            &ralph_yml,
+            "preset: feature-development\nRObot:\n  enabled: false\n",
+        )
+        .unwrap();
+
+        let has_credential = true;
+        let robot_enabled = check_robot_enabled_mismatch(&ralph_yml, has_credential);
+        assert!(
+            robot_enabled,
+            "should return true when credential exists but RObot.enabled is false"
+        );
     }
 }

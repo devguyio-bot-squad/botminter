@@ -25,7 +25,7 @@ Requirements for milestone v0.07. Each maps to roadmap phases.
 - [x] **BRDG-06**: Bridge state persisted across sessions tracking service URLs, container IDs, and registered user credentials
 - [x] **BRDG-07**: Config exchange between bridge commands and BotMinter uses file-based output (`$BRIDGE_CONFIG_DIR/config.json`), not stdout
 - [x] **BRDG-08**: Bridge is optional -- a team can operate without any bridge. All bridge-dependent features degrade gracefully.
-- [x] **BRDG-09**: Bridge credentials resolved in priority order: env var → config file → system keyring. Same resolution pattern as Ralph's credential handling.
+- [x] **BRDG-09**: Bridge credentials resolved in priority order: env var `BM_BRIDGE_TOKEN_{USERNAME}` → system keyring (formation credential store). Credentials are NOT stored in config files or bridge-state.json.
 
 ### Bridge CLI
 
@@ -58,12 +58,12 @@ Requirements for milestone v0.07. Each maps to roadmap phases.
 
 ### Profile & Config
 
-- [ ] **PROF-01**: Bridge config at team level -- bridge type and credentials validated against the bridge's `schema.json`
-- [ ] **PROF-02**: Profiles declare supported bridges in `bridges/` directory. Operator selects one (or none) during team setup. No separate profile per bridge.
-- [ ] **PROF-03**: `bm teams sync` provisions bridge resources (rooms, member identities) reusing the same bridge module as `bm bridge` commands. Generates `ralph.yml` `RObot` section based on active bridge config and member credentials.
-- [ ] **PROF-04**: Documentation updates for bridge abstraction, CLI commands, bridge spec, and profile bridge configuration
-- [ ] **PROF-05**: `bm init` wizard offers bridge selection from profile's supported bridges, including "No bridge"
-- [ ] **PROF-06**: `scrum-compact-telegram` profile removed. Telegram added as supported bridge on `scrum-compact`.
+- [x] **PROF-01**: Bridge config at team level -- bridge type and credentials validated against the bridge's `schema.json`
+- [x] **PROF-02**: Profiles declare supported bridges in `bridges/` directory. Operator selects one (or none) during team setup. No separate profile per bridge.
+- [x] **PROF-03**: `bm teams sync` provisions bridge resources (rooms, member identities) reusing the same bridge module as `bm bridge` commands. Generates `ralph.yml` `RObot` section based on active bridge config and member credentials.
+- [x] **PROF-04**: Documentation updates for bridge abstraction, CLI commands, bridge spec, and profile bridge configuration
+- [x] **PROF-05**: `bm init` wizard offers bridge selection from profile's supported bridges, including "No bridge"
+- [x] **PROF-06**: `scrum-compact-telegram` profile removed. Telegram added as supported bridge on `scrum-compact`.
 
 ## Future Requirements
 
@@ -140,11 +140,11 @@ Which phases cover which requirements. Updated during roadmap creation.
 | RC-07 | Phase 10 | Pending |
 | TELE-01 | Phase 8 | Complete |
 | TELE-02 | Phase 8 | Complete |
-| PROF-01 | Phase 9 | Pending |
-| PROF-02 | Phase 9 | Pending |
-| PROF-03 | Phase 9 | Pending |
-| PROF-04 | Phase 9 | Pending |
-| PROF-05 | Phase 9 | Pending |
+| PROF-01 | Phase 9 | In Progress (09-01: CredentialStore + keyring backend) |
+| PROF-02 | Phase 9 | In Progress (09-01: bridges field + YAML declarations) |
+| PROF-03 | Phase 9 | Complete |
+| PROF-04 | Phase 9 | Complete |
+| PROF-05 | Phase 9 | Complete |
 | PROF-06 | Phase 9 | Pending |
 
 **Coverage:**

@@ -45,8 +45,8 @@ pub struct WorkspaceRepoParams<'a> {
 /// containing submodules: `team/` points to the team repo, and `projects/<name>/`
 /// points to project forks. Member branches are checked out in all submodules.
 ///
-/// When `push` is true, a GitHub repo is created via `gh repo create`.
-/// When `push` is false, the workspace is initialized locally with `git init`.
+/// When `push` is true (i.e., `bm teams sync --repos`), a GitHub repo is
+/// created via `gh repo create`. When false, the workspace is local-only.
 pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
     let member_ws = params.workspace_base.join(params.member_dir_name);
 
@@ -65,24 +65,41 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
 
         let ws_repo_name = format!("{}/{}-{}", org, params.team_name, params.member_dir_name);
 
-        // Create GitHub repo
-        let mut cmd = Command::new("gh");
-        cmd.args(["repo", "create", &ws_repo_name, "--private"]);
+        // Check if repo already exists on GitHub
+        let mut view_cmd = Command::new("gh");
+        view_cmd.args(["repo", "view", &ws_repo_name, "--json", "name"]);
         if let Some(token) = params.gh_token {
-            cmd.env("GH_TOKEN", token);
+            view_cmd.env("GH_TOKEN", token);
         }
-        let output = cmd.output().context("Failed to run `gh repo create`")?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(
-                "Failed to create workspace repo '{}'.\n{}\n\n\
-                 If the repo already exists:\n  \
-                 gh repo delete {} --yes\n\
-                 Then re-run `bm teams sync --push`.",
-                ws_repo_name,
-                stderr.trim(),
-                ws_repo_name,
+        let view_output = view_cmd
+            .output()
+            .context("Failed to run `gh repo view`")?;
+        if view_output.status.success() {
+            // Repo already exists — skip creation
+            eprintln!(
+                "Workspace repo '{}' already exists on GitHub, skipping creation.",
+                ws_repo_name
             );
+        } else {
+            // Create GitHub repo
+            let mut cmd = Command::new("gh");
+            cmd.args(["repo", "create", &ws_repo_name, "--private"]);
+            if let Some(token) = params.gh_token {
+                cmd.env("GH_TOKEN", token);
+            }
+            let output = cmd.output().context("Failed to run `gh repo create`")?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                bail!(
+                    "Failed to create workspace repo '{}'.\n{}\n\n\
+                     If the repo already exists:\n  \
+                     gh repo delete {} --yes\n\
+                     Then re-run `bm teams sync --repos`.",
+                    ws_repo_name,
+                    stderr.trim(),
+                    ws_repo_name,
+                );
+            }
         }
 
         // Clone the newly created repo
@@ -574,6 +591,43 @@ pub fn hide_tracked_bm_files(
     Ok(())
 }
 
+// ── RObot injection ─────────────────────────────────────────────────
+
+/// Sets `RObot.enabled` in a ralph.yml file based on credential availability.
+///
+/// This function:
+/// - Loads ralph.yml as a YAML value
+/// - Sets `doc["RObot"]["enabled"]` to `member_has_credentials`
+/// - Does NOT write any token, secret, or credential to ralph.yml
+/// - Preserves all other ralph.yml content
+/// - Writes back to disk
+///
+/// Per ADR-0003: ralph.yml only gets RObot.enabled = true/false. NO secrets.
+/// Secrets are injected as env vars by `bm start`.
+pub fn inject_robot_enabled(
+    ralph_yml_path: &Path,
+    member_has_credentials: bool,
+) -> Result<()> {
+    let contents = fs::read_to_string(ralph_yml_path)
+        .with_context(|| format!("Failed to read ralph.yml at {}", ralph_yml_path.display()))?;
+    let mut doc: serde_yml::Value =
+        serde_yml::from_str(&contents).context("Failed to parse ralph.yml")?;
+
+    // Ensure RObot section exists as a mapping
+    if !doc.get("RObot").is_some_and(|v| v.is_mapping()) {
+        doc["RObot"] = serde_yml::Value::Mapping(serde_yml::Mapping::new());
+    }
+
+    // Set RObot.enabled
+    doc["RObot"]["enabled"] = serde_yml::Value::Bool(member_has_credentials);
+
+    let output = serde_yml::to_string(&doc).context("Failed to serialize ralph.yml")?;
+    fs::write(ralph_yml_path, output)
+        .with_context(|| format!("Failed to write ralph.yml at {}", ralph_yml_path.display()))?;
+
+    Ok(())
+}
+
 // ── Private helpers ──────────────────────────────────────────────────
 
 /// Symlinks all `.md` files from `src_dir` into `dst_dir` using relative paths.
@@ -738,8 +792,8 @@ fn verify_symlink(link: &Path, expected_target: &Path) -> Result<()> {
 ///
 /// Git 2.38.1+ blocks `file://` transport in submodule adds by default
 /// (CVE-2022-39253). We allow it since local clones are intentional here
-/// (during `bm teams sync` without `--push`). For `--push` mode, URLs are
-/// HTTPS and this config has no effect.
+/// (during `bm teams sync --repos` for local workspace setup). For remote
+/// repos, URLs are HTTPS and this config has no effect.
 fn git_submodule_add(dir: &Path, url: &str, path: &str) -> Result<()> {
     let output = Command::new("git")
         .args([

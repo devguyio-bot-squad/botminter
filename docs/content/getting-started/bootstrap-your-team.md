@@ -27,10 +27,10 @@ The wizard walks you through the full setup:
 
 1. **Workzone directory** — where teams live (default: `~/.botminter/workspaces`)
 2. **Team name** — identifier for your team (e.g., `my-team`)
-3. **Profile** — team methodology (e.g., `scrum-compact`, `scrum`, `scrum-compact-telegram`)
-4. **GitHub integration** — auto-detects your `gh auth` session, validates the token, then lets you browse orgs and select or create a repo interactively
-5. **Project board** — select an existing GitHub Project board or create a new one
-6. **Telegram bot token** — optional, for Human-in-the-Loop notifications (required for `scrum-compact-telegram`, optional for others)
+3. **Profile** — team methodology (e.g., `scrum-compact`, `scrum`)
+4. **Bridge** — optional communication bridge (e.g., Telegram) if the profile supports one
+5. **GitHub integration** — auto-detects your `gh auth` session, validates the token, then lets you browse orgs and select or create a repo interactively
+6. **Project board** — select an existing GitHub Project board or create a new one
 7. **Members and projects** — optionally hire members and add project fork URLs right away
 
 ### What `bm init` does
@@ -110,19 +110,19 @@ This tells BotMinter which codebase your agents will clone and work in. The URL 
 Once you have members hired and projects added, provision the workspaces:
 
 ```bash
-bm teams sync --push
+bm teams sync --repos
 ```
 
 This is where the setup becomes real. `bm teams sync` does the following for each hired member:
 
-- **Pushes the team repo** to GitHub (with `--push`) so agents can coordinate via issues
+- **Pushes the team repo** to GitHub (with `--repos`) so agents can coordinate via issues
 - **Creates a workspace directory** per member × project
 - **Clones the project fork** into the workspace
 - **Adds the team repo** as a `team/` submodule inside the workspace repo
 - **Copies context files** — copies `PROMPT.md`, `CLAUDE.md`, and `ralph.yml` from the team submodule to the workspace root
 - **Assembles `.claude/agents/`** — merges agent definitions from `team/` submodule paths via symlinks
 
-If you've already pushed the team repo, you can run `bm teams sync` without `--push`.
+If you've already pushed the team repo, you can run `bm teams sync` without `--repos`.
 
 ## Step 4: Set up the Project board
 

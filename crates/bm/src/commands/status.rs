@@ -2,7 +2,7 @@ use std::fs;
 use std::process::Command;
 
 use anyhow::{Context, Result};
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
+use comfy_table::{ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
 use serde::Deserialize;
 
 use crate::bridge;
@@ -117,6 +117,7 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
     table
         .load_preset(UTF8_FULL_CONDENSED)
         .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::DynamicFullWidth)
         .set_header(vec!["Member", "Role", "Status", "Branch", "Started", "PID"]);
 
     let mut crashed_keys: Vec<String> = Vec::new();
@@ -186,6 +187,7 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
             bridge_table
                 .load_preset(UTF8_FULL_CONDENSED)
                 .apply_modifier(UTF8_ROUND_CORNERS)
+                .set_content_arrangement(ContentArrangement::DynamicFullWidth)
                 .set_header(vec!["Member", "Bridge User", "User ID"]);
             for (username, identity) in &bridge_state.identities {
                 bridge_table.add_row(vec![

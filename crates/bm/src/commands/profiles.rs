@@ -1,5 +1,5 @@
 use anyhow::Result;
-use comfy_table::{Table, presets::UTF8_FULL_CONDENSED, modifiers::UTF8_ROUND_CORNERS};
+use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL_CONDENSED, modifiers::UTF8_ROUND_CORNERS};
 
 use crate::profile;
 
@@ -12,6 +12,8 @@ pub fn list() -> Result<()> {
     table
         .load_preset(UTF8_FULL_CONDENSED)
         .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::DynamicFullWidth)
+        .set_width(120)
         .set_header(vec!["Profile", "Version", "Schema", "Description"]);
 
     for name in &names {
@@ -79,6 +81,14 @@ pub fn describe(name: &str, show_tags: bool) -> Result<()> {
                 "  {}{:<14} {} — context: {}, dir: {}, binary: {}",
                 key, default_marker, agent.display_name, agent.context_file, agent.agent_dir, agent.binary
             );
+        }
+    }
+
+    if !manifest.bridges.is_empty() {
+        println!();
+        println!("Bridges ({}):", manifest.bridges.len());
+        for bridge in &manifest.bridges {
+            println!("  {:<20} {} [{}] — {}", bridge.name, bridge.display_name, bridge.bridge_type, bridge.description);
         }
     }
 

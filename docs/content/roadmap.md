@@ -30,7 +30,7 @@ Built the foundational infrastructure:
 - `scrum` profile — PROCESS.md, CLAUDE.md, team knowledge/invariants
 - human-assistant member skeleton with three-hat model
 - Workspace model — clone project, embed team repo, surface config
-- Human-in-the-loop (HIL) via Telegram (RObot) — validated during development; available as the `scrum-compact-telegram` profile variant
+- Human-in-the-loop (HIL) via Telegram (RObot) — validated during development; available as an optional bridge on any profile
 
 **Proved**: Inner loop works (Ralph + hats). Workspace model works (clone, surface, run). HIL validated (human <> human-assistant via Telegram).
 

@@ -95,6 +95,23 @@ pub fn build_cli_with_completions() -> clap::Command {
     let projects = ctx.project_names();
     let formations = ctx.formation_names();
 
+    let bridges: Vec<String> = {
+        // Collect bridge names from all profiles
+        let mut names = Vec::new();
+        if let Ok(profile_names) = profile::list_profiles() {
+            for pn in &profile_names {
+                if let Ok(m) = profile::read_manifest(pn) {
+                    for b in &m.bridges {
+                        if !names.contains(&b.name) {
+                            names.push(b.name.clone());
+                        }
+                    }
+                }
+            }
+        }
+        names
+    };
+
     let daemon_modes: Vec<String> = vec!["webhook".into(), "poll".into()];
     let knowledge_scopes: Vec<String> = vec![
         "team".into(),
@@ -104,6 +121,11 @@ pub fn build_cli_with_completions() -> clap::Command {
     ];
 
     Cli::command()
+        // ── init ──────────────────────────────────────────────
+        .mut_subcommand("init", |c| {
+            c.mut_arg("profile", |a| a.add(make(profiles.clone())))
+                .mut_arg("bridge", |a| a.add(make(bridges)))
+        })
         // ── hire ──────────────────────────────────────────────
         .mut_subcommand("hire", |c| {
             c.mut_arg("role", |a| a.add(make(roles)))
@@ -484,6 +506,7 @@ projects:
         let cmd = build_cli_with_completions();
 
         // Spot-check that subcommands we attached completions to exist.
+        assert!(cmd.find_subcommand("init").is_some());
         assert!(cmd.find_subcommand("hire").is_some());
         assert!(cmd.find_subcommand("minty").is_some());
         assert!(cmd.find_subcommand("start").is_some());

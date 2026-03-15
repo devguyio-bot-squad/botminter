@@ -23,6 +23,7 @@ fn main() -> Result<()> {
             org,
             repo,
             project,
+            bridge,
             skip_github,
             workzone,
         } => {
@@ -33,6 +34,7 @@ fn main() -> Result<()> {
                     org,
                     repo,
                     project,
+                    bridge,
                     skip_github,
                     workzone,
                 )?;
@@ -54,8 +56,10 @@ fn main() -> Result<()> {
             TeamsCommand::Show { name, team } => {
                 commands::teams::show(name.as_deref(), team.as_deref())?;
             }
-            TeamsCommand::Sync { push, verbose, team } => {
-                commands::teams::sync(push, verbose, team.as_deref())?;
+            TeamsCommand::Sync { repos, bridge, all, verbose, team } => {
+                let effective_repos = repos || all;
+                let effective_bridge = bridge || all;
+                commands::teams::sync(effective_repos, effective_bridge, verbose, team.as_deref())?;
             }
         },
 

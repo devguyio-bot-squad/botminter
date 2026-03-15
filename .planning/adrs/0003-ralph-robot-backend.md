@@ -39,7 +39,7 @@ Chosen option: "Bridge outputs credentials via file-based exchange, BotMinter ma
 
 ### Confirmation
 
-`bm teams sync` generates valid `ralph.yml` files with the robot section populated from bridge credentials stored in `$BRIDGE_CONFIG_DIR/config.json`. This will be validated in Phase 10 (runtime integration).
+`bm teams sync` generates `ralph.yml` files with `RObot.enabled` set based on credential availability — but credentials themselves are NOT written to `ralph.yml`. Instead, `bm start` injects per-member credentials as environment variables at launch time. This separation keeps secrets out of committed files while still enabling Ralph's robot backend.
 
 ## Pros and Cons of the Options
 
@@ -68,14 +68,45 @@ Chosen option: "Bridge outputs credentials via file-based exchange, BotMinter ma
 
 ### Data Flow
 
+Per-member credentials flow through three stages: provisioning, storage, and
+injection. Secrets are never written to `ralph.yml` — they are injected as
+environment variables at launch time.
+
 ```
-Bridge (onboard) --> $BRIDGE_CONFIG_DIR/config.json --> bm teams sync --> ralph.yml [robot]
+                        ┌─ local bridge: bridge creates user + token
+Bridge (onboard) ──────►│
+                        └─ external bridge: operator-supplied token validated
+        │
+        ▼
+$BRIDGE_CONFIG_DIR/config.json  (per-member: username, user_id, token)
+        │
+        ▼
+bm teams sync ──► Formation credential store (keyring / K8s Secret / etc.)
+        │
+        ├──► ralph.yml [RObot.enabled = true/false]  (no secrets)
+        │
+        ▼
+bm start ──► env var injection per member (e.g., RALPH_TELEGRAM_BOT_TOKEN)
+        │
+        ▼
+Ralph instance reads env var at startup ──► connects to chat platform
 ```
 
-1. `bm` invokes the bridge's `onboard` recipe with the member's username
-2. The bridge writes credentials to `$BRIDGE_CONFIG_DIR/config.json`
-3. During `bm teams sync`, BotMinter reads the credentials and generates the appropriate `ralph.yml` robot section
-4. The Ralph instance reads `ralph.yml` at startup and connects to the chat platform
+1. `bm teams sync --bridge` invokes the bridge's `onboard` recipe for each
+   member not yet provisioned (idempotent). For local bridges, the bridge
+   creates the user. For external bridges, the operator must have already
+   supplied a token (via `bm hire` or `bm bridge identity add`).
+2. The bridge writes credentials to `$BRIDGE_CONFIG_DIR/config.json`.
+3. BotMinter stores credentials in the formation's credential backend (system
+   keyring for local formations, K8s Secrets for Kubernetes formations).
+4. During workspace sync, `ralph.yml` gets `RObot.enabled = true` if the
+   member has bridge credentials, `false` otherwise. No secrets are written
+   to `ralph.yml`.
+5. At `bm start`, BotMinter resolves each member's credential from the
+   formation store and passes it as an environment variable to that member's
+   Ralph instance (e.g., `RALPH_TELEGRAM_BOT_TOKEN`).
+6. The Ralph instance reads the env var at startup and connects to the chat
+   platform via its robot backend.
 
 ### Related
 

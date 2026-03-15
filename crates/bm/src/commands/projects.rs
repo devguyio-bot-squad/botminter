@@ -1,7 +1,7 @@
 use std::fs;
 
 use anyhow::{bail, Context, Result};
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
+use comfy_table::{ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
 
 use crate::config;
 use crate::profile;
@@ -30,6 +30,7 @@ pub fn list(team_flag: Option<&str>) -> Result<()> {
     table
         .load_preset(UTF8_FULL_CONDENSED)
         .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::DynamicFullWidth)
         .set_header(vec!["Project", "Fork URL"]);
 
     for proj in &manifest.projects {

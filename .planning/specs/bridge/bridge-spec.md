@@ -81,6 +81,9 @@ and BotMinter.
 | `spec.identity.onboard` | string | MUST be a Justfile recipe name |
 | `spec.identity.rotate-credentials` | string | MUST be a Justfile recipe name |
 | `spec.identity.remove` | string | MUST be a Justfile recipe name |
+| `spec.room` | object | MAY be present for bridges that support room/channel management |
+| `spec.room.create` | string | MUST be a Justfile recipe name (if `spec.room` is present) |
+| `spec.room.list` | string | MUST be a Justfile recipe name (if `spec.room` is present) |
 | `spec.configDir` | string | MUST specify the config exchange directory; typically `$BRIDGE_CONFIG_DIR` |
 
 ### Local Bridge Example
@@ -106,6 +109,10 @@ spec:
     onboard: onboard
     rotate-credentials: rotate
     remove: remove
+
+  room:
+    create: room-create
+    list: room-list
 
   configDir: "$BRIDGE_CONFIG_DIR"
 ````
@@ -222,10 +229,32 @@ declare all three identity commands in `spec.identity`.
 
 All commands are Justfile recipes. The username is passed as a recipe argument.
 
+The semantics of identity commands differ by bridge type:
+
+- **Local bridges** provision identities autonomously. The bridge creates
+  accounts and generates credentials without operator-supplied tokens.
+- **External bridges** accept pre-existing credentials supplied by the
+  operator. The bridge validates and registers tokens but MUST NOT create
+  accounts on the external platform.
+
 ### `onboard <username>`
 
+**Local bridges:**
+
 - MUST create a user or bot account on the bridge platform.
+- MUST generate credentials for the new account.
 - MUST write credentials to `$BRIDGE_CONFIG_DIR/config.json`.
+- The output JSON MUST include at minimum `username`, `user_id`, and `token` fields.
+
+**External bridges:**
+
+- MUST accept a pre-existing token via the environment variable
+  `BM_BRIDGE_TOKEN_{USERNAME}` (username uppercased, hyphens replaced with
+  underscores).
+- MUST validate the token format (bridge-specific validation).
+- MUST write the validated credentials to `$BRIDGE_CONFIG_DIR/config.json`.
+- MUST NOT create accounts on the external platform.
+- MUST exit with a non-zero code if `BM_BRIDGE_TOKEN_{USERNAME}` is not set.
 - The output JSON MUST include at minimum `username`, `user_id`, and `token` fields.
 
 **Expected output** (`$BRIDGE_CONFIG_DIR/config.json`):
@@ -233,7 +262,7 @@ All commands are Justfile recipes. The username is passed as a recipe argument.
 {
   "username": "agent-alice",
   "user_id": "abc123",
-  "token": "generated-auth-token"
+  "token": "generated-or-validated-auth-token"
 }
 ````
 
@@ -258,6 +287,40 @@ All commands are Justfile recipes. The username is passed as a recipe argument.
 - SHOULD clean up associated resources (channels, permissions, etc.).
 - SHOULD write status to stderr for diagnostic purposes.
 
+## Room Commands
+
+Room commands are OPTIONAL. A bridge MAY declare a `spec.room` section to
+support room/channel management. If `spec.room` is present, both `create`
+and `list` recipes MUST be declared.
+
+### `create <room-name>`
+
+- MUST create a room or channel on the bridge platform.
+- MUST write room details to `$BRIDGE_CONFIG_DIR/config.json`.
+- The output JSON MUST include at minimum `name` and `room_id` fields.
+
+**Expected output** (`$BRIDGE_CONFIG_DIR/config.json`):
+````json
+{
+  "name": "my-team",
+  "room_id": "ch-abc123"
+}
+````
+
+### `list`
+
+- MUST list all rooms/channels managed by the bridge.
+- MUST write room list to `$BRIDGE_CONFIG_DIR/config.json`.
+- The output JSON MUST be an array of objects with at minimum `name` and
+  `room_id` fields.
+
+**Expected output** (`$BRIDGE_CONFIG_DIR/config.json`):
+````json
+[
+  { "name": "my-team", "room_id": "ch-abc123" }
+]
+````
+
 ## Config Exchange
 
 All bridge commands that produce configuration MUST write output to
@@ -278,6 +341,15 @@ stdout or stderr freely -- the configuration output channel is separate.
 3. The bridge command writes a JSON object to `$BRIDGE_CONFIG_DIR/config.json`.
 4. BotMinter reads the JSON file after the command completes.
 
+### Credential Persistence
+
+Credential persistence is BotMinter's responsibility, not the bridge's. After
+BotMinter reads credentials from `$BRIDGE_CONFIG_DIR/config.json`, it stores
+them according to the active formation's credential backend (e.g., system
+keyring for local formations, Kubernetes Secrets for K8s formations). The
+bridge MUST NOT assume any particular storage mechanism — its only
+responsibility is to produce credentials via config exchange.
+
 ### Output Shapes
 
 Each command category produces a specific JSON shape:
@@ -287,6 +359,8 @@ Each command category produces a specific JSON shape:
 | `start` | `url` | `status`, bridge-specific fields |
 | `onboard` | `username`, `user_id`, `token` | bridge-specific fields |
 | `rotate-credentials` | `username`, `user_id`, `token` | bridge-specific fields |
+| `room create` | `name`, `room_id` | bridge-specific fields |
+| `room list` | array of `name`, `room_id` | bridge-specific fields |
 | `stop` | (no file output required) | |
 | `health` | (no file output required) | |
 | `remove` | (no file output required) | |
@@ -321,6 +395,25 @@ Additional support files (scripts, templates, Docker Compose files, etc.) are
 permitted. The three required files are the contract surface between the bridge
 and BotMinter.
 
+### Profile Integration
+
+Within a BotMinter profile, bridge implementations live under a `bridges/`
+directory:
+
+```
+profiles/{profile-name}/
+  bridges/
+    {bridge-name}/
+      bridge.yml
+      schema.json
+      Justfile
+```
+
+Profiles declare their supported bridges in `botminter.yml` under a `bridges:`
+key. Operators select a bridge (or none) during `bm init`. This is a BotMinter
+deployment concern — bridge implementors need only ensure their files conform
+to the directory structure above.
+
 ## Non-Goals
 
 This specification does NOT define:
@@ -350,9 +443,11 @@ A bridge is conformant with this specification if:
 5. If `spec.type` is `external`, no `spec.lifecycle` section is present.
 6. The `spec.identity` section is present with `onboard`,
    `rotate-credentials`, and `remove` recipe references.
-7. A `schema.json` file exists at the path referenced by `spec.configSchema`
+7. If `spec.room` is present, it contains `create` and `list` recipe
+   references.
+8. A `schema.json` file exists at the path referenced by `spec.configSchema`
    and parses as valid JSON Schema with `"type": "object"` and `"properties"`.
-8. A `Justfile` exists at the bridge root containing recipes matching all
+9. A `Justfile` exists at the bridge root containing recipes matching all
    declared command names.
 
 Conformance is structural -- it validates that the required files and fields

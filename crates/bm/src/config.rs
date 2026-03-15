@@ -39,7 +39,10 @@ pub struct TeamEntry {
 pub struct Credentials {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gh_token: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// Legacy field: kept for backward compat with existing config.yml files.
+    /// New code uses the CredentialStore (system keyring) for bridge tokens.
+    /// Read from old configs but never written to new ones.
+    #[serde(default, skip_serializing)]
     pub telegram_bot_token: Option<String>,
     /// Webhook secret for daemon webhook verification (optional).
     #[serde(skip_serializing_if = "Option::is_none")]

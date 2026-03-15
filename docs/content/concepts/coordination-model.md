@@ -142,8 +142,8 @@ Two HIL models are supported, depending on the profile:
 
 | Model | Channel | Blocking | Used by |
 |-------|---------|----------|---------|
-| **GitHub comments** | Issue comments (`Approved` / `Rejected: <feedback>`) | Non-blocking — agent checks for response each scan cycle | `scrum-compact` |
-| **Telegram** | `human.interact` via RObot | Blocking — agent waits for response within timeout | `scrum`, `scrum-compact-telegram` |
+| **GitHub comments** | Issue comments (`Approved` / `Rejected: <feedback>`) | Non-blocking — agent checks for response each scan cycle | All profiles (default) |
+| **Telegram** | `human.interact` via RObot | Blocking — agent waits for response within timeout | Any profile with `--bridge telegram` |
 
 The GitHub comment model eliminates timeout-related issues — if the human hasn't responded, the agent moves on to other work and re-checks on the next scan. The Telegram model blocks the loop and may time out.
 

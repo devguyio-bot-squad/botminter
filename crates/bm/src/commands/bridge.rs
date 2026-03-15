@@ -1,7 +1,9 @@
-use anyhow::{bail, Result};
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
+use std::io::IsTerminal;
 
-use crate::bridge::{self, BridgeIdentity, BridgeRoom};
+use anyhow::{bail, Result};
+use comfy_table::{ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
+
+use crate::bridge::{self, BridgeIdentity, BridgeRoom, LocalCredentialStore, CredentialStore};
 use crate::config;
 
 /// Common setup: load config, resolve team, check `just` is installed, discover bridge.
@@ -152,6 +154,7 @@ pub fn status(team_flag: Option<&str>) -> Result<()> {
         table
             .load_preset(UTF8_FULL_CONDENSED)
             .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_content_arrangement(ContentArrangement::DynamicFullWidth)
             .set_header(vec!["Username", "User ID", "Created"]);
 
         let mut entries: Vec<_> = state.identities.iter().collect();
@@ -172,6 +175,7 @@ pub fn status(team_flag: Option<&str>) -> Result<()> {
         table
             .load_preset(UTF8_FULL_CONDENSED)
             .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_content_arrangement(ContentArrangement::DynamicFullWidth)
             .set_header(vec!["Room", "Room ID", "Created"]);
 
         for room in &state.rooms {
@@ -197,6 +201,28 @@ pub fn identity_add(username: &str, team_flag: Option<&str>) -> Result<()> {
     let manifest = bridge::load_manifest(&bridge_dir)?;
     let bridge_name = &manifest.metadata.name;
 
+    // For external bridges, prompt for token if interactive (mirrors hire.rs pattern)
+    if manifest.spec.bridge_type == "external" && std::io::stdin().is_terminal() {
+        let display_name = manifest
+            .metadata
+            .display_name
+            .as_deref()
+            .unwrap_or(&manifest.metadata.name);
+        let token: String = cliclack::input(format!(
+            "{} bot token for {}",
+            display_name, username
+        ))
+        .interact()?;
+
+        if !token.is_empty() {
+            let env_var = format!(
+                "BM_BRIDGE_TOKEN_{}",
+                crate::bridge::env_var_suffix_pub(username)
+            );
+            std::env::set_var(&env_var, &token);
+        }
+    }
+
     let result = bridge::invoke_recipe(
         &bridge_dir,
         &manifest.spec.identity.onboard,
@@ -209,7 +235,12 @@ pub fn identity_add(username: &str, team_flag: Option<&str>) -> Result<()> {
 
     let now = chrono::Utc::now().to_rfc3339();
 
+    // Extract token from recipe result and store in keyring
+    let mut token_str = String::new();
     let identity = if let Some(val) = result {
+        if let Some(tok) = val.get("token").and_then(|v| v.as_str()) {
+            token_str = tok.to_string();
+        }
         BridgeIdentity {
             username: val
                 .get("username")
@@ -221,18 +252,14 @@ pub fn identity_add(username: &str, team_flag: Option<&str>) -> Result<()> {
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string(),
-            token: val
-                .get("token")
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string(),
+            token: None, // No longer stored in bridge-state.json
             created_at: now,
         }
     } else {
         BridgeIdentity {
             username: username.to_string(),
             user_id: String::new(),
-            token: String::new(),
+            token: None,
             created_at: now,
         }
     };
@@ -247,6 +274,24 @@ pub fn identity_add(username: &str, team_flag: Option<&str>) -> Result<()> {
     }
 
     bridge::save_state(&state_path, &state)?;
+
+    // Store token in system keyring via CredentialStore (best-effort)
+    if !token_str.is_empty() {
+        let credential_store = LocalCredentialStore::new(
+            &team_name,
+            bridge_name,
+            state_path,
+        );
+        if let Err(e) = credential_store.store(username, &token_str) {
+            eprintln!(
+                "Warning: Could not store token in system keyring: {}\n\
+                 Set BM_BRIDGE_TOKEN_{} environment variable instead.",
+                e,
+                crate::bridge::env_var_suffix_pub(username)
+            );
+        }
+    }
+
     println!("Identity '{}' added to bridge '{}'.", username, bridge_name);
     Ok(())
 }
@@ -269,6 +314,7 @@ pub fn identity_rotate(username: &str, team_flag: Option<&str>) -> Result<()> {
     }
 
     let manifest = bridge::load_manifest(&bridge_dir)?;
+    let bridge_name = &manifest.metadata.name;
     let result = bridge::invoke_recipe(
         &bridge_dir,
         &manifest.spec.identity.rotate_credentials,
@@ -278,11 +324,24 @@ pub fn identity_rotate(username: &str, team_flag: Option<&str>) -> Result<()> {
 
     if let Some(val) = result {
         if let Some(identity) = state.identities.get_mut(username) {
-            if let Some(token) = val.get("token").and_then(|v| v.as_str()) {
-                identity.token = token.to_string();
-            }
             if let Some(user_id) = val.get("user_id").and_then(|v| v.as_str()) {
                 identity.user_id = user_id.to_string();
+            }
+        }
+        // Store rotated token in keyring (best-effort)
+        if let Some(token) = val.get("token").and_then(|v| v.as_str()) {
+            let credential_store = LocalCredentialStore::new(
+                &team_name,
+                bridge_name,
+                state_path.clone(),
+            );
+            if let Err(e) = credential_store.store(username, token) {
+                eprintln!(
+                    "Warning: Could not store rotated token in system keyring: {}\n\
+                     Set BM_BRIDGE_TOKEN_{} environment variable instead.",
+                    e,
+                    crate::bridge::env_var_suffix_pub(username)
+                );
             }
         }
     }
@@ -310,6 +369,7 @@ pub fn identity_remove(username: &str, team_flag: Option<&str>) -> Result<()> {
     }
 
     let manifest = bridge::load_manifest(&bridge_dir)?;
+    let bridge_name = &manifest.metadata.name;
     bridge::invoke_recipe(
         &bridge_dir,
         &manifest.spec.identity.remove,
@@ -319,6 +379,15 @@ pub fn identity_remove(username: &str, team_flag: Option<&str>) -> Result<()> {
 
     state.identities.remove(username);
     bridge::save_state(&state_path, &state)?;
+
+    // Remove credential from keyring
+    let credential_store = LocalCredentialStore::new(
+        &team_name,
+        bridge_name,
+        state_path,
+    );
+    // Best-effort: don't fail if keyring is unavailable
+    let _ = credential_store.remove(username);
 
     println!("Identity '{}' removed.", username);
     Ok(())
@@ -343,6 +412,7 @@ pub fn identity_list(team_flag: Option<&str>) -> Result<()> {
     table
         .load_preset(UTF8_FULL_CONDENSED)
         .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::DynamicFullWidth)
         .set_header(vec!["Username", "User ID", "Created"]);
 
     let mut entries: Vec<_> = state.identities.iter().collect();
@@ -448,6 +518,7 @@ pub fn room_list(team_flag: Option<&str>) -> Result<()> {
             table
                 .load_preset(UTF8_FULL_CONDENSED)
                 .apply_modifier(UTF8_ROUND_CORNERS)
+                .set_content_arrangement(ContentArrangement::DynamicFullWidth)
                 .set_header(vec!["Room", "Room ID"]);
 
             for room in rooms {
@@ -471,6 +542,7 @@ pub fn room_list(team_flag: Option<&str>) -> Result<()> {
     table
         .load_preset(UTF8_FULL_CONDENSED)
         .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::DynamicFullWidth)
         .set_header(vec!["Room", "Room ID"]);
 
     for room in &state.rooms {

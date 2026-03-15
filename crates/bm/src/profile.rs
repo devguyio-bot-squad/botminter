@@ -216,6 +216,22 @@ pub struct ProfileManifest {
     pub coding_agents: HashMap<String, CodingAgentDef>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub default_coding_agent: String,
+    /// Bridges supported by this profile.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bridges: Vec<BridgeDef>,
+    /// The selected bridge for this team (set during `bm init`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bridge: Option<String>,
+}
+
+/// A bridge declaration in the profile manifest.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct BridgeDef {
+    pub name: String,
+    pub display_name: String,
+    pub description: String,
+    #[serde(rename = "type")]
+    pub bridge_type: String,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -1019,13 +1035,6 @@ mod tests {
                 name
             );
         }
-    }
-
-    #[test]
-    fn scrum_compact_telegram_has_views() {
-        let (_tmp, base) = setup_disk_profiles();
-        let manifest = read_manifest_from("scrum-compact-telegram", &base).unwrap();
-        assert!(!manifest.views.is_empty());
     }
 
     #[test]
@@ -2106,5 +2115,85 @@ mod tests {
             restored.contains(&format!("version: \"{}\"", embedded_profile_version(sample).unwrap())),
             "botminter.yml should have embedded version after force update"
         );
+    }
+
+    // ── BridgeDef / ProfileManifest.bridges tests ───────────────
+
+    #[test]
+    fn manifest_with_bridges_deserializes() {
+        let yaml = r#"
+name: test
+display_name: "Test Profile"
+description: "Test"
+version: "1.0.0"
+schema_version: "1.0"
+bridges:
+  - name: telegram
+    display_name: "Telegram"
+    description: "Telegram bot"
+    type: external
+"#;
+        let manifest: ProfileManifest = serde_yml::from_str(yaml).unwrap();
+        assert_eq!(manifest.bridges.len(), 1);
+        assert_eq!(manifest.bridges[0].name, "telegram");
+        assert_eq!(manifest.bridges[0].display_name, "Telegram");
+        assert_eq!(manifest.bridges[0].description, "Telegram bot");
+        assert_eq!(manifest.bridges[0].bridge_type, "external");
+    }
+
+    #[test]
+    fn manifest_no_bridges_deserializes() {
+        let yaml = r#"
+name: test
+display_name: "Test Profile"
+description: "Test"
+version: "1.0.0"
+schema_version: "1.0"
+"#;
+        let manifest: ProfileManifest = serde_yml::from_str(yaml).unwrap();
+        assert!(manifest.bridges.is_empty());
+    }
+
+    #[test]
+    fn manifest_empty_bridges_deserializes() {
+        let yaml = r#"
+name: test
+display_name: "Test Profile"
+description: "Test"
+version: "1.0.0"
+schema_version: "1.0"
+bridges: []
+"#;
+        let manifest: ProfileManifest = serde_yml::from_str(yaml).unwrap();
+        assert!(manifest.bridges.is_empty());
+    }
+
+    #[test]
+    fn bridge_def_has_expected_fields() {
+        let bridge = BridgeDef {
+            name: "telegram".into(),
+            display_name: "Telegram".into(),
+            description: "Bot API".into(),
+            bridge_type: "external".into(),
+        };
+        assert_eq!(bridge.name, "telegram");
+        assert_eq!(bridge.display_name, "Telegram");
+        assert_eq!(bridge.description, "Bot API");
+        assert_eq!(bridge.bridge_type, "external");
+    }
+
+    #[test]
+    fn embedded_profiles_with_bridges_parse() {
+        let (_tmp, base) = setup_disk_profiles();
+        for name in list_profiles_from(&base).unwrap() {
+            let manifest = read_manifest_from(&name, &base).unwrap();
+            // All profiles should parse without error, bridges may or may not be present
+            if !manifest.bridges.is_empty() {
+                for bridge in &manifest.bridges {
+                    assert!(!bridge.name.is_empty(), "Bridge name should not be empty in profile '{}'", name);
+                    assert!(!bridge.bridge_type.is_empty(), "Bridge type should not be empty in profile '{}'", name);
+                }
+            }
+        }
     }
 }

@@ -34,9 +34,7 @@ Profiles are stored on disk at `~/.config/botminter/profiles/`. This directory i
       skills/                       # Profile skills
       formations/                   # Deployment targets
       .schema/                      # Schema validation layout
-    scrum-compact/                  # Single-agent profile
-      ...
-    scrum-compact-telegram/         # Compact with Telegram HIL
+    scrum-compact/                  # Single-agent profile (optional Telegram bridge)
       ...
   minty/                            # Minty interactive assistant
     prompt.md                       # Minty persona + system instructions
@@ -356,11 +354,11 @@ teams:
 | `default_team` | No | Team to operate on when `-t` flag is omitted |
 | `teams[].name` | Yes | Team identifier |
 | `teams[].path` | Yes | Absolute path to team directory |
-| `teams[].profile` | Yes | Profile name (e.g., `scrum`, `scrum-compact`, `scrum-compact-telegram`) |
+| `teams[].profile` | Yes | Profile name (e.g., `scrum`, `scrum-compact`) |
 | `teams[].github_repo` | No | GitHub `org/repo` for team coordination |
 | `teams[].coding_agent` | No | Override the profile's `default_coding_agent` for this team (e.g., `gemini-cli`) |
 | `teams[].credentials.gh_token` | No | GitHub API token for `gh` CLI (auto-detected from `GH_TOKEN` env var or `gh auth token` during `bm init`) |
-| `teams[].credentials.telegram_bot_token` | No | Telegram bot token for HIL (Human-in-the-Loop) notifications. Required for `scrum-compact-telegram` profile; optional for others. |
+| `teams[].credentials.telegram_bot_token` | No | Legacy field. Bridge tokens are now stored per-member in the system keyring via `bm bridge identity add`. |
 | `teams[].credentials.webhook_secret` | No | HMAC secret for daemon webhook signature validation |
 
 ## Daemon runtime files

@@ -40,8 +40,8 @@
 
 **Telegram Bot API (optional):**
 - Optional notification integration for team members
-- Token stored in credentials: `telegram_bot_token` in `~/.botminter/config.yml`
-- Profile variant: `profiles/scrum-compact-telegram/` for Telegram-enabled teams
+- Tokens stored per-member in system keyring via CredentialStore (env var fallback: BM_BRIDGE_TOKEN_{NAME})
+- Available as optional bridge on any profile (select during `bm init` or `--bridge telegram`)
 - E2E tests include Telegram mock server: `crates/bm/tests/e2e/telegram.rs`
 
 ## Data Storage

@@ -1,8 +1,10 @@
 use std::fs;
+use std::io::IsTerminal;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
+use crate::bridge::{self, CredentialStore};
 use crate::config;
 use crate::profile;
 
@@ -77,6 +79,62 @@ pub fn run(role: &str, name: Option<&str>, team_flag: Option<&str>) -> Result<()
         "Hired {} as {} in team '{}'.",
         role, member_name, team.name
     );
+
+    // Prompt for bridge token if team has an external bridge configured
+    if let Ok(Some(bridge_dir)) = bridge::discover(&team_repo, &team.name) {
+        if let Ok(bridge_manifest) = bridge::load_manifest(&bridge_dir) {
+            if bridge_manifest.spec.bridge_type == "external"
+                && std::io::stdin().is_terminal()
+            {
+                let display_name = bridge_manifest
+                    .metadata
+                    .display_name
+                    .as_deref()
+                    .unwrap_or(&bridge_manifest.metadata.name);
+
+                let token: String = cliclack::input(format!(
+                    "{} bot token for {} (optional, press Enter to skip)",
+                    display_name, member_name
+                ))
+                .default_input("")
+                .interact()?;
+
+                if !token.is_empty() {
+                    let workzone = team.path.parent().unwrap_or(&team.path);
+                    let state_path = bridge::state_path(
+                        workzone,
+                        &team.name,
+                    );
+                    let cred_store = bridge::LocalCredentialStore::new(
+                        &team.name,
+                        &bridge_manifest.metadata.name,
+                        state_path,
+                    );
+                    match cred_store.store(&member_name, &token) {
+                        Ok(()) => {
+                            println!(
+                                "Bridge token stored for {}.",
+                                member_name
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "Warning: Could not store token in keyring: {}. \
+                                 Set BM_BRIDGE_TOKEN_{} env var instead.",
+                                e,
+                                bridge::env_var_suffix_pub(&member_name)
+                            );
+                        }
+                    }
+                } else {
+                    println!(
+                        "No bridge token provided. Add later with: bm bridge identity add {}",
+                        member_name
+                    );
+                }
+            }
+        }
+    }
 
     Ok(())
 }

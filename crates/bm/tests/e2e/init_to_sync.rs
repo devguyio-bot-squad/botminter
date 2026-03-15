@@ -208,6 +208,10 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
             let cfg = cfg.clone();
             move || run_test(|| e2e_sync_push_creates_workspace_repo_impl(&cfg))
         }),
+        Trial::test("e2e_bridge_lifecycle", {
+            let cfg = cfg.clone();
+            move || run_test(|| e2e_bridge_lifecycle_impl(&cfg))
+        }),
     ];
     trials.extend(isolated);
 
@@ -828,7 +832,7 @@ fn e2e_sync_push_creates_workspace_repo_impl(config: &E2eConfig) {
         .output();
 
     let mut cmd = bm_cmd();
-    cmd.args(["teams", "sync", "--push", "-t", team_name])
+    cmd.args(["teams", "sync", "--repos", "-t", team_name])
         .env("HOME", tmp.path())
         .env("GH_TOKEN", &config.gh_token);
     let out = assert_cmd_success(&mut cmd);
@@ -862,7 +866,7 @@ fn e2e_sync_push_creates_workspace_repo_impl(config: &E2eConfig) {
 
     // Idempotency
     let mut cmd = bm_cmd();
-    cmd.args(["teams", "sync", "--push", "-t", team_name])
+    cmd.args(["teams", "sync", "--repos", "-t", team_name])
         .env("HOME", tmp.path())
         .env("GH_TOKEN", &config.gh_token);
     let out2 = assert_cmd_success(&mut cmd);
@@ -873,4 +877,170 @@ fn e2e_sync_push_creates_workspace_repo_impl(config: &E2eConfig) {
         .args(["repo", "delete", &ws_repo_name, "--yes"])
         .env("GH_TOKEN", &config.gh_token)
         .output();
+}
+
+/// E2E: scrum-compact + Telegram bridge — full operator journey.
+///
+/// Happy path covering the bridge profile variation:
+/// init --bridge telegram → hire → teams show (bridge visible) →
+/// bridge identity add → identity list → sync --bridge → verify RObot.enabled
+fn e2e_bridge_lifecycle_impl(config: &E2eConfig) {
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+    let repo_name = format!("bm-e2e-bridge-{}", timestamp);
+    let full_name = format!("{}/{}", config.gh_org, repo_name);
+
+    // RAII guard: deletes the repo on drop
+    let _cleanup = super::github::TempRepo {
+        full_name: full_name.clone(),
+    };
+
+    let tmp = tempfile::tempdir().unwrap();
+    let workzone = tmp.path().join("workspaces");
+
+    // 1. bm init --non-interactive --profile scrum-compact --bridge telegram
+    let mut cmd = bm_cmd();
+    cmd.args([
+        "init",
+        "--non-interactive",
+        "--profile",
+        "scrum-compact",
+        "--team-name",
+        "e2e-bridge",
+        "--org",
+        &config.gh_org,
+        "--repo",
+        &repo_name,
+        "--bridge",
+        "telegram",
+        "--workzone",
+        &workzone.to_string_lossy(),
+    ])
+    .env("HOME", tmp.path())
+    .env("GH_TOKEN", &config.gh_token)
+    .env("GIT_AUTHOR_NAME", "BM E2E")
+    .env("GIT_AUTHOR_EMAIL", "e2e@botminter.test")
+    .env("GIT_COMMITTER_NAME", "BM E2E")
+    .env("GIT_COMMITTER_EMAIL", "e2e@botminter.test");
+    let stdout = assert_cmd_success(&mut cmd);
+    eprintln!("bm init: {}", stdout.trim());
+
+    // Set up git auth in temp HOME (credential helper + user identity)
+    super::helpers::setup_git_auth(tmp.path());
+
+    // Verify bridge recorded in botminter.yml
+    let team_repo = workzone.join("e2e-bridge").join("team");
+    let manifest_content = fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
+    assert!(
+        manifest_content.contains("bridge:"),
+        "botminter.yml should contain bridge key after init --bridge telegram"
+    );
+
+    // 2. bm hire superman --name bob
+    let mut cmd = bm_cmd();
+    cmd.args(["hire", "superman", "--name", "bob", "-t", "e2e-bridge"])
+        .env("HOME", tmp.path())
+        .env("GIT_AUTHOR_NAME", "BM E2E")
+        .env("GIT_AUTHOR_EMAIL", "e2e@botminter.test")
+        .env("GIT_COMMITTER_NAME", "BM E2E")
+        .env("GIT_COMMITTER_EMAIL", "e2e@botminter.test");
+    let stdout = assert_cmd_success(&mut cmd);
+    eprintln!("bm hire: {}", stdout.trim());
+
+    // 3. bm teams show → assert Bridge: visible
+    let mut cmd = bm_cmd();
+    cmd.args(["teams", "show", "-t", "e2e-bridge"])
+        .env("HOME", tmp.path());
+    let stdout = assert_cmd_success(&mut cmd);
+    eprintln!("bm teams show: {}", stdout.trim());
+    assert!(
+        stdout.contains("Bridge:"),
+        "teams show should display bridge info, got:\n{}",
+        stdout
+    );
+
+    // 4. bm bridge identity add superman-bob (with env var token)
+    let mut cmd = bm_cmd();
+    cmd.args(["bridge", "identity", "add", "superman-bob", "-t", "e2e-bridge"])
+        .env("HOME", tmp.path())
+        .env("BM_BRIDGE_TOKEN_SUPERMAN_BOB", "123456:ABC-DEF-e2e-test-token");
+    let stdout = assert_cmd_success(&mut cmd);
+    eprintln!("bm bridge identity add: {}", stdout.trim());
+    assert!(
+        stdout.contains("superman-bob"),
+        "identity add should confirm member name, got:\n{}",
+        stdout
+    );
+
+    // 5. bm bridge identity list → contains superman-bob
+    let mut cmd = bm_cmd();
+    cmd.args(["bridge", "identity", "list", "-t", "e2e-bridge"])
+        .env("HOME", tmp.path());
+    let stdout = assert_cmd_success(&mut cmd);
+    eprintln!("bm bridge identity list: {}", stdout.trim());
+    assert!(
+        stdout.contains("superman-bob"),
+        "identity list should show superman-bob, got:\n{}",
+        stdout
+    );
+
+    // 6. bm teams sync --bridge → provisions identities
+    let mut cmd = bm_cmd();
+    cmd.args(["teams", "sync", "--bridge", "-t", "e2e-bridge"])
+        .env("HOME", tmp.path());
+    let stdout = assert_cmd_success(&mut cmd);
+    eprintln!("bm teams sync --bridge: {}", stdout.trim());
+    assert!(
+        !stdout.contains("No bridge configured"),
+        "sync --bridge should NOT say 'No bridge configured', got:\n{}",
+        stdout
+    );
+
+    // 7. Verify workspace ralph.yml has RObot.enabled after sync
+    let ws_path = workzone.join("e2e-bridge").join("superman-bob");
+    if ws_path.join("ralph.yml").exists() {
+        let ralph_content = fs::read_to_string(ws_path.join("ralph.yml")).unwrap();
+        // RObot.enabled should be set based on credential availability
+        eprintln!("ralph.yml content:\n{}", ralph_content);
+        // With credentials available, RObot.enabled should be true
+        assert!(
+            ralph_content.contains("enabled: true") || ralph_content.contains("enabled:true"),
+            "ralph.yml should have RObot.enabled: true when credentials exist, got:\n{}",
+            ralph_content
+        );
+    }
+
+    // Cleanup project boards (same pattern as e2e_init_non_interactive)
+    let output = Command::new("gh")
+        .args([
+            "project", "list", "--owner", &config.gh_org,
+            "--format", "json", "--limit", "100",
+        ])
+        .env("GH_TOKEN", &config.gh_token)
+        .output()
+        .expect("failed to list projects");
+
+    if output.status.success() {
+        let json: serde_json::Value =
+            serde_json::from_slice(&output.stdout).unwrap_or(serde_json::Value::Null);
+        if let Some(projects) = json["projects"].as_array() {
+            for project in projects {
+                let title = project["title"].as_str().unwrap_or("");
+                if title.contains("e2e-bridge") {
+                    if let Some(number) = project["number"].as_u64() {
+                        eprintln!("Cleaning up project board #{}: {}", number, title);
+                        let _ = Command::new("gh")
+                            .args([
+                                "project", "delete", "--owner", &config.gh_org,
+                                &number.to_string(), "--format", "json",
+                            ])
+                            .env("GH_TOKEN", &config.gh_token)
+                            .output();
+                    }
+                }
+            }
+        }
+    }
 }

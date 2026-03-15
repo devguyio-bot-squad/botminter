@@ -14,7 +14,7 @@ The project has completed Milestone 6 (Minty and Friends). See `.planning/ROADMA
 
 ```bash
 bm init                              # Interactive wizard — create a new team
-bm init --non-interactive ...        # Scripted/CI mode (requires --profile, --team-name, --org, --repo)
+bm init --non-interactive ...        # Scripted/CI mode (requires --profile, --team-name, --org, --repo; optional --bridge)
 bm hire <role> [--name <n>] [-t team] # Hire a member into a role
 bm chat <member> [-t team] [--hat h]  # Interactive session with a member
 bm projects add <url> [-t team]       # Add a project to the team
@@ -22,7 +22,7 @@ bm projects list [-t team]            # List configured projects
 bm projects show <project> [-t team]  # Show project details
 bm teams list                         # List registered teams
 bm teams show [<name>] [-t team]      # Show detailed team info
-bm teams sync [--push] [-v] [-t team] # Provision and reconcile workspaces
+bm teams sync [--repos] [--bridge] [--all|-a] [-v] [-t team] # Provision and reconcile workspaces
 bm start [-t team]                    # Launch all members (alias: bm up)
 bm stop [-t team] [--force]           # Stop all members
 bm status [-t team] [-v]              # Status dashboard
@@ -117,6 +117,8 @@ Issues, milestones, and PRs live on the team repo's GitHub. Status transitions u
 | `docs/` | MkDocs documentation site (`docs/content/` has the markdown, `docs/mkdocs.yml` is the config) |
 | `profiles/scrum/` | Scrum profile (PROCESS.md, member skeletons, knowledge, invariants) |
 | `profiles/scrum-compact/` | Compact solo profile (single "superman" role) |
+| `crates/bm/tests/e2e/` | E2E tests against real GitHub (init, sync, bridge lifecycle) |
+| `invariants/` | Constitutional constraints — hard requirements, not suggestions |
 | `.planning/adrs/` | Architecture Decision Records (MADR 4.0.0 format) |
 | `.planning/specs/` | Formal specifications for external contracts and plugin interfaces |
 
@@ -130,6 +132,10 @@ Issues, milestones, and PRs live on the team repo's GitHub. Status transitions u
 - **Docs must stay in sync with CLI changes:** The `docs/` directory contains a MkDocs site. When changing CLI behavior (commands, wizard flow, config format), update the corresponding docs in `docs/content/` — especially `getting-started/index.md`, `reference/cli.md`, `how-to/generate-team-repo.md`, and `reference/configuration.md`.
 - When embedding a codeblock inside a markdown codeblock, the outer block needs more backticks than the inner block.
 - **Invariants are constitutional.** All files in `invariants/` are hard constraints that MUST be satisfied — they are not suggestions. Read them before making changes and review compliance after implementation. Violations are treated as bugs.
+- **CLI idempotency:** All state-mutating commands (`init`, `teams sync`, `bridge identity add`, `bridge room create`) MUST be idempotent. Running the same command twice must produce the same end state without errors. Check for existing state before creating (e.g., `gh repo view` before `gh repo create`). See `invariants/cli-idempotency.md`.
+- **E2E test coverage per profile variation:** Each meaningful profile × bridge combination needs a happy path e2e test in `crates/bm/tests/e2e/`. The happy path must exercise the full operator journey (init → hire → configure → sync → verify). Integration tests cover variations and edge cases. Current variations: scrum-compact (no bridge), scrum-compact + telegram, scrum (no bridge), scrum + telegram.
+- **User-scenario TDD:** When adding features, write the e2e test first (what the user should experience), then fix code to make it green. Plans that decompose into implementation tasks without user-journey tests will miss display/integration gaps that only show up in UAT.
+- **Keyring prerequisites (Linux):** The `keyring` crate requires a Secret Service provider with an initialized collection. On desktop Linux this happens via PAM; on headless/su/SSH access it may not. Error messages must distinguish "no daemon" from "daemon running but collection missing." See `.planning/debug/keyring-report.md` and `.planning/todos/pending/2026-03-09-improve-local-formation-keyring-ux.md`.
 
 ## Generator Repo Runtime
 

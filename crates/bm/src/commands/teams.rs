@@ -1,9 +1,10 @@
 use std::fs;
 
 use anyhow::{Context, Result};
-use comfy_table::{modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
+use comfy_table::{ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
 use serde::Deserialize;
 
+use crate::bridge;
 use crate::commands::init::run_git;
 use crate::config;
 use crate::profile;
@@ -62,6 +63,7 @@ pub fn list() -> Result<()> {
     table
         .load_preset(UTF8_FULL_CONDENSED)
         .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::DynamicFullWidth)
         .set_header(vec!["Team", "Profile", "GitHub", "Members", "Projects", "Default"]);
 
     for team in &cfg.teams {
@@ -111,6 +113,18 @@ pub fn show(name: Option<&str>, team_flag: Option<&str>) -> Result<()> {
             if let Ok(agent) = profile::resolve_coding_agent(team, &manifest) {
                 println!("Coding Agent: {}", agent.display_name);
             }
+        }
+    }
+
+    // Show bridge configuration
+    if let Ok(Some(bridge_dir)) = bridge::discover(&team_repo, &team.name) {
+        if let Ok(manifest) = bridge::load_manifest(&bridge_dir) {
+            let display = manifest
+                .metadata
+                .display_name
+                .as_deref()
+                .unwrap_or(&manifest.metadata.name);
+            println!("Bridge: {} [{}]", display, manifest.spec.bridge_type);
         }
     }
 
@@ -166,6 +180,7 @@ pub fn format_team_summary(team_repo: &std::path::Path) -> String {
         table
             .load_preset(UTF8_FULL_CONDENSED)
             .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_content_arrangement(ContentArrangement::DynamicFullWidth)
             .set_header(vec!["Name", "Role"]);
         for (name, role) in &members {
             table.add_row(vec![name.as_str(), role.as_str()]);
@@ -184,6 +199,7 @@ pub fn format_team_summary(team_repo: &std::path::Path) -> String {
         table
             .load_preset(UTF8_FULL_CONDENSED)
             .apply_modifier(UTF8_ROUND_CORNERS)
+            .set_content_arrangement(ContentArrangement::DynamicFullWidth)
             .set_header(vec!["Name", "Fork URL"]);
         for proj in &projects {
             table.add_row(vec![proj.name.as_str(), proj.fork_url.as_str()]);
@@ -218,8 +234,8 @@ struct MemberManifest {
     role: Option<String>,
 }
 
-/// Handles `bm teams sync [--push] [-v] [-t team]` — provisions and reconciles workspaces.
-pub fn sync(push: bool, verbose: bool, team_flag: Option<&str>) -> Result<()> {
+/// Handles `bm teams sync [--repos] [--bridge] [--all] [-v] [-t team]` — provisions and reconciles workspaces.
+pub fn sync(repos: bool, bridge_flag: bool, verbose: bool, team_flag: Option<&str>) -> Result<()> {
     profile::ensure_profiles_initialized()?;
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
@@ -235,9 +251,49 @@ pub fn sync(push: bool, verbose: bool, team_flag: Option<&str>) -> Result<()> {
     profile::check_schema_version(&team.profile, &manifest.schema_version)?;
     let coding_agent = profile::resolve_coding_agent(team, &manifest)?;
 
-    // Optional push
-    if push {
+    // Optional git push (--repos flag)
+    if repos {
         run_git(&team_repo, &["push"])?;
+    }
+
+    // Bridge provisioning (--bridge flag)
+    // NOTE: We discover bridge here for provisioning AND for RObot injection below.
+    let bridge_dir = bridge::discover(&team_repo, &team.name)?;
+    if bridge_flag {
+        if let Some(ref bdir) = bridge_dir {
+            // Discover members first so we can pass them to provision_bridge
+            let members_dir_pb = team_repo.join("members");
+            let mut bridge_members: Vec<String> = Vec::new();
+            if members_dir_pb.is_dir() {
+                for entry in fs::read_dir(&members_dir_pb)? {
+                    let entry = entry?;
+                    if entry.file_type()?.is_dir() {
+                        bridge_members.push(entry.file_name().to_string_lossy().to_string());
+                    }
+                }
+            }
+            bridge_members.sort();
+
+            // Set up credential store
+            let bridge_manifest = bridge::load_manifest(bdir)?;
+            let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
+            let cred_store = bridge::LocalCredentialStore::new(
+                &team.name,
+                &bridge_manifest.metadata.name,
+                bstate_path,
+            );
+
+            println!("Provisioning bridge identities...");
+            bridge::provision_bridge(
+                &team_repo,
+                &team.name,
+                &cfg.workzone,
+                &bridge_members,
+                &cred_store,
+            )?;
+        } else {
+            println!("No bridge configured -- skipping bridge provisioning");
+        }
     }
 
     // Discover hired members (scan team/members/ dir)
@@ -277,6 +333,19 @@ pub fn sync(push: bool, verbose: bool, team_flag: Option<&str>) -> Result<()> {
         .map(|p| (p.name.as_str(), p.fork_url.as_str()))
         .collect();
 
+    // Set up credential store for RObot injection (only if bridge is configured)
+    let robot_cred_store = if let Some(ref bdir) = bridge_dir {
+        let bridge_manifest = bridge::load_manifest(bdir)?;
+        let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
+        Some(bridge::LocalCredentialStore::new(
+            &team.name,
+            &bridge_manifest.metadata.name,
+            bstate_path,
+        ))
+    } else {
+        None
+    };
+
     for member_dir_name in &members {
         // One workspace per member (submodule model)
         let ws = team.path.join(member_dir_name);
@@ -291,7 +360,7 @@ pub fn sync(push: bool, verbose: bool, team_flag: Option<&str>) -> Result<()> {
                 member_dir_name,
                 coding_agent,
                 verbose,
-                push,
+                repos,
             )?;
             updated += 1;
         } else {
@@ -303,7 +372,7 @@ pub fn sync(push: bool, verbose: bool, team_flag: Option<&str>) -> Result<()> {
                 team_name: &team.name,
                 projects: &project_refs,
                 github_repo: gh,
-                push,
+                push: repos,
                 gh_token,
                 coding_agent,
             };
@@ -312,6 +381,26 @@ pub fn sync(push: bool, verbose: bool, team_flag: Option<&str>) -> Result<()> {
                 Err(e) => {
                     eprintln!("Error: {}: {:#}", member_dir_name, e);
                     failures.push(member_dir_name.clone());
+                    continue;
+                }
+            }
+        }
+
+        // Inject RObot.enabled into ralph.yml (only when bridge is configured)
+        if let Some(ref cred_store) = robot_cred_store {
+            let ralph_yml = ws.join("ralph.yml");
+            if ralph_yml.exists() {
+                let has_cred = bridge::resolve_credential_from_store(
+                    member_dir_name,
+                    cred_store,
+                )?
+                .is_some();
+                workspace::inject_robot_enabled(&ralph_yml, has_cred)?;
+                if verbose {
+                    println!(
+                        "  RObot.enabled = {} for {}",
+                        has_cred, member_dir_name
+                    );
                 }
             }
         }

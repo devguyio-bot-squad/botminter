@@ -626,7 +626,10 @@ fn launch_members_oneshot(team_name: &str, shutdown: &Arc<AtomicBool>) -> Result
         .gh_token
         .as_deref()
         .unwrap_or("");
-    let telegram_token = team.credentials.telegram_bot_token.as_deref();
+    // Per-member bridge tokens are now resolved via CredentialStore (system keyring)
+    // + BM_BRIDGE_TOKEN_{USERNAME} env var fallback. The daemon passes None here;
+    // individual members resolve their own tokens at runtime.
+    let telegram_token: Option<&str> = None;
 
     let workzone = &cfg.workzone;
     let team_ws_base = workzone.join(team_name);

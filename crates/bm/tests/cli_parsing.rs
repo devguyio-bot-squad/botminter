@@ -117,13 +117,78 @@ fn force_flag_on_stop() {
 }
 
 #[test]
-fn push_flag_on_sync() {
+fn sync_repos_flag() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["teams", "sync", "--push"]).output().unwrap();
+    let output = bm(tmp.path()).args(["teams", "sync", "--repos"]).output().unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
         code, CLAP_PARSE_ERROR_CODE,
-        "`bm teams sync --push` should not be a parse error, stderr: {}",
+        "`bm teams sync --repos` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn sync_bridge_flag() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["teams", "sync", "--bridge"]).output().unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm teams sync --bridge` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn sync_all_flag_long_and_short() {
+    let tmp = tempfile::tempdir().unwrap();
+    for args in [
+        vec!["teams", "sync", "--all"],
+        vec!["teams", "sync", "-a"],
+    ] {
+        let output = bm(tmp.path()).args(&args).output().unwrap();
+        let code = output.status.code().unwrap_or(-1);
+        assert_ne!(
+            code, CLAP_PARSE_ERROR_CODE,
+            "`bm {}` should not be a parse error, stderr: {}",
+            args.join(" "),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn sync_repos_and_bridge_together() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["teams", "sync", "--repos", "--bridge"]).output().unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm teams sync --repos --bridge` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn sync_push_flag_removed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["teams", "sync", "--push"]).output().unwrap();
+    assert_eq!(
+        output.status.code(),
+        Some(CLAP_PARSE_ERROR_CODE),
+        "`bm teams sync --push` should be a parse error (flag removed)"
+    );
+}
+
+#[test]
+fn sync_no_flags_default() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path()).args(["teams", "sync"]).output().unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm teams sync` (no flags) should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }
@@ -154,7 +219,7 @@ fn verbose_flag_on_sync() {
     for args in [
         vec!["teams", "sync", "-v"],
         vec!["teams", "sync", "--verbose"],
-        vec!["teams", "sync", "--push", "-v"],
+        vec!["teams", "sync", "--repos", "-v"],
     ] {
         let output = bm(tmp.path()).args(&args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
@@ -819,6 +884,55 @@ fn profiles_describe_show_tags_help_text() {
         stdout.contains("--show-tags"),
         "Help should document --show-tags flag, output:\n{}",
         stdout
+    );
+}
+
+// ── Init --bridge flag (2 tests) ─────────────────────────────────────
+
+#[test]
+fn init_bridge_flag_parses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args([
+            "init",
+            "--non-interactive",
+            "--profile", "scrum-compact",
+            "--team-name", "test",
+            "--org", "testorg",
+            "--repo", "testrepo",
+            "--bridge", "telegram",
+            "--skip-github",
+        ])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm init --non-interactive --bridge telegram` should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+#[test]
+fn init_without_bridge_flag_parses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output = bm(tmp.path())
+        .args([
+            "init",
+            "--non-interactive",
+            "--profile", "scrum-compact",
+            "--team-name", "test",
+            "--org", "testorg",
+            "--repo", "testrepo",
+            "--skip-github",
+        ])
+        .output()
+        .unwrap();
+    let code = output.status.code().unwrap_or(-1);
+    assert_ne!(
+        code, CLAP_PARSE_ERROR_CODE,
+        "`bm init --non-interactive` without --bridge should not be a parse error, stderr: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
 }
 

@@ -82,9 +82,12 @@ The bridge spec document (`.planning/specs/bridge/`) and conformance tests valid
 ### Key Design Decisions
 
 - **Bridge types:** `local` bridges manage full lifecycle (start, stop, health) and identity. `external` bridges manage identity only (the service runs elsewhere).
+- **Provisioning model per type:** The bridge type determines who creates credentials. Local (managed) bridges auto-provision identities — the bridge creates bot users and generates tokens without operator input. External bridges accept pre-existing operator-supplied tokens — the bridge validates and registers them but does not create accounts on the external platform. This distinction is reflected in the `onboard` recipe semantics: local bridges create users, external bridges accept tokens via `BM_BRIDGE_TOKEN_{USERNAME}` env vars.
+- **Per-member identity:** Each hired team member gets their own bot user/token on the bridge, regardless of bridge type. This enables per-agent traceability in chat channels.
 - **File-based config exchange:** Bridge commands write output to `$BRIDGE_CONFIG_DIR/config.json`, not stdout. This avoids stdout corruption from diagnostic output, logging, or shell initialization scripts.
-- **Identity commands:** `onboard` (create bot user), `rotate-credentials` (refresh tokens), `remove` (delete bot user). These are per-agent operations.
+- **Identity commands:** `onboard` (create or register bot user), `rotate-credentials` (refresh tokens), `remove` (delete bot user). These are per-agent operations.
 - **Lifecycle commands:** `start`, `stop`, `health` (local bridges only). These manage the chat service instance.
+- **Formation-aware credential storage:** After BotMinter receives credentials from config exchange, it stores them through the active formation's credential backend (system keyring for local, K8s Secrets for Kubernetes). Credentials are NOT written to ralph.yml — they are injected as environment variables at `bm start` time. This keeps secrets out of committed files.
 - **API versioning:** `apiVersion: botminter.dev/v1alpha1` follows Kubernetes/Knative convention for future evolution.
 - **Commands are Justfile recipe names:** The contract specifies recipe names, not hardcoded shell commands. This decouples the contract from implementation details.
 

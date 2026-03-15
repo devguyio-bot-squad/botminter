@@ -20,6 +20,7 @@ bm init
 - Lists GitHub orgs and personal account for interactive selection
 - Offers to create a new repo or select an existing one from the chosen org
 - Offers to create a new GitHub Project board or select an existing one
+- If the selected profile supports bridges, prompts for bridge selection (or "No bridge")
 - For new repos: resolves the default coding agent from the profile, extracts the profile (filtering agent tags and renaming `context.md` to the agent's context file), optionally hires members and adds projects, creates GitHub repo and pushes
 - For existing repos: clones the repo (skips member/project prompts — use `bm hire` and `bm projects add` after init)
 - Registers the team in `~/.botminter/config.yml` early (before label/project operations) so a failure doesn't leave config in a broken state
@@ -32,7 +33,7 @@ bm init
 For scripted or CI usage:
 
 ```bash
-bm init --non-interactive --profile <profile> --team-name <name> --org <org> --repo <repo> [--project <url>] [--workzone <path>]
+bm init --non-interactive --profile <profile> --team-name <name> --org <org> --repo <repo> [--bridge <name>] [--project <url>] [--workzone <path>]
 ```
 
 | Parameter | Required | Description |
@@ -42,6 +43,7 @@ bm init --non-interactive --profile <profile> --team-name <name> --org <org> --r
 | `--team-name <name>` | Yes | Team identifier |
 | `--org <org>` | Yes | GitHub org or user account |
 | `--repo <repo>` | Yes | GitHub repo name |
+| `--bridge <name>` | No | Bridge to configure (e.g., `telegram`). Must be supported by the profile. Omit for no bridge |
 | `--project <url>` | No | Project fork URL to add, or `new` to create a GitHub Project board |
 | `--workzone <path>` | No | Override workzone directory (default: `~/.botminter/workspaces`) |
 
@@ -73,6 +75,7 @@ bm hire <role> [--name <name>] [-t <team>]
 - Performs schema version guard (rejects if team schema doesn't match profile)
 - Extracts member skeleton from the profile on disk into `team/{role}-{name}/`
 - Finalizes `botminter.yml` with the member's name
+- If the team has an external bridge configured, prompts for an optional bridge token (interactive mode only). The token is stored in the system keyring.
 - Creates a git commit (no auto-push)
 - Auto-suffix fills gaps: if `01` and `03` exist, returns `02`
 
@@ -294,12 +297,14 @@ bm teams show [<name>] [-t <team>]
 Provision and reconcile workspaces.
 
 ```bash
-bm teams sync [--push] [-v] [-t <team>]
+bm teams sync [--repos] [--bridge] [--all|-a] [-v] [-t <team>]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `--push` | No | Push team repo to GitHub before syncing; also creates workspace repos on GitHub for new members |
+| `--repos` | No | Push team repo to GitHub before syncing; also creates workspace repos on GitHub for new members |
+| `--bridge` | No | Provision bridge identities and rooms on the bridge |
+| `--all` / `-a` | No | Equivalent to `--repos --bridge` (all remote operations) |
 | `-v` | No | Show detailed sync status per workspace (submodule updates, file copy decisions, branch state) |
 | `-t <team>` | No | Team to operate on |
 
@@ -498,6 +503,93 @@ bm knowledge [-t <team>] [--scope <scope>]
 
 - Spawns a Claude Code session with the knowledge-manager skill injected
 - Requires schema version 1.0
+
+## Bridge management
+
+### `bm bridge status`
+
+Show the current bridge state for the team.
+
+```bash
+bm bridge status [-t <team>]
+```
+
+**Behavior:**
+
+- Displays bridge type, service URL (if running), provisioned identities, and rooms
+- Reads from `bridge-state.json` in the team directory
+
+### `bm bridge identity add`
+
+Add or update a bridge identity for a member.
+
+```bash
+bm bridge identity add <username> [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<username>` | Yes | Member name (e.g., `superman-01`) |
+| `-t <team>` | No | Team to operate on |
+
+**Behavior:**
+
+- Prompts for a bridge token (external bridges) or auto-provisions (local bridges)
+- Stores the credential in the system keyring
+- Updates `bridge-state.json` with the identity record
+
+### `bm bridge identity rotate`
+
+Rotate credentials for an existing bridge identity.
+
+```bash
+bm bridge identity rotate <username> [-t <team>]
+```
+
+**Behavior:**
+
+- Generates or accepts new credentials for the member
+- Updates the system keyring with the new token
+- Updates `bridge-state.json`
+
+### `bm bridge identity remove`
+
+Remove a bridge identity for a member.
+
+```bash
+bm bridge identity remove <username> [-t <team>]
+```
+
+**Behavior:**
+
+- Removes the credential from the system keyring
+- Removes the identity from `bridge-state.json`
+
+### `bm bridge room create`
+
+Create a room on the bridge platform.
+
+```bash
+bm bridge room create <room-name> [-t <team>]
+```
+
+**Behavior:**
+
+- Creates a room/channel on the configured bridge
+- Records the room in `bridge-state.json`
+
+### `bm bridge room list`
+
+List rooms managed by the bridge.
+
+```bash
+bm bridge room list [-t <team>]
+```
+
+**Behavior:**
+
+- Lists all rooms/channels tracked in `bridge-state.json`
+- For local bridges, queries the live service for current room state
 
 ## Daemon
 

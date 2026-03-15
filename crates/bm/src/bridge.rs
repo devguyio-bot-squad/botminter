@@ -7,6 +7,202 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 
+// ── CredentialStore trait + implementations ──────────────────────────
+
+/// Trait for storing and retrieving bridge credentials (tokens).
+///
+/// Different formation backends implement this trait:
+/// - `LocalCredentialStore` uses the system keyring (local formation)
+/// - `InMemoryCredentialStore` for testing
+/// - Future: K8s Secrets backend for K8s formation
+pub trait CredentialStore {
+    fn store(&self, member_name: &str, token: &str) -> Result<()>;
+    fn retrieve(&self, member_name: &str) -> Result<Option<String>>;
+    fn remove(&self, member_name: &str) -> Result<()>;
+    fn list(&self) -> Result<Vec<String>>;
+}
+
+/// In-memory credential store for testing. Avoids system keyring dependency.
+pub struct InMemoryCredentialStore {
+    tokens: std::sync::Mutex<HashMap<String, String>>,
+}
+
+impl Default for InMemoryCredentialStore {
+    fn default() -> Self {
+        Self {
+            tokens: std::sync::Mutex::new(HashMap::new()),
+        }
+    }
+}
+
+impl InMemoryCredentialStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+}
+
+impl CredentialStore for InMemoryCredentialStore {
+    fn store(&self, member_name: &str, token: &str) -> Result<()> {
+        self.tokens
+            .lock()
+            .unwrap()
+            .insert(member_name.to_string(), token.to_string());
+        Ok(())
+    }
+
+    fn retrieve(&self, member_name: &str) -> Result<Option<String>> {
+        Ok(self
+            .tokens
+            .lock()
+            .unwrap()
+            .get(member_name)
+            .cloned())
+    }
+
+    fn remove(&self, member_name: &str) -> Result<()> {
+        self.tokens.lock().unwrap().remove(member_name);
+        Ok(())
+    }
+
+    fn list(&self) -> Result<Vec<String>> {
+        let mut names: Vec<String> = self.tokens.lock().unwrap().keys().cloned().collect();
+        names.sort();
+        Ok(names)
+    }
+}
+
+/// Local credential store backed by the system keyring (via `keyring` crate).
+///
+/// Uses `keyring::Entry` for credential storage. The keyring service name
+/// is `botminter.{team}.{bridge}`. Member names from bridge-state.json
+/// serve as the index (keyring doesn't support enumeration).
+pub struct LocalCredentialStore {
+    service: String,
+    state_path: PathBuf,
+}
+
+impl LocalCredentialStore {
+    pub fn new(team_name: &str, bridge_name: &str, state_path: PathBuf) -> Self {
+        Self {
+            service: format!("botminter.{}.{}", team_name, bridge_name),
+            state_path,
+        }
+    }
+}
+
+impl CredentialStore for LocalCredentialStore {
+    fn store(&self, member_name: &str, token: &str) -> Result<()> {
+        match keyring::Entry::new(&self.service, member_name) {
+            Ok(entry) => {
+                entry.set_password(token).map_err(|e| {
+                    anyhow::anyhow!(
+                        "System keyring not available. On Linux, install a Secret Service provider \
+                         (e.g., gnome-keyring). For headless/CI environments, set \
+                         BM_BRIDGE_TOKEN_{} environment variables instead. ({})",
+                        env_var_suffix(member_name),
+                        e
+                    )
+                })?;
+            }
+            Err(e) => {
+                return Err(anyhow::anyhow!(
+                    "System keyring not available. On Linux, install a Secret Service provider \
+                     (e.g., gnome-keyring). For headless/CI environments, set \
+                     BM_BRIDGE_TOKEN_{} environment variables instead. ({})",
+                    env_var_suffix(member_name),
+                    e
+                ));
+            }
+        }
+
+        // Record member in bridge-state.json identities (metadata only, no token)
+        let mut state = load_state(&self.state_path)?;
+        if !state.identities.contains_key(member_name) {
+            state.identities.insert(
+                member_name.to_string(),
+                BridgeIdentity {
+                    username: member_name.to_string(),
+                    user_id: String::new(),
+                    token: None,
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+            save_state(&self.state_path, &state)?;
+        }
+
+        Ok(())
+    }
+
+    fn retrieve(&self, member_name: &str) -> Result<Option<String>> {
+        let entry = match keyring::Entry::new(&self.service, member_name) {
+            Ok(e) => e,
+            Err(_) => {
+                // Keyring not available — fall back to env var resolution
+                return Ok(None);
+            }
+        };
+        match entry.get_password() {
+            Ok(password) => Ok(Some(password)),
+            Err(keyring::Error::NoEntry) => Ok(None),
+            Err(e) => {
+                eprintln!(
+                    "Warning: System keyring error ({}). \
+                     Falling back to BM_BRIDGE_TOKEN_{} env var.",
+                    e,
+                    env_var_suffix(member_name)
+                );
+                Ok(None)
+            }
+        }
+    }
+
+    fn remove(&self, member_name: &str) -> Result<()> {
+        if let Ok(entry) = keyring::Entry::new(&self.service, member_name) {
+            match entry.delete_credential() {
+                Ok(()) => {}
+                Err(keyring::Error::NoEntry) => {} // Already gone
+                Err(e) => {
+                    eprintln!("Warning: Could not remove credential from keyring: {}", e);
+                }
+            }
+        }
+
+        // Remove from bridge-state.json identities
+        let mut state = load_state(&self.state_path)?;
+        state.identities.remove(member_name);
+        save_state(&self.state_path, &state)?;
+
+        Ok(())
+    }
+
+    fn list(&self) -> Result<Vec<String>> {
+        let state = load_state(&self.state_path)?;
+        let mut names: Vec<String> = state.identities.keys().cloned().collect();
+        names.sort();
+        Ok(names)
+    }
+}
+
+/// Resolves a credential for a member using the CredentialStore abstraction.
+///
+/// Priority: env var `BM_BRIDGE_TOKEN_{USERNAME}` (uppercased, hyphens to underscores) first,
+/// then `credential_store.retrieve(member)` second.
+pub fn resolve_credential_from_store(
+    member_name: &str,
+    credential_store: &dyn CredentialStore,
+) -> Result<Option<String>> {
+    // Check env var first
+    let env_key = format!("BM_BRIDGE_TOKEN_{}", env_var_suffix(member_name));
+    if let Ok(val) = std::env::var(&env_key) {
+        if !val.is_empty() {
+            return Ok(Some(val));
+        }
+    }
+
+    // Fall back to credential store
+    credential_store.retrieve(member_name)
+}
+
 /// Parsed bridge manifest from bridge.yml.
 #[derive(Debug, Deserialize)]
 pub struct BridgeManifest {
@@ -87,11 +283,17 @@ pub struct BridgeState {
 }
 
 /// A registered identity on the bridge.
+///
+/// The `token` field is kept for backward compatibility with old bridge-state.json files.
+/// New serializations never include it (tokens are stored in the system keyring).
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct BridgeIdentity {
     pub username: String,
     pub user_id: String,
-    pub token: String,
+    /// Legacy field: old bridge-state.json files may contain tokens. Read but never re-serialized.
+    /// New code stores tokens in the system keyring via CredentialStore.
+    #[serde(default, skip_serializing)]
+    pub token: Option<String>,
     pub created_at: String,
 }
 
@@ -256,23 +458,175 @@ pub fn invoke_recipe(
     }
 }
 
-/// Resolves a credential for an identity.
+/// Provisions bridge identities for team members during `bm teams sync --bridge`.
 ///
-/// Priority: env var `BM_BRIDGE_TOKEN_{USERNAME}` (uppercased) -> state file identity token.
+/// For each member NOT already in `bridge-state.json`:
+/// - **Local (managed) bridges:** invoke the onboard recipe directly (creates user + returns token).
+/// - **External bridges:** check if a credential exists in `credential_store`; skip with warning if not.
+///
+/// After provisioning identities, creates a team room if `state.rooms` is empty and
+/// the manifest has a room spec. Saves bridge state at the end.
+pub fn provision_bridge(
+    team_repo: &Path,
+    team_name: &str,
+    workzone: &Path,
+    members: &[String],
+    credential_store: &dyn CredentialStore,
+) -> Result<()> {
+    // Discover bridge
+    let bridge_dir = match discover(team_repo, team_name)? {
+        Some(dir) => dir,
+        None => {
+            println!("No bridge configured -- skipping");
+            return Ok(());
+        }
+    };
+
+    let manifest = load_manifest(&bridge_dir)?;
+    let state_path = state_path(workzone, team_name);
+    let mut state = load_state(&state_path)?;
+
+    // Provision identities for members not yet in state
+    for member in members {
+        if state.identities.contains_key(member) {
+            println!("  {}: already provisioned -- skipping", member);
+            continue;
+        }
+
+        if manifest.spec.bridge_type == "external" {
+            // External bridge: operator must have pre-supplied a token
+            let has_cred = resolve_credential_from_store(member, credential_store)?;
+            if has_cred.is_none() {
+                eprintln!(
+                    "  {}: no bridge credentials -- skipping. Use `bm bridge identity add` to add later.",
+                    member
+                );
+                continue;
+            }
+            // Set env var for recipe to use
+            let env_key = format!("BM_BRIDGE_TOKEN_{}", env_var_suffix(member));
+            std::env::set_var(&env_key, has_cred.as_ref().unwrap());
+        }
+
+        // Invoke onboard recipe
+        let recipe_result = invoke_recipe(
+            &bridge_dir,
+            &manifest.spec.identity.onboard,
+            &[member.as_str()],
+            team_name,
+        )?;
+
+        // Process recipe output
+        if let Some(config) = recipe_result {
+            let username = config["username"]
+                .as_str()
+                .unwrap_or(member.as_str())
+                .to_string();
+            let user_id = config["user_id"]
+                .as_str()
+                .unwrap_or("")
+                .to_string();
+            let token = config["token"].as_str().map(|s| s.to_string());
+
+            // Store identity metadata in state (no token)
+            state.identities.insert(
+                member.clone(),
+                BridgeIdentity {
+                    username,
+                    user_id,
+                    token: None,
+                    created_at: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+
+            // Store token in credential store (system keyring)
+            if let Some(ref tok) = token {
+                if let Err(e) = credential_store.store(member, tok) {
+                    eprintln!(
+                        "Warning: Could not store credential for {} in keyring: {}. \
+                         Set BM_BRIDGE_TOKEN_{} env var instead.",
+                        member,
+                        e,
+                        env_var_suffix(member)
+                    );
+                }
+            }
+
+            println!("  {}: provisioned", member);
+        } else {
+            println!("  {}: onboard recipe returned no config", member);
+        }
+
+        // Clean up env var if we set it for external bridge
+        if manifest.spec.bridge_type == "external" {
+            let env_key = format!("BM_BRIDGE_TOKEN_{}", env_var_suffix(member));
+            std::env::remove_var(&env_key);
+        }
+    }
+
+    // Create team room if rooms are empty and manifest has room spec
+    if state.rooms.is_empty() {
+        if let Some(ref room_spec) = manifest.spec.room {
+            let room_name = format!("{}-general", team_name);
+            let room_result = invoke_recipe(
+                &bridge_dir,
+                &room_spec.create,
+                &[&room_name],
+                team_name,
+            )?;
+
+            let room_id = room_result
+                .as_ref()
+                .and_then(|v| v["room_id"].as_str())
+                .map(|s| s.to_string());
+
+            state.rooms.push(BridgeRoom {
+                name: room_name.clone(),
+                room_id,
+                created_at: chrono::Utc::now().to_rfc3339(),
+            });
+            println!("  Created team room: {}", room_name);
+        }
+    }
+
+    // Save bridge state
+    state.bridge_name = Some(manifest.metadata.name.clone());
+    state.bridge_type = Some(manifest.spec.bridge_type.clone());
+    save_state(&state_path, &state)?;
+
+    Ok(())
+}
+
+/// Normalizes a name into a valid env var suffix: uppercased, hyphens replaced with underscores.
+pub fn env_var_suffix_pub(name: &str) -> String {
+    env_var_suffix(name)
+}
+
+/// Normalizes a name into a valid env var suffix: uppercased, hyphens replaced with underscores.
+fn env_var_suffix(name: &str) -> String {
+    name.to_uppercase().replace('-', "_")
+}
+
+/// Resolves a credential for an identity (legacy path).
+///
+/// Priority: env var `BM_BRIDGE_TOKEN_{USERNAME}` (uppercased, hyphens to underscores) -> state file identity token.
+///
+/// Note: Prefer `resolve_credential_from_store()` for new code. This function
+/// is retained for backward compatibility with code that still reads from bridge-state.json.
 pub fn resolve_credential(identity_name: &str, state: &BridgeState) -> Option<String> {
-    // Check env var first
-    let env_key = format!("BM_BRIDGE_TOKEN_{}", identity_name.to_uppercase());
+    // Check env var first (hyphens replaced with underscores for valid env var names)
+    let env_key = format!("BM_BRIDGE_TOKEN_{}", env_var_suffix(identity_name));
     if let Ok(val) = std::env::var(&env_key) {
         if !val.is_empty() {
             return Some(val);
         }
     }
 
-    // Fall back to state file
+    // Fall back to state file (token is now optional)
     state
         .identities
         .get(identity_name)
-        .map(|id| id.token.clone())
+        .and_then(|id| id.token.clone())
 }
 
 #[cfg(test)]
@@ -358,7 +712,7 @@ spec:
             BridgeIdentity {
                 username: "alice".to_string(),
                 user_id: "u123".to_string(),
-                token: "tok-abc".to_string(),
+                token: None,
                 created_at: "2026-03-08T00:00:00Z".to_string(),
             },
         );
@@ -397,7 +751,8 @@ spec:
         );
         assert_eq!(loaded.identities.len(), 1);
         let alice = loaded.identities.get("alice").unwrap();
-        assert_eq!(alice.token, "tok-abc");
+        // Token is skip_serializing so it won't round-trip
+        assert!(alice.token.is_none());
         assert_eq!(loaded.rooms.len(), 1);
         assert_eq!(loaded.rooms[0].name, "general");
         assert_eq!(loaded.rooms[0].room_id.as_deref(), Some("r-123"));
@@ -518,7 +873,7 @@ spec:
             BridgeIdentity {
                 username: "testuser".to_string(),
                 user_id: "u1".to_string(),
-                token: "state-token".to_string(),
+                token: Some("state-token".to_string()),
                 created_at: "2026-01-01T00:00:00Z".to_string(),
             },
         );
@@ -547,7 +902,7 @@ spec:
             BridgeIdentity {
                 username: "fallbackuser".to_string(),
                 user_id: "u2".to_string(),
-                token: "state-token-fb".to_string(),
+                token: Some("state-token-fb".to_string()),
                 created_at: "2026-01-01T00:00:00Z".to_string(),
             },
         );
@@ -569,6 +924,133 @@ spec:
         let state = BridgeState::default();
         let cred = resolve_credential("nouser", &state);
         assert!(cred.is_none());
+    }
+
+    #[test]
+    fn credential_env_var_hyphen_to_underscore() {
+        // Member names with hyphens should produce valid env var names
+        let key = "BM_BRIDGE_TOKEN_AGENT_ALICE";
+        std::env::set_var(key, "hyphen-test-token");
+
+        let state = BridgeState::default();
+        let cred = resolve_credential("agent-alice", &state);
+        assert_eq!(cred, Some("hyphen-test-token".to_string()));
+
+        // Clean up
+        std::env::remove_var(key);
+    }
+
+    #[test]
+    fn env_var_suffix_normalization() {
+        assert_eq!(env_var_suffix("alice"), "ALICE");
+        assert_eq!(env_var_suffix("agent-alice"), "AGENT_ALICE");
+        assert_eq!(env_var_suffix("my-agent-name"), "MY_AGENT_NAME");
+    }
+
+    // ── CredentialStore (InMemory) tests ─────────────────────────────
+
+    #[test]
+    fn credential_store_store_and_retrieve() {
+        let store = InMemoryCredentialStore::new();
+        store.store("alice", "tok123").unwrap();
+        assert_eq!(store.retrieve("alice").unwrap(), Some("tok123".to_string()));
+    }
+
+    #[test]
+    fn credential_store_retrieve_unknown() {
+        let store = InMemoryCredentialStore::new();
+        assert_eq!(store.retrieve("unknown").unwrap(), None);
+    }
+
+    #[test]
+    fn credential_store_remove() {
+        let store = InMemoryCredentialStore::new();
+        store.store("alice", "tok123").unwrap();
+        store.remove("alice").unwrap();
+        assert_eq!(store.retrieve("alice").unwrap(), None);
+    }
+
+    #[test]
+    fn credential_store_list() {
+        let store = InMemoryCredentialStore::new();
+        store.store("bob", "tok-b").unwrap();
+        store.store("alice", "tok-a").unwrap();
+        let names = store.list().unwrap();
+        assert_eq!(names, vec!["alice", "bob"]); // sorted
+    }
+
+    #[test]
+    fn credential_store_overwrite() {
+        let store = InMemoryCredentialStore::new();
+        store.store("alice", "old_token").unwrap();
+        store.store("alice", "new_token").unwrap();
+        assert_eq!(
+            store.retrieve("alice").unwrap(),
+            Some("new_token".to_string())
+        );
+    }
+
+    #[test]
+    fn credential_store_list_empty() {
+        let store = InMemoryCredentialStore::new();
+        let names = store.list().unwrap();
+        assert!(names.is_empty());
+    }
+
+    #[test]
+    fn resolve_credential_from_store_env_var_priority() {
+        let key = "BM_BRIDGE_TOKEN_STORETESTUSER";
+        std::env::set_var(key, "env-token-store");
+
+        let store = InMemoryCredentialStore::new();
+        store.store("storetestuser", "store-token").unwrap();
+
+        let cred = resolve_credential_from_store("storetestuser", &store).unwrap();
+        assert_eq!(cred, Some("env-token-store".to_string()));
+
+        std::env::remove_var(key);
+    }
+
+    #[test]
+    fn resolve_credential_from_store_fallback() {
+        let key = "BM_BRIDGE_TOKEN_STOREFALLBACK";
+        std::env::remove_var(key);
+
+        let store = InMemoryCredentialStore::new();
+        store.store("storefallback", "store-token-fb").unwrap();
+
+        let cred = resolve_credential_from_store("storefallback", &store).unwrap();
+        assert_eq!(cred, Some("store-token-fb".to_string()));
+    }
+
+    #[test]
+    fn old_bridge_state_with_token_deserializes() {
+        // Simulate old bridge-state.json format where token was a required string field
+        let old_json = r#"{
+            "status": "running",
+            "identities": {
+                "alice": {
+                    "username": "alice",
+                    "user_id": "u123",
+                    "token": "old-secret-token",
+                    "created_at": "2026-01-01T00:00:00Z"
+                }
+            },
+            "rooms": []
+        }"#;
+
+        let state: BridgeState = serde_json::from_str(old_json).unwrap();
+        let alice = state.identities.get("alice").unwrap();
+        // Old token field is deserialized but won't be re-serialized
+        assert_eq!(alice.token, Some("old-secret-token".to_string()));
+        assert_eq!(alice.username, "alice");
+
+        // Re-serialize and verify token is NOT included
+        let re_serialized = serde_json::to_string_pretty(&state).unwrap();
+        assert!(
+            !re_serialized.contains("old-secret-token"),
+            "Token should not appear in re-serialized output"
+        );
     }
 
     #[test]

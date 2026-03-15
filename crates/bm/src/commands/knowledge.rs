@@ -149,14 +149,17 @@ pub fn interactive(team_flag: Option<&str>, _scope: Option<&str>) -> Result<()> 
 }
 
 /// Builds env vars from team credentials.
+///
+/// GH_TOKEN is sourced from config.yml credentials. Bridge tokens are now
+/// resolved per-member via CredentialStore (system keyring) + env var fallback,
+/// not from the team-wide config.
 fn credentials_env(team: &TeamEntry) -> Vec<(String, String)> {
     let mut env = Vec::new();
     if let Some(token) = &team.credentials.gh_token {
         env.push(("GH_TOKEN".to_string(), token.clone()));
     }
-    if let Some(token) = &team.credentials.telegram_bot_token {
-        env.push(("RALPH_TELEGRAM_BOT_TOKEN".to_string(), token.clone()));
-    }
+    // Note: telegram_bot_token is no longer stored in config.yml.
+    // Per-member bridge tokens are resolved via CredentialStore at launch time.
     env
 }
 

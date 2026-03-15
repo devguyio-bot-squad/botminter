@@ -12,10 +12,10 @@ bm teams sync
 
 This creates or updates **workspace repos** for each hired member. Each workspace repo is a dedicated git repository containing submodules for the team repo and project forks.
 
-**New workspaces** (use `--push` to create GitHub repos):
+**New workspaces** (use `--repos` to create GitHub repos):
 
 ```bash
-bm teams sync --push
+bm teams sync --repos
 ```
 
 1. Creates a GitHub repo (`org/<team>-<member>`) for each member
@@ -28,7 +28,7 @@ bm teams sync --push
 8. Writes `.botminter.workspace` marker and `.gitignore`
 9. Commits and pushes
 
-**Existing workspaces** (without `--push`):
+**Existing workspaces** (without `--repos`):
 
 ```bash
 bm teams sync

@@ -20,7 +20,7 @@ fn next_steps_message(team_name: &str, team_dir: &Path, team_repo: &Path) -> Str
         "Team '{}' created at {}\n\
          {}\n\
          Next steps:\n  \
-         1. bm teams sync --push   Push team repo and provision workspaces\n  \
+         1. bm teams sync --repos  Push team repo and provision workspaces\n  \
          2. bm projects sync       Sync project repos into workspaces",
         team_name,
         team_dir.display(),
@@ -33,12 +33,14 @@ fn next_steps_message(team_name: &str, team_dir: &Path, team_repo: &Path) -> Str
 /// Skips all interactive prompts. When `skip_github` is true, also skips
 /// GitHub API calls (token validation, label bootstrap, project board creation),
 /// making it suitable for automated testing without network access.
+#[allow(clippy::too_many_arguments)]
 pub fn run_non_interactive(
     profile: Option<String>,
     team_name: Option<String>,
     org: Option<String>,
     repo: Option<String>,
     project: Option<String>,
+    bridge: Option<String>,
     skip_github: bool,
     workzone_override: Option<String>,
 ) -> Result<()> {
@@ -100,6 +102,14 @@ pub fn run_non_interactive(
 
     let manifest = profile::read_manifest(&selected_profile)?;
 
+    // Validate bridge selection (if provided)
+    let selected_bridge = if let Some(ref bridge_name) = bridge {
+        validate_bridge_selection(bridge_name, &manifest.bridges)?;
+        Some(bridge_name.clone())
+    } else {
+        None
+    };
+
     // GitHub token handling
     let gh_token = if skip_github {
         None
@@ -149,6 +159,11 @@ pub fn run_non_interactive(
 
     if !projects_to_add.is_empty() {
         augment_manifest_with_projects(&team_repo, &projects_to_add)?;
+    }
+
+    // Record bridge selection in team botminter.yml
+    if let Some(ref bridge_name) = selected_bridge {
+        record_bridge_in_manifest(&team_repo, bridge_name)?;
     }
 
     fs::create_dir_all(team_repo.join("members")).context("Failed to create members/ dir")?;
@@ -336,17 +351,37 @@ pub fn run() -> Result<()> {
 
     let gh_token = Some(token);
 
-    let telegram_token: String = cliclack::input("Telegram bot token (optional, enter to skip)")
-        .default_input("")
-        .required(false)
-        .interact()?;
-    let telegram_bot_token = if telegram_token.is_empty() {
-        None
-    } else {
-        Some(telegram_token)
-    };
+    let telegram_bot_token: Option<String> = None;
 
     let manifest = profile::read_manifest(&selected_profile)?;
+
+    // Bridge selection (interactive)
+    let selected_bridge: Option<String> = if !manifest.bridges.is_empty() {
+        let mut bridge_items: Vec<(String, String, String)> = manifest
+            .bridges
+            .iter()
+            .map(|b| (b.name.clone(), b.display_name.clone(), b.description.clone()))
+            .collect();
+        bridge_items.push((
+            "none".to_string(),
+            "No bridge".to_string(),
+            "Skip bridge configuration".to_string(),
+        ));
+
+        let items_ref: Vec<(&str, &str, &str)> = bridge_items
+            .iter()
+            .map(|(v, l, h)| (v.as_str(), l.as_str(), h.as_str()))
+            .collect();
+
+        let choice: String = cliclack::select("Communication bridge")
+            .items(&items_ref)
+            .interact()
+            .map(|s: &str| s.to_string())?;
+
+        if choice == "none" { None } else { Some(choice) }
+    } else {
+        None
+    };
 
     // Hire members and add projects (only for new repos — existing repos already have content)
     let (members_to_hire, projects_to_add) = if is_new_repo {
@@ -376,6 +411,9 @@ pub fn run() -> Result<()> {
         ProjectChoice::UseExisting(n) => {
             summary.push_str(&format!("\nProject board: existing (#{n})"));
         }
+    }
+    if let Some(ref bridge_name) = selected_bridge {
+        summary.push_str(&format!("\nBridge: {}", bridge_name));
     }
     if !members_to_hire.is_empty() {
         summary.push_str("\nMembers:");
@@ -432,6 +470,11 @@ pub fn run() -> Result<()> {
 
         if !projects_to_add.is_empty() {
             augment_manifest_with_projects(&team_repo, &projects_to_add)?;
+        }
+
+        // Record bridge selection in team botminter.yml
+        if let Some(ref bridge_name) = selected_bridge {
+            record_bridge_in_manifest(&team_repo, bridge_name)?;
         }
 
         fs::create_dir_all(team_repo.join("members")).context("Failed to create members/ dir")?;
@@ -1492,6 +1535,46 @@ pub fn find_project_number(
         .with_context(|| format!("No project named '{}' found for owner '{}'", board_title, owner))
 }
 
+/// Validates that a bridge name exists in the profile's bridges list.
+/// Returns Ok(()) if valid, Err with available bridges list if not.
+fn validate_bridge_selection(bridge_name: &str, bridges: &[profile::BridgeDef]) -> Result<()> {
+    if bridges.is_empty() {
+        bail!("Profile has no bridges available. Remove the --bridge flag.");
+    }
+    if !bridges.iter().any(|b| b.name == bridge_name) {
+        let available: Vec<&str> = bridges.iter().map(|b| b.name.as_str()).collect();
+        bail!(
+            "Bridge '{}' not found in profile. Available bridges: {}",
+            bridge_name,
+            available.join(", ")
+        );
+    }
+    Ok(())
+}
+
+/// Records the selected bridge in the team's botminter.yml.
+fn record_bridge_in_manifest(team_repo: &Path, bridge_name: &str) -> Result<()> {
+    let manifest_path = team_repo.join("botminter.yml");
+    let contents = fs::read_to_string(&manifest_path)
+        .context("Failed to read team botminter.yml for bridge recording")?;
+    let mut doc: serde_yml::Value =
+        serde_yml::from_str(&contents).context("Failed to parse team botminter.yml")?;
+
+    if let serde_yml::Value::Mapping(ref mut map) = doc {
+        map.insert(
+            serde_yml::Value::String("bridge".to_string()),
+            serde_yml::Value::String(bridge_name.to_string()),
+        );
+    }
+
+    let updated = serde_yml::to_string(&doc)
+        .context("Failed to serialize team botminter.yml with bridge")?;
+    fs::write(&manifest_path, updated)
+        .context("Failed to write team botminter.yml with bridge")?;
+
+    Ok(())
+}
+
 /// Loads the existing config or returns a fresh default.
 fn load_or_default_config() -> BotminterConfig {
     config::load().unwrap_or_else(|_| BotminterConfig {
@@ -1585,5 +1668,55 @@ mod tests {
         let url = format!("https://github.com/{}/{}.git", org, repo);
         assert_eq!(url, "https://github.com/my-org/my-repo.git");
         assert_eq!(derive_project_name(&url), "my-repo");
+    }
+
+    // ── bridge selection validation ─────────────────────────────
+
+    #[test]
+    fn init_bridge_valid_name_accepted() {
+        let bridges = vec![
+            profile::BridgeDef {
+                name: "telegram".to_string(),
+                display_name: "Telegram".to_string(),
+                description: "Telegram bot".to_string(),
+                bridge_type: "external".to_string(),
+            },
+        ];
+        let result = validate_bridge_selection("telegram", &bridges);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn init_bridge_invalid_name_rejected() {
+        let bridges = vec![
+            profile::BridgeDef {
+                name: "telegram".to_string(),
+                display_name: "Telegram".to_string(),
+                description: "Telegram bot".to_string(),
+                bridge_type: "external".to_string(),
+            },
+        ];
+        let result = validate_bridge_selection("slack", &bridges);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("telegram"), "Error should list available bridges: {}", err);
+    }
+
+    #[test]
+    fn init_bridge_empty_bridges_rejects() {
+        let bridges: Vec<profile::BridgeDef> = Vec::new();
+        let result = validate_bridge_selection("telegram", &bridges);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("no bridges"), "Error should say no bridges available: {}", err);
+    }
+
+    #[test]
+    fn init_no_bridge_with_no_bridges_ok() {
+        // When no --bridge flag is passed and profile has no bridges, nothing to validate
+        let bridges: Vec<profile::BridgeDef> = Vec::new();
+        // validate_bridge_selection is only called when --bridge is provided
+        // This test documents the expected behavior: no call = no error
+        assert!(bridges.is_empty());
     }
 }

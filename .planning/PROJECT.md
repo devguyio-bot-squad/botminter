@@ -25,7 +25,7 @@ When you run several agents across multiple projects, four gaps show up fast:
 
 ### Validated
 
-- v0.05: Profile-based team generation with embedded profiles (scrum, scrum-compact, scrum-compact-telegram)
+- v0.05: Profile-based team generation with embedded profiles (scrum, scrum-compact; Telegram available as bridge)
 - v0.05: Interactive `bm init` wizard with GitHub auth, org selection, repo creation, label/project bootstrap
 - v0.05: `bm hire` for adding members to roles with profile-driven skeletons
 - v0.05: `bm teams sync` for provisioning workspaces
@@ -82,7 +82,7 @@ When you run several agents across multiple projects, four gaps show up fast:
 
 BotMinter is pre-alpha. Six milestones complete (v0.01 through v0.06). The full workflow works end-to-end (`bm init` -> hire -> sync -> start -> agents work issues -> you review at gates), and v0.06 added coding-agent-agnostic architecture, disk-based profiles, workspace repos with submodules, composable skills, `bm chat` for interactive sessions, and `bm minty` as an interactive assistant.
 
-Three profiles ship today: `scrum` (multi-agent, one per role), `scrum-compact` (solo agent, all hats), and `scrum-compact-telegram` (solo with Telegram notifications). The `bm` CLI is a Rust binary (`crates/bm/`) with profiles embedded at compile time via `include_dir` and extractable to disk for customization.
+Two profiles ship today: `scrum` (multi-agent, one per role) and `scrum-compact` (solo agent, all hats). Telegram is available as an optional bridge on any profile. The `bm` CLI is a Rust binary (`crates/bm/`) with profiles embedded at compile time via `include_dir` and extractable to disk for customization.
 
 21,267 lines of Rust. 471 tests (327 unit + 49 cli_parsing + 95 integration). Prior planning artifacts in `specs/` (PDD format).
 

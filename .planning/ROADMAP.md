@@ -29,7 +29,7 @@ Full details: `.planning/milestones/v0.06-ROADMAP.md`
 
 - [ ] **Phase 7: Specs Foundation & Bridge Contract** - Establish ADR practice, create specs directory, and define the bridge plugin contract with spec and schema
 - [x] **Phase 8: Bridge Abstraction, CLI & Telegram** - Build the Rust bridge module, all `bm bridge` CLI commands, Telegram migration, and `bm start/stop/status` integration — validated end-to-end with Telegram as the first real bridge (completed 2026-03-08)
-- [ ] **Phase 9: Profile Integration & Cleanup** - Connect bridge to profiles, init wizard, teams sync provisioning, and verify full cycle end-to-end with Telegram
+- [x] **Phase 9: Profile Integration & Cleanup** - Connect bridge to profiles, init wizard, teams sync provisioning, and verify full cycle end-to-end with Telegram (completed 2026-03-09)
 - [ ] **Phase 10: Rocket.Chat Bridge** - Ship the reference bridge implementation proving the full abstraction with Podman-based Rocket.Chat
 
 ## Phase Details
@@ -84,12 +84,15 @@ Plans:
   3. `bm teams sync` provisions bridge resources (rooms, member identities) and generates `ralph.yml` RObot section based on active bridge config and member credentials
   4. `scrum-compact-telegram` profile is removed; Telegram is a supported bridge on `scrum-compact` instead
   5. Documentation covers bridge abstraction, CLI commands, bridge spec, and profile bridge configuration
-**Plans**: TBD
+**Plans**: 6 plans
 
 Plans:
-- [ ] 09-01: TBD
-- [ ] 09-02: TBD
-- [ ] 09-03: TBD
+- [x] 09-01-PLAN.md -- CredentialStore trait, ProfileManifest.bridges, CLI flag redesign (--repos/--bridge/--all replace --push) (completed 2026-03-08)
+- [x] 09-02-PLAN.md -- Init wizard bridge selection, hire token prompt, scrum-compact-telegram removal (completed 2026-03-08)
+- [x] 09-03-PLAN.md -- Teams sync --bridge provisioning, ralph.yml RObot injection, per-member credential resolution in bm start (completed 2026-03-08)
+- [x] 09-04-PLAN.md -- Bridge documentation (concepts, setup guide, CLI reference updates) (completed 2026-03-09)
+- [x] 09-05-PLAN.md -- Gap closure: profile display fixes (bridges in describe, table formatting, init completions) (completed 2026-03-09)
+- [x] 09-06-PLAN.md -- Gap closure: bridge sync data integrity (ProfileManifest round-trip, repo pre-existence, stale flag references) (completed 2026-03-09)
 
 ### Phase 10: Rocket.Chat Bridge
 **Goal**: A complete Rocket.Chat bridge ships as the reference implementation, proving the bridge abstraction works end-to-end with full lifecycle management
@@ -123,8 +126,8 @@ Phases execute in numeric order: 7 -> 8 -> 9 -> 10
 | 6. Minty | v0.06 | 2/2 | Complete | 2026-03-08 |
 | 7. Specs Foundation & Bridge Contract | v0.07 | 0/3 | Planning | - |
 | 8. Bridge Abstraction, CLI & Telegram | v0.07 | 4/5 | Gap closure | 2026-03-08 |
-| 9. Profile Integration & Cleanup | v0.07 | 0/3 | Not started | - |
+| 9. Profile Integration & Cleanup | v0.07 | 6/6 | Complete | 2026-03-09 |
 | 10. Rocket.Chat Bridge | v0.07 | 0/3 | Not started | - |
 
 ---
-*Roadmap updated: 2026-03-08 -- Phase 8 gap closure plan added (08-05, E2E Telegram bridge tests)*
+*Roadmap updated: 2026-03-09 -- Phase 9 gap closure plans created (09-05, 09-06)*

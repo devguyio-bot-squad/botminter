@@ -14,10 +14,10 @@ The wizard will prompt you for:
 
 1. **Workzone directory** — where teams live (default: `~/.botminter/workspaces`)
 2. **Team name** — identifier for your team (e.g., `my-team`)
-3. **Profile** — team methodology (e.g., `scrum`, `scrum-compact`, `scrum-compact-telegram`)
-4. **GitHub integration** — auto-detects your `GH_TOKEN` or `gh auth` session, validates the token, then lets you browse orgs and select or create a repo
-5. **Project board** — select an existing GitHub Project board or create a new one
-6. **Telegram bot token** — optional, for Human-in-the-Loop notifications (required for `scrum-compact-telegram`, optional for others)
+3. **Profile** — team methodology (e.g., `scrum`, `scrum-compact`)
+4. **Bridge** — optional communication bridge (e.g., Telegram) if the profile supports one
+5. **GitHub integration** — auto-detects your `GH_TOKEN` or `gh auth` session, validates the token, then lets you browse orgs and select or create a repo
+6. **Project board** — select an existing GitHub Project board or create a new one
 7. **Members** — optionally hire members during init (new repos only)
 8. **Projects** — select project repos from the same GitHub org (HTTPS-only, new repos only)
 
@@ -124,7 +124,8 @@ Use `bm profiles list` to see all available profiles:
 |---------|-------------|
 | `scrum` | Scrum-style team with pull-based kanban, status labels, conventional commits |
 | `scrum-compact` | Single-agent "superman" profile with GitHub comment-based human review |
-| `scrum-compact-telegram` | Same as compact but uses Telegram (RObot) for blocking HIL approval gates |
+
+Both profiles support an optional Telegram bridge for real-time notifications. Select it during `bm init` or add `--bridge telegram` in non-interactive mode.
 
 Use `bm profiles describe <name>` for detailed information about roles and labels.
 

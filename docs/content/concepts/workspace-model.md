@@ -93,7 +93,7 @@ Runtime state (`.ralph/`) is gitignored in the workspace repo. `bm teams sync` w
 
 Run `bm teams sync` to create or update workspaces:
 
-**New workspace** (with `--push`):
+**New workspace** (with `--repos`):
 
 1. Create a GitHub repo: `org/<team>-<member>`
 2. Clone locally

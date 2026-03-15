@@ -19,9 +19,7 @@ Profiles live on disk at `~/.config/botminter/profiles/<profile-name>/`. The `bm
       invariants/
       roles/
       ...
-    scrum-compact/                  # Single-agent "superman" profile
-      ...
-    scrum-compact-telegram/         # Compact profile with Telegram HIL
+    scrum-compact/                  # Single-agent "superman" profile (optional Telegram bridge)
       ...
   minty/                            # Minty interactive assistant config
     prompt.md                       # Persona prompt
@@ -145,15 +143,6 @@ A single agent (role: `superman`) that wears all hats — product owner, archite
 - **Full pipeline** — same epic lifecycle and status transitions as the multi-member `scrum` profile
 
 Best for: individual engineers who want to get started quickly with a single Claude Code agent.
-
-### `scrum-compact-telegram`
-
-Same as `scrum-compact` — a single `superman` agent — but uses **Telegram** for human-in-the-loop approval gates instead of GitHub comments. The agent blocks the loop waiting for a response via Telegram (RObot), then continues.
-
-- **Blocking HIL** — the agent pauses and waits for your Telegram response before proceeding
-- **Requires a Telegram bot token** — configured during `bm init`
-
-Best for: engineers who want real-time notifications and instant approval flow via Telegram.
 
 ### `scrum`
 

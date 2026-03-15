@@ -14,6 +14,12 @@ coding_agents:
 
 default_coding_agent: claude-code
 
+bridges:
+  - name: telegram
+    display_name: "Telegram"
+    description: "Telegram Bot API for team communication"
+    type: external
+
 roles:
   - name: superman
     description: "All-in-one member — PO, architect, dev, QE, SRE, content writer"

@@ -26,15 +26,14 @@ Like Helm for Kubernetes or Rails for web, a profile ships opinionated defaults 
 - **Communication** - how agents surface decisions to you for approval
 - **Runtime & Workspace** - where agents execute, how directories are laid out
 
-You pick a profile when you run `bm init`. It stamps out a team repo you own and customize from there.
+You pick a profile when you run `bm init`. If the profile supports communication bridges (like Telegram), you can select one during init to give your agents presence on a messaging platform. It stamps out a team repo you own and customize from there.
 
 All profiles share the same knowledge scoping, constraint system, workspace layout, and local sandboxed runtime. They differ in two dimensions:
 
 | | Roles | Communication |
 |---|---|---|
-| **`scrum-compact`** | Single agent - PO, architect, dev, QE | GitHub Issues |
-| **`scrum`** | Separate agent per role, parallel handoffs | GitHub Issues |
-| **`scrum-compact-telegram`** | Single agent - all roles | Telegram for approval gates |
+| **`scrum-compact`** | Single agent - PO, architect, dev, QE | GitHub Issues (optional Telegram bridge) |
+| **`scrum`** | Separate agent per role, parallel handoffs | GitHub Issues (optional Telegram bridge) |
 
 Everything is customizable after init - add roles, redefine pipeline phases, change gate criteria, or extend the workspace layout.
 

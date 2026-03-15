@@ -36,6 +36,10 @@ pub enum Command {
         #[arg(long)]
         project: Option<String>,
 
+        /// Bridge name to configure (optional)
+        #[arg(long)]
+        bridge: Option<String>,
+
         /// Skip GitHub API calls (for testing)
         #[arg(long, hide = true)]
         skip_github: bool,
@@ -248,9 +252,17 @@ pub enum TeamsCommand {
 
     /// Reconcile workspaces with team repo state
     Sync {
-        /// Push team repo to GitHub before syncing
+        /// Sync git repositories (push team repo)
         #[arg(long)]
-        push: bool,
+        repos: bool,
+
+        /// Provision bridge identities and rooms
+        #[arg(long)]
+        bridge: bool,
+
+        /// Equivalent to --repos --bridge (all remote operations)
+        #[arg(short = 'a', long)]
+        all: bool,
 
         /// Show detailed sync status per workspace
         #[arg(short, long)]

@@ -29,6 +29,10 @@ spec:
 
   # Identity commands (all bridges).
   # Each value is a Justfile recipe name.
+  #
+  # For external bridges, onboard accepts a pre-existing operator-supplied
+  # token via BM_BRIDGE_TOKEN_{USERNAME} env var. It validates and registers
+  # the token but does NOT create accounts on the external platform.
   identity:
     onboard: onboard
     rotate-credentials: rotate
