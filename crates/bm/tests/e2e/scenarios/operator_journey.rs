@@ -39,7 +39,19 @@ const MEMBER_DIR: &str = "superman-alice";
 fn init_with_bridge_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let workzone = env.home.join("workspaces");
-        let repo_name = env.repo_full_name.split('/').next_back().unwrap();
+        let repo_name = env.repo_full_name.split('/').next_back().unwrap().to_string();
+
+        // Use a board title that does NOT match the "{team_name} Board" convention.
+        // On first pass, the board doesn't exist and gets created.
+        // On second pass (after reset_home), the board exists and gets found by title.
+        let board_title = env.get_export("board_title")
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| {
+                let ts = repo_name.split('-').next_back().unwrap_or("0");
+                format!("e2e-board-{}", ts)
+            });
+        env.export("board_title", &board_title);
+        env.save();
 
         let output = env.command("bm")
             .args([
@@ -47,8 +59,9 @@ fn init_with_bridge_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEn
                 "--profile", PROFILE,
                 "--team-name", TEAM_NAME,
                 "--org", &gh_org,
-                "--repo", repo_name,
+                "--repo", &repo_name,
                 "--bridge", "tuwunel",
+                "--github-project-board", &board_title,
                 "--workzone", &workzone.to_string_lossy(),
             ])
             .output();
@@ -898,6 +911,22 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
             env.reset_home();
         })
         // ── Second pass: existing repo ───────────────────────────────
+        .case("verify_board_survives_reset", {
+            let gh_org = gh_org.clone();
+            let gh_token = gh_token.clone();
+            move |env: &mut TestEnv| {
+                let board_title = env.get_export("board_title")
+                    .expect("board_title export should survive reset_home")
+                    .to_string();
+                let projects = bm::git::list_projects(&gh_token, &gh_org)
+                    .expect("list_projects should succeed");
+                assert!(
+                    projects.iter().any(|(_, t)| t == &board_title),
+                    "Project board '{}' should still exist on GitHub after HOME wipe, found: {:?}",
+                    board_title, projects
+                );
+            }
+        })
         .case("init_with_bridge_existing", init_with_bridge_fn(gh_org.clone(), gh_token.clone()))
         .case_expect_error("hire_member_existing", hire_member_fn(gh_token.clone()),
             |err| err.contains("already exists"))
@@ -976,6 +1005,7 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
                     .args(["repo", "delete", &env.repo_full_name, "--yes"])
                     .output();
                 cleanup_project_boards(&gh_org_c, &gh_token_c, TEAM_NAME);
+                cleanup_project_boards(&gh_org_c, &gh_token_c, "e2e-board-");
             }
         });
 

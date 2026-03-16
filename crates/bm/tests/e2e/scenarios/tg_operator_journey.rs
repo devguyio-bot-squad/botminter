@@ -37,7 +37,8 @@ fn init_with_tg_bridge_fn(
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let workzone = env.home.join("workspaces");
-        let repo_name = env.repo_full_name.split('/').next_back().unwrap();
+        let repo_name = env.repo_full_name.split('/').next_back().unwrap().to_string();
+        let board_title = format!("{} Board", TEAM_NAME);
 
         let output = env.command("bm")
             .args([
@@ -45,8 +46,9 @@ fn init_with_tg_bridge_fn(
                 "--profile", PROFILE,
                 "--team-name", TEAM_NAME,
                 "--org", &gh_org,
-                "--repo", repo_name,
+                "--repo", &repo_name,
                 "--bridge", "telegram",
+                "--github-project-board", &board_title,
                 "--workzone", &workzone.to_string_lossy(),
             ])
             .output();

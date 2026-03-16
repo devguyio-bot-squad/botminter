@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 
 use super::{
-    create_github_label, derive_project_name, find_project_number, run_git,
+    create_github_label, derive_project_name, run_git,
     sync_project_status_field, verify_fork_url,
 };
 use crate::config::TeamEntry;
@@ -96,7 +96,13 @@ pub fn sync_project_board(
         .unwrap_or(&team.github_repo);
     let gh_token = team.credentials.gh_token.as_deref();
 
-    let project_number = find_project_number(owner, &team.name, gh_token)?;
+    let project_number = team.project_number.with_context(|| {
+        format!(
+            "No project board number stored for team '{}'. \
+             Re-run `bm init` to select or create a project board.",
+            team.name
+        )
+    })?;
     sync_project_status_field(owner, project_number, &manifest.statuses, gh_token)?;
 
     let views: Vec<ViewDisplay> = manifest

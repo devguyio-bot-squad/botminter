@@ -66,6 +66,7 @@ pub fn run_non_interactive(
     org: Option<String>,
     repo: Option<String>,
     project: Option<String>,
+    github_project_board: Option<String>,
     bridge: Option<String>,
     skip_github: bool,
     workzone_override: Option<String>,
@@ -78,7 +79,6 @@ pub fn run_non_interactive(
         org.ok_or_else(|| anyhow::anyhow!("--org is required with --non-interactive"))?;
     let repo_name =
         repo.ok_or_else(|| anyhow::anyhow!("--repo is required with --non-interactive"))?;
-
     if team_name.is_empty() {
         bail!("Team name cannot be empty");
     }
@@ -188,20 +188,38 @@ pub fn run_non_interactive(
         }
 
         let owner = github_repo.split('/').next().unwrap_or(&github_org);
-        match git::create_project(owner, &team_name, &manifest.statuses, gh_token.as_deref()) {
-            Ok(project_number) => {
-                let mut cfg = config::load()?;
-                if let Some(entry) = cfg.teams.iter_mut().find(|t| t.name == team_name) {
-                    entry.project_number = Some(project_number);
+        let board_title = github_project_board
+            .ok_or_else(|| anyhow::anyhow!("--github-project-board is required with --non-interactive"))?;
+
+        // Find existing board by title, or create one
+        let project_number = {
+            let projects = git::list_projects(
+                gh_token.as_deref().unwrap_or(""),
+                owner,
+            )?;
+            if let Some((number, _)) = projects.iter().find(|(_, t)| t == &board_title) {
+                eprintln!("Using existing project board '{}' (#{})", board_title, number);
+                git::sync_project_status_field(owner, *number, &manifest.statuses, gh_token.as_deref())?;
+                *number
+            } else {
+                match git::create_project(owner, &board_title, &manifest.statuses, gh_token.as_deref()) {
+                    Ok(n) => n,
+                    Err(e) => {
+                        bail!(
+                            "Failed to create GitHub Project: {}. Run `bm projects sync` to retry.",
+                            e
+                        );
+                    }
                 }
-                config::save(&cfg)?;
             }
-            Err(e) => {
-                bail!(
-                    "Failed to create GitHub Project: {}. Run `bm projects sync` to retry.",
-                    e
-                );
+        };
+
+        {
+            let mut cfg = config::load()?;
+            if let Some(entry) = cfg.teams.iter_mut().find(|t| t.name == team_name) {
+                entry.project_number = Some(project_number);
             }
+            config::save(&cfg)?;
         }
     }
 
@@ -410,7 +428,8 @@ pub fn run() -> Result<()> {
     let project_number = match project_choice {
         ProjectChoice::CreateNew => {
             spinner.start("Creating GitHub Project board...");
-            match git::create_project(owner, &team_name, &manifest.statuses, gh_token.as_deref()) {
+            let board_title = format!("{} Board", team_name);
+            match git::create_project(owner, &board_title, &manifest.statuses, gh_token.as_deref()) {
                 Ok(n) => {
                     spinner.stop("GitHub Project board created");
                     n

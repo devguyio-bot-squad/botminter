@@ -378,14 +378,14 @@ pub fn list_projects(gh_token: &str, owner: &str) -> Result<Vec<(u64, String)>> 
 /// Creates a GitHub Project (v2), syncs the Status field options, and returns the project number.
 pub fn create_project(
     owner: &str,
-    team_name: &str,
+    title: &str,
     statuses: &[profile::StatusDef],
     gh_token: Option<&str>,
 ) -> Result<u64> {
     let mut cmd = Command::new("gh");
     cmd.args([
         "project", "create", "--owner", owner,
-        "--title", &format!("{} Board", team_name),
+        "--title", title,
         "--format", "json",
     ]);
     if let Some(token) = gh_token {

@@ -36,6 +36,10 @@ pub enum Command {
         #[arg(long)]
         project: Option<String>,
 
+        /// GitHub Project board title (required with --non-interactive). Creates if not found.
+        #[arg(long)]
+        github_project_board: Option<String>,
+
         /// Bridge name to configure (optional)
         #[arg(long)]
         bridge: Option<String>,
