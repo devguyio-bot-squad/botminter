@@ -21,16 +21,14 @@ jobs:
             os: ubuntu-latest
             cross: true
             name: Linux ARM64
-          - target: x86_64-apple-darwin
-            os: macos-latest
-            name: macOS x86_64
-          - target: aarch64-apple-darwin
-            os: macos-latest
-            name: macOS ARM64
     name: Build (${{ matrix.name }})
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        if: runner.os == 'Linux' && !matrix.cross
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable

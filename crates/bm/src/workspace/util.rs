@@ -504,7 +504,8 @@ mod tests {
         git_cmd(&remote, &["init", "-b", "main"]).unwrap();
         git_cmd(&remote, &["config", "user.email", "test@test.com"]).unwrap();
         git_cmd(&remote, &["config", "user.name", "Test"]).unwrap();
-        fs::write(remote.join("file.txt"), "hello").unwrap();
+        git_cmd(&remote, &["config", "commit.gpgsign", "false"]).unwrap();
+        fs::write(remote.join("README.md"), "hello").unwrap();
         git_cmd(&remote, &["add", "."]).unwrap();
         git_cmd(&remote, &["commit", "-m", "init"]).unwrap();
 
@@ -514,6 +515,7 @@ mod tests {
         git_cmd(&ws, &["init", "-b", "main"]).unwrap();
         git_cmd(&ws, &["config", "user.email", "test@test.com"]).unwrap();
         git_cmd(&ws, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(&ws, &["config", "commit.gpgsign", "false"]).unwrap();
         git_cmd(
             &ws,
             &[
