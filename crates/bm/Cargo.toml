@@ -4,7 +4,7 @@ version = "0.2.0-pre-alpha"
 edition = "2021"
 description = "Lead your own Claude Code agents"
 license = "Apache-2.0"
-repository = "https://github.com/devguyio/botminter"
+repository = "https://github.com/botminter/botminter"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
