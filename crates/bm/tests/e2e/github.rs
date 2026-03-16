@@ -1,5 +1,6 @@
 //! GitHub test helpers — TempRepo with RAII cleanup, label/issue listing.
 
+use std::collections::HashMap;
 use std::process::Command;
 
 /// A temporary private GitHub repository that is deleted on drop.
@@ -174,17 +175,19 @@ pub fn list_labels_json(repo: &str) -> Vec<(String, String)> {
 pub struct TempProject {
     pub owner: String,
     pub number: u64,
+    /// Captured env for Drop cleanup (raw Command is acceptable in Drop per ADR-0005).
+    drop_env: HashMap<String, String>,
 }
 
 impl TempProject {
-    /// Creates a new GitHub Project under the given owner.
-    pub fn new(owner: &str, title: &str) -> Result<Self, String> {
-        let output = Command::new("gh")
-            .args([
-                "project", "create", "--owner", owner, "--title", title, "--format", "json",
-            ])
-            .output()
-            .map_err(|e| format!("failed to run gh project create: {}", e))?;
+    /// Creates a new GitHub Project under the given owner via TestEnv.
+    pub fn new(env: &super::test_env::TestEnv, owner: &str, title: &str) -> Result<Self, String> {
+        let drop_env = env.resolved_env("gh");
+
+        let output = env.command("gh")
+            .args(["project", "create", "--owner", owner, "--title", title, "--format", "json"])
+            .output();
+
         if !output.status.success() {
             return Err(format!(
                 "gh project create failed: {}",
@@ -203,6 +206,7 @@ impl TempProject {
         Ok(TempProject {
             owner: owner.to_string(),
             number,
+            drop_env,
         })
     }
 }
@@ -210,18 +214,15 @@ impl TempProject {
 impl Drop for TempProject {
     fn drop(&mut self) {
         eprintln!("TempProject dropping: {}/project#{}", self.owner, self.number);
-        let output = Command::new("gh")
-            .args([
-                "project",
-                "delete",
-                "--owner",
-                &self.owner,
-                &self.number.to_string(),
-                "--format",
-                "json",
-            ])
-            .output();
-        match output {
+        // Raw Command is acceptable in Drop per ADR-0005 (panic-safety cleanup).
+        let mut cmd = Command::new("gh");
+        cmd.args([
+            "project", "delete", "--owner", &self.owner,
+            &self.number.to_string(), "--format", "json",
+        ]);
+        cmd.env_clear();
+        cmd.envs(&self.drop_env);
+        match cmd.output() {
             Ok(o) if o.status.success() => {
                 eprintln!("TempProject deleted: {}/project#{}", self.owner, self.number);
             }

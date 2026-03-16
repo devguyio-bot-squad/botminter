@@ -51,7 +51,10 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
             let cfg = cfg.clone();
             move || {
                 run_test(|| {
+                    let env = TestEnv::fresh(&cfg.gh_token, &cfg.gh_org, "");
+
                     let project = super::github::TempProject::new(
+                        &env,
                         &cfg.gh_org,
                         "bm-e2e-list-projects",
                     )
