@@ -1,6 +1,6 @@
 [package]
 name = "bm"
-version = "0.1.0-pre-alpha"
+version = "0.2.0-pre-alpha"
 edition = "2021"
 description = "Lead your own Claude Code agents"
 license = "Apache-2.0"
