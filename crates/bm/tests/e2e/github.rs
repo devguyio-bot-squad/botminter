@@ -7,34 +7,35 @@ use std::process::Command;
 pub struct TempRepo {
     /// Full name in `owner/repo` format.
     pub full_name: String,
+    /// Captured env for Drop cleanup (raw Command is acceptable in Drop per ADR-0005).
+    drop_env: HashMap<String, String>,
 }
 
 impl TempRepo {
     /// Wraps an already-existing GitHub repo by name, without creating anything.
     /// Used by progressive mode to reconnect to a repo from a previous run.
     #[allow(dead_code)]
-    pub fn from_existing(full_name: &str) -> Self {
+    pub fn from_existing(full_name: &str, env: &super::test_env::TestEnv) -> Self {
         eprintln!("TempRepo from_existing: {}", full_name);
         TempRepo {
             full_name: full_name.to_string(),
+            drop_env: env.resolved_env("gh"),
         }
     }
 
-    /// Creates a new private GitHub repository under a specific organization.
-    ///
-    /// Returns `Err` if the gh token lacks permission to create repos in the org.
-    pub fn new_in_org(prefix: &str, org: &str) -> Result<Self, String> {
+    /// Creates a new private GitHub repository under a specific organization via TestEnv.
+    pub fn new_in_org(env: &super::test_env::TestEnv, prefix: &str, org: &str) -> Result<Self, String> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
             .as_secs();
         let repo_name = format!("{}-{}", prefix, timestamp);
         let full_name = format!("{}/{}", org, repo_name);
+        let drop_env = env.resolved_env("gh");
 
-        let output = Command::new("gh")
+        let output = env.command("gh")
             .args(["repo", "create", &full_name, "--private"])
-            .output()
-            .map_err(|e| format!("failed to run gh repo create: {}", e))?;
+            .output();
         if !output.status.success() {
             return Err(format!(
                 "gh repo create '{}' failed: {}",
@@ -44,62 +45,19 @@ impl TempRepo {
         }
 
         eprintln!("TempRepo created: {}", full_name);
-        Ok(TempRepo { full_name })
+        Ok(TempRepo { full_name, drop_env })
     }
 
-    /// Creates a new private GitHub repository with a unique timestamped name.
-    ///
-    /// Returns `Err` if the gh token lacks `CreateRepository` permission or
-    /// any other creation failure occurs.
-    #[allow(dead_code)]
-    pub fn new(prefix: &str) -> Result<Self, String> {
-        let timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let repo_name = format!("{}-{}", prefix, timestamp);
-
-        // Get the authenticated user's login
-        let whoami = Command::new("gh")
-            .args(["api", "user", "--jq", ".login"])
-            .output()
-            .map_err(|e| format!("failed to get gh user login: {}", e))?;
-        if !whoami.status.success() {
-            return Err(format!(
-                "gh api user failed: {}",
-                String::from_utf8_lossy(&whoami.stderr)
-            ));
-        }
-        let user = String::from_utf8_lossy(&whoami.stdout)
-            .trim()
-            .to_string();
-
-        // Create the private repo
-        let output = Command::new("gh")
-            .args(["repo", "create", &repo_name, "--private"])
-            .output()
-            .map_err(|e| format!("failed to run gh repo create: {}", e))?;
-        if !output.status.success() {
-            return Err(format!(
-                "gh repo create '{}' failed: {}",
-                repo_name,
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-
-        let full_name = format!("{}/{}", user, repo_name);
-        eprintln!("TempRepo created: {}", full_name);
-
-        Ok(TempRepo { full_name })
-    }
 }
 
 impl Drop for TempRepo {
     fn drop(&mut self) {
         eprintln!("TempRepo dropping: {}", self.full_name);
-        let output = Command::new("gh")
-            .args(["repo", "delete", &self.full_name, "--yes"])
-            .output();
+        let mut cmd = Command::new("gh");
+        cmd.args(["repo", "delete", &self.full_name, "--yes"]);
+        cmd.env_clear();
+        cmd.envs(&self.drop_env);
+        let output = cmd.output();
         match output {
             Ok(o) if o.status.success() => {
                 eprintln!("TempRepo deleted: {}", self.full_name);

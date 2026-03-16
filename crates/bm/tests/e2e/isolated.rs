@@ -12,9 +12,11 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
             let cfg = cfg.clone();
             move || {
                 run_test(|| {
+                    let env = TestEnv::fresh(&cfg.gh_token, &cfg.gh_org, "");
+
                     // GitHub smoke
                     let repo =
-                        super::github::TempRepo::new_in_org("bm-e2e-smoke", &cfg.gh_org)
+                        super::github::TempRepo::new_in_org(&env, "bm-e2e-smoke", &cfg.gh_org)
                             .expect("GitHub repo creation failed");
                     let labels = super::github::list_labels(&repo.full_name);
                     eprintln!(
