@@ -552,12 +552,18 @@ bm bridge stop [-t <team>]
 Show the current bridge state for the team.
 
 ```bash
-bm bridge status [-t <team>]
+bm bridge status [--reveal] [-t <team>]
 ```
+
+| Parameter | Description |
+|-----------|-------------|
+| `--reveal` | Show sensitive information (operator password and token) |
+| `-t <team>` | Team to operate on (default team if omitted) |
 
 **Behavior:**
 
 - Displays bridge type, service URL (if running), provisioned identities, and rooms
+- With `--reveal`: also shows operator password (for Matrix client login) and access token
 - Reads from `bridge-state.json` in the team directory
 
 ### `bm bridge identity add`

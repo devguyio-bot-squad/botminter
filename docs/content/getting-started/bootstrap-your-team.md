@@ -28,7 +28,7 @@ The wizard walks you through the full setup:
 1. **Workzone directory** — where teams live (default: `~/.botminter/workspaces`)
 2. **Team name** — identifier for your team (e.g., `my-team`)
 3. **Profile** — team methodology (e.g., `scrum-compact`, `scrum`)
-4. **Bridge** — optional communication bridge (Telegram, Rocket.Chat, or Matrix) if the profile supports one
+4. **Bridge** — optional communication bridge (Matrix or Telegram) if the profile supports one
 5. **GitHub integration** — auto-detects your `gh auth` session, validates the token, then lets you browse orgs and select or create a repo interactively
 6. **Project board** — select an existing GitHub Project board or create a new one
 7. **Members and projects** — optionally hire members and add project fork URLs right away

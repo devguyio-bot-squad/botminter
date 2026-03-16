@@ -12,7 +12,8 @@ SERVER_NAME := env("TUWUNEL_SERVER_NAME", "localhost")
 REG_TOKEN := env("TUWUNEL_REG_TOKEN", "bm-tuwunel-reg-default")
 ADMIN_USER := env("TUWUNEL_ADMIN_USER", "bmadmin")
 ADMIN_PASS := env("TUWUNEL_ADMIN_PASS", "bmadmin-pass-default")
-PASSWORDS_FILE := env("BM_BRIDGE_DIR", env("BRIDGE_CONFIG_DIR", "/tmp")) + "/tuwunel-passwords.json"
+PASSWORDS_FILE := env("BM_BRIDGE_STATE_DIR", env("BM_BRIDGE_DIR", env("BRIDGE_CONFIG_DIR", "/tmp"))) + "/tuwunel-passwords.json"
+PASSWORDS_BACKUP := "/database/tuwunel-passwords.json"
 
 # Boot Tuwunel homeserver in a Podman container, wait for health, register admin.
 start:
@@ -172,7 +173,12 @@ start:
 
     # Store admin password
     PASSWORDS_FILE="{{PASSWORDS_FILE}}"
+    CONTAINER="{{CONTAINER_NAME}}"
     mkdir -p "$(dirname "$PASSWORDS_FILE")"
+    # Restore from container backup if local copy missing
+    if [ ! -f "$PASSWORDS_FILE" ] && podman container exists "$CONTAINER" 2>/dev/null; then
+        podman cp "${CONTAINER}:{{PASSWORDS_BACKUP}}" "$PASSWORDS_FILE" 2>/dev/null || true
+    fi
     if [ -f "$PASSWORDS_FILE" ]; then
         jq --arg user "$ADMIN_USER" --arg pass "$ADMIN_PASS" \
             '. + {($user): $pass}' "$PASSWORDS_FILE" > "${PASSWORDS_FILE}.tmp"
@@ -182,6 +188,8 @@ start:
             '{($user): $pass}' > "$PASSWORDS_FILE"
     fi
     chmod 0600 "$PASSWORDS_FILE"
+    # Backup to container volume
+    podman cp "$PASSWORDS_FILE" "${CONTAINER}:{{PASSWORDS_BACKUP}}" 2>/dev/null || true
 
     # Write config exchange output
     mkdir -p "$BRIDGE_CONFIG_DIR"
@@ -234,6 +242,14 @@ onboard username:
     REG_TOKEN="{{REG_TOKEN}}"
     USERNAME="{{username}}"
     PASSWORDS_FILE="{{PASSWORDS_FILE}}"
+    CONTAINER="{{CONTAINER_NAME}}"
+
+    # Restore from container backup if local copy missing
+    if [ ! -f "$PASSWORDS_FILE" ] && podman container exists "$CONTAINER" 2>/dev/null; then
+        mkdir -p "$(dirname "$PASSWORDS_FILE")"
+        podman cp "${CONTAINER}:{{PASSWORDS_BACKUP}}" "$PASSWORDS_FILE" 2>/dev/null || true
+        [ -f "$PASSWORDS_FILE" ] && chmod 0600 "$PASSWORDS_FILE" || true
+    fi
 
     # Generate random password for this bot user
     BOT_PASS=$(openssl rand -hex 16)
@@ -280,20 +296,52 @@ onboard username:
                 '{($user): $pass}' > "$PASSWORDS_FILE"
         fi
         chmod 0600 "$PASSWORDS_FILE"
+        podman cp "$PASSWORDS_FILE" "${CONTAINER}:{{PASSWORDS_BACKUP}}" 2>/dev/null || true
     elif [ "$REG_ERRCODE" = "M_USER_IN_USE" ]; then
-        # User already exists -- read stored password
+        # User already exists -- read stored password or reset via admin API
         echo >&2 "[tuwunel-bridge] User ${USERNAME} already exists, using stored password..."
         if [ -f "$PASSWORDS_FILE" ]; then
             STORED_PASS=$(jq -r --arg user "$USERNAME" '.[$user] // empty' "$PASSWORDS_FILE")
             if [ -n "$STORED_PASS" ]; then
                 BOT_PASS="$STORED_PASS"
-            else
-                echo >&2 "[tuwunel-bridge] FATAL: No stored password for ${USERNAME}."
+            fi
+        fi
+        if [ "$BOT_PASS" != "${STORED_PASS:-}" ] || [ -z "${STORED_PASS:-}" ]; then
+            # No stored password — reset via admin API
+            echo >&2 "[tuwunel-bridge] No stored password, resetting via admin API..."
+            ADMIN_LOGIN=$(curl -s -X POST \
+                -H "Content-Type: application/json" \
+                -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
+                "${MATRIX_URL}/_matrix/client/v3/login")
+            ADMIN_TOKEN=$(echo "$ADMIN_LOGIN" | jq -r '.access_token // empty')
+            if [ -z "$ADMIN_TOKEN" ]; then
+                echo >&2 "[tuwunel-bridge] FATAL: Admin login failed, cannot reset password."
+                echo >&2 "$ADMIN_LOGIN"
                 exit 1
             fi
-        else
-            echo >&2 "[tuwunel-bridge] FATAL: Passwords file not found and user already exists."
-            exit 1
+            USER_ID="@${USERNAME}:${SERVER_NAME}"
+            RESET_RESP=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "{\"new_password\":\"${BOT_PASS}\",\"logout_devices\":false}" \
+                "${MATRIX_URL}/_synapse/admin/v1/reset_password/${USER_ID}")
+            if [ "$RESET_RESP" != "200" ]; then
+                echo >&2 "[tuwunel-bridge] FATAL: Password reset failed (HTTP ${RESET_RESP})."
+                exit 1
+            fi
+            echo >&2 "[tuwunel-bridge] Password reset for ${USERNAME}."
+            # Store the new password
+            mkdir -p "$(dirname "$PASSWORDS_FILE")"
+            if [ -f "$PASSWORDS_FILE" ]; then
+                jq --arg user "$USERNAME" --arg pass "$BOT_PASS" \
+                    '. + {($user): $pass}' "$PASSWORDS_FILE" > "${PASSWORDS_FILE}.tmp"
+                mv "${PASSWORDS_FILE}.tmp" "$PASSWORDS_FILE"
+            else
+                jq -n --arg user "$USERNAME" --arg pass "$BOT_PASS" \
+                    '{($user): $pass}' > "$PASSWORDS_FILE"
+            fi
+            chmod 0600 "$PASSWORDS_FILE"
+            podman cp "$PASSWORDS_FILE" "${CONTAINER}:{{PASSWORDS_BACKUP}}" 2>/dev/null || true
         fi
     else
         echo >&2 "[tuwunel-bridge] FATAL: Could not get registration session."
@@ -330,6 +378,14 @@ rotate username:
     MATRIX_URL="{{MATRIX_URL}}"
     USERNAME="{{username}}"
     PASSWORDS_FILE="{{PASSWORDS_FILE}}"
+    CONTAINER="{{CONTAINER_NAME}}"
+
+    # Restore from container backup if local copy missing
+    if [ ! -f "$PASSWORDS_FILE" ] && podman container exists "$CONTAINER" 2>/dev/null; then
+        mkdir -p "$(dirname "$PASSWORDS_FILE")"
+        podman cp "${CONTAINER}:{{PASSWORDS_BACKUP}}" "$PASSWORDS_FILE" 2>/dev/null || true
+        [ -f "$PASSWORDS_FILE" ] && chmod 0600 "$PASSWORDS_FILE" || true
+    fi
 
     if [ ! -f "$PASSWORDS_FILE" ]; then
         echo >&2 "[tuwunel-bridge] FATAL: Passwords file not found."
@@ -370,6 +426,14 @@ remove username:
     MATRIX_URL="{{MATRIX_URL}}"
     USERNAME="{{username}}"
     PASSWORDS_FILE="{{PASSWORDS_FILE}}"
+    CONTAINER="{{CONTAINER_NAME}}"
+
+    # Restore from container backup if local copy missing
+    if [ ! -f "$PASSWORDS_FILE" ] && podman container exists "$CONTAINER" 2>/dev/null; then
+        mkdir -p "$(dirname "$PASSWORDS_FILE")"
+        podman cp "${CONTAINER}:{{PASSWORDS_BACKUP}}" "$PASSWORDS_FILE" 2>/dev/null || true
+        [ -f "$PASSWORDS_FILE" ] && chmod 0600 "$PASSWORDS_FILE" || true
+    fi
 
     if [ ! -f "$PASSWORDS_FILE" ]; then
         echo >&2 "[tuwunel-bridge] User ${USERNAME} not found (no passwords file), nothing to remove."
@@ -401,6 +465,7 @@ remove username:
     # Remove from passwords file
     jq --arg user "$USERNAME" 'del(.[$user])' "$PASSWORDS_FILE" > "${PASSWORDS_FILE}.tmp"
     mv "${PASSWORDS_FILE}.tmp" "$PASSWORDS_FILE"
+    podman cp "$PASSWORDS_FILE" "${CONTAINER}:{{PASSWORDS_BACKUP}}" 2>/dev/null || true
 
     echo >&2 "[tuwunel-bridge] User ${USERNAME} removed."
 

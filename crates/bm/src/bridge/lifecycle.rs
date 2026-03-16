@@ -6,14 +6,16 @@ use anyhow::{bail, Context, Result};
 
 /// Invokes a Justfile recipe from the bridge directory.
 ///
-/// Sets `BRIDGE_CONFIG_DIR` (temp dir) and `BM_TEAM_NAME` environment variables.
-/// After the recipe completes, reads `config.json` from the temp dir if it exists.
+/// Sets `BRIDGE_CONFIG_DIR` (temp dir), `BM_TEAM_NAME`, and optionally
+/// `BM_BRIDGE_STATE_DIR` environment variables. After the recipe completes,
+/// reads `config.json` from the temp dir if it exists.
 /// Returns Ok(None) if no config.json was written.
 pub fn invoke_recipe(
     bridge_dir: &Path,
     recipe: &str,
     args: &[&str],
     team_name: &str,
+    state_dir: Option<&Path>,
 ) -> Result<Option<serde_json::Value>> {
     let config_dir = tempfile::tempdir().context("Failed to create temp dir for bridge config")?;
     let config_dir_path = config_dir.path().to_path_buf();
@@ -29,6 +31,13 @@ pub fn invoke_recipe(
         .env("BRIDGE_CONFIG_DIR", &config_dir_path)
         .env("BM_BRIDGE_DIR", bridge_dir)
         .env("BM_TEAM_NAME", team_name);
+
+    // Persistent state directory for bridge-specific data (e.g., passwords).
+    // Survives team re-initialization unlike BM_BRIDGE_DIR which points to
+    // the profile template directory.
+    if let Some(sd) = state_dir {
+        cmd.env("BM_BRIDGE_STATE_DIR", sd);
+    }
 
     // If BM_BRIDGE_HOME is set, override HOME for bridge recipes.
     // This allows test environments to use a different HOME for bm config
@@ -83,7 +92,7 @@ mod tests {
     #[test]
     fn invoke_recipe_start() {
         let bridge_dir = stub_bridge_dir();
-        let result = invoke_recipe(&bridge_dir, "start", &[], "test-team").unwrap();
+        let result = invoke_recipe(&bridge_dir, "start", &[], "test-team", None).unwrap();
         assert!(result.is_some());
         let val = result.unwrap();
         assert_eq!(val["service_url"], "http://localhost:0");
@@ -93,7 +102,7 @@ mod tests {
     #[test]
     fn invoke_recipe_onboard() {
         let bridge_dir = stub_bridge_dir();
-        let result = invoke_recipe(&bridge_dir, "onboard", &["alice"], "test-team").unwrap();
+        let result = invoke_recipe(&bridge_dir, "onboard", &["alice"], "test-team", None).unwrap();
         assert!(result.is_some());
         let val = result.unwrap();
         assert_eq!(val["username"], "alice");
@@ -104,14 +113,14 @@ mod tests {
     #[test]
     fn invoke_recipe_stop_no_config() {
         let bridge_dir = stub_bridge_dir();
-        let result = invoke_recipe(&bridge_dir, "stop", &[], "test-team").unwrap();
+        let result = invoke_recipe(&bridge_dir, "stop", &[], "test-team", None).unwrap();
         assert!(result.is_none());
     }
 
     #[test]
     fn invoke_recipe_room_create() {
         let bridge_dir = stub_bridge_dir();
-        let result = invoke_recipe(&bridge_dir, "room-create", &["general"], "test-team").unwrap();
+        let result = invoke_recipe(&bridge_dir, "room-create", &["general"], "test-team", None).unwrap();
         assert!(result.is_some());
         let val = result.unwrap();
         assert_eq!(val["name"], "general");
@@ -121,7 +130,7 @@ mod tests {
     #[test]
     fn invoke_recipe_room_list() {
         let bridge_dir = stub_bridge_dir();
-        let result = invoke_recipe(&bridge_dir, "room-list", &[], "test-team").unwrap();
+        let result = invoke_recipe(&bridge_dir, "room-list", &[], "test-team", None).unwrap();
         assert!(result.is_some());
         let val = result.unwrap();
         assert!(val["rooms"].is_array());

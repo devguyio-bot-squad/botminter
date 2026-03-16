@@ -34,7 +34,7 @@ Profiles are stored on disk at `~/.config/botminter/profiles/`. This directory i
       skills/                       # Profile skills
       formations/                   # Deployment targets
       .schema/                      # Schema validation layout
-    scrum-compact/                  # Single-agent profile (optional Telegram bridge)
+    scrum-compact/                  # Single-agent profile (optional bridge: Matrix or Telegram)
       ...
   minty/                            # Minty interactive assistant
     prompt.md                       # Minty persona + system instructions

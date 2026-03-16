@@ -85,7 +85,7 @@ impl Bridge {
 
     /// Invokes a Just recipe from the bridge directory.
     pub fn invoke_recipe(&self, recipe: &str, args: &[&str]) -> Result<Option<serde_json::Value>> {
-        invoke_recipe(&self.bridge_dir, recipe, args, &self.team_name)
+        invoke_recipe(&self.bridge_dir, recipe, args, &self.team_name, self.state_path.parent())
     }
 
     /// Starts the bridge: invokes start recipe, health check, and updates state.
@@ -275,6 +275,18 @@ impl Bridge {
             .values()
             .find(|id| id.is_operator)
             .map(|id| id.username.as_str())
+    }
+
+    /// Returns the operator's login password from the bridge state directory.
+    /// For local bridges (e.g., Tuwunel), passwords are stored in a JSON file.
+    /// Returns None if no passwords file exists or the operator isn't found.
+    pub fn operator_password(&self) -> Option<String> {
+        let op_username = self.operator_username()?;
+        let state_dir = self.state_path.parent()?;
+        let passwords_file = state_dir.join("tuwunel-passwords.json");
+        let contents = std::fs::read_to_string(&passwords_file).ok()?;
+        let passwords: serde_json::Value = serde_json::from_str(&contents).ok()?;
+        passwords.get(op_username)?.as_str().map(String::from)
     }
 
     /// Returns true if an identity with the given name exists.

@@ -15,6 +15,10 @@ coding_agents:
 default_coding_agent: claude-code
 
 bridges:
+  - name: tuwunel
+    display_name: "Matrix (Tuwunel)"
+    description: "Matrix bridge via Tuwunel homeserver (local Podman container)"
+    type: local
   - name: telegram
     display_name: "Telegram"
     description: "Telegram Bot API for team communication"
@@ -22,10 +26,6 @@ bridges:
   - name: rocketchat
     display_name: "Rocket.Chat"
     description: "Rocket.Chat bridge for team communication (local Podman Pod)"
-    type: local
-  - name: tuwunel
-    display_name: "Matrix (Tuwunel)"
-    description: "Matrix bridge via Tuwunel homeserver (local Podman container)"
     type: local
 
 roles:

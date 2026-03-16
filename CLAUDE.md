@@ -158,7 +158,7 @@ Issues, milestones, and PRs live on the team repo's GitHub. Status transitions u
 | `formation.rs` | Orchestrates `bm init` — the multi-step wizard |
 | `topology.rs` | Resolves team/member/project paths and relationships |
 | `workspace.rs` | Workspace provisioning and file surfacing |
-| `bridge.rs` | Bridge plugin abstraction (Telegram, future Rocket.Chat) |
+| `bridge.rs` | Bridge plugin abstraction (Telegram, Rocket.Chat, Matrix/Tuwunel) |
 | `session.rs` | Ralph session management (start/stop/status) |
 | `state.rs` | Runtime state persistence (`state.json`) |
 | `agent_tags.rs` | Agent identification tags in workspace markers |

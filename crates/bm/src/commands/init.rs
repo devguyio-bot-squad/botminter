@@ -3,7 +3,6 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
-use crate::commands::teams;
 use crate::config;
 use crate::formation;
 use crate::git;
@@ -16,21 +15,41 @@ enum ProjectChoice {
 }
 
 /// Formats the "next steps" message shown after `bm init` completes.
+/// Uses a simple text format (no tables) to fit within cliclack's bordered frame.
 fn next_steps_message(team_name: &str, team_dir: &Path, team_repo: &Path, bridge_selected: bool) -> String {
     let sync_cmd = if bridge_selected {
         "bm teams sync --all     Push team repo, provision workspaces and bridge"
     } else {
         "bm teams sync --repos   Push team repo and provision workspaces"
     };
+    let summary = profile::gather_team_summary(team_repo);
+    let members_text = if summary.members.is_empty() {
+        "Members: none".to_string()
+    } else {
+        let list: Vec<String> = summary.members.iter()
+            .map(|(name, role)| format!("  {} ({})", name, role))
+            .collect();
+        format!("Members:\n{}", list.join("\n"))
+    };
+    let projects_text = if summary.projects.is_empty() {
+        "Projects: none".to_string()
+    } else {
+        let list: Vec<String> = summary.projects.iter()
+            .map(|p| format!("  {} — {}", p.name, p.fork_url))
+            .collect();
+        format!("Projects:\n{}", list.join("\n"))
+    };
     format!(
         "Team '{}' created at {}\n\
+         {}\n\
          {}\n\
          Next steps:\n  \
          1. {}\n  \
          2. bm projects sync       Sync project repos into workspaces",
         team_name,
         team_dir.display(),
-        teams::format_team_summary(&profile::gather_team_summary(team_repo)),
+        members_text,
+        projects_text,
         sync_cmd,
     )
 }
@@ -144,6 +163,7 @@ pub fn run_non_interactive(
                 vec![(name, url)]
             }).unwrap_or_default(),
             selected_bridge.as_deref(),
+            None,
         )?;
 
         if !skip_github {
@@ -277,6 +297,7 @@ pub fn run() -> Result<()> {
 
         let choice: String = cliclack::select("Communication bridge")
             .items(&items_ref)
+            .initial_value(items_ref[0].0)
             .interact()
             .map(|s: &str| s.to_string())?;
 
@@ -349,6 +370,7 @@ pub fn run() -> Result<()> {
             &team_repo, &selected_profile, &manifest,
             &members_to_hire, &projects_to_add,
             selected_bridge.as_deref(),
+            None,
         )?;
 
         spinner.start("Creating GitHub repository...");
@@ -576,7 +598,7 @@ fn select_or_create_project(gh_token: &str, owner: &str, team_name: &str) -> Res
 /// Collect members to hire during init (optional).
 fn collect_members(roles: &[String]) -> Result<Vec<(String, String)>> {
     let hire_members: bool = cliclack::confirm("Hire members now?")
-        .initial_value(false)
+        .initial_value(true)
         .interact()?;
 
     if !hire_members {
@@ -608,10 +630,13 @@ fn collect_members(roles: &[String]) -> Result<Vec<(String, String)>> {
             })
             .interact()?;
 
-        members.push((role, name));
+        members.push((role.clone(), name));
 
+        // Default to "yes" as long as there are roles without a hired member
+        let hired_roles: std::collections::HashSet<&str> = members.iter().map(|(r, _)| r.as_str()).collect();
+        let all_covered = roles.iter().all(|r| hired_roles.contains(r.as_str()));
         let more: bool = cliclack::confirm("Hire another member?")
-            .initial_value(false)
+            .initial_value(!all_covered)
             .interact()?;
         if !more {
             break;

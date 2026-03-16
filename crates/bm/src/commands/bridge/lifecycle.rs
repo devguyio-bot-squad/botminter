@@ -79,6 +79,9 @@ pub fn status(team_flag: Option<&str>, reveal: bool) -> Result<()> {
             op_user_id.as_deref().unwrap_or("not provisioned")
         );
         if reveal {
+            if let Some(pass) = bridge.operator_password() {
+                println!("Operator Password: {}", pass);
+            }
             let cred_store = make_credential_store(&ctx, bridge.bridge_name());
             match cred_store.retrieve(op_username) {
                 Ok(Some(token)) => println!("Operator Token: {}", token),

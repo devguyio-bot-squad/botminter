@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result};
 use include_dir::{Dir, include_dir};
 
-static PROFILES: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/../../profiles");
+static PROFILES: Dir<'static> = include_dir!("$BM_PROFILES_DIR");
 
 /// Returns the names of all embedded profiles.
 pub fn list_embedded_profiles() -> Vec<String> {
@@ -203,12 +203,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         extract_embedded_to_disk(tmp.path()).unwrap();
 
+        let profile = &list_embedded_profiles()[0];
         let embedded_dir = embedded_profiles();
+        let file_path = format!("{}/botminter.yml", profile);
         let embedded_bytes = embedded_dir
-            .get_file("scrum/botminter.yml")
+            .get_file(&file_path)
             .unwrap()
             .contents();
-        let disk = std::fs::read(tmp.path().join("scrum").join("botminter.yml")).unwrap();
+        let disk = std::fs::read(tmp.path().join(profile).join("botminter.yml")).unwrap();
         assert_eq!(embedded_bytes, disk.as_slice(), "Extracted content should be byte-identical");
     }
 
@@ -232,10 +234,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         extract_embedded_to_disk(tmp.path()).unwrap();
 
-        let content = std::fs::read_to_string(tmp.path().join("scrum").join("context.md")).unwrap();
+        let profile = &list_embedded_profiles()[0];
+        let content = std::fs::read_to_string(tmp.path().join(profile).join("context.md")).unwrap();
         let embedded_dir = embedded_profiles();
+        let file_path = format!("{}/context.md", profile);
         let embedded_content = embedded_dir
-            .get_file("scrum/context.md")
+            .get_file(&file_path)
             .unwrap()
             .contents_utf8()
             .unwrap();
@@ -271,8 +275,9 @@ mod tests {
         let nested = tmp.path().join("deep").join("nested").join("profiles");
         extract_embedded_to_disk(&nested).unwrap();
 
+        let profile = &list_embedded_profiles()[0];
         assert!(nested.is_dir(), "Nested target should be created");
-        assert!(nested.join("scrum").join("botminter.yml").exists(), "Profiles should be extracted into nested target");
+        assert!(nested.join(profile).join("botminter.yml").exists(), "Profiles should be extracted into nested target");
     }
 
     #[test]

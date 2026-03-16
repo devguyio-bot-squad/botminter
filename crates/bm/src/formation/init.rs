@@ -9,6 +9,9 @@ use crate::profile;
 
 /// Sets up a new team repo: git init, extract profile, augment with projects,
 /// record bridge, create member dirs, create project dirs, and initial commit.
+///
+/// `profiles_base` is the directory containing extracted profile directories.
+/// If `None`, uses the default system profiles directory (`~/.config/botminter/profiles`).
 pub fn setup_new_team_repo(
     team_repo: &Path,
     selected_profile: &str,
@@ -16,6 +19,7 @@ pub fn setup_new_team_repo(
     members: &[(String, String)],
     projects: &[(String, String)],
     bridge: Option<&str>,
+    profiles_base: Option<&Path>,
 ) -> Result<()> {
     fs::create_dir_all(team_repo).context("Failed to create team repo directory")?;
     git::run_git(team_repo, &["init", "-b", "main"])?;
@@ -29,7 +33,12 @@ pub fn setup_new_team_repo(
                 selected_profile, manifest.default_coding_agent
             )
         })?;
-    profile::extract_profile_to(selected_profile, team_repo, coding_agent)?;
+
+    if let Some(base) = profiles_base {
+        profile::extract_profile_from(base, selected_profile, team_repo, coding_agent)?;
+    } else {
+        profile::extract_profile_to(selected_profile, team_repo, coding_agent)?;
+    }
 
     if !projects.is_empty() {
         profile::augment_manifest_with_projects(team_repo, projects)?;
@@ -49,7 +58,11 @@ pub fn setup_new_team_repo(
         let member_dir = team_repo.join("members").join(&member_dir_name);
         fs::create_dir_all(&member_dir)
             .with_context(|| format!("Failed to create member dir {}", member_dir.display()))?;
-        profile::extract_member_to(selected_profile, role, &member_dir, coding_agent)?;
+        if let Some(base) = profiles_base {
+            profile::extract_member_from(base, selected_profile, role, &member_dir, coding_agent)?;
+        } else {
+            profile::extract_member_to(selected_profile, role, &member_dir, coding_agent)?;
+        }
         profile::finalize_member_manifest(&member_dir, name)?;
     }
 
@@ -116,7 +129,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_repo = tmp.path().join("team");
 
-        // Use a real embedded profile
+        // Extract embedded profiles to a temp dir (test-path-isolation compliant)
         let profiles_tmp = tempfile::tempdir().unwrap();
         profile::embedded::extract_embedded_to_disk(profiles_tmp.path()).unwrap();
         let profiles = profile::list_profiles_from(profiles_tmp.path()).unwrap();
@@ -126,6 +139,7 @@ mod tests {
         setup_new_team_repo(
             &team_repo, profile_name, &manifest,
             &[], &[], None,
+            Some(profiles_tmp.path()),
         ).unwrap();
 
         assert!(team_repo.join(".git").exists(), "Should have git repo");
@@ -150,6 +164,7 @@ mod tests {
             setup_new_team_repo(
                 &team_repo, profile_name, &manifest,
                 &[], &[], Some(bridge_name),
+                Some(profiles_tmp.path()),
             ).unwrap();
 
             let contents = fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
@@ -172,6 +187,7 @@ mod tests {
         setup_new_team_repo(
             &team_repo, profile_name, &manifest,
             &[], &projects, None,
+            Some(profiles_tmp.path()),
         ).unwrap();
 
         assert!(team_repo.join("projects/my-app/knowledge").exists());
