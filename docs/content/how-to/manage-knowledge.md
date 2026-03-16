@@ -46,7 +46,7 @@ git commit -m "docs: add HyperShift upgrade flow knowledge"
 Member knowledge applies only to a specific role:
 
 ```bash
-cat > team/architect/knowledge/design-template.md << 'EOF'
+cat > members/architect/knowledge/design-template.md << 'EOF'
 # Design Doc Template
 
 Every design must include:
@@ -57,7 +57,7 @@ Every design must include:
 5. Acceptance criteria (Given-When-Then)
 EOF
 
-git add team/architect/knowledge/design-template.md
+git add members/architect/knowledge/design-template.md
 git commit -m "docs: add architect design template"
 ```
 
@@ -90,7 +90,7 @@ Invariants are mandatory constraints. Add them at the appropriate scope:
 === "Member invariant"
 
     ```bash
-    cat > team/human-assistant/invariants/always-confirm.md << 'EOF'
+    cat > members/human-assistant/invariants/always-confirm.md << 'EOF'
     # Always Confirm
 
     Present all state-modifying decisions to the human

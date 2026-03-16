@@ -15,7 +15,7 @@ BotMinter is developed through incremental milestones. Each milestone builds on 
 | GitHub Integration | **Complete** | Replaced file-based coordination with real GitHub via `gh` CLI |
 | `bm` CLI | **Complete** | Rust CLI, single operator interface, workzone model |
 | Minty and Friends | **Complete** | Team Manager role, profile externalization, Minty assistant |
-| Team Bridge | **In Progress** | Bridge plugin system, Telegram + Rocket.Chat + Matrix bridges |
+| Team Bridge | **Complete** | Bridge plugin system, Matrix (default) + Telegram + Rocket.Chat bridges |
 | Full Team + First Story | Future | Dev, QE, reviewer members, full story kanban, TDD flow |
 | Eval/Confidence System | Future | Formalized eval framework, scored confidence, HIL graduation |
 
@@ -31,7 +31,7 @@ Built the foundational infrastructure:
 - `scrum` profile — PROCESS.md, CLAUDE.md, team knowledge/invariants
 - human-assistant member skeleton with three-hat model
 - Workspace model — clone project, embed team repo, surface config
-- Human-in-the-loop (HIL) via Telegram (RObot) — validated during development; available as an optional bridge on any profile
+- Human-in-the-loop (HIL) via RObot — validated during development; available as an optional bridge on any profile
 
 **Proved**: Inner loop works (Ralph + hats). Workspace model works (clone, surface, run). HIL validated (human <> human-assistant via Telegram).
 
@@ -71,7 +71,7 @@ Replaced Justfile-based tooling with a Rust CLI binary (`bm`):
 - Single operator interface for managing agentic teams
 - Workzone model with known, discoverable workspace directory
 - Profile restructuring — collapsed into single layer with `botminter.yml` + `.schema/`
-- Profiles embedded in the binary at compile time via `include_dir`
+- Profiles shipped with the binary, extracted to disk on first use (`bm profiles init`)
 - Event-driven daemon with webhook and poll modes (`bm daemon start/stop/status`)
 - Knowledge management commands (`bm knowledge list/show` + interactive mode)
 - Formation-aware deployment (`bm start --formation`)
@@ -94,25 +94,20 @@ Multiple UX enhancements to improve the operator experience:
 
 ---
 
-## In Progress
-
 ### Team Bridge
-
-!!! warning "Experimental"
-    Bridges are an experimental feature. The plugin contract and CLI commands may change between releases.
 
 Bridge plugin system for connecting team members to messaging platforms:
 
 - **Bridge plugin contract** — Knative-style resource format (bridge.yml + schema.json + Justfile), no Rust code needed for new bridges
-- **Telegram bridge** (external) — operator-managed bot tokens, per-member identity
-- **Rocket.Chat bridge** (local) — Podman pod with RC + MongoDB, auto-provisioned bot accounts
-- **Matrix / Tuwunel bridge** (local) — single Podman container with Tuwunel homeserver, UIAA registration
+- **Matrix / Tuwunel bridge** (local, default) — single Podman container with Tuwunel homeserver, pre-selected during `bm init`
+- **Telegram bridge** (external, experimental) — operator-managed bot tokens, per-member identity
+- **Rocket.Chat bridge** (local, experimental) — Podman pod with RC + MongoDB, auto-provisioned bot accounts
 - **Bridge CLI** — `bm bridge start/stop/status`, `bm bridge identity add/show/rotate/remove`, `bm bridge room create/list`
 - **Per-member start/stop** — `bm start <member>` and `bm stop <member>` for individual member lifecycle
 - **Credential storage** — system keyring with env var fallback, formation-aware via CredentialStore trait
-- **E2E test coverage** — operator journey scenarios for Telegram and Rocket.Chat bridges
+- **E2E test coverage** — operator journey scenarios for Matrix and Telegram bridges
 
-**Proving**: Bridge plugin model is extensible. Local bridges can self-provision. Credential management works across formation types.
+**Proved**: Bridge plugin model is extensible. Local bridges can self-provision. Credential management works across formation types.
 
 ---
 

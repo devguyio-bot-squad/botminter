@@ -4,7 +4,7 @@ BotMinter's architecture has two fundamental models: a **profile-based generatio
 
 ## Profile-based generation model
 
-The `bm` CLI embeds profiles at compile time. When you run `bm init`, it extracts a profile's content into a new team repo:
+Profiles are extracted to disk on first use (`bm profiles init`). When you run `bm init`, it extracts a profile's content into a new team repo:
 
 | Layer | Location | What lives here | Who changes it |
 |-------|----------|-----------------|----------------|

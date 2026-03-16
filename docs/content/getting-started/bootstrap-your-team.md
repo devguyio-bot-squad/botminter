@@ -27,7 +27,7 @@ The wizard walks you through the full setup:
 
 1. **Workzone directory** — where teams live (default: `~/.botminter/workspaces`)
 2. **Team name** — identifier for your team (e.g., `my-team`)
-3. **Profile** — team methodology (e.g., `scrum-compact`, `scrum`)
+3. **Profile** — team methodology (e.g., `scrum-compact`)
 4. **Bridge** — optional communication bridge (Matrix or Telegram) if the profile supports one
 5. **GitHub integration** — auto-detects your `gh auth` session, validates the token, then lets you browse orgs and select or create a repo interactively
 6. **Project board** — select an existing GitHub Project board or create a new one
@@ -53,7 +53,7 @@ Config is saved early so that if a GitHub operation fails, the team is still reg
         team/                           # Team repo (control plane, git repo)
           botminter.yml                 # Profile manifest (roles, statuses, views)
           PROCESS.md                    # Issue format, labels, communication protocols
-          CLAUDE.md                     # Team-wide agent context
+          CLAUDE.md                     # Team-wide agent context (name varies by coding agent)
           knowledge/                    # Team-level knowledge files
           invariants/                   # Team-level quality rules
           coding-agent/

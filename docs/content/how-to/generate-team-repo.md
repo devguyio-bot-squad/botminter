@@ -14,8 +14,8 @@ The wizard will prompt you for:
 
 1. **Workzone directory** — where teams live (default: `~/.botminter/workspaces`)
 2. **Team name** — identifier for your team (e.g., `my-team`)
-3. **Profile** — team methodology (e.g., `scrum`, `scrum-compact`)
-4. **Bridge** — optional communication bridge (e.g., Telegram) if the profile supports one
+3. **Profile** — team methodology (e.g., `scrum-compact`)
+4. **Bridge** — communication bridge (e.g., Matrix via Tuwunel, the default) if the profile supports one
 5. **GitHub integration** — auto-detects your `GH_TOKEN` or `gh auth` session, validates the token, then lets you browse orgs and select or create a repo
 6. **Project board** — select an existing GitHub Project board or create a new one
 7. **Members** — optionally hire members during init (new repos only)
@@ -120,12 +120,12 @@ git commit -m "docs: add project architecture knowledge"
 
 Use `bm profiles list` to see all available profiles:
 
-| Profile | Description |
-|---------|-------------|
-| `scrum` | Scrum-style team with pull-based kanban, status labels, conventional commits |
-| `scrum-compact` | Single-agent "superman" profile with GitHub comment-based human review |
+| Profile | Description | Status |
+|---------|-------------|--------|
+| `scrum-compact` | Single-agent "superman" profile with GitHub comment-based human review | Available |
+| `scrum` | Multi-role team with pull-based kanban, status labels, conventional commits | In development |
 
-Both profiles support optional communication bridges: Matrix via Tuwunel (local) or Telegram (external). Select one during `bm init` or use `--bridge <name>` in non-interactive mode. See the [Bridge Setup Guide](bridge-setup.md) for details.
+`scrum-compact` supports communication bridges: Matrix via Tuwunel (default), Telegram (experimental), and Rocket.Chat (experimental). Select one during `bm init` or use `--bridge <name>` in non-interactive mode. See the [Bridge Setup Guide](bridge-setup.md) for details.
 
 Use `bm profiles describe <name>` for detailed information about roles and labels.
 

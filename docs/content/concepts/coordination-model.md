@@ -143,7 +143,7 @@ Two HIL models are supported, depending on the profile:
 | Model | Channel | Blocking | Used by |
 |-------|---------|----------|---------|
 | **GitHub comments** | Issue comments (`Approved` / `Rejected: <feedback>`) | Non-blocking — agent checks for response each scan cycle | All profiles (default) |
-| **Bridge messaging** | `human.interact` via RObot (Telegram, Rocket.Chat, or Matrix) | Blocking — agent waits for response within timeout | Any profile with a bridge configured |
+| **Bridge messaging** | `human.interact` via RObot (Matrix, Telegram, or Rocket.Chat) | Blocking — agent waits for response within timeout | Any profile with a bridge configured |
 
 The GitHub comment model eliminates timeout-related issues — if the human hasn't responded, the agent moves on to other work and re-checks on the next scan. The bridge messaging model blocks the loop and may time out.
 
@@ -159,7 +159,7 @@ Members support an operating mode toggle in their `PROMPT.md`. This acts as a co
     In the `scrum-compact` profile, the single "superman" agent posts review request comments on GitHub issues at review gates (`po:design-review`, `po:plan-review`, `po:accept`). The human responds with `Approved` or `Rejected: <feedback>` as an issue comment. The agent checks for responses each scan cycle and advances or reverts status accordingly. If no response is found, no action is taken — the agent never auto-approves.
 
 ???+ example "Example: scrum HIL"
-    In `scrum`, the `human-assistant` member acts as the PO's (Product Owner's) proxy. The human sends status updates and questions via RObot (Ralph's Telegram integration), and the human-assistant incorporates human guidance into team decisions.
+    In `scrum`, the `human-assistant` member acts as the PO's (Product Owner's) proxy. The human sends status updates and questions via RObot (Ralph's bridge integration - Matrix by default), and the human-assistant incorporates human guidance into team decisions.
 
 ## Related topics
 

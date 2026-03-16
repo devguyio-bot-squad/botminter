@@ -132,19 +132,23 @@ Teams can override the default coding agent in `~/.botminter/config.yml` via the
 
 ## Available profiles
 
-BotMinter ships with three profiles. Each runs coding agents orchestrated by Ralph — they differ in how many agents you run and how human approval works.
+BotMinter ships with the `scrum-compact` profile. The `scrum` profile (multi-role teams) is in development and will ship in a future release.
 
 ### `scrum-compact` (recommended starting point)
 
 A single agent (role: `superman`) that wears all hats — product owner, architect, developer, QE, SRE, and content writer. The agent self-transitions through the entire issue lifecycle by switching hats.
 
 - **One agent, all roles** — no coordination overhead, simplest setup
+- **Team manager** — a `team-manager` role is also available for coordination and process improvement. Hire one with `bm hire team-manager`.
 - **GitHub-based HIL** — human approves/rejects via GitHub issue comments. The agent posts a review request, moves on to other work, and checks for the human's response on the next scan cycle. Non-blocking.
 - **Full pipeline** — same epic lifecycle and status transitions as the multi-member `scrum` profile
 
 Best for: individual engineers who want to get started quickly with a single Claude Code agent.
 
-### `scrum`
+### `scrum` (in development)
+
+!!! warning "Not yet available"
+    The `scrum` profile is included in development builds but does not ship in release binaries. It will be available in a future release.
 
 A multi-member team with specialized roles. Each role runs as a separate Claude Code agent in its own workspace.
 
@@ -152,6 +156,7 @@ A multi-member team with specialized roles. Each role runs as a separate Claude 
 |------|---------|----------|
 | `human-assistant` | PO's proxy — backlog management, review gating | backlog_manager, review_gater |
 | `architect` | Technical authority — design docs, story breakdowns, issue creation | designer, planner, breakdown_executor, epic_monitor |
+| `team-manager` | Process improvement and team coordination | executor |
 
 Additional roles (developer, QE, reviewer) are defined in the status pipeline but not yet implemented as member skeletons. They are planned for future milestones.
 

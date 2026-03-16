@@ -73,7 +73,7 @@ bm hire <role> [--name <name>] [-t <team>]
 **Behavior:**
 
 - Performs schema version guard (rejects if team schema doesn't match profile)
-- Extracts member skeleton from the profile on disk into `team/{role}-{name}/`
+- Extracts member skeleton from the profile on disk into `members/{role}-{name}/`
 - Finalizes `botminter.yml` with the member's name
 - If the team has an external bridge configured, prompts for an optional bridge token (interactive mode only). The token is stored in the system keyring.
 - Creates a git commit (no auto-push)
@@ -89,7 +89,7 @@ bm members list [-t <team>]
 
 **Behavior:**
 
-- Scans `team/` directory for member directories
+- Scans `members/` directory for member directories
 - Displays Member, Role, and Status columns
 - Status reflects running/crashed/stopped from runtime state
 
@@ -531,7 +531,7 @@ bm bridge start [-t <team>]
 - Runs a health check after start
 - Saves bridge state (service URL, status) to `bridge-state.json`
 - Idempotent: if the bridge is already running and healthy, skips the start
-- Only applies to local bridges (Rocket.Chat, Tuwunel). External bridges print a message and exit.
+- Only applies to local bridges (Tuwunel, Rocket.Chat). External bridges print a message and exit.
 
 ### `bm bridge stop`
 

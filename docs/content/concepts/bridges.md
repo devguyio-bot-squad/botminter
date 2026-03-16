@@ -1,8 +1,5 @@
 # Bridges
 
-!!! warning "Experimental Feature"
-    Bridges are experimental. The bridge plugin contract, CLI commands, and credential storage model may change between releases. Rocket.Chat and Matrix (Tuwunel) bridges are newer and less tested than the Telegram bridge.
-
 A **bridge** is a pluggable communication integration that connects your team members to a messaging platform. Each bridge is a self-contained directory with a YAML manifest, JSON config schema, and Justfile recipes -- no Rust code or recompilation needed.
 
 Bridges give your agents presence on a chat platform. Each team member gets their own bot user and token, so messages in the team channel are attributable to individual agents.
@@ -11,9 +8,11 @@ Bridges give your agents presence on a chat platform. Each team member gets thei
 
 | Bridge | Type | Service | Status |
 |--------|------|---------|--------|
-| **Telegram** | External | SaaS (Telegram Bot API) | Stable |
+| **Matrix (Tuwunel)** | Local | Self-hosted (Podman container: Tuwunel) | Default |
+| **Telegram** | External | SaaS (Telegram Bot API) | Experimental |
 | **Rocket.Chat** | Local | Self-hosted (Podman pod: RC + MongoDB) | Experimental |
-| **Matrix (Tuwunel)** | Local | Self-hosted (Podman container: Tuwunel) | Experimental |
+
+**Matrix (Tuwunel)** is the default bridge, pre-selected during `bm init`. It launches a [Tuwunel](https://github.com/avitex/tuwunel) homeserver in a Podman container -- a full Matrix experience with zero external dependencies. Your agents get their own Matrix accounts, and you interact with the team through any Matrix client.
 
 ## Bridge types
 
@@ -23,7 +22,7 @@ BotMinter supports two categories of bridges:
 
 An external bridge integrates with a SaaS messaging platform that runs independently. BotMinter manages identity only -- it does not start, stop, or monitor the service.
 
-**Example:** Telegram. The operator creates bot users via @BotFather, supplies tokens during `bm bridge identity add`, and BotMinter injects those credentials at launch time.
+**Example:** Telegram (experimental). The operator creates bot users via @BotFather, supplies tokens during `bm bridge identity add`, and BotMinter injects those credentials at launch time.
 
 External bridges:
 
@@ -37,8 +36,8 @@ A local bridge manages the full service lifecycle. BotMinter starts the service,
 
 **Examples:**
 
-- **Rocket.Chat** -- BotMinter starts a Podman pod (RC + MongoDB), creates bot accounts via RC's REST API, generates auth tokens, and monitors health.
-- **Matrix (Tuwunel)** -- BotMinter starts a single Podman container (`bm-tuwunel-{team}`) with a persistent volume (`bm-tuwunel-{team}-data`) running the Tuwunel homeserver (embedded RocksDB). It registers users via the standard Matrix client-server API and obtains access tokens via login.
+- **Matrix (Tuwunel)** -- BotMinter starts a single Podman container (`bm-tuwunel-{team}`) with a persistent volume (`bm-tuwunel-{team}-data`) running the Tuwunel homeserver (embedded RocksDB). It registers users via the standard Matrix client-server API and obtains access tokens via login. This is the default bridge.
+- **Rocket.Chat** (experimental) -- BotMinter starts a Podman pod (RC + MongoDB), creates bot accounts via RC's REST API, generates auth tokens, and monitors health.
 
 Local bridges:
 

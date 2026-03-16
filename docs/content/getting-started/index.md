@@ -26,14 +26,15 @@ Like Helm for Kubernetes or Rails for web, a profile ships opinionated defaults 
 - **Communication** - how agents surface decisions to you for approval
 - **Runtime & Workspace** - where agents execute, how directories are laid out
 
-You pick a profile when you run `bm init`. If the profile supports communication bridges (like Telegram), you can select one during init to give your agents presence on a messaging platform. It stamps out a team repo you own and customize from there.
+You pick a profile when you run `bm init`. The default bridge (Matrix via Tuwunel) gives your agents presence on a messaging platform out of the box. It stamps out a team repo you own and customize from there.
 
 All profiles share the same knowledge scoping, constraint system, workspace layout, and local sandboxed runtime. They differ in two dimensions:
 
 | | Roles | Communication |
 |---|---|---|
-| **`scrum-compact`** | Single agent - PO, architect, dev, QE | GitHub Issues (optional bridge: Matrix or Telegram) |
-| **`scrum`** | Separate agent per role, parallel handoffs | GitHub Issues (optional bridge: Matrix or Telegram) |
+| **`scrum-compact`** | Single agent - PO, architect, dev, QE | GitHub Issues + Matrix (default) |
+
+> The `scrum` profile (multi-role teams with separate agents per role) is in development and will ship in a future release.
 
 Everything is customizable after init - add roles, redefine pipeline phases, change gate criteria, or extend the workspace layout.
 
@@ -62,7 +63,7 @@ my-team/                                    # Team repo
   projects/backend/
     knowledge/                              # Project-wide - only backend agents
       db-migration-rules.md
-  team/dev-01/
+  members/dev-01/
     knowledge/                              # Member-wide - only dev-01
       azure-deploy-notes.md
     projects/backend/

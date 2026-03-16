@@ -1,8 +1,11 @@
 # Member Roles
 
-This reference documents the available member roles in the `scrum` profile, including their hat models, event dispatch, and responsibilities.
+This reference documents the member roles defined in BotMinter profiles, including their hat models, event dispatch, and responsibilities. The `team-manager` role is available in both `scrum-compact` and `scrum` profiles. The `human-assistant` and `architect` roles are defined in the `scrum` profile (in development, not yet shipping in release builds).
 
 ## human-assistant
+
+!!! warning "scrum profile only (in development)"
+    This role is part of the `scrum` profile, which is not yet available in release builds.
 
 The human's proxy on the agentic scrum team. Manages the backlog, gates reviews, and coordinates the epic lifecycle through the human-in-the-loop (HIL) channel.
 
@@ -53,6 +56,9 @@ All gates present artifacts to the human for decision. The HIL channel depends o
 ---
 
 ## architect
+
+!!! warning "scrum profile only (in development)"
+    This role is part of the `scrum` profile, which is not yet available in release builds.
 
 The team's technical authority. Produces design documents, story breakdowns, and story issues for epics. Pull-based — discovers work through board state.
 

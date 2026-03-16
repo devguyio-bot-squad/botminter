@@ -43,8 +43,9 @@ All profiles share the same knowledge scoping, constraint system, workspace layo
 
 | | Roles | Communication |
 |---|---|---|
-| **`scrum-compact`** | Single agent - PO, architect, dev, QE | GitHub Issues (optional Telegram bridge) |
-| **`scrum`** | Separate agent per role, parallel handoffs | GitHub Issues (optional Telegram bridge) |
+| **`scrum-compact`** | Single agent - PO, architect, dev, QE | GitHub Issues + Matrix (default) |
+
+> The `scrum` profile (multi-role teams with separate agents per role) is in development and will ship in a future release.
 
 Everything is customizable after init - add roles, redefine pipeline phases, change gate criteria, or extend the workspace layout.
 
@@ -75,7 +76,7 @@ my-team/                                    # Team repo
   projects/backend/
     knowledge/                              # Project-wide - only backend agents
       db-migration-rules.md
-  team/dev-01/
+  members/dev-01/
     knowledge/                              # Member-wide - only dev-01
       azure-deploy-notes.md
     projects/backend/
@@ -98,7 +99,7 @@ cargo install --path botminter/crates/bm    # Install the CLI
 bm init                                      # Interactive wizard - team name, profile, GitHub org/repo
 bm hire superman                             # Add an agent (the all-in-one role in scrum-compact)
 bm projects add https://github.com/my-org/my-project
-bm teams sync --push                         # Provision workspaces
+bm teams sync --repos                        # Provision workspaces
 
 bm start                                     # Launch agents
 bm status                                    # Check status
@@ -113,13 +114,13 @@ bm init                              # Interactive wizard - create a new team
 bm hire <role> [--name <n>] [-t team] # Hire an agent into a role
 bm projects add <url> [-t team]       # Add a project
 bm teams list                         # List registered teams
-bm teams sync [--push] [-t team]      # Provision and reconcile workspaces
+bm teams sync [--repos] [-t team]     # Provision and reconcile workspaces
 bm start [-t team]                    # Launch all agents
 bm stop [-t team] [--force]           # Stop all agents
 bm status [-t team] [-v]              # Status dashboard
 bm members list [-t team]             # List agents
 bm roles list [-t team]               # List available roles
-bm profiles list                      # List embedded profiles
+bm profiles list                      # List available profiles
 bm profiles describe <profile>        # Show detailed profile information
 ```
 

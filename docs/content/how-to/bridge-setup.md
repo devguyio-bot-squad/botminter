@@ -1,15 +1,12 @@
 # Bridge Setup
 
-!!! warning "Experimental Feature"
-    Bridges are experimental. The workflow described here may change between releases.
-
-This guide walks you through setting up a bridge for your team, from initialization to running members with bridge credentials.
+This guide walks you through setting up a bridge for your team, from initialization to running members with bridge credentials. Matrix (Tuwunel) is the default bridge and recommended starting point.
 
 ## Prerequisites
 
-- A profile with bridge support (`scrum-compact` or `scrum` -- both support Telegram, Rocket.Chat, and Matrix)
-- For external bridges (Telegram): bot tokens created via the platform (e.g., @BotFather for Telegram)
-- For local bridges (Rocket.Chat, Matrix): Podman installed and running
+- A profile with bridge support (`scrum-compact` supports Matrix, Telegram, and Rocket.Chat)
+- For local bridges (Matrix, Rocket.Chat): Podman installed and running
+- For external bridges (Telegram, experimental): bot tokens created via @BotFather
 - `bm` CLI installed and GitHub auth configured
 
 ## Step 1: Initialize with bridge selection
@@ -20,24 +17,24 @@ During `bm init`, select a bridge when prompted:
 bm init
 ```
 
-The wizard lists bridges from the selected profile plus a "No bridge" option. Choose the bridge you want.
+The wizard lists bridges from the selected profile plus a "No bridge" option. Matrix (Tuwunel) is pre-selected as the default.
 
 For non-interactive/CI mode, use the `--bridge` flag:
 
 ```bash
-# Telegram (external -- you manage the bots)
+# Matrix via Tuwunel (default -- BotMinter manages the homeserver)
 bm init --non-interactive \
   --profile scrum-compact \
   --team-name my-team \
   --org my-org \
   --repo my-team \
-  --bridge telegram
+  --bridge tuwunel
 
-# Rocket.Chat (local -- BotMinter manages the server)
+# Telegram (experimental -- you manage the bots)
+bm init ... --bridge telegram
+
+# Rocket.Chat (experimental -- BotMinter manages the server)
 bm init ... --bridge rocketchat
-
-# Matrix via Tuwunel (local -- BotMinter manages the server)
-bm init ... --bridge tuwunel
 ```
 
 Omitting `--bridge` means no bridge is configured. When a bridge is selected, the init output will suggest `bm teams sync --all` (which provisions both workspaces and bridge identities).
@@ -141,24 +138,7 @@ The naming convention is `BM_BRIDGE_TOKEN_{USERNAME}` with the username uppercas
 
 ## Bridge-specific notes
 
-### Telegram (external)
-
-1. **Create bots:** Create one Telegram bot per team member via [@BotFather](https://t.me/BotFather). Each bot needs a unique name.
-2. **Supply tokens:** Provide the bot token via `bm bridge identity add`.
-3. **Sync:** Run `bm teams sync --bridge` to validate tokens and update workspace config.
-4. **Launch:** `bm start` injects per-member bot tokens as `RALPH_TELEGRAM_BOT_TOKEN`.
-
-### Rocket.Chat (local)
-
-1. **Start:** `bm bridge start` creates a Podman pod with Rocket.Chat + MongoDB.
-2. **Provision:** `bm teams sync --bridge` creates bot users and generates auth tokens via the RC REST API.
-3. **Rooms:** A default room is created automatically. Create additional rooms with `bm bridge room create <name>`.
-4. **Launch:** `bm start` injects per-member auth tokens as `RALPH_ROCKETCHAT_AUTH_TOKEN` + `RALPH_ROCKETCHAT_SERVER_URL`.
-5. **Stop:** `bm bridge stop` stops the Podman pod (data is preserved for restart).
-
-Requires: Podman, `curl`, `jq`.
-
-### Matrix / Tuwunel (local)
+### Matrix / Tuwunel (local, default)
 
 The Tuwunel bridge runs a local Matrix homeserver in a Podman container. All configuration is via environment variables:
 
@@ -186,6 +166,23 @@ Lifecycle:
     host is shared or network-accessible.
 
 Requires: Podman, `curl`, `jq`, `openssl`.
+
+### Telegram (external, experimental)
+
+1. **Create bots:** Create one Telegram bot per team member via [@BotFather](https://t.me/BotFather). Each bot needs a unique name.
+2. **Supply tokens:** Provide the bot token via `bm bridge identity add`.
+3. **Sync:** Run `bm teams sync --bridge` to validate tokens and update workspace config.
+4. **Launch:** `bm start` injects per-member bot tokens as `RALPH_TELEGRAM_BOT_TOKEN`.
+
+### Rocket.Chat (local, experimental)
+
+1. **Start:** `bm bridge start` creates a Podman pod with Rocket.Chat + MongoDB.
+2. **Provision:** `bm teams sync --bridge` creates bot users and generates auth tokens via the RC REST API.
+3. **Rooms:** A default room is created automatically. Create additional rooms with `bm bridge room create <name>`.
+4. **Launch:** `bm start` injects per-member auth tokens as `RALPH_ROCKETCHAT_AUTH_TOKEN` + `RALPH_ROCKETCHAT_SERVER_URL`.
+5. **Stop:** `bm bridge stop` stops the Podman pod (data is preserved for restart).
+
+Requires: Podman, `curl`, `jq`.
 
 ## Related topics
 
