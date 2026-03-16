@@ -88,7 +88,9 @@ my-team/                                    # Team repo
 
 ### Prerequisites
 
-[Rust](https://rustup.rs/), [Claude Code](https://claude.ai/code), [Ralph](https://github.com/mikeyobrien/ralph-orchestrator) (manages Claude Code as persistent, looping workflows - BotMinter handles the configuration), [gh CLI](https://cli.github.com/), and Git. A GitHub token with `repo`, `project`, and `read:org` scopes. See the full [Prerequisites](https://botminter.github.io/botminter/getting-started/prerequisites/) guide.
+[Rust](https://rustup.rs/), [Claude Code](https://claude.ai/code), [Ralph Orchestrator](https://github.com/botminter/ralph-orchestrator/releases/tag/v2.8.1-bm.137b1b3.1) (custom build - temporary, see below), [gh CLI](https://cli.github.com/), and Git. A GitHub token with `repo`, `project`, and `read:org` scopes. See the full [Prerequisites](https://botminter.github.io/botminter/getting-started/prerequisites/) guide.
+
+> **Ralph Orchestrator:** This release requires a [custom-patched build](https://github.com/botminter/ralph-orchestrator/releases/tag/v2.8.1-bm.137b1b3.1) of Ralph Orchestrator. Download `ralph-cli` for your platform from that release. This will be resolved once the patches are merged upstream.
 
 ### Install and run
 
