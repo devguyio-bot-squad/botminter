@@ -105,10 +105,27 @@ release version notes_file:
     fi
     git tag -s -a "$TAG" -m "Release ${TAG}"
     git push origin HEAD "$TAG"
-    # Create GitHub release with notes from file
+    echo "Pushed ${TAG} — cargo-dist workflow will build, create the release, and attach binaries"
+    echo "Once CI completes, set release notes with:"
+    echo "  just release-notes ${TAG}"
+
+# Update release notes on an existing GitHub release
+release-notes tag notes_file="release-notes.md":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    TAG="{{ tag }}"
+    NOTES_FILE="{{ notes_file }}"
     REPO=$(git remote get-url origin | sed -E 's|.*github\.com[:/](.+)\.git$|\1|')
-    gh release create "$TAG" --repo "$REPO" --title "$TAG" --notes-file "$NOTES_FILE"
-    echo "Released ${TAG} — workflow will build and attach binaries"
+    if [ ! -f "$NOTES_FILE" ]; then
+        echo "Error: notes file '$NOTES_FILE' not found" >&2
+        exit 1
+    fi
+    if ! gh release view "$TAG" --repo "$REPO" > /dev/null 2>&1; then
+        echo "Error: release '$TAG' not found" >&2
+        exit 1
+    fi
+    gh release edit "$TAG" --repo "$REPO" --notes-file "$NOTES_FILE"
+    echo "Release notes updated for ${TAG}"
 
 # Build locally and attach binary to an existing release (fallback if CI fails)
 release-build-local tag:
