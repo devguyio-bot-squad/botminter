@@ -88,15 +88,13 @@ my-team/                                    # Team repo
 
 ### Prerequisites
 
-[Rust](https://rustup.rs/), [Claude Code](https://claude.ai/code), [Ralph Orchestrator](https://github.com/botminter/ralph-orchestrator/releases/tag/v2.8.1-bm.137b1b3.1) (custom build - temporary, see below), [gh CLI](https://cli.github.com/), and Git. A GitHub token with `repo`, `project`, and `read:org` scopes. See the full [Prerequisites](https://botminter.github.io/botminter/getting-started/prerequisites/) guide.
-
-> **Ralph Orchestrator:** This release requires a [custom-patched build](https://github.com/botminter/ralph-orchestrator/releases/tag/v2.8.1-bm.137b1b3.1) of Ralph Orchestrator. Download `ralph-cli` for your platform from that release. This will be resolved once the patches are merged upstream.
+[Claude Code](https://claude.ai/code), [Ralph Orchestrator](#install-ralph-orchestrator), [gh CLI](https://cli.github.com/), and Git. A GitHub token with `repo`, `project`, and `read:org` scopes. See the full [Prerequisites](https://botminter.github.io/botminter/getting-started/prerequisites/) guide.
 
 ### Install and run
 
 ```bash
-git clone https://github.com/botminter/botminter.git
-cargo install --path botminter/crates/bm    # Install the CLI
+# Install bm (Linux x86_64 - see releases for other platforms)
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/botminter/botminter/releases/download/v0.2.0-pre-alpha/bm-installer.sh | sh
 
 bm init                                      # Interactive wizard - team name, profile, GitHub org/repo
 bm hire superman                             # Add an agent (the all-in-one role in scrum-compact)
@@ -105,6 +103,17 @@ bm teams sync --repos                        # Provision workspaces
 
 bm start                                     # Launch agents
 bm status                                    # Check status
+```
+
+### Install Ralph Orchestrator
+
+> [!WARNING]
+> This release requires a patched build of Ralph Orchestrator. This is temporary — the patches will be merged upstream.
+
+Download `ralph-cli` for your platform from the [botminter/ralph-orchestrator v2.8.1-bm.137b1b3.1](https://github.com/botminter/ralph-orchestrator/releases/tag/v2.8.1-bm.137b1b3.1) release, or use the installer:
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/botminter/ralph-orchestrator/releases/download/v2.8.1-bm.137b1b3.1/ralph-cli-installer.sh | sh
 ```
 
 See [Your First Journey](https://botminter.github.io/botminter/getting-started/first-journey/) for a complete walkthrough.

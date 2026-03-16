@@ -8,37 +8,34 @@ Install these before running `bm init`:
 
 | Tool | Version | Install |
 |------|---------|---------|
-| **[Rust](https://rustup.rs/)** | stable | Required to build the `bm` CLI |
-| **bm** (BotMinter CLI) | latest | `cargo install --path crates/bm` |
+| **bm** (BotMinter CLI) | latest | See [releases](https://github.com/botminter/botminter/releases) or use the installer below |
 | **Ralph Orchestrator** | v2.8.1-bm | See [install instructions](#install-ralph-orchestrator) below |
 | **[Claude Code](https://claude.ai/code)** | latest | Requires an Anthropic API key or Claude Pro/Team subscription |
 | **[gh CLI](https://cli.github.com/)** | 2.x+ | GitHub CLI for repo and issue operations |
 | **Git** | 2.x+ | Your package manager |
 
-Ralph Orchestrator is the runtime layer that manages agent lifecycle — it runs each team member as a Claude Code instance with structured hats, knowledge, and workflow controls.
+### Install bm
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/botminter/botminter/releases/download/v0.2.0-pre-alpha/bm-installer.sh | sh
+```
+
+Or download a binary directly from the [releases page](https://github.com/botminter/botminter/releases).
 
 ### Install Ralph Orchestrator
 
+Ralph Orchestrator is the runtime layer that manages agent lifecycle — it runs each team member as a Claude Code instance with structured hats, knowledge, and workflow controls.
+
 !!! warning "Custom build required"
-    BotMinter currently requires a custom-patched build of Ralph Orchestrator. This is temporary — the patches will be merged upstream.
+    BotMinter currently requires a patched build of Ralph Orchestrator. This is temporary — the patches will be merged upstream.
 
-Download `ralph-cli` for your platform from the [botminter/ralph-orchestrator v2.8.1-bm.137b1b3.1](https://github.com/botminter/ralph-orchestrator/releases/tag/v2.8.1-bm.137b1b3.1) release:
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/botminter/ralph-orchestrator/releases/download/v2.8.1-bm.137b1b3.1/ralph-cli-installer.sh | sh
+```
 
-=== "Linux x86_64"
+Or download `ralph-cli` for your platform from the [botminter/ralph-orchestrator v2.8.1-bm.137b1b3.1](https://github.com/botminter/ralph-orchestrator/releases/tag/v2.8.1-bm.137b1b3.1) release.
 
-    ```bash
-    curl -sSL https://github.com/botminter/ralph-orchestrator/releases/download/v2.8.1-bm.137b1b3.1/ralph-cli-x86_64-unknown-linux-gnu.tar.xz | tar xJ
-    sudo mv ralph /usr/local/bin/
-    ```
-
-=== "Linux ARM64"
-
-    ```bash
-    curl -sSL https://github.com/botminter/ralph-orchestrator/releases/download/v2.8.1-bm.137b1b3.1/ralph-cli-aarch64-unknown-linux-gnu.tar.xz | tar xJ
-    sudo mv ralph /usr/local/bin/
-    ```
-
-Verify the install:
+Verify:
 
 ```bash
 ralph --version

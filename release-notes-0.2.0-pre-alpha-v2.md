@@ -6,6 +6,33 @@ BotMinter brings conventions to running a team of coding agents. This release ad
 
 ---
 
+### Install
+
+#### bm
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/botminter/botminter/releases/download/v0.2.0-pre-alpha/bm-installer.sh | sh
+```
+
+Or download a binary from the [release assets](https://github.com/botminter/botminter/releases/tag/v0.2.0-pre-alpha).
+
+#### Ralph Orchestrator
+
+> [!WARNING]
+> This release requires a patched build of Ralph Orchestrator. This is temporary — the patches will be merged upstream.
+
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/botminter/ralph-orchestrator/releases/download/v2.8.1-bm.137b1b3.1/ralph-cli-installer.sh | sh
+```
+
+Or download `ralph-cli` from [botminter/ralph-orchestrator v2.8.1-bm.137b1b3.1](https://github.com/botminter/ralph-orchestrator/releases/tag/v2.8.1-bm.137b1b3.1).
+
+#### Other prerequisites
+
+[Claude Code](https://claude.ai/code), [gh CLI](https://cli.github.com/), and Git. See the [getting started guide](https://www.botminter.ai/getting-started/).
+
+---
+
 ### Chat with your team - bridges
 
 Your agents now have real chat presence. Each team member gets their own account on a messaging platform, posts to shared rooms, and you can follow along from any client. No more reading terminal logs to see what your agents decided.
@@ -166,32 +193,3 @@ All changes are breaking. Teams and workspaces created with v0.1.0-pre-alpha mus
 | Workspaces | Submodules, new marker file, new surfacing paths |
 | Profile schema | Reset to v1 for `botminter.yml` format |
 
----
-
-### Get started
-
-Requires the `bm` CLI, Ralph Orchestrator, Claude Code, and the `gh` CLI. See the [getting started guide](https://www.botminter.ai/getting-started/).
-
-#### Install `bm`
-
-Download a pre-built binary from the [release assets](https://github.com/botminter/botminter/releases/tag/v0.2.0-pre-alpha), or build from source:
-
-```bash
-cargo install --path crates/bm
-```
-
-#### Install Ralph Orchestrator
-
-> **Temporary:** This release requires a custom-patched build of Ralph Orchestrator. This will be resolved once the patches are merged upstream.
-
-Download `ralph-cli` for your platform from the [botminter/ralph-orchestrator v2.8.1-bm.137b1b3.1](https://github.com/botminter/ralph-orchestrator/releases/tag/v2.8.1-bm.137b1b3.1) release:
-
-```bash
-# Linux x86_64
-curl -sSL https://github.com/botminter/ralph-orchestrator/releases/download/v2.8.1-bm.137b1b3.1/ralph-cli-x86_64-unknown-linux-gnu.tar.xz | tar xJ
-sudo mv ralph /usr/local/bin/
-
-# Linux ARM64
-curl -sSL https://github.com/botminter/ralph-orchestrator/releases/download/v2.8.1-bm.137b1b3.1/ralph-cli-aarch64-unknown-linux-gnu.tar.xz | tar xJ
-sudo mv ralph /usr/local/bin/
-```
