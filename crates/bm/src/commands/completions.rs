@@ -515,6 +515,7 @@ projects:
                     DaemonCommand::Status { .. } => {}
                 },
                 Command::DaemonRun { .. } => {}
+                Command::Attach { .. } => {}
                 Command::Bootstrap { .. } => {}
                 Command::Completions { .. } => {}
             }

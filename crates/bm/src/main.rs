@@ -207,6 +207,9 @@ fn main() -> Result<()> {
         Command::Status { team, verbose } => {
             commands::status::run(team.as_deref(), verbose)?;
         }
+        Command::Attach { team } => {
+            commands::attach::run(team.as_deref())?;
+        }
         Command::Bootstrap {
             non_interactive,
             name,

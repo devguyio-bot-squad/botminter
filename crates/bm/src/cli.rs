@@ -220,6 +220,13 @@ pub enum Command {
         interval: u64,
     },
 
+    /// Attach to a running Lima VM
+    Attach {
+        /// Team to operate on (resolves VM from team config)
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
     /// Provision an isolated Fedora VM for running BotMinter teams
     Bootstrap {
         /// Run without interactive prompts (requires --name)

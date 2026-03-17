@@ -95,6 +95,43 @@ bm bootstrap
 bm bootstrap --non-interactive --name bm-test --cpus 8 --memory 16GiB
 ```
 
+### `bm attach`
+
+Attach to a running Lima VM.
+
+```bash
+bm attach [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-t <team>` | No | Team to operate on (resolves VM from team's `vm` config field) |
+
+**Prerequisites:**
+
+- `limactl` must be installed. If not found, shows platform-specific install instructions.
+- At least one VM must be registered (via `bm bootstrap`).
+
+**Behavior:**
+
+- Resolves the target VM using 3-step resolution:
+    1. If `-t <team>` is given and that team has a `vm` field set → uses that VM
+    2. If exactly one VM is registered in config → uses it automatically
+    3. If multiple VMs exist → prompts interactively (errors in non-interactive/piped contexts)
+- Checks that the VM is running via `limactl list --json`
+- If the VM exists but is stopped, offers to start it (auto-starts in non-interactive contexts)
+- Execs into `limactl shell <vm-name>` (replaces the current process with an SSH session into the VM)
+
+**Example:**
+
+```bash
+# Attach to the only configured VM
+bm attach
+
+# Attach to a specific team's VM
+bm attach -t my-team
+```
+
 ## Member management
 
 ### `bm hire`

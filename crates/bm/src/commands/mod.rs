@@ -1,3 +1,4 @@
+pub mod attach;
 pub mod bootstrap;
 pub mod bridge;
 pub mod chat;
