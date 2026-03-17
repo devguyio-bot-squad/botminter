@@ -1,3 +1,4 @@
+pub mod bootstrap;
 pub mod bridge;
 pub mod chat;
 pub mod completions;

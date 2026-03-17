@@ -207,6 +207,7 @@ mod tests {
             coding_agent: None,
             project_number: None,
             bridge_lifecycle: Default::default(),
+            vm: None,
         };
         let token = config::require_gh_token(&team).unwrap();
         assert_eq!(token, "ghp_test123");
@@ -227,6 +228,7 @@ mod tests {
             coding_agent: None,
             project_number: None,
             bridge_lifecycle: Default::default(),
+            vm: None,
         };
         let err = config::require_gh_token(&team).unwrap_err();
         let msg = format!("{}", err);

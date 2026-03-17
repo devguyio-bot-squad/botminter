@@ -16,10 +16,19 @@ pub struct BotminterConfig {
     pub default_team: Option<String>,
     #[serde(default)]
     pub teams: Vec<TeamEntry>,
+    /// Lima VMs provisioned by `bm bootstrap`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vms: Vec<VmEntry>,
     /// Override the Secret Service collection used for credential storage.
     /// Default (None) uses the `login` collection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyring_collection: Option<String>,
+}
+
+/// A provisioned Lima VM.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VmEntry {
+    pub name: String,
 }
 
 /// A registered team.
@@ -39,6 +48,9 @@ pub struct TeamEntry {
     /// Bridge lifecycle configuration.
     #[serde(default, skip_serializing_if = "BridgeLifecycle::is_default")]
     pub bridge_lifecycle: BridgeLifecycle,
+    /// Optional Lima VM name this team is linked to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm: Option<String>,
 }
 
 /// Controls bridge lifecycle relative to member start/stop.
@@ -172,6 +184,7 @@ pub fn load_or_default() -> BotminterConfig {
         workzone: default_workzone_path(),
         default_team: None,
         teams: Vec::new(),
+        vms: Vec::new(),
         keyring_collection: None,
     })
 }
@@ -272,7 +285,9 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
+                vm: None,
             }],
+            vms: Vec::new(),
             keyring_collection: None,
         };
 
@@ -310,6 +325,7 @@ mod tests {
             workzone: PathBuf::from("/tmp/ws"),
             default_team: None,
             teams: vec![],
+            vms: Vec::new(),
             keyring_collection: None,
         };
         save_to(&path, &config).unwrap();
@@ -334,6 +350,7 @@ mod tests {
                     coding_agent: None,
                     project_number: None,
                     bridge_lifecycle: Default::default(),
+                vm: None,
                 },
                 TeamEntry {
                     name: "other".to_string(),
@@ -344,8 +361,10 @@ mod tests {
                     coding_agent: None,
                     project_number: None,
                     bridge_lifecycle: Default::default(),
+                vm: None,
                 },
             ],
+            vms: Vec::new(),
             keyring_collection: None,
         };
 
@@ -369,7 +388,9 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
+                vm: None,
             }],
+            vms: Vec::new(),
             keyring_collection: None,
         };
 
@@ -383,6 +404,7 @@ mod tests {
             workzone: PathBuf::from("/tmp"),
             default_team: None,
             teams: vec![],
+            vms: Vec::new(),
             keyring_collection: None,
         };
 
@@ -437,7 +459,9 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
+                vm: None,
             }],
+            vms: Vec::new(),
             keyring_collection: None,
         };
 

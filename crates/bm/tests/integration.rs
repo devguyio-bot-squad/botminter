@@ -98,7 +98,9 @@ fn setup_team(tmp: &Path, team_name: &str, profile_name: &str) -> PathBuf {
             coding_agent: None,
             project_number: None,
             bridge_lifecycle: Default::default(),
+            vm: None,
         }],
+        vms: Vec::new(),
         keyring_collection: None,
     };
 
@@ -144,6 +146,7 @@ fn add_team_to_config(
         coding_agent: None,
         project_number: None,
         bridge_lifecycle: Default::default(),
+        vm: None,
     });
 
     if make_default {
@@ -1357,6 +1360,7 @@ fn teams_list_with_empty_config() {
         workzone: tmp.path().join("workspaces"),
         default_team: None,
         teams: vec![],
+        vms: Vec::new(),
         keyring_collection: None,
     };
     let config_path = tmp.path().join(".botminter/config.yml");
@@ -2792,7 +2796,9 @@ fn setup_bridge_test() -> (tempfile::TempDir, String, PathBuf, PathBuf) {
             coding_agent: None,
             project_number: None,
             bridge_lifecycle: Default::default(),
+            vm: None,
         }],
+        vms: Vec::new(),
         keyring_collection: None,
     };
 
@@ -2830,7 +2836,9 @@ fn setup_no_bridge_test() -> (tempfile::TempDir, String) {
             coding_agent: None,
             project_number: None,
             bridge_lifecycle: Default::default(),
+            vm: None,
         }],
+        vms: Vec::new(),
         keyring_collection: None,
     };
 
@@ -2906,7 +2914,9 @@ remove username:
             coding_agent: None,
             project_number: None,
             bridge_lifecycle: Default::default(),
+            vm: None,
         }],
+        vms: Vec::new(),
         keyring_collection: None,
     };
 

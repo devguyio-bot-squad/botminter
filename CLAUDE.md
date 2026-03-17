@@ -20,6 +20,7 @@ bm chat <member> [-t team] [--hat h]  # Interactive session with a member
 bm projects add <url> [-t team]       # Add a project to the team
 bm projects list [-t team]            # List configured projects
 bm projects show <project> [-t team]  # Show project details
+bm bootstrap [--non-interactive --name <n>]  # Provision a Fedora VM via Lima
 bm teams list                         # List registered teams
 bm teams show [<name>] [-t team]      # Show detailed team info
 bm teams sync [--repos] [--bridge] [--all|-a] [-v] [-t team] # Provision and reconcile workspaces

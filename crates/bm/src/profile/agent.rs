@@ -225,6 +225,7 @@ mod tests {
             coding_agent: None,
             project_number: None,
             bridge_lifecycle: Default::default(),
+            vm: None,
         };
         let agent = resolve_coding_agent(&team, &manifest).unwrap();
         assert_eq!(agent.name, "claude-code");
@@ -244,6 +245,7 @@ mod tests {
             coding_agent: Some("claude-code".into()),
             project_number: None,
             bridge_lifecycle: Default::default(),
+            vm: None,
         };
         let agent = resolve_coding_agent(&team, &manifest).unwrap();
         assert_eq!(agent.name, "claude-code");
@@ -262,6 +264,7 @@ mod tests {
             coding_agent: Some("nonexistent-agent".into()),
             project_number: None,
             bridge_lifecycle: Default::default(),
+            vm: None,
         };
         let result = resolve_coding_agent(&team, &manifest);
         assert!(result.is_err());

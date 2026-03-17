@@ -325,6 +325,7 @@ mod tests {
             config: Some(BotminterConfig {
                 workzone: PathBuf::from("/tmp"),
                 default_team: None,
+                vms: Vec::new(),
                 teams: vec![
                     TeamEntry {
                         name: "alpha".into(),
@@ -335,6 +336,7 @@ mod tests {
                         coding_agent: None,
                         project_number: None,
                         bridge_lifecycle: Default::default(),
+                        vm: None,
                     },
                     TeamEntry {
                         name: "beta".into(),
@@ -345,6 +347,7 @@ mod tests {
                         coding_agent: None,
                         project_number: None,
                         bridge_lifecycle: Default::default(),
+                        vm: None,
                     },
                 ],
                 keyring_collection: None,
@@ -371,6 +374,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
+                vm: None,
             }),
             team_repo: None,
         };
@@ -511,6 +515,7 @@ projects:
                     DaemonCommand::Status { .. } => {}
                 },
                 Command::DaemonRun { .. } => {}
+                Command::Bootstrap { .. } => {}
                 Command::Completions { .. } => {}
             }
         }

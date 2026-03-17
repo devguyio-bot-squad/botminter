@@ -207,6 +207,15 @@ fn main() -> Result<()> {
         Command::Status { team, verbose } => {
             commands::status::run(team.as_deref(), verbose)?;
         }
+        Command::Bootstrap {
+            non_interactive,
+            name,
+            cpus,
+            memory,
+            disk,
+        } => {
+            commands::bootstrap::run(non_interactive, name, cpus, &memory, &disk)?;
+        }
         Command::Completions { shell } => {
             commands::completions::run(shell)?;
         }
