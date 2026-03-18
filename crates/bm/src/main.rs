@@ -212,12 +212,17 @@ fn main() -> Result<()> {
         }
         Command::Bootstrap {
             non_interactive,
+            render,
             name,
             cpus,
             memory,
             disk,
         } => {
-            commands::bootstrap::run(non_interactive, name, cpus, &memory, &disk)?;
+            if render {
+                commands::bootstrap::render(name, cpus, &memory, &disk);
+            } else {
+                commands::bootstrap::run(non_interactive, name, cpus, &memory, &disk)?;
+            }
         }
         Command::Completions { shell } => {
             commands::completions::run(shell)?;

@@ -1,11 +1,40 @@
-use std::io::IsTerminal;
-use std::process::Command;
+use anyhow::{bail, Result};
 
-use anyhow::{bail, Context, Result};
+use crate::formation::lima::{self, Lima};
 
-use crate::config::{self, VmEntry};
+/// Prints the rendered Lima template to stdout and exits.
+pub fn render(name: Option<String>, cpus: u32, memory: &str, disk: &str) {
+    let vm_name = name.unwrap_or_else(|| "bm-default".to_string());
+    print!("{}", lima::generate_template(&vm_name, cpus, memory, disk));
+}
 
-/// Handles `bm bootstrap [--non-interactive --name <name>] [--cpus N] [--memory S] [--disk S]`.
+/// Handles `bm bootstrap` in non-interactive mode.
+pub fn run_non_interactive(
+    name: Option<String>,
+    cpus: u32,
+    memory: &str,
+    disk: &str,
+) -> Result<()> {
+    let vm_name = name.ok_or_else(|| anyhow::anyhow!("--non-interactive requires --name <vm-name>"))?;
+    if vm_name.is_empty() {
+        bail!("VM name cannot be empty.");
+    }
+
+    let lima = Lima::check_prerequisites()?;
+    let result = lima.bootstrap(&vm_name, cpus, memory, disk)?;
+
+    if result.created {
+        eprintln!("VM '{}' created.", result.vm_name);
+    }
+    if result.started {
+        eprintln!("VM '{}' started.", result.vm_name);
+    }
+    eprintln!("VM '{}' is ready. Run `bm attach` to connect.", result.vm_name);
+
+    Ok(())
+}
+
+/// Runs `bm bootstrap` as an interactive wizard.
 pub fn run(
     non_interactive: bool,
     name: Option<String>,
@@ -13,284 +42,92 @@ pub fn run(
     memory: &str,
     disk: &str,
 ) -> Result<()> {
-    // 1. Check limactl prerequisite
-    check_limactl()?;
+    if non_interactive {
+        return run_non_interactive(name, cpus, memory, disk);
+    }
 
-    // 2. Resolve VM name
-    let vm_name = resolve_vm_name(non_interactive, name)?;
+    let lima = Lima::check_prerequisites()?;
 
-    // 3. Generate Lima YAML template
-    let template = generate_lima_template(&vm_name, cpus, memory, disk);
+    cliclack::intro("botminter — bootstrap a VM")?;
 
-    // 4. Create VM (idempotent — skips if exists)
-    create_vm(&vm_name, &template)?;
+    let vm_name = resolve_vm_name(name)?;
 
-    // 5. Start VM (idempotent — skips if running)
-    start_vm(&vm_name)?;
+    let cpus: u32 = cliclack::input("CPUs")
+        .default_input(&cpus.to_string())
+        .validate(|input: &String| {
+            input.parse::<u32>()
+                .map(|_| ())
+                .map_err(|_| "Must be a positive integer")
+        })
+        .interact()
+        .map(|s: String| s.parse().unwrap())?;
 
-    // 6. Register in config (idempotent — skips if already present)
-    register_vm(&vm_name)?;
+    let memory: String = cliclack::input("Memory")
+        .default_input(memory)
+        .interact()?;
 
-    println!();
-    println!("VM '{}' is ready.", vm_name);
-    println!("Run `bm attach` to connect.");
+    let disk: String = cliclack::input("Disk")
+        .default_input(disk)
+        .interact()?;
+
+    let summary = format!(
+        "VM: {}\nCPUs: {}\nMemory: {}\nDisk: {}",
+        vm_name, cpus, memory, disk,
+    );
+    cliclack::log::info(summary)?;
+
+    let confirm: bool = cliclack::confirm("Create this VM?")
+        .initial_value(true)
+        .interact()?;
+    if !confirm {
+        cliclack::outro("Aborted.")?;
+        return Ok(());
+    }
+
+    let spinner = cliclack::spinner();
+    spinner.start("Provisioning VM...");
+
+    let result = lima.bootstrap(&vm_name, cpus, &memory, &disk)?;
+
+    if result.created && result.started {
+        spinner.stop("VM created and started");
+    } else if result.created {
+        spinner.stop("VM created (already running)");
+    } else if result.started {
+        spinner.stop("VM started (already existed)");
+    } else {
+        spinner.stop("VM already running");
+    }
+
+    cliclack::log::info(format!(
+        "VM '{}' is ready.\nTemplate: {}\nRun `bm attach` to connect, then `bm init` inside the VM.",
+        result.vm_name,
+        result.template_path.display(),
+    ))?;
+    cliclack::outro("Ready to go!")?;
 
     Ok(())
 }
 
-fn check_limactl() -> Result<()> {
-    if which::which("limactl").is_ok() {
-        return Ok(());
-    }
-    bail!(
-        "limactl is not installed.\n\n\
-         Install Lima to provision VMs:\n\
-         \n\
-         macOS:   brew install lima\n\
-         Linux:   brew install lima (or download from https://github.com/lima-vm/lima/releases)\n\
-         Windows: See https://lima-vm.io/docs/installation/ (requires WSL2)\n\
-         \n\
-         Then run `bm bootstrap` again."
-    );
-}
-
-fn resolve_vm_name(non_interactive: bool, name: Option<String>) -> Result<String> {
+fn resolve_vm_name(name: Option<String>) -> Result<String> {
     if let Some(n) = name {
         return Ok(n);
     }
 
-    if non_interactive {
-        bail!("--non-interactive requires --name <vm-name>");
-    }
-
-    if !std::io::stdin().is_terminal() {
-        bail!("No TTY detected. Use --non-interactive --name <vm-name> for scripted usage.");
-    }
-
     let name: String = cliclack::input("VM name")
         .default_input("bm-default")
+        .validate(|input: &String| {
+            if input.is_empty() {
+                Err("VM name cannot be empty")
+            } else if input.contains('/') || input.contains(' ') {
+                Err("VM name cannot contain '/' or spaces")
+            } else {
+                Ok(())
+            }
+        })
         .interact()?;
 
-    if name.is_empty() {
-        bail!("VM name cannot be empty.");
-    }
-
     Ok(name)
-}
-
-fn generate_lima_template(vm_name: &str, cpus: u32, memory: &str, disk: &str) -> String {
-    // BotMinter and Ralph install URLs (cargo-dist installers from botminter org)
-    let bm_install_url = "https://github.com/botminter/botminter/releases/download/v0.2.0-pre-alpha/bm-installer.sh";
-    let ralph_install_url = "https://github.com/botminter/ralph-orchestrator/releases/download/v2.8.1-bm.137b1b3.1/ralph-cli-installer.sh";
-    let claude_install_url = "https://storage.googleapis.com/anthropic-sdk/claude-code/claude-code-latest-linux-x64.tar.gz";
-
-    format!(
-        r#"# Lima template generated by `bm bootstrap` for VM "{vm_name}"
-minimumLimaVersion: "2.0.0"
-
-images:
-- location: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/x86_64/images/Fedora-Cloud-Base-Generic-43-1.6.x86_64.qcow2"
-  arch: "x86_64"
-  digest: "sha256:846574c8a97cd2d8dc1f231062d73107cc85cbbbda56335e264a46e3a6c8ab2f"
-- location: "https://download.fedoraproject.org/pub/fedora/linux/releases/43/Cloud/aarch64/images/Fedora-Cloud-Base-Generic-43-1.6.aarch64.qcow2"
-  arch: "aarch64"
-  digest: "sha256:66031aea9ec61e6d0d5bba12b9454e80ca94e8a79c913d37ded4c60311705b8b"
-
-ssh:
-  overVsock: false
-
-cpus: {cpus}
-memory: "{memory}"
-disk: "{disk}"
-
-mounts:
-- location: "~"
-  writable: true
-
-containerd:
-  system: false
-  user: false
-
-provision:
-- mode: system
-  script: |
-    #!/bin/bash
-    set -eux -o pipefail
-
-    # System packages
-    dnf install -y git jq curl gnome-keyring podman
-
-    # gh CLI (GitHub CLI)
-    dnf install -y 'dnf-command(config-manager)'
-    dnf config-manager addrepo --from-repofile=https://cli.github.com/packages/rpm/gh-cli.repo
-    dnf install -y gh
-
-    # just (command runner)
-    dnf install -y just
-
-- mode: system
-  script: |
-    #!/bin/bash
-    set -eux -o pipefail
-
-    # bm (BotMinter CLI) — cargo-dist installer
-    if ! command -v bm >/dev/null 2>&1; then
-      curl --proto '=https' --tlsv1.2 -LsSf "{bm_install_url}" | sh
-    fi
-
-    # ralph (Ralph Orchestrator CLI) — cargo-dist installer from botminter fork
-    if ! command -v ralph >/dev/null 2>&1; then
-      curl --proto '=https' --tlsv1.2 -LsSf "{ralph_install_url}" | sh
-    fi
-
-    # claude (Claude Code) — native binary
-    if ! command -v claude >/dev/null 2>&1; then
-      curl -fsSL "{claude_install_url}" | tar xz -C /usr/local/bin
-    fi
-
-probes:
-- mode: readiness
-  description: All BotMinter tools installed
-  script: |
-    #!/bin/bash
-    set -eux -o pipefail
-    if ! timeout 120s bash -c "until command -v bm && command -v ralph && command -v claude && command -v gh && command -v git && command -v just; do sleep 5; done"; then
-      echo >&2 "BotMinter tools are not fully installed yet"
-      exit 1
-    fi
-  hint: |
-    Tool installation is still in progress. Check /var/log/cloud-init-output.log in the guest.
-
-message: |
-  BotMinter VM "{{{{.Name}}}}" is ready!
-  Run `bm attach` to connect, then `bm init` inside the VM to set up your team.
-"#,
-        vm_name = vm_name,
-        cpus = cpus,
-        memory = memory,
-        disk = disk,
-        bm_install_url = bm_install_url,
-        ralph_install_url = ralph_install_url,
-        claude_install_url = claude_install_url,
-    )
-}
-
-/// Creates the VM via `limactl create`. Skips if already exists.
-fn create_vm(vm_name: &str, template: &str) -> Result<()> {
-    // Check if VM already exists
-    if vm_exists(vm_name)? {
-        println!("VM '{}' already exists, skipping creation.", vm_name);
-        return Ok(());
-    }
-
-    println!("Creating VM '{}'...", vm_name);
-
-    // Write template to a temp file
-    let tmp_dir = tempfile::tempdir().context("Failed to create temp directory")?;
-    let template_path = tmp_dir.path().join(format!("{}.yaml", vm_name));
-    std::fs::write(&template_path, template).context("Failed to write Lima template")?;
-
-    let output = Command::new("limactl")
-        .args(["create", "--name", vm_name, "--tty=false"])
-        .arg(&template_path)
-        .output()
-        .context("Failed to run limactl create")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("limactl create failed:\n{}", stderr);
-    }
-
-    println!("VM '{}' created.", vm_name);
-    Ok(())
-}
-
-/// Starts the VM via `limactl start`. Skips if already running.
-fn start_vm(vm_name: &str) -> Result<()> {
-    if vm_running(vm_name)? {
-        println!("VM '{}' is already running.", vm_name);
-        return Ok(());
-    }
-
-    println!("Starting VM '{}'... (this may take a few minutes on first boot)", vm_name);
-
-    let output = Command::new("limactl")
-        .args(["start", vm_name])
-        .output()
-        .context("Failed to run limactl start")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("limactl start failed:\n{}", stderr);
-    }
-
-    println!("VM '{}' started.", vm_name);
-    Ok(())
-}
-
-/// Registers the VM in ~/.botminter/config.yml. Skips if already registered.
-fn register_vm(vm_name: &str) -> Result<()> {
-    let mut cfg = config::load_or_default();
-
-    if cfg.vms.iter().any(|v| v.name == vm_name) {
-        println!("VM '{}' already registered in config.", vm_name);
-        return Ok(());
-    }
-
-    cfg.vms.push(VmEntry {
-        name: vm_name.to_string(),
-    });
-
-    config::save(&cfg)?;
-    println!("VM '{}' registered in config.", vm_name);
-    Ok(())
-}
-
-/// Checks if a VM with the given name exists (any state).
-fn vm_exists(vm_name: &str) -> Result<bool> {
-    let output = Command::new("limactl")
-        .args(["list", "--json"])
-        .output()
-        .context("Failed to run limactl list")?;
-
-    if !output.status.success() {
-        return Ok(false);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // limactl list --json outputs one JSON object per line (JSONL)
-    for line in stdout.lines() {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-            if v.get("name").and_then(|n| n.as_str()) == Some(vm_name) {
-                return Ok(true);
-            }
-        }
-    }
-
-    Ok(false)
-}
-
-/// Checks if a VM is in the "Running" state.
-fn vm_running(vm_name: &str) -> Result<bool> {
-    let output = Command::new("limactl")
-        .args(["list", "--json"])
-        .output()
-        .context("Failed to run limactl list")?;
-
-    if !output.status.success() {
-        return Ok(false);
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-            if v.get("name").and_then(|n| n.as_str()) == Some(vm_name) {
-                return Ok(v.get("status").and_then(|s| s.as_str()) == Some("Running"));
-            }
-        }
-    }
-
-    Ok(false)
 }
 
 #[cfg(test)]
@@ -298,70 +135,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn generate_template_contains_required_tools() {
-        let template = generate_lima_template("test-vm", 4, "8GiB", "100GiB");
-
-        // Verify Fedora image URLs
-        assert!(template.contains("Fedora-Cloud-Base-Generic-43"));
-        assert!(template.contains("x86_64"));
-        assert!(template.contains("aarch64"));
-
-        // Verify system packages
-        assert!(template.contains("git"));
-        assert!(template.contains("jq"));
-        assert!(template.contains("curl"));
-        assert!(template.contains("gnome-keyring"));
-        assert!(template.contains("podman"));
-        assert!(template.contains("gh"));
-        assert!(template.contains("just"));
-
-        // Verify tool installers
-        assert!(template.contains("botminter/botminter"));
-        assert!(template.contains("botminter/ralph-orchestrator"));
-        assert!(template.contains("claude"));
-
-        // Verify resource settings
-        assert!(template.contains("cpus: 4"));
-        assert!(template.contains("memory: \"8GiB\""));
-        assert!(template.contains("disk: \"100GiB\""));
-    }
-
-    #[test]
-    fn generate_template_custom_resources() {
-        let template = generate_lima_template("custom", 8, "16GiB", "200GiB");
-        assert!(template.contains("cpus: 8"));
-        assert!(template.contains("memory: \"16GiB\""));
-        assert!(template.contains("disk: \"200GiB\""));
-    }
-
-    #[test]
-    fn generate_template_has_readiness_probe() {
-        let template = generate_lima_template("probe-vm", 4, "8GiB", "100GiB");
-        assert!(template.contains("probes:"));
-        assert!(template.contains("mode: readiness"));
-        assert!(template.contains("command -v bm"));
-        assert!(template.contains("command -v ralph"));
-        assert!(template.contains("command -v claude"));
-    }
-
-    #[test]
-    fn generate_template_is_idempotent() {
-        // Cloud-init scripts check before installing
-        let template = generate_lima_template("idemp-vm", 4, "8GiB", "100GiB");
-        assert!(template.contains("command -v bm >/dev/null 2>&1"));
-        assert!(template.contains("command -v ralph >/dev/null 2>&1"));
-        assert!(template.contains("command -v claude >/dev/null 2>&1"));
-    }
-
-    #[test]
-    fn generate_template_home_mount_writable() {
-        let template = generate_lima_template("mount-vm", 4, "8GiB", "100GiB");
-        assert!(template.contains("writable: true"));
-    }
-
-    #[test]
-    fn resolve_vm_name_non_interactive_requires_name() {
-        let result = resolve_vm_name(true, None);
+    fn run_non_interactive_requires_name() {
+        let result = run_non_interactive(None, 4, "8GiB", "100GiB");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("--name"));
@@ -369,50 +144,7 @@ mod tests {
 
     #[test]
     fn resolve_vm_name_with_explicit_name() {
-        let result = resolve_vm_name(false, Some("my-vm".to_string()));
+        let result = resolve_vm_name(Some("my-vm".to_string()));
         assert_eq!(result.unwrap(), "my-vm");
-    }
-
-    #[test]
-    fn resolve_vm_name_non_interactive_with_name() {
-        let result = resolve_vm_name(true, Some("ci-vm".to_string()));
-        assert_eq!(result.unwrap(), "ci-vm");
-    }
-
-    #[test]
-    fn register_vm_idempotent() {
-        // Use a temp config to avoid touching real config
-        let tmp = tempfile::tempdir().unwrap();
-        let config_path = tmp.path().join(".botminter").join("config.yml");
-
-        let mut cfg = config::BotminterConfig {
-            workzone: tmp.path().to_path_buf(),
-            default_team: None,
-            teams: Vec::new(),
-            vms: vec![VmEntry {
-                name: "existing-vm".to_string(),
-            }],
-            keyring_collection: None,
-        };
-
-        config::save_to(&config_path, &cfg).unwrap();
-
-        // Verify VM already registered
-        assert!(cfg.vms.iter().any(|v| v.name == "existing-vm"));
-
-        // Adding duplicate should not create a second entry
-        if !cfg.vms.iter().any(|v| v.name == "existing-vm") {
-            cfg.vms.push(VmEntry {
-                name: "existing-vm".to_string(),
-            });
-        }
-        assert_eq!(cfg.vms.len(), 1);
-    }
-
-    #[test]
-    fn check_limactl_returns_result() {
-        // This test just verifies the function runs without panic.
-        // In CI, limactl may or may not be available.
-        let _ = check_limactl();
     }
 }

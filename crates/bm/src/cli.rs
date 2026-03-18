@@ -233,6 +233,10 @@ pub enum Command {
         #[arg(long)]
         non_interactive: bool,
 
+        /// Print the rendered Lima template and exit (does not create a VM)
+        #[arg(long)]
+        render: bool,
+
         /// VM name (e.g. bm-alpha)
         #[arg(long)]
         name: Option<String>,
