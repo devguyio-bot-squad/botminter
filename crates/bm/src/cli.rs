@@ -227,33 +227,6 @@ pub enum Command {
         team: Option<String>,
     },
 
-    /// Provision an isolated Fedora VM for running BotMinter teams
-    Bootstrap {
-        /// Run without interactive prompts (requires --name)
-        #[arg(long)]
-        non_interactive: bool,
-
-        /// Print the rendered Lima template and exit (does not create a VM)
-        #[arg(long)]
-        render: bool,
-
-        /// VM name (e.g. bm-alpha)
-        #[arg(long)]
-        name: Option<String>,
-
-        /// Number of CPUs to allocate
-        #[arg(long, default_value = "4")]
-        cpus: u32,
-
-        /// Memory to allocate (e.g. "8GiB")
-        #[arg(long, default_value = "8GiB")]
-        memory: String,
-
-        /// Disk size (e.g. "100GiB")
-        #[arg(long, default_value = "100GiB")]
-        disk: String,
-    },
-
     /// Generate dynamic shell completions
     ///
     /// Completions are dynamic: tab suggestions include real team names, roles,
@@ -292,6 +265,37 @@ pub enum TeamsCommand {
     Show {
         /// Team name (uses default team if omitted)
         name: Option<String>,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Provision an isolated Fedora VM for this team
+    Bootstrap {
+        /// Run without interactive prompts (requires --name)
+        #[arg(long)]
+        non_interactive: bool,
+
+        /// Print the rendered Lima template and exit (does not create a VM)
+        #[arg(long)]
+        render: bool,
+
+        /// VM name (e.g. bm-alpha)
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Number of CPUs to allocate
+        #[arg(long, default_value = "4")]
+        cpus: u32,
+
+        /// Memory to allocate (e.g. "8GiB")
+        #[arg(long, default_value = "8GiB")]
+        memory: String,
+
+        /// Disk size (e.g. "100GiB")
+        #[arg(long, default_value = "100GiB")]
+        disk: String,
 
         /// Team to operate on
         #[arg(short, long)]

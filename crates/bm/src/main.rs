@@ -57,6 +57,21 @@ fn main() -> Result<()> {
             TeamsCommand::Show { name, team } => {
                 commands::teams::show(name.as_deref(), team.as_deref())?;
             }
+            TeamsCommand::Bootstrap {
+                non_interactive,
+                render,
+                name,
+                cpus,
+                memory,
+                disk,
+                team,
+            } => {
+                if render {
+                    commands::bootstrap::render(name, cpus, &memory, &disk, team.as_deref());
+                } else {
+                    commands::bootstrap::run(non_interactive, name, cpus, &memory, &disk, team.as_deref())?;
+                }
+            }
             TeamsCommand::Sync { repos, bridge, all, verbose, team } => {
                 let effective_repos = repos || all;
                 let effective_bridge = bridge || all;
@@ -209,20 +224,6 @@ fn main() -> Result<()> {
         }
         Command::Attach { team } => {
             commands::attach::run(team.as_deref())?;
-        }
-        Command::Bootstrap {
-            non_interactive,
-            render,
-            name,
-            cpus,
-            memory,
-            disk,
-        } => {
-            if render {
-                commands::bootstrap::render(name, cpus, &memory, &disk);
-            } else {
-                commands::bootstrap::run(non_interactive, name, cpus, &memory, &disk)?;
-            }
         }
         Command::Completions { shell } => {
             commands::completions::run(shell)?;

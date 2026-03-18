@@ -51,9 +51,8 @@ fn main() {
     // Collect tests based on mode
     let mut tests = Vec::new();
     if config.progressive.is_none() {
-        // Normal mode: isolated + bootstrap + all scenarios
+        // Normal mode: isolated + all scenarios (bootstrap cases are in operator journey)
         tests.extend(isolated::tests(&config));
-        tests.extend(bootstrap::tests(&config));
     }
     tests.extend(scenarios::tests(&config));
 

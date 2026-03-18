@@ -157,6 +157,9 @@ pub fn build_cli_with_completions() -> clap::Command {
                 s.mut_arg("name", |a| a.add(make(teams.clone())))
                     .mut_arg("team", |a| a.add(make(teams.clone())))
             })
+            .mut_subcommand("bootstrap", |s| {
+                s.mut_arg("team", |a| a.add(make(teams.clone())))
+            })
             .mut_subcommand("sync", |s| {
                 s.mut_arg("team", |a| a.add(make(teams.clone())))
             })
@@ -468,6 +471,7 @@ projects:
                 Command::Teams { command } => match command {
                     TeamsCommand::List => {}
                     TeamsCommand::Show { .. } => {}
+                    TeamsCommand::Bootstrap { .. } => {}
                     TeamsCommand::Sync { .. } => {}
                 },
                 Command::Members { command } => match command {
@@ -516,7 +520,6 @@ projects:
                 },
                 Command::DaemonRun { .. } => {}
                 Command::Attach { .. } => {}
-                Command::Bootstrap { .. } => {}
                 Command::Completions { .. } => {}
             }
         }

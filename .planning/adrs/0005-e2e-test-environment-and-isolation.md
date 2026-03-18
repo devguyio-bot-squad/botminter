@@ -23,7 +23,19 @@ E2E tests run commands against real infrastructure (GitHub, podman, system keyri
 
 ## Decision
 
-### `TestEnv` is the shell session
+### `TestEnv` owns the suite setup and teardown
+
+**`TestEnv` is NOT just a command factory.** It is the authoritative owner of test environment setup, command execution, AND teardown — all three equally. Every test resource created during the test lifecycle is `TestEnv`'s responsibility to clean up.
+
+`TestEnv` manages:
+
+* **Setup** — starts isolated daemons (dbus, gnome-keyring), captures real system values for overrides, builds the base environment and per-binary rules.
+* **Command execution** — produces `TestCommand` instances with base + includes + overrides + one-shot vars applied.
+* **Teardown** — kills daemons, deletes VMs, cleans temp directories in its Drop implementation. ALL test infrastructure cleanup belongs here.
+
+When a test creates infrastructure (dbus daemons, Lima VMs, containers), `TestEnv` tracks it and cleans it up in Drop. Custom standalone guards (e.g., `VmGuard`, `ContainerGuard`) are an anti-pattern — they fragment lifecycle ownership that belongs in `TestEnv`. If you need cleanup for a new resource type, extend `TestEnv`'s Drop, don't create a standalone guard.
+
+### Command execution: three-layer environment
 
 `TestEnv` is the test equivalent of a shell session. It holds environment state and produces commands. All command execution in E2E tests goes through it.
 
@@ -71,14 +83,6 @@ State snapshot operations:
 * `.output()` — raw output without assertions
 
 The underlying `Command` is never exposed. This prevents test cases from calling `.current_dir()`, `.stdin()`, or other `Command` methods that bypass `TestEnv`'s control.
-
-### `TestEnv` owns setup and teardown
-
-`TestEnv` manages the full test lifecycle:
-
-* **Setup** — starts isolated daemons (dbus, gnome-keyring), captures real system values for overrides, builds the base environment and per-binary rules.
-* **Command execution** — produces `TestCommand` instances with base + includes + overrides + one-shot vars applied.
-* **Teardown** — kills daemons, cleans temp directories.
 
 ### Cross-case state persistence
 
@@ -141,3 +145,4 @@ Rejected because: exposing the full `Command` API tempts callers to bypass `Test
 * **Do NOT** use thread-locals or process-wide env mutation to pass test context to commands. `TestEnv` sets env vars explicitly on each `TestCommand` instance.
 * **Do NOT** rely on `TestEnv` exports persisting across progressive mode runs without calling `env.save()`. Exports are in-memory by default.
 * **Do NOT** write state files directly for cross-case persistence. Use `env.export()` + `env.save()` — `TestEnv` manages its own snapshot file.
+* **Do NOT** create standalone RAII guards for test resource cleanup. `TestEnv` owns teardown — extend its Drop implementation for new resource types (VMs, containers, daemons). Standalone guards fragment lifecycle ownership and bypass `TestEnv`'s environment control.

@@ -1,52 +1,64 @@
 use anyhow::{bail, Result};
 
+use crate::config;
 use crate::formation::lima::{self, Lima};
 
 /// Prints the rendered Lima template to stdout and exits.
-pub fn render(name: Option<String>, cpus: u32, memory: &str, disk: &str) {
+///
+/// This is a dry-run — it does not require a team to exist.
+pub fn render(name: Option<String>, cpus: u32, memory: &str, disk: &str, _team: Option<&str>) {
     let vm_name = name.unwrap_or_else(|| "bm-default".to_string());
-    print!("{}", lima::generate_template(&vm_name, cpus, memory, disk));
+    let mount_path = config::config_dir()
+        .map(|p| p.display().to_string())
+        .unwrap_or_else(|_| "~/.botminter".to_string());
+    print!(
+        "{}",
+        lima::generate_template(&vm_name, cpus, memory, disk, &mount_path)
+    );
 }
 
-/// Handles `bm bootstrap` in non-interactive mode.
-pub fn run_non_interactive(
-    name: Option<String>,
-    cpus: u32,
-    memory: &str,
-    disk: &str,
-) -> Result<()> {
-    let vm_name = name.ok_or_else(|| anyhow::anyhow!("--non-interactive requires --name <vm-name>"))?;
-    if vm_name.is_empty() {
-        bail!("VM name cannot be empty.");
-    }
-
-    let lima = Lima::check_prerequisites()?;
-    let result = lima.bootstrap(&vm_name, cpus, memory, disk)?;
-
-    if result.created {
-        eprintln!("VM '{}' created.", result.vm_name);
-    }
-    if result.started {
-        eprintln!("VM '{}' started.", result.vm_name);
-    }
-    eprintln!("VM '{}' is ready. Run `bm attach` to connect.", result.vm_name);
-
-    Ok(())
-}
-
-/// Runs `bm bootstrap` as an interactive wizard.
+/// Runs `bm teams bootstrap` — provisions a Lima VM for a team.
 pub fn run(
     non_interactive: bool,
     name: Option<String>,
     cpus: u32,
     memory: &str,
     disk: &str,
+    team: Option<&str>,
 ) -> Result<()> {
-    if non_interactive {
-        return run_non_interactive(name, cpus, memory, disk);
-    }
+    // Team context: require a team exists
+    let mut cfg = config::load()?;
+    let team_entry = config::resolve_team(&cfg, team)?;
+    let team_name = team_entry.name.clone();
 
+    let mount_path = config::config_dir()?.display().to_string();
     let lima = Lima::check_prerequisites()?;
+
+    if non_interactive {
+        let vm_name =
+            name.ok_or_else(|| anyhow::anyhow!("--non-interactive requires --name <vm-name>"))?;
+        if vm_name.is_empty() {
+            bail!("VM name cannot be empty.");
+        }
+
+        let result = lima.bootstrap(&vm_name, cpus, memory, disk, &mount_path)?;
+
+        if result.created {
+            eprintln!("VM '{}' created.", result.vm_name);
+        }
+        if result.started {
+            eprintln!("VM '{}' started.", result.vm_name);
+        }
+        eprintln!(
+            "VM '{}' is ready. Run `bm attach` to connect.",
+            result.vm_name
+        );
+
+        // Associate VM with team
+        associate_vm_with_team(&mut cfg, &team_name, &result.vm_name)?;
+
+        return Ok(());
+    }
 
     cliclack::intro("botminter — bootstrap a VM")?;
 
@@ -55,20 +67,17 @@ pub fn run(
     let cpus: u32 = cliclack::input("CPUs")
         .default_input(&cpus.to_string())
         .validate(|input: &String| {
-            input.parse::<u32>()
+            input
+                .parse::<u32>()
                 .map(|_| ())
                 .map_err(|_| "Must be a positive integer")
         })
         .interact()
         .map(|s: String| s.parse().unwrap())?;
 
-    let memory: String = cliclack::input("Memory")
-        .default_input(memory)
-        .interact()?;
+    let memory: String = cliclack::input("Memory").default_input(memory).interact()?;
 
-    let disk: String = cliclack::input("Disk")
-        .default_input(disk)
-        .interact()?;
+    let disk: String = cliclack::input("Disk").default_input(disk).interact()?;
 
     let summary = format!(
         "VM: {}\nCPUs: {}\nMemory: {}\nDisk: {}",
@@ -87,7 +96,7 @@ pub fn run(
     let spinner = cliclack::spinner();
     spinner.start("Provisioning VM...");
 
-    let result = lima.bootstrap(&vm_name, cpus, &memory, &disk)?;
+    let result = lima.bootstrap(&vm_name, cpus, &memory, &disk, &mount_path)?;
 
     if result.created && result.started {
         spinner.stop("VM created and started");
@@ -100,12 +109,28 @@ pub fn run(
     }
 
     cliclack::log::info(format!(
-        "VM '{}' is ready.\nTemplate: {}\nRun `bm attach` to connect, then `bm init` inside the VM.",
+        "VM '{}' is ready.\nTemplate: {}\nRun `bm attach` to connect.",
         result.vm_name,
         result.template_path.display(),
     ))?;
     cliclack::outro("Ready to go!")?;
 
+    // Associate VM with team
+    associate_vm_with_team(&mut cfg, &team_name, &result.vm_name)?;
+
+    Ok(())
+}
+
+/// Associates a VM with a team in config, then saves.
+fn associate_vm_with_team(
+    cfg: &mut config::BotminterConfig,
+    team_name: &str,
+    vm_name: &str,
+) -> Result<()> {
+    if let Some(entry) = cfg.teams.iter_mut().find(|t| t.name == team_name) {
+        entry.vm = Some(vm_name.to_string());
+    }
+    config::save(cfg)?;
     Ok(())
 }
 
@@ -133,14 +158,6 @@ fn resolve_vm_name(name: Option<String>) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn run_non_interactive_requires_name() {
-        let result = run_non_interactive(None, 4, "8GiB", "100GiB");
-        assert!(result.is_err());
-        let err = result.unwrap_err().to_string();
-        assert!(err.contains("--name"));
-    }
 
     #[test]
     fn resolve_vm_name_with_explicit_name() {

@@ -355,7 +355,7 @@ teams:
 |-------|----------|-------------|
 | `workzone` | Yes | Root directory for all team workspaces |
 | `default_team` | No | Team to operate on when `-t` flag is omitted |
-| `vms[].name` | Yes | Name of a Lima VM provisioned by `bm bootstrap` |
+| `vms[].name` | Yes | Name of a Lima VM provisioned by `bm teams bootstrap` |
 | `teams[].name` | Yes | Team identifier |
 | `teams[].path` | Yes | Absolute path to team directory |
 | `teams[].profile` | Yes | Profile name (e.g., `scrum`, `scrum-compact`) |

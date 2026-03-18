@@ -35,7 +35,7 @@ pub fn run(team: Option<&str>) -> Result<()> {
         }
         VmStatus::NotFound => {
             bail!(
-                "VM '{}' does not exist. Run `bm bootstrap --name {}` to create it.",
+                "VM '{}' does not exist. Run `bm teams bootstrap --name {}` to create it.",
                 vm_name, vm_name
             );
         }
@@ -98,7 +98,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("No VM found"));
-        assert!(err.contains("bm bootstrap"));
+        assert!(err.contains("bm teams bootstrap"));
     }
 
     #[test]

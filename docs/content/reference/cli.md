@@ -56,16 +56,17 @@ bm init --non-interactive --profile <profile> --team-name <name> --org <org> --r
 
 ## VM provisioning
 
-### `bm bootstrap`
+### `bm teams bootstrap`
 
-Provision an isolated Fedora VM for running BotMinter teams.
+Provision an isolated Fedora VM for a team. Requires a team to exist (run `bm init` first).
 
 ```bash
-bm bootstrap [--non-interactive --name <vm-name>] [--cpus N] [--memory S] [--disk S]
+bm teams bootstrap [--non-interactive --name <vm-name>] [--cpus N] [--memory S] [--disk S] [-t <team>]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
+| `-t <team>` | No | Team to provision the VM for (defaults to default team) |
 | `--non-interactive` | No | Run without interactive prompts (requires `--name`) |
 | `--name <name>` | No* | VM name (e.g., `bm-alpha`). *Required with `--non-interactive` |
 | `--cpus <N>` | No | Number of CPUs to allocate (default: `4`) |
@@ -74,7 +75,8 @@ bm bootstrap [--non-interactive --name <vm-name>] [--cpus N] [--memory S] [--dis
 
 **Prerequisites:**
 
-- `limactl` must be installed. If not found, `bm bootstrap` shows platform-specific install instructions.
+- A team must exist (created via `bm init`)
+- `limactl` must be installed. If not found, `bm teams bootstrap` shows platform-specific install instructions.
 
 **Behavior:**
 
@@ -82,17 +84,18 @@ bm bootstrap [--non-interactive --name <vm-name>] [--cpus N] [--memory S] [--dis
 - Creates and starts a VM via `limactl create` and `limactl start`
 - Cloud-init provisioning installs all required tools: `git`, `jq`, `curl`, `gh`, `just`, `gnome-keyring`, `podman`, `bm`, `ralph`, and `claude`
 - Registers the VM in `~/.botminter/config.yml` under the `vms` list
+- Associates the VM with the team (sets the team's `vm` field)
 - Idempotent: re-running with the same name skips creation/start if the VM already exists and is running
-- The home directory is mounted writable inside the VM
+- The `~/.botminter` directory is mounted writable inside the VM
 
 **Example:**
 
 ```bash
 # Interactive
-bm bootstrap
+bm teams bootstrap -t my-team
 
 # Non-interactive (CI/scripted)
-bm bootstrap --non-interactive --name bm-test --cpus 8 --memory 16GiB
+bm teams bootstrap --non-interactive --name bm-test --cpus 8 --memory 16GiB -t my-team
 ```
 
 ### `bm attach`
@@ -110,7 +113,7 @@ bm attach [-t <team>]
 **Prerequisites:**
 
 - `limactl` must be installed. If not found, shows platform-specific install instructions.
-- At least one VM must be registered (via `bm bootstrap`).
+- At least one VM must be registered (via `bm teams bootstrap`).
 
 **Behavior:**
 
