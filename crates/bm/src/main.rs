@@ -5,7 +5,7 @@ use clap_complete::CompleteEnv;
 use bm::cli::{
     BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Cli, Command, DaemonCommand,
     KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand, RolesCommand,
-    TeamsCommand,
+    RuntimeCommand, TeamsCommand,
 };
 use bm::commands;
 
@@ -56,21 +56,6 @@ fn main() -> Result<()> {
             TeamsCommand::List => commands::teams::list()?,
             TeamsCommand::Show { name, team } => {
                 commands::teams::show(name.as_deref(), team.as_deref())?;
-            }
-            TeamsCommand::Bootstrap {
-                non_interactive,
-                render,
-                name,
-                cpus,
-                memory,
-                disk,
-                team,
-            } => {
-                if render {
-                    commands::bootstrap::render(name, cpus, &memory, &disk, team.as_deref());
-                } else {
-                    commands::bootstrap::run(non_interactive, name, cpus, &memory, &disk, team.as_deref())?;
-                }
             }
             TeamsCommand::Sync { repos, bridge, all, verbose, team } => {
                 let effective_repos = repos || all;
@@ -222,6 +207,26 @@ fn main() -> Result<()> {
         Command::Status { team, verbose } => {
             commands::status::run(team.as_deref(), verbose)?;
         }
+        Command::Runtime { command } => match command {
+            RuntimeCommand::Create {
+                non_interactive,
+                render,
+                name,
+                cpus,
+                memory,
+                disk,
+                team,
+            } => {
+                if render {
+                    commands::bootstrap::render(name, cpus, &memory, &disk, team.as_deref());
+                } else {
+                    commands::bootstrap::run(non_interactive, name, cpus, &memory, &disk, team.as_deref())?;
+                }
+            }
+            RuntimeCommand::Delete { name, force } => {
+                commands::bootstrap::delete(&name, force)?;
+            }
+        },
         Command::Attach { team } => {
             commands::attach::run(team.as_deref())?;
         }

@@ -220,6 +220,12 @@ pub enum Command {
         interval: u64,
     },
 
+    /// Runtime infrastructure management (VMs)
+    Runtime {
+        #[command(subcommand)]
+        command: RuntimeCommand,
+    },
+
     /// Attach to a running Lima VM
     Attach {
         /// Team to operate on (resolves VM from team config)
@@ -271,8 +277,34 @@ pub enum TeamsCommand {
         team: Option<String>,
     },
 
-    /// Provision an isolated Fedora VM for this team
-    Bootstrap {
+    /// Reconcile workspaces with team repo state
+    Sync {
+        /// Sync git repositories (push team repo)
+        #[arg(long)]
+        repos: bool,
+
+        /// Provision bridge identities and rooms
+        #[arg(long)]
+        bridge: bool,
+
+        /// Equivalent to --repos --bridge (all remote operations)
+        #[arg(short = 'a', long)]
+        all: bool,
+
+        /// Show detailed sync status per workspace
+        #[arg(short, long)]
+        verbose: bool,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RuntimeCommand {
+    /// Provision an isolated Fedora VM for a team
+    Create {
         /// Run without interactive prompts (requires --name)
         #[arg(long)]
         non_interactive: bool,
@@ -302,27 +334,14 @@ pub enum TeamsCommand {
         team: Option<String>,
     },
 
-    /// Reconcile workspaces with team repo state
-    Sync {
-        /// Sync git repositories (push team repo)
+    /// Delete a Lima VM and remove it from config
+    Delete {
+        /// VM name to delete
+        name: String,
+
+        /// Skip confirmation prompt
         #[arg(long)]
-        repos: bool,
-
-        /// Provision bridge identities and rooms
-        #[arg(long)]
-        bridge: bool,
-
-        /// Equivalent to --repos --bridge (all remote operations)
-        #[arg(short = 'a', long)]
-        all: bool,
-
-        /// Show detailed sync status per workspace
-        #[arg(short, long)]
-        verbose: bool,
-
-        /// Team to operate on
-        #[arg(short, long)]
-        team: Option<String>,
+        force: bool,
     },
 }
 

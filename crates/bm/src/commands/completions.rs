@@ -157,10 +157,13 @@ pub fn build_cli_with_completions() -> clap::Command {
                 s.mut_arg("name", |a| a.add(make(teams.clone())))
                     .mut_arg("team", |a| a.add(make(teams.clone())))
             })
-            .mut_subcommand("bootstrap", |s| {
+            .mut_subcommand("sync", |s| {
                 s.mut_arg("team", |a| a.add(make(teams.clone())))
             })
-            .mut_subcommand("sync", |s| {
+        })
+        // ── runtime ──────────────────────────────────────────
+        .mut_subcommand("runtime", |c| {
+            c.mut_subcommand("create", |s| {
                 s.mut_arg("team", |a| a.add(make(teams.clone())))
             })
         })
@@ -453,7 +456,7 @@ projects:
         use crate::cli::{
             BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Command, DaemonCommand,
             KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand, RolesCommand,
-            TeamsCommand,
+            RuntimeCommand, TeamsCommand,
         };
 
         // This exhaustive match ensures that if a new Command variant is
@@ -471,8 +474,11 @@ projects:
                 Command::Teams { command } => match command {
                     TeamsCommand::List => {}
                     TeamsCommand::Show { .. } => {}
-                    TeamsCommand::Bootstrap { .. } => {}
                     TeamsCommand::Sync { .. } => {}
+                },
+                Command::Runtime { command } => match command {
+                    RuntimeCommand::Create { .. } => {}
+                    RuntimeCommand::Delete { .. } => {}
                 },
                 Command::Members { command } => match command {
                     MembersCommand::List { .. } => {}
@@ -538,5 +544,6 @@ projects:
         assert!(cmd.find_subcommand("daemon").is_some());
         assert!(cmd.find_subcommand("knowledge").is_some());
         assert!(cmd.find_subcommand("teams").is_some());
+        assert!(cmd.find_subcommand("runtime").is_some());
     }
 }

@@ -1,8 +1,8 @@
-//! Bootstrap utilities and case functions for `bm teams bootstrap` E2E tests.
+//! Runtime create utilities and case functions for `bm runtime create` E2E tests.
 //!
 //! These cases are registered by the operator journey scenario, which already
-//! runs `bm init` — so a team exists when bootstrap runs. Cases skip gracefully
-//! when Lima is not available (like bridge cases skip without podman).
+//! runs `bm init` — so a team exists when runtime create runs. Cases skip
+//! gracefully when Lima is not available (like bridge cases skip without podman).
 //!
 //! VM cleanup is handled by TestEnv's Drop via the `lima_vm_name` export.
 
@@ -56,8 +56,8 @@ pub fn bootstrap_vm_fn(
         let output = env
             .command("bm")
             .args([
-                "teams",
-                "bootstrap",
+                "runtime",
+                "create",
                 "--non-interactive",
                 "--name",
                 VM_NAME,
@@ -73,7 +73,7 @@ pub fn bootstrap_vm_fn(
             .output();
         assert!(
             output.status.success(),
-            "bm teams bootstrap failed: {}",
+            "bm runtime create failed: {}",
             String::from_utf8_lossy(&output.stderr)
         );
 
@@ -123,8 +123,8 @@ pub fn bootstrap_idempotent_fn(
         let output = env
             .command("bm")
             .args([
-                "teams",
-                "bootstrap",
+                "runtime",
+                "create",
                 "--non-interactive",
                 "--name",
                 VM_NAME,

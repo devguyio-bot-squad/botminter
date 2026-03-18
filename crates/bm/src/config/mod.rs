@@ -16,7 +16,7 @@ pub struct BotminterConfig {
     pub default_team: Option<String>,
     #[serde(default)]
     pub teams: Vec<TeamEntry>,
-    /// Lima VMs provisioned by `bm teams bootstrap`.
+    /// Lima VMs provisioned by `bm runtime create`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub vms: Vec<VmEntry>,
     /// Override the Secret Service collection used for credential storage.
@@ -274,7 +274,7 @@ pub fn resolve_vm(config: &BotminterConfig, team_flag: Option<&str>) -> Result<S
 
     // Step 2: single VM auto-select
     match config.vms.len() {
-        0 => bail!("No VM found. Run `bm teams bootstrap` first."),
+        0 => bail!("No VM found. Run `bm runtime create` first."),
         1 => Ok(config.vms[0].name.clone()),
         _ => bail!(
             "Multiple VMs configured. Use `-t <team>` to select one, \

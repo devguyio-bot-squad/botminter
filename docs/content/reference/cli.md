@@ -56,12 +56,12 @@ bm init --non-interactive --profile <profile> --team-name <name> --org <org> --r
 
 ## VM provisioning
 
-### `bm teams bootstrap`
+### `bm runtime create`
 
 Provision an isolated Fedora VM for a team. Requires a team to exist (run `bm init` first).
 
 ```bash
-bm teams bootstrap [--non-interactive --name <vm-name>] [--cpus N] [--memory S] [--disk S] [-t <team>]
+bm runtime create [--non-interactive --name <vm-name>] [--cpus N] [--memory S] [--disk S] [-t <team>]
 ```
 
 | Parameter | Required | Description |
@@ -76,7 +76,7 @@ bm teams bootstrap [--non-interactive --name <vm-name>] [--cpus N] [--memory S] 
 **Prerequisites:**
 
 - A team must exist (created via `bm init`)
-- `limactl` must be installed. If not found, `bm teams bootstrap` shows platform-specific install instructions.
+- `limactl` must be installed. If not found, `bm runtime create` shows platform-specific install instructions.
 
 **Behavior:**
 
@@ -92,10 +92,38 @@ bm teams bootstrap [--non-interactive --name <vm-name>] [--cpus N] [--memory S] 
 
 ```bash
 # Interactive
-bm teams bootstrap -t my-team
+bm runtime create -t my-team
 
 # Non-interactive (CI/scripted)
-bm teams bootstrap --non-interactive --name bm-test --cpus 8 --memory 16GiB -t my-team
+bm runtime create --non-interactive --name bm-test --cpus 8 --memory 16GiB -t my-team
+```
+
+### `bm runtime delete`
+
+Delete a Lima VM and remove it from the botminter config.
+
+```bash
+bm runtime delete <name> [--force]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<name>` | Yes | Name of the VM to delete |
+| `--force` | No | Skip confirmation prompt |
+
+**Behavior:**
+
+- Stops and deletes the VM via `limactl delete --force`
+- Removes the VM from the `vms` list in `~/.botminter/config.yml`
+- Clears the `vm` field on any team that referenced this VM
+- Idempotent: deleting a non-existent VM succeeds with an informational message
+- Prompts for confirmation in interactive mode unless `--force` is given
+
+**Example:**
+
+```bash
+bm runtime delete bm-alpha
+bm runtime delete bm-alpha --force
 ```
 
 ### `bm attach`
@@ -113,7 +141,7 @@ bm attach [-t <team>]
 **Prerequisites:**
 
 - `limactl` must be installed. If not found, shows platform-specific install instructions.
-- At least one VM must be registered (via `bm teams bootstrap`).
+- At least one VM must be registered (via `bm runtime create`).
 
 **Behavior:**
 

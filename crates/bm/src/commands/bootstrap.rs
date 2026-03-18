@@ -1,3 +1,5 @@
+use std::io::IsTerminal;
+
 use anyhow::{bail, Result};
 
 use crate::config;
@@ -17,7 +19,7 @@ pub fn render(name: Option<String>, cpus: u32, memory: &str, disk: &str, _team: 
     );
 }
 
-/// Runs `bm teams bootstrap` — provisions a Lima VM for a team.
+/// Runs `bm runtime create` — provisions a Lima VM for a team.
 pub fn run(
     non_interactive: bool,
     name: Option<String>,
@@ -39,6 +41,9 @@ pub fn run(
             name.ok_or_else(|| anyhow::anyhow!("--non-interactive requires --name <vm-name>"))?;
         if vm_name.is_empty() {
             bail!("VM name cannot be empty.");
+        }
+        if vm_name.contains('/') || vm_name.contains(' ') {
+            bail!("VM name cannot contain '/' or spaces.");
         }
 
         let result = lima.bootstrap(&vm_name, cpus, memory, disk, &mount_path)?;
@@ -117,6 +122,32 @@ pub fn run(
 
     // Associate VM with team
     associate_vm_with_team(&mut cfg, &team_name, &result.vm_name)?;
+
+    Ok(())
+}
+
+/// Runs `bm runtime delete` — deletes a Lima VM and removes it from config.
+pub fn delete(name: &str, force: bool) -> Result<()> {
+    let lima = Lima::check_prerequisites()?;
+
+    if !force && std::io::stdin().is_terminal() {
+        let confirm: bool = cliclack::confirm(format!("Delete VM '{}'? This cannot be undone.", name))
+            .initial_value(false)
+            .interact()?;
+        if !confirm {
+            eprintln!("Aborted.");
+            return Ok(());
+        }
+    }
+
+    let result = lima.delete(name)?;
+
+    if result.existed {
+        eprintln!("VM '{}' deleted.", result.vm_name);
+    } else {
+        eprintln!("VM '{}' was not found (already deleted).", result.vm_name);
+    }
+    eprintln!("Config updated.");
 
     Ok(())
 }
