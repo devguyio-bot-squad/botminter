@@ -46,8 +46,7 @@ impl Bridge {
         let mut results = Vec::new();
 
         for member in members {
-            let is_reonboard;
-            if self.state.identities.contains_key(&member.name) {
+            let is_reonboard = if self.state.identities.contains_key(&member.name) {
                 // Check if credential is actually in the keyring — if not,
                 // re-onboard to recover from a previous keyring-locked failure.
                 let has_cred = resolve_credential_from_store(&member.name, cred_store)?;
@@ -57,10 +56,10 @@ impl Bridge {
                 }
                 // Remove stale identity so re-onboard proceeds below
                 self.state.identities.remove(&member.name);
-                is_reonboard = true;
+                true
             } else {
-                is_reonboard = false;
-            }
+                false
+            };
 
             if self.manifest.spec.bridge_type == "external" {
                 let has_cred = resolve_credential_from_store(&member.name, cred_store)?;

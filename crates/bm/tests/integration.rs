@@ -688,6 +688,36 @@ fn lifecycle_sync_idempotent() {
     // Sync twice — should not error
     bm_sync(tmp.path(), "idem-team");
     bm_sync(tmp.path(), "idem-team");
+
+    // Assert context files are present after both syncs
+    let ws = tmp.path().join("workspaces/idem-team/architect-alice");
+    assert!(ws.join("ralph.yml").exists(), "ralph.yml should exist after sync");
+    assert!(ws.join("CLAUDE.md").exists(), "CLAUDE.md should exist after sync");
+    assert!(ws.join("PROMPT.md").exists(), "PROMPT.md should exist after sync");
+    assert!(ws.join(".botminter.workspace").exists(), "marker should exist after sync");
+}
+
+#[test]
+fn sync_recovers_stale_workspace_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    setup_team(tmp.path(), "stale-team", "scrum");
+
+    bm_hire(tmp.path(), "architect", "alice", "stale-team");
+    bm_sync(tmp.path(), "stale-team");
+
+    let ws = tmp.path().join("workspaces/stale-team/architect-alice");
+    assert!(ws.join(".botminter.workspace").exists(), "marker should exist after first sync");
+
+    // Remove the marker to simulate a stale/incomplete workspace
+    fs::remove_file(ws.join(".botminter.workspace")).unwrap();
+
+    // Sync again — should recover by re-creating the workspace
+    bm_sync(tmp.path(), "stale-team");
+
+    assert!(ws.join(".botminter.workspace").exists(), "marker should be restored after recovery");
+    assert!(ws.join("ralph.yml").exists(), "ralph.yml should exist after recovery");
+    assert!(ws.join("CLAUDE.md").exists(), "CLAUDE.md should exist after recovery");
+    assert!(ws.join("PROMPT.md").exists(), "PROMPT.md should exist after recovery");
 }
 
 // ── Roles list test ──────────────────────────────────────────────────

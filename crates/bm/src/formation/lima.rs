@@ -67,6 +67,7 @@ impl Lima {
 
     /// Provisions a VM end-to-end: generate template, create, start, register.
     /// Idempotent — skips steps that are already done.
+    #[allow(clippy::too_many_arguments)]
     pub fn bootstrap(
         &self,
         vm_name: &str,
