@@ -18,7 +18,7 @@ pub fn render(name: Option<String>, cpus: u32, memory: &str, disk: &str, _team: 
         .unwrap_or_else(|| "~/.config/botminter".to_string());
     print!(
         "{}",
-        lima::generate_template(&vm_name, cpus, memory, disk, &[&bm_config, &xdg_config], None)
+        lima::generate_template(&vm_name, cpus, memory, disk, &[&bm_config, &xdg_config], None, &[])
     );
 }
 
@@ -29,6 +29,7 @@ pub fn run(
     cpus: u32,
     memory: &str,
     disk: &str,
+    env_vars: &[String],
     team: Option<&str>,
 ) -> Result<()> {
     // Team context: require a team exists
@@ -55,7 +56,8 @@ pub fn run(
             bail!("VM name cannot contain '/' or spaces.");
         }
 
-        let result = lima.bootstrap(&vm_name, cpus, memory, disk, mounts, Some(&gh_token))?;
+        let parsed_env = parse_env_vars(env_vars)?;
+        let result = lima.bootstrap(&vm_name, cpus, memory, disk, mounts, Some(&gh_token), &parsed_env)?;
 
         if result.created {
             eprintln!("VM '{}' created.", result.vm_name);
@@ -93,9 +95,38 @@ pub fn run(
 
     let disk: String = cliclack::input("Disk").default_input(disk).interact()?;
 
+    // Collect environment variables interactively
+    let mut collected_env: Vec<(String, String)> = parse_env_vars(env_vars)?;
+    cliclack::log::info("Environment variables (enter KEY=VALUE pairs, empty to finish)")?;
+    loop {
+        let entry: String = cliclack::input("ENV (KEY=VALUE)")
+            .placeholder("ANTHROPIC_API_KEY=sk-ant-...")
+            .default_input("")
+            .required(false)
+            .interact()?;
+        let entry = entry.trim().to_string();
+        if entry.is_empty() {
+            break;
+        }
+        match entry.split_once('=') {
+            Some((key, value)) if !key.is_empty() => {
+                collected_env.push((key.to_string(), value.to_string()));
+            }
+            _ => {
+                cliclack::log::warning("Invalid format. Use KEY=VALUE (e.g. ANTHROPIC_API_KEY=sk-ant-...)")?;
+            }
+        }
+    }
+    if collected_env.is_empty() {
+        cliclack::log::info("No environment variables configured.")?;
+    } else {
+        let env_keys: Vec<&str> = collected_env.iter().map(|(k, _)| k.as_str()).collect();
+        cliclack::log::info(format!("Environment variables: {}", env_keys.join(", ")))?;
+    }
+
     let summary = format!(
-        "VM: {}\nCPUs: {}\nMemory: {}\nDisk: {}",
-        vm_name, cpus, memory, disk,
+        "VM: {}\nCPUs: {}\nMemory: {}\nDisk: {}\nEnv vars: {}",
+        vm_name, cpus, memory, disk, collected_env.len(),
     );
     cliclack::log::info(summary)?;
 
@@ -110,7 +141,7 @@ pub fn run(
     let spinner = cliclack::spinner();
     spinner.start("Provisioning VM...");
 
-    let result = lima.bootstrap(&vm_name, cpus, &memory, &disk, mounts, Some(&gh_token))?;
+    let result = lima.bootstrap(&vm_name, cpus, &memory, &disk, mounts, Some(&gh_token), &collected_env)?;
 
     if result.created && result.started {
         spinner.stop("VM created and started");
@@ -133,6 +164,19 @@ pub fn run(
     associate_vm_with_team(&mut cfg, &team_name, &result.vm_name)?;
 
     Ok(())
+}
+
+/// Parses `KEY=VALUE` strings into `(key, value)` tuples.
+fn parse_env_vars(env_vars: &[String]) -> Result<Vec<(String, String)>> {
+    env_vars
+        .iter()
+        .map(|s| {
+            s.split_once('=')
+                .filter(|(k, _)| !k.is_empty())
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+                .ok_or_else(|| anyhow::anyhow!("Invalid --env value '{}'. Expected KEY=VALUE format.", s))
+        })
+        .collect()
 }
 
 /// Runs `bm runtime delete` — deletes a Lima VM and removes it from config.

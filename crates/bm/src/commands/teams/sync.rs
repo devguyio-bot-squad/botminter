@@ -84,6 +84,11 @@ fn display_sync_event(event: &TeamSyncEvent) {
                 eprintln!("  Warning: {}", w);
                 println!("  {}: provisioned", name);
             }
+            bridge::ProvisionMemberResult::ReOnboarded => println!("  {}: re-onboarded (keyring credential recovered)", name),
+            bridge::ProvisionMemberResult::ReOnboardedWithKeyringWarning(w) => {
+                eprintln!("  Warning: {}", w);
+                println!("  {}: re-onboarded (keyring still failing)", name);
+            }
         },
         TeamSyncEvent::BridgeRoomCreated(room) => println!("  Created team room: {}", room),
         TeamSyncEvent::WorkspaceCreated(name) => println!("Created workspace: {}", name),

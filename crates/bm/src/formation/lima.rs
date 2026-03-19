@@ -75,8 +75,9 @@ impl Lima {
         disk: &str,
         mounts: &[&str],
         gh_token: Option<&str>,
+        env_vars: &[(String, String)],
     ) -> Result<BootstrapResult> {
-        let template = generate_template(vm_name, cpus, memory, disk, mounts, gh_token);
+        let template = generate_template(vm_name, cpus, memory, disk, mounts, gh_token, env_vars);
         let template_path = persist_template(vm_name, &template)?;
 
         let created = match self.status(vm_name)? {
@@ -276,6 +277,7 @@ pub fn generate_template(
     disk: &str,
     mounts: &[&str],
     gh_token: Option<&str>,
+    env_vars: &[(String, String)],
 ) -> String {
     let bm_install_url = "https://github.com/botminter/botminter/releases/download/v0.2.0-pre-alpha/bm-installer.sh";
     let ralph_install_url = "https://github.com/botminter/ralph-orchestrator/releases/download/v2.8.1-bm.137b1b3.1/ralph-cli-installer.sh";
@@ -301,12 +303,50 @@ pub fn generate_template(
         .collect::<Vec<_>>()
         .join("\n");
 
+    // When the host home differs from the guest home (e.g. /home/user vs
+    // /home/user.guest), create a symlink so that absolute paths baked into
+    // config.yml resolve correctly inside the VM. This runs as root (system
+    // mode) since /home/ is not user-writable, but looks up the lima user's
+    // home via getent to get the correct guest path.
+    let host_username = std::env::var("USER")
+        .or_else(|_| std::env::var("LOGNAME"))
+        .unwrap_or_default();
+    let host_home_symlink = if !home_dir.is_empty() && !host_username.is_empty() {
+        format!(
+            r#"
+    # Symlink host home path → guest home so config.yml absolute paths work
+    GUEST_HOME=$(getent passwd "{host_username}" | cut -d: -f6)
+    if [ -n "$GUEST_HOME" ] && [ "{home_dir}" != "$GUEST_HOME" ] && [ ! -e "{home_dir}" ]; then
+      ln -s "$GUEST_HOME" "{home_dir}"
+    fi"#,
+            home_dir = home_dir,
+            host_username = host_username,
+        )
+    } else {
+        String::new()
+    };
+
+    let env_yaml = if env_vars.is_empty() {
+        String::new()
+    } else {
+        let entries: Vec<String> = env_vars
+            .iter()
+            .map(|(k, v)| {
+                // Quote the value to handle special YAML characters
+                let escaped = v.replace('\\', "\\\\").replace('"', "\\\"");
+                format!("  {k}: \"{escaped}\"")
+            })
+            .collect();
+        format!("\nenv:\n{}\n", entries.join("\n"))
+    };
+
     let gh_auth_block = match gh_token {
         Some(token) => format!(
             r#"
     # GitHub auth — configure gh CLI and git credentials
     echo '{token}' | gh auth login --with-token
     gh auth setup-git
+    gh config set git_protocol https
     GH_USER=$(gh api user --jq '.login' 2>/dev/null || true)
     GH_EMAIL=$(gh api user --jq '.email // empty' 2>/dev/null || true)
     [ -n "$GH_USER" ] && git config --global user.name "$GH_USER"
@@ -339,7 +379,7 @@ disk: "{disk}"
 
 mounts:
 {mounts_yaml}
-
+{env_yaml}
 containerd:
   system: false
   user: false
@@ -365,6 +405,7 @@ provision:
     if ! command -v claude >/dev/null 2>&1; then
       npm install -g @anthropic-ai/claude-code
     fi
+{host_home_symlink}
 
 - mode: user
   script: |
@@ -404,6 +445,8 @@ message: |
         memory = memory,
         disk = disk,
         mounts_yaml = mounts_yaml,
+        env_yaml = env_yaml,
+        host_home_symlink = host_home_symlink,
         bm_install_url = bm_install_url,
         ralph_install_url = ralph_install_url,
         gh_auth_block = gh_auth_block,
@@ -428,7 +471,7 @@ mod tests {
 
     #[test]
     fn generate_template_contains_required_tools() {
-        let template = generate_template("test-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None);
+        let template = generate_template("test-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None, &[]);
 
         assert!(template.contains("Fedora-Cloud-Base-Generic-43"));
         assert!(template.contains("x86_64"));
@@ -456,7 +499,7 @@ mod tests {
 
     #[test]
     fn generate_template_custom_resources() {
-        let template = generate_template("custom", 8, "16GiB", "200GiB", &test_mounts_ref(&test_mounts()), None);
+        let template = generate_template("custom", 8, "16GiB", "200GiB", &test_mounts_ref(&test_mounts()), None, &[]);
         assert!(template.contains("cpus: 8"));
         assert!(template.contains("memory: \"16GiB\""));
         assert!(template.contains("disk: \"200GiB\""));
@@ -464,7 +507,7 @@ mod tests {
 
     #[test]
     fn generate_template_has_readiness_probe() {
-        let template = generate_template("probe-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None);
+        let template = generate_template("probe-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None, &[]);
         assert!(template.contains("probes:"));
         assert!(template.contains("mode: readiness"));
         assert!(template.contains("command -v bm"));
@@ -474,7 +517,7 @@ mod tests {
 
     #[test]
     fn generate_template_is_idempotent() {
-        let template = generate_template("idemp-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None);
+        let template = generate_template("idemp-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None, &[]);
         assert!(template.contains("command -v bm >/dev/null 2>&1"));
         assert!(template.contains("command -v ralph >/dev/null 2>&1"));
         assert!(template.contains("command -v claude >/dev/null 2>&1"));
@@ -483,7 +526,7 @@ mod tests {
     #[test]
     fn generate_template_multiple_mounts() {
         let mounts = test_mounts();
-        let template = generate_template("mount-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&mounts), None);
+        let template = generate_template("mount-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&mounts), None, &[]);
         assert!(template.contains(&mounts[0]), "should contain botminter mount location");
         assert!(template.contains(&mounts[1]), "should contain config mount location");
         // Each mount has writable: true
@@ -493,7 +536,7 @@ mod tests {
     #[test]
     fn generate_template_mount_point_uses_guest_home() {
         let mounts = test_mounts();
-        let template = generate_template("mount-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&mounts), None);
+        let template = generate_template("mount-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&mounts), None, &[]);
         // mountPoint uses Lima's {{.Home}} template variable for guest home
         assert!(template.contains("mountPoint: \"{{.Home}}/.botminter\""));
         assert!(template.contains("mountPoint: \"{{.Home}}/.config/botminter\""));
@@ -501,13 +544,13 @@ mod tests {
 
     #[test]
     fn generate_template_embeds_vm_name() {
-        let template = generate_template("my-team", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None);
+        let template = generate_template("my-team", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None, &[]);
         assert!(template.contains(r#"for VM "my-team""#));
     }
 
     #[test]
     fn generate_template_is_valid_yaml() {
-        let template = generate_template("yaml-check", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None);
+        let template = generate_template("yaml-check", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None, &[]);
         let parsed: serde_yml::Value = serde_yml::from_str(&template).unwrap();
         assert_eq!(
             parsed.get("cpus").and_then(|v| v.as_u64()),
@@ -521,7 +564,7 @@ mod tests {
 
     #[test]
     fn generate_template_user_mode_provision() {
-        let template = generate_template("mode-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None);
+        let template = generate_template("mode-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None, &[]);
         // bm and ralph install as user, not system
         assert!(template.contains("mode: user"));
         // Verify the user block contains bm/ralph but not claude
@@ -533,16 +576,17 @@ mod tests {
 
     #[test]
     fn generate_template_selinux_comment() {
-        let template = generate_template("sel-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None);
+        let template = generate_template("sel-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None, &[]);
         assert!(template.contains("SELinux"));
         assert!(template.contains("lima-vm/lima/issues/4334"));
     }
 
     #[test]
     fn generate_template_gh_auth_with_token() {
-        let template = generate_template("auth-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), Some("ghp_test123"));
+        let template = generate_template("auth-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), Some("ghp_test123"), &[]);
         assert!(template.contains("gh auth login --with-token"));
         assert!(template.contains("gh auth setup-git"));
+        assert!(template.contains("gh config set git_protocol https"));
         assert!(template.contains("ghp_test123"));
         assert!(template.contains("git config --global user.name"));
         assert!(template.contains("git config --global user.email"));
@@ -550,17 +594,44 @@ mod tests {
 
     #[test]
     fn generate_template_no_gh_auth_without_token() {
-        let template = generate_template("noauth-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None);
+        let template = generate_template("noauth-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None, &[]);
         assert!(!template.contains("gh auth login"));
         assert!(!template.contains("gh auth setup-git"));
     }
 
     #[test]
     fn generate_template_gh_auth_valid_yaml() {
-        let template = generate_template("auth-yaml", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), Some("ghp_test"));
+        let template = generate_template("auth-yaml", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), Some("ghp_test"), &[]);
         let parsed: serde_yml::Value = serde_yml::from_str(&template).unwrap();
         // Should still be valid YAML with the auth block
         assert_eq!(parsed.get("cpus").and_then(|v| v.as_u64()), Some(4));
+    }
+
+    #[test]
+    fn generate_template_env_vars_rendered() {
+        let env_vars = vec![
+            ("ANTHROPIC_API_KEY".to_string(), "sk-ant-test".to_string()),
+            ("CLAUDE_CODE_MAX_TURNS".to_string(), "50".to_string()),
+        ];
+        let template = generate_template("env-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None, &env_vars);
+        assert!(template.contains("env:"), "should contain env: block");
+        assert!(template.contains("ANTHROPIC_API_KEY: \"sk-ant-test\""));
+        assert!(template.contains("CLAUDE_CODE_MAX_TURNS: \"50\""));
+
+        // Must still be valid YAML
+        let parsed: serde_yml::Value = serde_yml::from_str(&template).unwrap();
+        let env = parsed.get("env").expect("env key should exist in parsed YAML");
+        assert_eq!(
+            env.get("ANTHROPIC_API_KEY").and_then(|v| v.as_str()),
+            Some("sk-ant-test"),
+        );
+    }
+
+    #[test]
+    fn generate_template_no_env_vars_no_env_block() {
+        let template = generate_template("noenv-vm", 4, "8GiB", "100GiB", &test_mounts_ref(&test_mounts()), None, &[]);
+        // Should not have a standalone env: block (env may appear in other contexts like provision scripts)
+        assert!(!template.contains("\nenv:\n"), "should not contain env: block when no env vars");
     }
 
     #[test]

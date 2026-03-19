@@ -215,12 +215,13 @@ fn main() -> Result<()> {
                 cpus,
                 memory,
                 disk,
+                env_vars,
                 team,
             } => {
                 if render {
                     commands::bootstrap::render(name, cpus, &memory, &disk, team.as_deref());
                 } else {
-                    commands::bootstrap::run(non_interactive, name, cpus, &memory, &disk, team.as_deref())?;
+                    commands::bootstrap::run(non_interactive, name, cpus, &memory, &disk, &env_vars, team.as_deref())?;
                 }
             }
             RuntimeCommand::Delete { name, force } => {

@@ -18,6 +18,10 @@ pub enum ProvisionMemberResult {
     NoConfig,
     /// Credential stored, but keyring store failed (with warning message).
     ProvisionedWithKeyringWarning(String),
+    /// Re-onboarded: member was in state but had no keyring credential.
+    ReOnboarded,
+    /// Re-onboard attempted but keyring store failed again.
+    ReOnboardedWithKeyringWarning(String),
 }
 
 /// Result of the full provisioning operation.
@@ -42,9 +46,20 @@ impl Bridge {
         let mut results = Vec::new();
 
         for member in members {
+            let is_reonboard;
             if self.state.identities.contains_key(&member.name) {
-                results.push((member.name.clone(), ProvisionMemberResult::AlreadyProvisioned));
-                continue;
+                // Check if credential is actually in the keyring — if not,
+                // re-onboard to recover from a previous keyring-locked failure.
+                let has_cred = resolve_credential_from_store(&member.name, cred_store)?;
+                if has_cred.is_some() || self.manifest.spec.bridge_type == "external" {
+                    results.push((member.name.clone(), ProvisionMemberResult::AlreadyProvisioned));
+                    continue;
+                }
+                // Remove stale identity so re-onboard proceeds below
+                self.state.identities.remove(&member.name);
+                is_reonboard = true;
+            } else {
+                is_reonboard = false;
             }
 
             if self.manifest.spec.bridge_type == "external" {
@@ -98,9 +113,19 @@ impl Bridge {
                 }
 
                 if let Some(warning) = keyring_warning {
-                    results.push((member.name.clone(), ProvisionMemberResult::ProvisionedWithKeyringWarning(warning)));
+                    let result = if is_reonboard {
+                        ProvisionMemberResult::ReOnboardedWithKeyringWarning(warning)
+                    } else {
+                        ProvisionMemberResult::ProvisionedWithKeyringWarning(warning)
+                    };
+                    results.push((member.name.clone(), result));
                 } else {
-                    results.push((member.name.clone(), ProvisionMemberResult::Provisioned));
+                    let result = if is_reonboard {
+                        ProvisionMemberResult::ReOnboarded
+                    } else {
+                        ProvisionMemberResult::Provisioned
+                    };
+                    results.push((member.name.clone(), result));
                 }
             } else {
                 results.push((member.name.clone(), ProvisionMemberResult::NoConfig));

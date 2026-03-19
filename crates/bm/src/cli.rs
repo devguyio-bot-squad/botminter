@@ -329,6 +329,10 @@ pub enum RuntimeCommand {
         #[arg(long, default_value = "100GiB")]
         disk: String,
 
+        /// Environment variables to set in the VM (repeatable, e.g. --env ANTHROPIC_API_KEY=sk-...)
+        #[arg(long = "env", value_name = "KEY=VALUE")]
+        env_vars: Vec<String>,
+
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,
