@@ -10,12 +10,15 @@ use crate::formation::lima::{self, Lima};
 /// This is a dry-run — it does not require a team to exist.
 pub fn render(name: Option<String>, cpus: u32, memory: &str, disk: &str, _team: Option<&str>) {
     let vm_name = name.unwrap_or_else(|| "bm-default".to_string());
-    let mount_path = config::config_dir()
+    let bm_config = config::config_dir()
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "~/.botminter".to_string());
+    let xdg_config = dirs::config_dir()
+        .map(|p| p.join("botminter").display().to_string())
+        .unwrap_or_else(|| "~/.config/botminter".to_string());
     print!(
         "{}",
-        lima::generate_template(&vm_name, cpus, memory, disk, &mount_path)
+        lima::generate_template(&vm_name, cpus, memory, disk, &[&bm_config, &xdg_config], None)
     );
 }
 
@@ -32,8 +35,14 @@ pub fn run(
     let mut cfg = config::load()?;
     let team_entry = config::resolve_team(&cfg, team)?;
     let team_name = team_entry.name.clone();
+    let gh_token = config::require_gh_token(team_entry)?;
 
-    let mount_path = config::config_dir()?.display().to_string();
+    let bm_config = config::config_dir()?.display().to_string();
+    let xdg_config = dirs::config_dir()
+        .map(|p| p.join("botminter").display().to_string())
+        .unwrap_or_else(|| "~/.config/botminter".to_string());
+    let mounts: &[&str] = &[&bm_config, &xdg_config];
+
     let lima = Lima::check_prerequisites()?;
 
     if non_interactive {
@@ -46,7 +55,7 @@ pub fn run(
             bail!("VM name cannot contain '/' or spaces.");
         }
 
-        let result = lima.bootstrap(&vm_name, cpus, memory, disk, &mount_path)?;
+        let result = lima.bootstrap(&vm_name, cpus, memory, disk, mounts, Some(&gh_token))?;
 
         if result.created {
             eprintln!("VM '{}' created.", result.vm_name);
@@ -101,7 +110,7 @@ pub fn run(
     let spinner = cliclack::spinner();
     spinner.start("Provisioning VM...");
 
-    let result = lima.bootstrap(&vm_name, cpus, &memory, &disk, &mount_path)?;
+    let result = lima.bootstrap(&vm_name, cpus, &memory, &disk, mounts, Some(&gh_token))?;
 
     if result.created && result.started {
         spinner.stop("VM created and started");
