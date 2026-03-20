@@ -1,3 +1,4 @@
+pub mod acp;
 pub mod agent_tags;
 pub mod bridge;
 pub mod chat;
