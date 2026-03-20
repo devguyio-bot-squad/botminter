@@ -5,6 +5,7 @@ use anyhow::{bail, Context, Result};
 use crate::chat;
 use crate::config;
 use crate::profile;
+use crate::state;
 
 /// Handles `bm chat <member> [-t team] [--hat <hat>] [--render-system-prompt]`.
 pub fn run(
@@ -16,6 +17,23 @@ pub fn run(
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
     let team_repo = team.path.join("team");
+
+    // Check if this member is running in brain mode
+    let runtime_state = state::load()?;
+    let state_key = format!("{}/{}", team.name, member);
+    if let Some(rt) = runtime_state.members.get(&state_key) {
+        if rt.brain_mode && state::is_alive(rt.pid) {
+            println!(
+                "Member '{}' is running in brain mode (PID {}).",
+                member, rt.pid
+            );
+            println!(
+                "The brain is available through the bridge chat. \
+                 Direct ACP chat will be available in a future release."
+            );
+            return Ok(());
+        }
+    }
 
     // Prepare session (validates member, workspace, hat, builds meta-prompt)
     let session = chat::prepare_chat_session(

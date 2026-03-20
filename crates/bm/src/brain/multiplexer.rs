@@ -61,6 +61,17 @@ impl MultiplexerInput {
             .await
             .map_err(|_| MultiplexerError::Shutdown)
     }
+
+    /// Returns the inner sender for use by components that take
+    /// `mpsc::Sender<BrainMessage>` directly (event watcher, heartbeat).
+    pub fn into_sender(self) -> mpsc::Sender<BrainMessage> {
+        self.tx
+    }
+
+    /// Returns a clone of the inner sender.
+    pub fn sender(&self) -> mpsc::Sender<BrainMessage> {
+        self.tx.clone()
+    }
 }
 
 /// Handle for receiving output from the multiplexer.
@@ -78,6 +89,7 @@ impl MultiplexerOutput {
 }
 
 /// Handle for shutting down the multiplexer.
+#[derive(Clone)]
 pub struct MultiplexerShutdown {
     tx: mpsc::Sender<()>,
 }

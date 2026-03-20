@@ -30,6 +30,10 @@ pub struct MemberRuntime {
     pub pid: u32,
     pub started_at: String, // ISO 8601
     pub workspace: PathBuf,
+    /// When true, this member runs the brain multiplexer (chat-first mode)
+    /// instead of a raw Ralph Orchestrator process.
+    #[serde(default)]
+    pub brain_mode: bool,
 }
 
 /// Returns the path to state.json.
@@ -84,14 +88,22 @@ pub fn is_alive(pid: u32) -> bool {
 /// Status of a team member process.
 #[derive(Debug)]
 pub enum MemberStatus {
-    Running { pid: u32, started_at: String },
-    Crashed { pid: u32, started_at: String },
+    Running {
+        pid: u32,
+        started_at: String,
+        brain_mode: bool,
+    },
+    Crashed {
+        pid: u32,
+        started_at: String,
+    },
     Stopped,
 }
 
 impl MemberStatus {
     pub fn label(&self) -> &'static str {
         match self {
+            MemberStatus::Running { brain_mode: true, .. } => "brain",
             MemberStatus::Running { .. } => "running",
             MemberStatus::Crashed { .. } => "crashed",
             MemberStatus::Stopped => "stopped",
@@ -112,6 +124,7 @@ pub fn resolve_member_status(
                 MemberStatus::Running {
                     pid: rt.pid,
                     started_at: rt.started_at.clone(),
+                    brain_mode: rt.brain_mode,
                 }
             } else {
                 MemberStatus::Crashed {
@@ -156,6 +169,7 @@ mod tests {
                 pid: 12345,
                 started_at: "2026-02-20T10:00:00Z".to_string(),
                 workspace: PathBuf::from("/tmp/ws/arch-01"),
+                brain_mode: false,
             },
         );
 
@@ -213,6 +227,7 @@ mod tests {
                 pid: 4_000_000, // unlikely to exist
                 started_at: "2026-01-01T00:00:00Z".to_string(),
                 workspace: PathBuf::from("/tmp/dead"),
+                brain_mode: false,
             },
         );
         state.members.insert(
@@ -221,6 +236,7 @@ mod tests {
                 pid: std::process::id(), // current process, definitely alive
                 started_at: "2026-01-01T00:00:00Z".to_string(),
                 workspace: PathBuf::from("/tmp/alive"),
+                brain_mode: false,
             },
         );
 
@@ -244,6 +260,7 @@ mod tests {
                 pid: alive_pid,
                 started_at: "2026-02-21T10:00:00Z".to_string(),
                 workspace: PathBuf::from("/tmp/ws"),
+                brain_mode: false,
             },
         );
 
@@ -265,6 +282,7 @@ mod tests {
                 pid: dead_pid,
                 started_at: "2026-02-21T10:00:00Z".to_string(),
                 workspace: PathBuf::from("/tmp/ws"),
+                brain_mode: false,
             },
         );
 
@@ -290,10 +308,20 @@ mod tests {
         assert_eq!(
             MemberStatus::Running {
                 pid: 1,
-                started_at: String::new()
+                started_at: String::new(),
+                brain_mode: false,
             }
             .label(),
             "running"
+        );
+        assert_eq!(
+            MemberStatus::Running {
+                pid: 1,
+                started_at: String::new(),
+                brain_mode: true,
+            }
+            .label(),
+            "brain"
         );
         assert_eq!(
             MemberStatus::Crashed {
@@ -304,5 +332,22 @@ mod tests {
             "crashed"
         );
         assert_eq!(MemberStatus::Stopped.label(), "stopped");
+    }
+
+    #[test]
+    fn brain_mode_backward_compat_deserialization() {
+        // Old state.json without brain_mode field should deserialize with brain_mode=false
+        let json = r#"{
+            "members": {
+                "team/member": {
+                    "pid": 1234,
+                    "started_at": "2026-01-01T00:00:00Z",
+                    "workspace": "/tmp/ws"
+                }
+            }
+        }"#;
+        let state: RuntimeState = serde_json::from_str(json).unwrap();
+        let rt = state.members.get("team/member").unwrap();
+        assert!(!rt.brain_mode, "brain_mode should default to false");
     }
 }

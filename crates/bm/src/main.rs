@@ -207,6 +207,14 @@ fn main() -> Result<()> {
         Command::Status { team, verbose } => {
             commands::status::run(team.as_deref(), verbose)?;
         }
+        Command::BrainRun {
+            workspace,
+            system_prompt,
+            acp_binary,
+        } => {
+            commands::brain_run::run(&workspace, &system_prompt, &acp_binary)?;
+        }
+
         Command::Runtime { command } => match command {
             RuntimeCommand::Create {
                 non_interactive,

@@ -454,8 +454,10 @@ bm up [<member>] [-t <team>] [--formation <name>]
 - Checks for `ralph` binary prerequisite
 - Resolves per-member credentials from keyring or environment variables
 - Discovers member workspaces
-- Launches `ralph run -p PROMPT.md` as background process per member
-- Records PIDs in `state.json` with atomic writes
+- Detects chat-first members (brain mode) via `brain-prompt.md` in workspace
+- For brain members: launches the brain multiplexer (`bm brain-run`) which runs an ACP session with event watcher and heartbeat
+- For standard members: launches `ralph run -p PROMPT.md` as background process
+- Records PIDs and mode (brain/ralph) in `state.json` with atomic writes
 - Verifies processes alive after 2 seconds
 - For non-local formations: runs the formation manager as a one-shot Ralph session
 - Writes a `.topology` file tracking member endpoints
@@ -476,8 +478,8 @@ bm stop [<member>] [-t <team>] [--force]
 
 **Behavior:**
 
-- Graceful mode (default): runs `ralph loops stop` per member, polls for 60s
-- Force mode (`--force`): sends SIGTERM immediately
+- Graceful mode (default): sends SIGTERM to brain members (multiplexer handles shutdown), runs `ralph loops stop` for standard members, polls for 60s
+- Force mode (`--force`): sends SIGTERM immediately to all members
 - Cleans state.json entries
 - Suggests `bm stop -f` on graceful failure
 - When stopping a single member, bridge lifecycle is not affected
@@ -500,6 +502,7 @@ bm status [-t <team>] [-v]
 
 - Header shows team name, profile, GitHub repo, and configured projects
 - Displays Member, Role, Status, Branch, Started, PID table
+- Status column shows "brain" for chat-first members, "running" for standard members, "crashed" or "stopped" as appropriate
 - Branch column shows the workspace repo's current git branch (or "—" if no workspace exists)
 - Shows daemon status if a daemon is running
 - Checks PID liveness via `kill(pid, 0)`

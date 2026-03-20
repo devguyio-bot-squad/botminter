@@ -78,7 +78,11 @@ pub fn run(
         eprintln!("{}: already running (PID {})", m.name, m.pid);
     }
     for m in &result.launched {
-        eprintln!("{}: started (PID {})", m.name, m.pid);
+        if m.brain_mode {
+            eprintln!("{}: started brain (PID {})", m.name, m.pid);
+        } else {
+            eprintln!("{}: started (PID {})", m.name, m.pid);
+        }
     }
     for m in &result.errors {
         eprintln!("{}: {}", m.name, m.error);

@@ -57,11 +57,11 @@ pub fn stop_local_members(
 
     // Find running members for this team
     let team_prefix = format!("{}/", team_name);
-    let all_running: Vec<(String, u32, PathBuf)> = runtime_state
+    let all_running: Vec<(String, u32, PathBuf, bool)> = runtime_state
         .members
         .iter()
         .filter(|(key, _)| key.starts_with(&team_prefix))
-        .map(|(key, rt)| (key.clone(), rt.pid, rt.workspace.clone()))
+        .map(|(key, rt)| (key.clone(), rt.pid, rt.workspace.clone(), rt.brain_mode))
         .collect();
 
     // Filter to a single member if requested
@@ -69,7 +69,7 @@ pub fn stop_local_members(
         let target_key = format!("{}/{}", team_name, target);
         all_running
             .into_iter()
-            .filter(|(k, _, _)| *k == target_key)
+            .filter(|(k, _, _, _)| *k == target_key)
             .collect()
     } else {
         all_running
@@ -88,7 +88,7 @@ pub fn stop_local_members(
         return Ok(result);
     }
 
-    for (key, pid, workspace) in &running {
+    for (key, pid, workspace, brain_mode) in &running {
         let member_name = key.strip_prefix(&team_prefix).unwrap_or(key);
 
         if !state::is_alive(*pid) {
@@ -112,7 +112,14 @@ pub fn stop_local_members(
                 forced: true,
             });
         } else {
-            match graceful_stop(workspace, *pid) {
+            // Brain members use SIGTERM directly (multiplexer handles shutdown).
+            // Ralph members use `ralph loops stop` for graceful shutdown.
+            let stop_result = if *brain_mode {
+                graceful_stop_brain(*pid)
+            } else {
+                graceful_stop(workspace, *pid)
+            };
+            match stop_result {
                 Ok(()) => {
                     runtime_state.members.remove(key);
                     state::save(&runtime_state)?;
@@ -153,6 +160,30 @@ pub fn stop_local_members(
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+/// Graceful stop for brain members: send SIGTERM, then poll for exit.
+///
+/// The brain multiplexer registers a SIGTERM handler that cancels any in-flight
+/// ACP prompt, shuts down the event watcher and heartbeat, then exits cleanly.
+fn graceful_stop_brain(pid: u32) -> Result<()> {
+    // Send SIGTERM to the brain multiplexer process
+    unsafe {
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+
+    for _ in 0..GRACEFUL_TIMEOUT_SECS {
+        if !state::is_alive(pid) {
+            return Ok(());
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+
+    bail!(
+        "Brain process {} did not exit after {}s. Use `bm stop -f` to force-kill.",
+        pid,
+        GRACEFUL_TIMEOUT_SECS
+    );
+}
 
 /// Graceful stop: run `ralph loops stop` in the workspace, then poll for exit.
 fn graceful_stop(workspace: &Path, pid: u32) -> Result<()> {
