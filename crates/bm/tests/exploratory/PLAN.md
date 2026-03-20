@@ -1,4 +1,4 @@
-# Manual Test Plan: Sync, Bridge & Lima Idempotency
+# Exploratory Test Plan: Sync, Bridge & Lima Idempotency
 
 **Date:** 2026-03-20
 **Build:** bm 0.2.0-pre-alpha (local debug, post-RemoteRepoOps + Lima --overwrite)
@@ -20,7 +20,7 @@ Four features under test:
 - Keyring unlocked (`secret-tool store/lookup` works)
 - `gh` authenticated with delete permission on devguyio-bot-squad
 - `podman`, `just`, `limactl`, `curl`, `jq` available
-- No existing `manual-test` team state
+- No existing `exploratory-test` team state
 
 ---
 
@@ -48,10 +48,10 @@ Foundation setup for subsequent phases.
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| B1 | Fresh init with tuwunel bridge | `bm init --non-interactive --profile scrum-compact --team-name manual-test --org devguyio-bot-squad --repo manual-test-team --bridge tuwunel --github-project-board "Manual Test Board"` | Team created, labels/project bootstrapped |
-| B2 | Verify GitHub repo exists and is private | `gh repo view devguyio-bot-squad/manual-test-team --json name,visibility` | `{"name":"manual-test-team","visibility":"PRIVATE"}` |
-| B3 | Verify GitHub project board created | `gh project list --owner devguyio-bot-squad` | "Manual Test Board" present |
-| B4 | Verify labels bootstrapped | `gh label list -R devguyio-bot-squad/manual-test-team` | Status labels from scrum-compact profile |
+| B1 | Fresh init with tuwunel bridge | `bm init --non-interactive --profile scrum-compact --team-name exploratory-test --org devguyio-bot-squad --repo exploratory-test-team --bridge tuwunel --github-project-board "Exploratory Test Board"` | Team created, labels/project bootstrapped |
+| B2 | Verify GitHub repo exists and is private | `gh repo view devguyio-bot-squad/exploratory-test-team --json name,visibility` | `{"name":"exploratory-test-team","visibility":"PRIVATE"}` |
+| B3 | Verify GitHub project board created | `gh project list --owner devguyio-bot-squad` | "Exploratory Test Board" present |
+| B4 | Verify labels bootstrapped | `gh label list -R devguyio-bot-squad/exploratory-test-team` | Status labels from scrum-compact profile |
 | B5 | Verify team config registered | `cat ~/.botminter/config.yml` | Team entry with github_repo, bridge, project_number |
 | B6 | Verify team repo has profile content | `ls team/members/ team/knowledge/ team/PROCESS.md` | Profile skeleton files present |
 | B7 | Init again (idempotency) | Same command as B1 | Expected: error (init is intentionally not idempotent — "directory exists") |
@@ -67,13 +67,13 @@ Foundation setup for subsequent phases.
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
 | C1 | First sync --bridge | `bm teams sync --bridge -v` | Container created, admin registered, alice+bob onboarded, room created |
-| C2 | Verify container running | `podman ps --filter name=bm-tuwunel-manual-test` | Status "Up" |
+| C2 | Verify container running | `podman ps --filter name=bm-tuwunel-exploratory-test` | Status "Up" |
 | C3 | Verify Matrix server healthy | `curl -sf http://127.0.0.1:8008/_matrix/client/versions` | HTTP 200, version list |
 | C4 | Verify bridge state file | `jq '{status, identities: (.identities\|keys), rooms}' bridge-state.json` | status=running, 3 identities (bmadmin, alice, bob), 1 room |
 | C5 | Verify passwords persisted | `jq 'keys' tuwunel-passwords.json` | [bmadmin, superman-alice, superman-bob] |
 | C6 | Verify keyring credentials stored | `secret-tool lookup service botminter-bridge user superman-alice` | Non-empty token |
 | C7 | Verify admin can login to Matrix | `curl` Matrix login API with admin creds | access_token returned |
-| C8 | Verify room exists | `curl` Matrix room alias API for manual-test-general | room_id returned |
+| C8 | Verify room exists | `curl` Matrix room alias API for exploratory-test-general | room_id returned |
 
 ### C.2: Bridge Idempotency (Repeated Sync)
 
@@ -89,7 +89,7 @@ Foundation setup for subsequent phases.
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| C14 | Stop container externally | `podman stop bm-tuwunel-manual-test` | Container stopped |
+| C14 | Stop container externally | `podman stop bm-tuwunel-exploratory-test` | Container stopped |
 | C15 | Verify bridge state still says "running" | `jq '.status' bridge-state.json` | "running" (stale state) |
 | C16 | Matrix server unreachable | `curl http://127.0.0.1:8008/_matrix/client/versions` | Connection refused |
 | C17 | Sync --bridge recovers | `bm teams sync --bridge -v` | Bridge auto-restarts or re-provisions |
@@ -101,7 +101,7 @@ Foundation setup for subsequent phases.
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| C21 | Force-remove container | `podman rm -f bm-tuwunel-manual-test` | Container gone |
+| C21 | Force-remove container | `podman rm -f bm-tuwunel-exploratory-test` | Container gone |
 | C22 | Sync --bridge recreates from scratch | `bm teams sync --bridge -v` | New container, admin re-registered, members re-onboarded |
 | C23 | Verify container running | `podman ps` | New container "Up" |
 | C24 | Verify all identities re-provisioned | `jq '.identities\|keys' bridge-state.json` | All 3 present |
@@ -200,9 +200,9 @@ For local-only teams (no per-member GitHub repos), use `--bridge` instead.
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| G1 | Stop + remove bridge container | `podman stop/rm bm-tuwunel-manual-test` | Container cleaned |
-| G2 | Remove bridge volume | `podman volume rm bm-tuwunel-manual-test-data` | Volume removed |
-| G3 | Delete GitHub repo | `gh repo delete devguyio-bot-squad/manual-test-team --yes` | Repo deleted |
+| G1 | Stop + remove bridge container | `podman stop/rm bm-tuwunel-exploratory-test` | Container cleaned |
+| G2 | Remove bridge volume | `podman volume rm bm-tuwunel-exploratory-test-data` | Volume removed |
+| G3 | Delete GitHub repo | `gh repo delete devguyio-bot-squad/exploratory-test-team --yes` | Repo deleted |
 | G4 | Delete GitHub project | `gh project delete <number>` | Board deleted |
 | G5 | Remove local state | `rm -rf ~/.botminter ~/.config/botminter` | Clean state |
 | G6 | Verify clean | No leftover containers, repos, or config | Everything gone |

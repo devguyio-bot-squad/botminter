@@ -1,4 +1,4 @@
-# Manual Test Report: Sync, Bridge & Lima Idempotency
+# Exploratory Test Report: Sync, Bridge & Lima Idempotency
 
 **Date:** 2026-03-20
 **Build:** bm 0.2.0-pre-alpha (local debug)
@@ -33,7 +33,7 @@
 | C5 | Passwords file has 3 entries | **PASS** |
 | C6 | Keyring has credentials for alice + bob | **PASS** |
 | C7 | Admin can login to Matrix | **PASS** |
-| C8 | Room manual-test-general exists (!ethyfnIemWvDOlp3PB:localhost) | **PASS** |
+| C8 | Room exploratory-test-general exists (!ethyfnIemWvDOlp3PB:localhost) | **PASS** |
 | C9 | Sync --bridge again (idempotent) | **PASS** |
 | C10 | No duplicate identities (3) | **PASS** |
 | C11 | No duplicate rooms (1) | **PASS** |

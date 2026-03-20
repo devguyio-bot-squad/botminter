@@ -1,20 +1,20 @@
-# Manual test execution recipes for sync & bridge idempotency
-# Usage: just -f reports/Justfile <phase>
-# Full run: just -f reports/Justfile all
+# Exploratory test execution recipes for sync & bridge idempotency
+# Usage: just -f crates/bm/tests/exploratory/Justfile <phase>
+# Full run: just -f crates/bm/tests/exploratory/Justfile all
 
 set positional-arguments
 set dotenv-load := false
 
-BM := justfile_directory() + "/../target/debug/bm"
-TEAM := "manual-test"
+BM := justfile_directory() + "/../../target/debug/bm"
+TEAM := "exploratory-test"
 ORG := "devguyio-bot-squad"
-REPO := "manual-test-team"
+REPO := "exploratory-test-team"
 FULL_REPO := ORG + "/" + REPO
 PROFILE := "scrum-compact"
-BOARD := "Manual Test Board"
+BOARD := "Exploratory Test Board"
 TEAM_DIR := env("HOME") + "/.botminter/workspaces/" + TEAM
 TEAM_REPO := TEAM_DIR + "/team"
-REPORT := justfile_directory() + "/manual-test-report.md"
+REPORT := justfile_directory() + "/REPORT.md"
 LIMA_VM := "lima-idem-test"
 
 # ─── Helpers ────────────────────────────────────────────────────
@@ -46,7 +46,7 @@ note id desc detail:
 
 # Build bm from source
 build:
-    cd {{justfile_directory()}}/.. && just build
+    cd {{justfile_directory()}}/../../../.. && just build
 
 # Full cleanup — remove all test artifacts
 clean:
@@ -66,7 +66,7 @@ clean:
     rm -rf ~/.botminter ~/.config/botminter 2>/dev/null || true
     # Clear keyring entries
     for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing; do
-        secret-tool clear service "botminter.manual-test.tuwunel" username "$u" 2>/dev/null || true
+        secret-tool clear service "botminter.exploratory-test.tuwunel" username "$u" 2>/dev/null || true
     done
     echo "Clean."
 
@@ -77,7 +77,7 @@ init-report:
     LIMA_VERSION=$(limactl --version 2>/dev/null | head -1 || echo "unknown")
     GH_USER=$(gh api user --jq .login 2>/dev/null || echo "unknown")
     cat > "{{REPORT}}" << EOF
-    # Manual Test Report: Sync, Bridge & Lima Idempotency
+    # Exploratory Test Report: Sync, Bridge & Lima Idempotency
 
     **Date:** $(date +%Y-%m-%d)
     **Build:** $BM_VERSION (local debug)
@@ -358,9 +358,9 @@ phase-c:
     if [ -n "$ADMIN_TOKEN" ]; then pass "C7" "Admin can login to Matrix"; else fail "C7" "Admin login" "no token"; fi
 
     # C8: Room exists
-    ROOM_RESP=$(curl -sf "$MATRIX_URL/_matrix/client/v3/directory/room/%23manual-test-general:localhost" 2>/dev/null || echo '{}')
+    ROOM_RESP=$(curl -sf "$MATRIX_URL/_matrix/client/v3/directory/room/%23exploratory-test-general:localhost" 2>/dev/null || echo '{}')
     ROOM_ID=$(echo "$ROOM_RESP" | jq -r '.room_id // empty')
-    if [ -n "$ROOM_ID" ]; then pass "C8" "Room manual-test-general exists ($ROOM_ID)"; else fail "C8" "Room" "not found"; fi
+    if [ -n "$ROOM_ID" ]; then pass "C8" "Room exploratory-test-general exists ($ROOM_ID)"; else fail "C8" "Room" "not found"; fi
 
     # ── C.2: Idempotency ──
 

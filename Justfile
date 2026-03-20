@@ -45,6 +45,18 @@ e2e-verbose:
     @test -n "$TESTS_GH_ORG" || { echo "Error: TESTS_GH_ORG env var must be set"; exit 1; }
     cargo test -p bm --features e2e --test e2e -- --gh-token "$TESTS_GH_TOKEN" --gh-org "$TESTS_GH_ORG" --test-threads=1
 
+# Run exploratory tests (bridge lifecycle, workspace sync, idempotency). Requires podman, keyring, gh auth.
+exploratory-test:
+    just -f crates/bm/tests/exploratory/Justfile all-no-lima
+
+# Run exploratory tests including Lima VM boot script test (adds ~10 minutes)
+exploratory-test-full:
+    just -f crates/bm/tests/exploratory/Justfile all
+
+# Clean up exploratory test artifacts (GitHub repos, containers, local state)
+exploratory-test-clean:
+    just -f crates/bm/tests/exploratory/Justfile clean
+
 # Run clippy with warnings as errors
 clippy:
     cargo clippy -p bm -- -D warnings
