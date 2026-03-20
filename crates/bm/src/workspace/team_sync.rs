@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::brain;
 use crate::bridge::{self, Bridge, LocalCredentialStore};
 use crate::profile::{self, CodingAgentDef, ProfileManifest};
 use crate::workspace;
@@ -50,6 +51,7 @@ pub enum TeamSyncEvent {
     WorkspaceSynced { name: String, events: Vec<workspace::SyncEvent> },
     WorkspaceCreateFailed { name: String, error: String },
     RobotInjected { member: String, enabled: bool },
+    BrainPromptSurfaced { member: String },
 }
 
 // ── Sync orchestration ──────────────────────────────────────────────
@@ -166,6 +168,17 @@ pub fn sync_team_workspaces(params: &TeamSyncParams) -> Result<TeamSyncResult> {
         if let Some(ref ctx) = robot_context {
             inject_robot_for_member(&ws, member_dir_name, ctx, params, &mut events)?;
         }
+
+        // Surface brain prompt (rendered from profile template)
+        surface_brain_prompt_for_member(
+            params.team_repo,
+            &ws,
+            member_dir_name,
+            params.team_name,
+            params.github_repo,
+            params.verbose,
+            &mut events,
+        );
     }
 
     Ok(TeamSyncResult {
@@ -289,6 +302,52 @@ fn build_robot_context(
         cred_store: store,
         bridge: b,
     }))
+}
+
+fn surface_brain_prompt_for_member(
+    team_repo: &Path,
+    ws: &Path,
+    member_dir_name: &str,
+    team_name: &str,
+    github_repo: Option<&str>,
+    verbose: bool,
+    events: &mut Vec<TeamSyncEvent>,
+) {
+    let (gh_org, gh_repo_full) = github_repo
+        .and_then(brain::parse_github_repo)
+        .map(|(org, repo)| (org.to_string(), format!("{org}/{repo}")))
+        .unwrap_or_default();
+
+    let role = brain::read_member_role(team_repo, member_dir_name)
+        .unwrap_or_default();
+    let member_name = brain::read_member_name(team_repo, member_dir_name);
+
+    // Read the template from the team repo root (extracted from profile)
+    let vars = brain::BrainPromptVars {
+        member_name,
+        team_name: team_name.to_string(),
+        role,
+        gh_org,
+        gh_repo: gh_repo_full,
+    };
+
+    match brain::surface_brain_prompt(team_repo, ws, &vars) {
+        Ok(true) => {
+            if verbose {
+                events.push(TeamSyncEvent::BrainPromptSurfaced {
+                    member: member_dir_name.to_string(),
+                });
+            }
+        }
+        Ok(false) => {} // No template in profile — skip silently
+        Err(e) => {
+            tracing::warn!(
+                member = member_dir_name,
+                error = %e,
+                "Failed to surface brain prompt"
+            );
+        }
+    }
 }
 
 fn inject_robot_for_member(
