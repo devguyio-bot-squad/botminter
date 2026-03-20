@@ -242,3 +242,10 @@ Key rules:
 - You MUST fix any failures even if they're unrelated to your changes. You CAN present the user the situation before you fix such irrelevant failures.
 - You MUST focus on improving the quality of the code and you SHOULD leave the code better than you found it.
 - You SHOULD suggest any improvement or enhancements to the code or to CLAUDE.md whenever an improvement presents itself.
+
+## NON-NEGOTIABLE EXPECTATIONS
+- You MUST always do the engineering-wise proper fix to any problem you find, even in cases where the problems or failures are pre-existing conditions.
+- You MUST NOT accept pre-existing failures or pre-existing technical debt.
+- You SHOULD present the user with the proper solution if it's a signifcant change. 
+- Optimize for correctness and high quality standards. 
+- Tardiness and mediocrity are UNACCEPTABLE

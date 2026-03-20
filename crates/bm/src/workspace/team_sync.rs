@@ -227,8 +227,11 @@ fn provision_bridge(
     )
     .with_collection(params.keyring_collection.clone());
 
-    // Auto-start local bridge if stopped
-    if b.is_local() && !b.is_running() {
+    // Ensure local bridge is running before provisioning.
+    // Always call start() — it's idempotent: health-checks first and
+    // returns AlreadyRunning if healthy, or restarts if the container
+    // died (e.g., after VM reboot while state still says "running").
+    if b.is_local() {
         if which::which("just").is_err() {
             events.push(TeamSyncEvent::BridgeAutoStartSkipped {
                 reason: "'just' not found. Cannot start bridge for provisioning. \

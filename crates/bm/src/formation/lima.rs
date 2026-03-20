@@ -396,7 +396,7 @@ provision:
 
     # gh CLI (GitHub CLI)
     dnf install -y 'dnf-command(config-manager)'
-    dnf config-manager addrepo --from-repofile=https://cli.github.com/packages/rpm/gh-cli.repo
+    dnf config-manager addrepo --overwrite --from-repofile=https://cli.github.com/packages/rpm/gh-cli.repo
     dnf install -y gh
 
     # just (command runner)
@@ -522,6 +522,11 @@ mod tests {
         assert!(template.contains("command -v bm >/dev/null 2>&1"));
         assert!(template.contains("command -v ralph >/dev/null 2>&1"));
         assert!(template.contains("command -v claude >/dev/null 2>&1"));
+        // gh-cli repo add must use --overwrite to avoid failure on VM restart
+        assert!(
+            template.contains("addrepo --overwrite"),
+            "dnf config-manager addrepo must use --overwrite for idempotency"
+        );
     }
 
     #[test]

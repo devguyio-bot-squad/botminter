@@ -307,29 +307,58 @@ onboard username:
             fi
         fi
         if [ "$BOT_PASS" != "${STORED_PASS:-}" ] || [ -z "${STORED_PASS:-}" ]; then
-            # No stored password — reset via admin API
-            echo >&2 "[tuwunel-bridge] No stored password, resetting via admin API..."
-            ADMIN_LOGIN=$(curl -s -X POST \
-                -H "Content-Type: application/json" \
+            # No stored password — recover via Tuwunel admin room commands.
+            # This is a fully-managed local bridge: bm owns the server and
+            # all users, so it has full authority to reset credentials.
+            #
+            # Tuwunel exposes admin commands via the Matrix admin room
+            # (#admins:<server>), not via HTTP endpoints. The command
+            # `!admin users reset-password <username> <password>` resets
+            # the password without requiring the user's current credentials.
+            echo >&2 "[tuwunel-bridge] No stored password for ${USERNAME}, recovering via admin room..."
+
+            # Login as admin
+            ADMIN_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
                 -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
-                "${MATRIX_URL}/_matrix/client/v3/login")
+                "${MATRIX_URL}/_matrix/client/v3/login" || echo '{}')
             ADMIN_TOKEN=$(echo "$ADMIN_LOGIN" | jq -r '.access_token // empty')
             if [ -z "$ADMIN_TOKEN" ]; then
                 echo >&2 "[tuwunel-bridge] FATAL: Admin login failed, cannot reset password."
                 echo >&2 "$ADMIN_LOGIN"
                 exit 1
             fi
-            USER_ID="@${USERNAME}:${SERVER_NAME}"
-            RESET_RESP=$(curl -s -o /dev/null -w "%{http_code}" -X PUT \
-                -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-                -H "Content-Type: application/json" \
-                -d "{\"new_password\":\"${BOT_PASS}\",\"logout_devices\":false}" \
-                "${MATRIX_URL}/_synapse/admin/v1/reset_password/${USER_ID}")
-            if [ "$RESET_RESP" != "200" ]; then
-                echo >&2 "[tuwunel-bridge] FATAL: Password reset failed (HTTP ${RESET_RESP})."
+
+            # Find admin room (#admins:<server>)
+            ADMIN_ROOM_RESP=$(curl -sf \
+                "${MATRIX_URL}/_matrix/client/v3/directory/room/%23admins:${SERVER_NAME}" || echo '{}')
+            ADMIN_ROOM_ID=$(echo "$ADMIN_ROOM_RESP" | jq -r '.room_id // empty')
+            if [ -z "$ADMIN_ROOM_ID" ]; then
+                echo >&2 "[tuwunel-bridge] FATAL: Cannot find admin room #admins:${SERVER_NAME}."
                 exit 1
             fi
-            echo >&2 "[tuwunel-bridge] Password reset for ${USERNAME}."
+
+            # Reset password via admin room command
+            BOT_PASS=$(openssl rand -hex 16)
+            TXN_ID=$(date +%s%N)
+            curl -sf -X PUT \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+                -H "Content-Type: application/json" \
+                -d "{\"msgtype\":\"m.text\",\"body\":\"!admin users reset-password ${USERNAME} ${BOT_PASS}\"}" \
+                "${MATRIX_URL}/_matrix/client/v3/rooms/${ADMIN_ROOM_ID}/send/m.room.message/${TXN_ID}" >/dev/null
+            sleep 2
+
+            # Verify by logging in with the new password
+            VERIFY_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+                -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${USERNAME}\"},\"password\":\"${BOT_PASS}\"}" \
+                "${MATRIX_URL}/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+            VERIFY_TOKEN=$(echo "$VERIFY_LOGIN" | jq -r '.access_token // empty')
+            if [ -z "$VERIFY_TOKEN" ]; then
+                echo >&2 "[tuwunel-bridge] FATAL: Password reset via admin room failed."
+                echo >&2 "[tuwunel-bridge] Verify admin user is joined to #admins:${SERVER_NAME}."
+                exit 1
+            fi
+            echo >&2 "[tuwunel-bridge] Password reset for ${USERNAME} via admin room."
+
             # Store the new password
             mkdir -p "$(dirname "$PASSWORDS_FILE")"
             if [ -f "$PASSWORDS_FILE" ]; then
