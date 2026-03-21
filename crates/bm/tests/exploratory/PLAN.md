@@ -210,21 +210,76 @@ For local-only teams (no per-member GitHub repos), use `--bridge` instead.
 
 ## Phase H: Brain Lifecycle Validation (Chat-First Member)
 
-Tests the brain/multiplexer infrastructure added by the chat-first member milestone.
-These tests validate the integration layer without requiring a real ACP binary.
+Thorough tests for the brain/multiplexer infrastructure added by the chat-first member milestone.
+Covers template rendering, brain mode detection, CLI integration, state persistence, sync edge cases,
+and per-module unit test verification.
 
 **Prerequisites:** Phases B-D must run first (team init + hire + workspace sync).
 
+### H.1: Template Rendering & Content
+
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| H1 | Brain prompt surfaced during sync | `ls` workspace for `brain-prompt.md` after `bm teams sync` | `brain-prompt.md` exists with rendered template variables |
-| H2 | Brain prompt contains member identity | `grep` brain-prompt.md for member name | Contains `superman-alice` or equivalent member name |
-| H3 | Brain prompt contains team context | `grep` brain-prompt.md for team name and GitHub repo | Contains team name and org/repo references |
-| H4 | Brain mode detection — with prompt | Create `brain-prompt.md` in workspace, check `is_brain_member` behavior via `bm start` | `bm start` attempts brain launch (may fail without ACP, but detects brain mode) |
-| H5 | Brain mode detection — without prompt | Remove `brain-prompt.md`, run `bm start` | Falls back to standard ralph launch (no brain mode) |
-| H6 | State file brain_mode field | After brain mode detection, inspect `state.json` | `brain_mode: true` when brain-prompt.md present |
-| H7 | Brain prompt re-surfaced on re-sync | Modify brain-prompt.md, re-run `bm teams sync` | brain-prompt.md restored from profile template |
-| H8 | Priority queue ordering (unit-level) | Verify via cargo test that human > loop events > heartbeat | Unit tests in `brain::queue` pass |
-| H9 | Event significance filter (unit-level) | Verify via cargo test that only significant events pass filter | Unit tests in `brain::event_watcher` pass |
-| H10 | Heartbeat skip-when-pending (unit-level) | Verify via cargo test that pending flag prevents heartbeat | Unit tests in `brain::heartbeat` pass |
-| H11 | Brain status label in `bm status` | With brain_mode state, run `bm status` | Shows "brain" instead of "running" for brain-mode members |
+| H1 | Brain prompt exists after sync | Check `brain-prompt.md` in alice workspace | File exists, non-empty |
+| H2 | No unrendered template vars | `grep '{{' brain-prompt.md` | Zero matches — all 5 vars rendered |
+| H3 | Contains rendered member name | `grep -q 'alice' brain-prompt.md` | Member name present in rendered output |
+| H4 | Contains rendered team name | `grep -q 'exploratory-test' brain-prompt.md` | Team name present |
+| H5 | Contains rendered GitHub org | `grep -q 'devguyio-bot-squad' brain-prompt.md` | Org name present |
+| H6 | Contains rendered GitHub repo | `grep -q 'exploratory-test-team' brain-prompt.md` | Repo name present |
+| H7 | Contains expected sections | `grep` for Identity, Board Awareness, Work Loop, Human Interaction, Dual-Channel | All major sections present |
+
+### H.2: Per-Member Differentiation
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| H8 | Bob also has brain-prompt.md | Check file exists in bob workspace | File present |
+| H9 | Alice and bob differ | `diff` alice vs bob brain-prompt.md | Files differ (different member names) |
+| H10 | Bob contains bob's name | `grep -q 'bob' bob/brain-prompt.md` | bob's name present, not alice |
+
+### H.3: Brain Mode Detection
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| H11 | bm start detects brain mode | Run `bm start`, check output for brain references | Output mentions "brain" for members with brain-prompt.md |
+| H12 | State file has brain_mode=true | After start, inspect `state.json` for `brain_mode` | `brain_mode: true` present |
+| H13 | Remove brain-prompt.md disables brain | Remove file, run `bm start`, check state | No `brain_mode: true` or falls back to ralph |
+| H14 | Restore brain-prompt.md and stop | Restore file via re-sync, stop all | Clean state after stop |
+
+### H.4: Brain-Run Command
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| H15 | brain-run hidden command exists | `bm brain-run --help` | Exits 0, shows workspace/system-prompt args |
+| H16 | brain-run with missing args | `bm brain-run` (no args) | Non-zero exit, no panic/crash |
+| H17 | brain-run with bad workspace | `bm brain-run --workspace /nonexistent --system-prompt /nonexistent` | Non-zero exit, error message (no panic) |
+
+### H.5: State Persistence & Status Display
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| H18 | Mock state: brain label | Write state.json with `brain_mode: true`, run `bm status` | Shows "brain" in status table |
+| H19 | Mock state: running label | Write state.json with `brain_mode: false`, run `bm status` | Shows "running" (not "brain") |
+| H20 | Backward compat: missing brain_mode | Write state.json without `brain_mode` field | `bm status` works, shows "running" |
+| H21 | Members show: brain label | With brain_mode state, run `bm members show` | Shows "brain" status |
+
+### H.6: Sync Edge Cases
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| H22 | Modified brain-prompt.md restored | Overwrite with junk, re-sync | Original content restored from template |
+| H23 | Deleted brain-prompt.md restored | Delete file, re-sync | File recreated from template |
+| H24 | Content idempotent across syncs | Sync twice, diff results | Identical content after both syncs |
+| H25 | Verbose sync shows BrainPromptSurfaced | Run `bm teams sync -v` | Output contains brain prompt surfacing message |
+
+### H.7: Unit Test Verification (per-module)
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| H26 | brain::queue tests | `cargo test -p bm brain::queue` | All 8 pass |
+| H27 | brain::types tests | `cargo test -p bm brain::types` | All 7 pass |
+| H28 | brain::multiplexer tests | `cargo test -p bm brain::multiplexer` | All 8 pass |
+| H29 | brain::event_watcher tests | `cargo test -p bm brain::event_watcher` | All 24 pass |
+| H30 | brain::heartbeat tests | `cargo test -p bm brain::heartbeat` | All 14 pass |
+| H31 | brain::prompt_template tests | `cargo test -p bm brain::prompt_template` | All 16 pass |
+| H32 | formation::launch brain tests | `cargo test -p bm formation::launch::tests::is_brain` | Both pass |
+| H33 | state brain_mode tests | `cargo test -p bm state::mod::tests::brain` | backward compat + label tests pass |

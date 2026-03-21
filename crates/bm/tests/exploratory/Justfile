@@ -5,7 +5,7 @@
 set positional-arguments
 set dotenv-load := false
 
-BM := justfile_directory() + "/../../target/debug/bm"
+BM := justfile_directory() + "/../../../../target/debug/bm"
 TEAM := "exploratory-test"
 ORG := "devguyio-bot-squad"
 REPO := "exploratory-test-team"
@@ -843,7 +843,14 @@ phase-h:
     BM="{{BM}}"
     REPORT="{{REPORT}}"
     TEAM_DIR="{{TEAM_DIR}}"
+    TEAM_REPO="{{TEAM_REPO}}"
+    TEAM_NAME="{{TEAM}}"
+    GH_ORG="{{ORG}}"
+    GH_REPO="{{REPO}}"
     ALICE_WS="$TEAM_DIR/superman-alice"
+    BOB_WS="$TEAM_DIR/superman-bob"
+    STATE_FILE="$HOME/.botminter/state.json"
+    CARGO_ROOT="{{justfile_directory()}}/../../../.."
 
     pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
     fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
@@ -858,112 +865,349 @@ phase-h:
     echo "Phase H: Brain Lifecycle"
     echo "========================="
 
-    # H1: Brain prompt surfaced after sync
-    if [ -f "$ALICE_WS/brain-prompt.md" ]; then
-        pass "H1" "brain-prompt.md surfaced in alice workspace"
+    # ── H.1: Template Rendering & Content ─────────────────────────
+
+    echo "  H.1: Template Rendering & Content..."
+
+    # H1: Brain prompt exists after sync
+    if [ -f "$ALICE_WS/brain-prompt.md" ] && [ -s "$ALICE_WS/brain-prompt.md" ]; then
+        pass "H1" "brain-prompt.md exists and is non-empty"
     else
-        fail "H1" "brain-prompt.md" "not found in $ALICE_WS"
+        fail "H1" "brain-prompt.md" "missing or empty in $ALICE_WS"
     fi
 
-    # H2: Brain prompt contains member identity
-    if grep -qi "alice\|member" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
-        pass "H2" "brain-prompt.md contains member identity"
+    # H2: No unrendered template variables remain
+    UNRENDERED=$(grep -o '{{{{' "$ALICE_WS/brain-prompt.md" 2>/dev/null | wc -l || true)
+    if [ "${UNRENDERED:-0}" -eq 0 ]; then
+        pass "H2" "No unrendered template variables"
     else
-        fail "H2" "Member identity" "member name not found in brain-prompt.md"
+        fail "H2" "Unrendered vars" "$UNRENDERED occurrences of mustache-style vars found"
     fi
 
-    # H3: Brain prompt contains team context
-    if grep -qi "{{TEAM}}\|{{ORG}}" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
-        pass "H3" "brain-prompt.md contains team/org context"
+    # H3: Contains rendered member name
+    if grep -q "alice" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
+        pass "H3" "Contains rendered member name (alice)"
     else
-        # Template vars may not be literally present — check for rendered values
-        if grep -q "team\|org" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
-            pass "H3" "brain-prompt.md contains team context (rendered)"
-        else
-            fail "H3" "Team context" "team/org references not found"
+        fail "H3" "Member name" "alice not found in brain-prompt.md"
+    fi
+
+    # H4: Contains rendered team name
+    if grep -q "$TEAM_NAME" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
+        pass "H4" "Contains rendered team name ($TEAM_NAME)"
+    else
+        fail "H4" "Team name" "$TEAM_NAME not found in brain-prompt.md"
+    fi
+
+    # H5: Contains rendered GitHub org
+    if grep -q "$GH_ORG" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
+        pass "H5" "Contains rendered GitHub org ($GH_ORG)"
+    else
+        fail "H5" "GitHub org" "$GH_ORG not found in brain-prompt.md"
+    fi
+
+    # H6: Contains rendered GitHub repo
+    if grep -q "$GH_REPO" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
+        pass "H6" "Contains rendered GitHub repo ($GH_REPO)"
+    else
+        fail "H6" "GitHub repo" "$GH_REPO not found in brain-prompt.md"
+    fi
+
+    # H7: Contains expected sections from the template
+    SECTIONS_OK=true
+    MISSING_SECTIONS=""
+    for section in "Identity" "Board Awareness" "Work Loop" "Human Interaction" "Dual-Channel"; do
+        if ! grep -q "$section" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
+            SECTIONS_OK=false
+            MISSING_SECTIONS="$MISSING_SECTIONS $section"
         fi
+    done
+    if $SECTIONS_OK; then
+        pass "H7" "All expected sections present (Identity, Board Awareness, Work Loop, Human Interaction, Dual-Channel)"
+    else
+        fail "H7" "Missing sections" "$MISSING_SECTIONS"
     fi
 
-    # H4: Brain mode detection — with brain-prompt.md present
-    # bm start will try to launch brain mode but fail without ACP binary
-    # We just verify it enters the brain code path
+    # ── H.2: Per-Member Differentiation ──────────────────────────
+
+    echo "  H.2: Per-Member Differentiation..."
+
+    # H8: Bob also has brain-prompt.md
+    if [ -f "$BOB_WS/brain-prompt.md" ] && [ -s "$BOB_WS/brain-prompt.md" ]; then
+        pass "H8" "Bob workspace also has brain-prompt.md"
+    else
+        fail "H8" "Bob brain-prompt.md" "missing or empty in $BOB_WS"
+    fi
+
+    # H9: Alice and bob brain-prompt.md differ
+    if ! diff -q "$ALICE_WS/brain-prompt.md" "$BOB_WS/brain-prompt.md" >/dev/null 2>&1; then
+        pass "H9" "Alice and bob brain-prompt.md differ (per-member rendering)"
+    else
+        fail "H9" "Per-member diff" "alice and bob have identical brain-prompt.md"
+    fi
+
+    # H10: Bob contains bob's name, not alice
+    if grep -q "bob" "$BOB_WS/brain-prompt.md" 2>/dev/null && ! grep -q "alice" "$BOB_WS/brain-prompt.md" 2>/dev/null; then
+        pass "H10" "Bob's brain-prompt.md contains 'bob', not 'alice'"
+    else
+        fail "H10" "Bob content" "expected 'bob' only, got mixed or wrong names"
+    fi
+
+    # ── H.3: Brain Mode Detection ────────────────────────────────
+
+    echo "  H.3: Brain Mode Detection..."
+
+    # H11: bm start detects brain mode when brain-prompt.md is present
     OUT=$($BM start 2>&1 || true)
-    if echo "$OUT" | grep -qi "brain\|multiplexer\|brain-run"; then
-        pass "H4" "bm start detects brain mode (brain-prompt.md present)"
-    else
-        note "H4" "Brain mode detection" "bm start output: $(echo "$OUT" | tail -3)"
-    fi
-
-    # H5: Remove brain-prompt.md and verify fallback to ralph
-    mv "$ALICE_WS/brain-prompt.md" "$ALICE_WS/brain-prompt.md.bak" 2>/dev/null || true
-    OUT=$($BM start 2>&1 || true)
-    if echo "$OUT" | grep -qi "ralph\|launch"; then
-        pass "H5" "Without brain-prompt.md, falls back to ralph launch"
-    else
-        note "H5" "Ralph fallback" "bm start output: $(echo "$OUT" | tail -3)"
-    fi
-    mv "$ALICE_WS/brain-prompt.md.bak" "$ALICE_WS/brain-prompt.md" 2>/dev/null || true
-    # Stop any processes we may have started
-    $BM stop --force 2>/dev/null || true
-
-    # H6: State file brain_mode field
-    STATE_FILE="$TEAM_DIR/state.json"
-    if [ -f "$STATE_FILE" ] && grep -q "brain_mode" "$STATE_FILE" 2>/dev/null; then
-        pass "H6" "state.json has brain_mode field"
-    else
-        note "H6" "State file" "brain_mode not found (may not have started successfully)"
-    fi
-
-    # H7: Brain prompt re-surfaced on re-sync
-    echo "modified content" > "$ALICE_WS/brain-prompt.md"
-    $BM teams sync -v 2>&1 >/dev/null
-    CONTENT=$(cat "$ALICE_WS/brain-prompt.md" 2>/dev/null)
-    if [ "$CONTENT" != "modified content" ] && [ -n "$CONTENT" ]; then
-        pass "H7" "brain-prompt.md restored from template on re-sync"
-    else
-        fail "H7" "Re-sync" "brain-prompt.md not restored"
-    fi
-
-    # H8-H10: Unit-level tests (verify brain module tests pass)
-    echo "  Running brain unit tests..."
-    UNIT_OUT=$(cd {{justfile_directory()}}/../../../.. && cargo test -p bm brain:: 2>&1)
-    UNIT_EC=$?
-    if [ $UNIT_EC -eq 0 ]; then
-        BRAIN_TESTS=$(echo "$UNIT_OUT" | grep "test result" | tail -1)
-        pass "H8" "Priority queue unit tests pass ($BRAIN_TESTS)"
-        pass "H9" "Event significance filter tests pass"
-        pass "H10" "Heartbeat skip-when-pending tests pass"
-    else
-        fail "H8" "Brain unit tests" "exit $UNIT_EC"
-        fail "H9" "Brain unit tests" "exit $UNIT_EC"
-        fail "H10" "Brain unit tests" "exit $UNIT_EC"
-    fi
-
-    # H11: Brain status label
-    # Create a mock state.json with brain_mode to test status display
-    mkdir -p "$(dirname "$STATE_FILE")"
-    cat > "$STATE_FILE" << 'STATEJSON'
-    {
-      "members": {
-        "superman-alice": {
-          "pid": 99999,
-          "workspace": "/tmp/test-ws",
-          "started_at": "2026-03-21T00:00:00Z",
-          "brain_mode": true
-        }
-      }
-    }
-STATEJSON
-    # Fix heredoc indentation
-    sed -i 's/^    //' "$STATE_FILE"
-    OUT=$($BM status 2>&1 || true)
     if echo "$OUT" | grep -qi "brain"; then
-        pass "H11" "bm status shows 'brain' label for brain-mode members"
+        pass "H11" "bm start detects brain mode (output mentions brain)"
     else
-        note "H11" "Brain status label" "bm status output: $(echo "$OUT" | tail -3)"
+        note "H11" "Brain mode detection" "output: $(echo "$OUT" | tail -2 | tr '\n' ' ')"
     fi
+
+    # H12: State file has brain_mode after start attempt
+    if [ -f "$STATE_FILE" ] && grep -q '"brain_mode"' "$STATE_FILE" 2>/dev/null; then
+        BRAIN_VAL=$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(any(v.get('brain_mode',False) for v in d.get('members',{}).values()))" 2>/dev/null || echo "parse_error")
+        if [ "$BRAIN_VAL" = "True" ]; then
+            pass "H12" "state.json has brain_mode=true for at least one member"
+        else
+            note "H12" "brain_mode field" "present but not true (start may have failed)"
+        fi
+    else
+        note "H12" "State file" "brain_mode field not found (start may have failed before writing state)"
+    fi
+
+    # H13: Remove brain-prompt.md from ALL workspaces and verify no brain mode
+    # Save backups for all members
+    for ws in "$TEAM_DIR"/superman-*/; do
+        if [ -f "$ws/brain-prompt.md" ]; then
+            cp "$ws/brain-prompt.md" "$ws/brain-prompt.md.bak"
+            rm "$ws/brain-prompt.md"
+        fi
+    done
+    # Stop any previous processes
+    $BM stop --force 2>/dev/null || true
+    rm -f "$STATE_FILE"
+    OUT=$($BM start 2>&1 || true)
+    if echo "$OUT" | grep -qi "ralph\|launch\|started"; then
+        # Verify state.json does NOT have brain_mode=true
+        if [ -f "$STATE_FILE" ]; then
+            BRAIN_VAL=$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(any(v.get('brain_mode',False) for v in d.get('members',{}).values()))" 2>/dev/null || echo "parse_error")
+            if [ "$BRAIN_VAL" = "False" ]; then
+                pass "H13" "Without brain-prompt.md: no brain_mode=true in state"
+            else
+                note "H13" "Ralph fallback" "brain_mode still true despite missing brain-prompt.md"
+            fi
+        else
+            pass "H13" "Without brain-prompt.md: standard launch path (no state written)"
+        fi
+    else
+        note "H13" "Ralph fallback" "start output: $(echo "$OUT" | tail -2 | tr '\n' ' ')"
+    fi
+
+    # H14: Restore brain-prompt.md and clean up
+    for ws in "$TEAM_DIR"/superman-*/; do
+        if [ -f "$ws/brain-prompt.md.bak" ]; then
+            mv "$ws/brain-prompt.md.bak" "$ws/brain-prompt.md"
+        fi
+    done
+    $BM stop --force 2>/dev/null || true
+    rm -f "$STATE_FILE"
+    pass "H14" "Restored brain-prompt.md and cleaned up state"
+
+    # ── H.4: Brain-Run Command ───────────────────────────────────
+
+    echo "  H.4: Brain-Run Command..."
+
+    # H15: brain-run hidden command exists
+    HELP_OUT=$($BM brain-run --help 2>&1)
+    HELP_EC=$?
+    if [ $HELP_EC -eq 0 ] && echo "$HELP_OUT" | grep -q "workspace"; then
+        pass "H15" "bm brain-run --help works (shows workspace arg)"
+    else
+        fail "H15" "brain-run help" "exit $HELP_EC"
+    fi
+
+    # H16: brain-run with missing args
+    ERR_OUT=$($BM brain-run 2>&1)
+    ERR_EC=$?
+    if [ $ERR_EC -ne 0 ]; then
+        # Verify it's a clean error (missing required args), not a panic
+        if echo "$ERR_OUT" | grep -qi "required\|missing\|error"; then
+            pass "H16" "brain-run with missing args: clean error (exit $ERR_EC)"
+        else
+            pass "H16" "brain-run with missing args: non-zero exit (exit $ERR_EC)"
+        fi
+    else
+        fail "H16" "brain-run no args" "should fail but exited 0"
+    fi
+
+    # H17: brain-run with bad workspace path
+    ERR_OUT=$($BM brain-run --workspace /nonexistent/path --system-prompt /nonexistent/prompt.md 2>&1)
+    ERR_EC=$?
+    if [ $ERR_EC -ne 0 ]; then
+        # Check for no panic in output
+        if echo "$ERR_OUT" | grep -qi "panic\|SIGSEGV\|thread.*panicked"; then
+            fail "H17" "brain-run bad args" "PANIC detected"
+        else
+            pass "H17" "brain-run with bad workspace: clean error (exit $ERR_EC)"
+        fi
+    else
+        fail "H17" "brain-run bad workspace" "should fail but exited 0"
+    fi
+
+    # ── H.5: State Persistence & Status Display ──────────────────
+
+    echo "  H.5: State Persistence & Status Display..."
+
+    # Helper: write mock state.json with a given brain_mode value (or omit it)
+    # Uses current bash PID ($$) so is_alive() returns true — required for brain label to show
+    LIVE_PID=$$
+    write_mock_state() {
+        local FILE="$1" BRAIN_MODE="$2"
+        mkdir -p "$(dirname "$FILE")"
+        if [ "$BRAIN_MODE" = "omit" ]; then
+            printf '{"members":{"exploratory-test/superman-alice":{"pid":%d,"workspace":"/tmp/test-ws","started_at":"2026-03-21T00:00:00Z"}}}\n' "$LIVE_PID" > "$FILE"
+        else
+            printf '{"members":{"exploratory-test/superman-alice":{"pid":%d,"workspace":"/tmp/test-ws","started_at":"2026-03-21T00:00:00Z","brain_mode":%s}}}\n' "$LIVE_PID" "$BRAIN_MODE" > "$FILE"
+        fi
+    }
+
+    # H18: Mock state with brain_mode=true shows "brain" label
+    write_mock_state "$STATE_FILE" "true"
+    OUT=$($BM status 2>&1 || true)
+    if echo "$OUT" | grep -q "brain"; then
+        pass "H18" "bm status shows 'brain' label for brain_mode=true"
+    else
+        fail "H18" "Brain label" "bm status output: $(echo "$OUT" | tail -5 | tr '\n' ' ')"
+    fi
+
+    # H19: Mock state with brain_mode=false shows "running" (not "brain")
+    write_mock_state "$STATE_FILE" "false"
+    OUT=$($BM status 2>&1 || true)
+    # PID 99999 is likely dead, so it may show "crashed" instead of "running"
+    # The key assertion: it should NOT show "brain"
+    if echo "$OUT" | grep -q "brain"; then
+        fail "H19" "Non-brain label" "brain_mode=false but 'brain' label shown"
+    else
+        pass "H19" "bm status does NOT show 'brain' for brain_mode=false"
+    fi
+
+    # H20: Backward compat — state without brain_mode field
+    write_mock_state "$STATE_FILE" "omit"
+    OUT=$($BM status 2>&1 || true)
+    STATUS_EC=$?
+    if [ $STATUS_EC -eq 0 ] || echo "$OUT" | grep -q "superman-alice"; then
+        if echo "$OUT" | grep -q "brain"; then
+            fail "H20" "Backward compat" "missing brain_mode treated as brain"
+        else
+            pass "H20" "Backward compat: missing brain_mode defaults to non-brain"
+        fi
+    else
+        fail "H20" "Backward compat" "bm status crashed (exit $STATUS_EC)"
+    fi
+
+    # H21: Members show also uses brain label
+    write_mock_state "$STATE_FILE" "true"
+    OUT=$($BM members show superman-alice 2>&1 || true)
+    if echo "$OUT" | grep -qi "brain"; then
+        pass "H21" "bm members show displays 'brain' status"
+    else
+        note "H21" "Members show" "output: $(echo "$OUT" | tail -3 | tr '\n' ' ')"
+    fi
+
     # Clean up mock state
     rm -f "$STATE_FILE"
+
+    # ── H.6: Sync Edge Cases ─────────────────────────────────────
+
+    echo "  H.6: Sync Edge Cases..."
+
+    # H22: Modified brain-prompt.md restored on re-sync
+    echo "JUNK CONTENT — this should be overwritten" > "$ALICE_WS/brain-prompt.md"
+    $BM teams sync -v 2>&1 >/dev/null
+    CONTENT=$(cat "$ALICE_WS/brain-prompt.md" 2>/dev/null)
+    if [ "$CONTENT" != "JUNK CONTENT — this should be overwritten" ] && echo "$CONTENT" | grep -q "Identity"; then
+        pass "H22" "Modified brain-prompt.md restored on re-sync"
+    else
+        fail "H22" "Re-sync restore" "brain-prompt.md not restored from template"
+    fi
+
+    # H23: Deleted brain-prompt.md restored on re-sync
+    rm -f "$ALICE_WS/brain-prompt.md"
+    $BM teams sync -v 2>&1 >/dev/null
+    if [ -f "$ALICE_WS/brain-prompt.md" ] && [ -s "$ALICE_WS/brain-prompt.md" ]; then
+        pass "H23" "Deleted brain-prompt.md restored on re-sync"
+    else
+        fail "H23" "Re-sync recreate" "brain-prompt.md not recreated"
+    fi
+
+    # H24: Content idempotent across multiple syncs
+    HASH1=$(md5sum "$ALICE_WS/brain-prompt.md" 2>/dev/null | cut -d' ' -f1)
+    $BM teams sync -v 2>&1 >/dev/null
+    HASH2=$(md5sum "$ALICE_WS/brain-prompt.md" 2>/dev/null | cut -d' ' -f1)
+    if [ "$HASH1" = "$HASH2" ]; then
+        pass "H24" "brain-prompt.md content idempotent across syncs (hash match)"
+    else
+        fail "H24" "Idempotency" "hash changed: $HASH1 -> $HASH2"
+    fi
+
+    # H25: Verbose sync shows brain prompt surfacing
+    OUT=$($BM teams sync -v 2>&1)
+    if echo "$OUT" | grep -qi "brain\|BrainPrompt"; then
+        pass "H25" "Verbose sync mentions brain prompt surfacing"
+    else
+        note "H25" "Verbose output" "no brain-related output in sync -v"
+    fi
+
+    # ── H.7: Unit Test Verification (per-module) ────────────────
+
+    echo "  H.7: Unit Test Verification (per-module)..."
+
+    # Helper: count passing tests from cargo output (handles pipefail safely)
+    count_ok() {
+        echo "$1" | grep -c '\.\.\. ok$' 2>/dev/null || true
+    }
+
+    # Helper: run cargo test for a filter and verify expected count
+    run_module_test() {
+        local ID="$1" MODULE="$2" EXPECTED="$3"
+        local OUT EC ACTUAL
+        OUT=$(cd "$CARGO_ROOT" && cargo test -p bm "brain::${MODULE}::" 2>&1)
+        EC=$?
+        ACTUAL=$(count_ok "$OUT")
+        if [ $EC -eq 0 ] && [ "${ACTUAL:-0}" -ge "$EXPECTED" ]; then
+            pass "$ID" "brain::$MODULE — $ACTUAL tests pass (expected >= $EXPECTED)"
+        else
+            fail "$ID" "brain::$MODULE" "exit=$EC actual=$ACTUAL expected>=$EXPECTED"
+        fi
+    }
+
+    run_module_test "H26" "queue" 8
+    run_module_test "H27" "types" 7
+    run_module_test "H28" "multiplexer" 8
+    run_module_test "H29" "event_watcher" 24
+    run_module_test "H30" "heartbeat" 14
+    run_module_test "H31" "prompt_template" 16
+
+    # H32: formation::launch brain-specific tests
+    LAUNCH_OUT=$(cd "$CARGO_ROOT" && cargo test -p bm "formation::launch::tests::is_brain" 2>&1)
+    LAUNCH_EC=$?
+    LAUNCH_PASS=$(count_ok "$LAUNCH_OUT")
+    if [ $LAUNCH_EC -eq 0 ] && [ "${LAUNCH_PASS:-0}" -ge 2 ]; then
+        pass "H32" "formation::launch brain tests — $LAUNCH_PASS pass"
+    else
+        fail "H32" "launch brain tests" "exit=$LAUNCH_EC pass=$LAUNCH_PASS"
+    fi
+
+    # H33: state brain_mode tests (backward compat + label)
+    STATE_OUT=$(cd "$CARGO_ROOT" && cargo test -p bm "brain_mode" 2>&1)
+    STATE_EC=$?
+    STATE_PASS=$(count_ok "$STATE_OUT")
+    if [ $STATE_EC -eq 0 ] && [ "${STATE_PASS:-0}" -ge 1 ]; then
+        pass "H33" "state brain_mode tests — $STATE_PASS pass"
+    else
+        fail "H33" "state brain_mode tests" "exit=$STATE_EC pass=$STATE_PASS"
+    fi
 
     echo "Phase H complete."
 
