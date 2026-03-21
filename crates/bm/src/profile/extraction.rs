@@ -182,6 +182,7 @@ mod tests {
         assert!(output.path().join("botminter.yml").exists());
         assert!(output.path().join("knowledge").is_dir());
         assert!(output.path().join("invariants").is_dir());
+        assert!(output.path().join("agreements").is_dir());
         assert!(output.path().join("coding-agent").is_dir());
         assert!(!output.path().join("roles").exists());
         assert!(!output.path().join(".schema").exists());
@@ -313,6 +314,90 @@ mod tests {
         let yaml = parsed.unwrap();
         let backend = yaml.get("cli").and_then(|c: &serde_yml::Value| c.get("backend")).and_then(|b: &serde_yml::Value| b.as_str());
         assert_eq!(backend, Some("claude"), "Extracted ralph.yml should have cli.backend: claude");
+    }
+
+    #[test]
+    fn extract_profile_copies_agreements_directory() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let output = tempfile::tempdir().unwrap();
+            extract_profile_from(&base, &profile, output.path(), &claude_code_agent()).unwrap();
+
+            assert!(output.path().join("agreements").is_dir(), "{profile}: agreements/ should exist");
+            assert!(output.path().join("agreements/decisions").is_dir(), "{profile}: agreements/decisions/ should exist");
+            assert!(output.path().join("agreements/retros").is_dir(), "{profile}: agreements/retros/ should exist");
+            assert!(output.path().join("agreements/norms").is_dir(), "{profile}: agreements/norms/ should exist");
+        }
+    }
+
+    #[test]
+    fn extract_profile_agreements_has_gitkeep() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let output = tempfile::tempdir().unwrap();
+            extract_profile_from(&base, &profile, output.path(), &claude_code_agent()).unwrap();
+
+            assert!(output.path().join("agreements/decisions/.gitkeep").exists(), "{profile}: decisions/.gitkeep should exist");
+            assert!(output.path().join("agreements/retros/.gitkeep").exists(), "{profile}: retros/.gitkeep should exist");
+            assert!(output.path().join("agreements/norms/.gitkeep").exists(), "{profile}: norms/.gitkeep should exist");
+        }
+    }
+
+    #[test]
+    fn extract_profile_includes_agreements_knowledge() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let output = tempfile::tempdir().unwrap();
+            extract_profile_from(&base, &profile, output.path(), &claude_code_agent()).unwrap();
+
+            let knowledge_path = output.path().join("knowledge/team-agreements.md");
+            assert!(knowledge_path.exists(), "{profile}: knowledge/team-agreements.md should exist");
+
+            let content = std::fs::read_to_string(&knowledge_path).unwrap();
+            assert!(content.contains("decisions/"), "{profile}: should document decisions/ subdir");
+            assert!(content.contains("retros/"), "{profile}: should document retros/ subdir");
+            assert!(content.contains("norms/"), "{profile}: should document norms/ subdir");
+        }
+    }
+
+    #[test]
+    fn knowledge_team_agreements_documents_format() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let output = tempfile::tempdir().unwrap();
+            extract_profile_from(&base, &profile, output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(output.path().join("knowledge/team-agreements.md")).unwrap();
+            // Verify frontmatter fields are documented
+            assert!(content.contains("id"), "{profile}: should document id field");
+            assert!(content.contains("type"), "{profile}: should document type field");
+            assert!(content.contains("status"), "{profile}: should document status field");
+            assert!(content.contains("date"), "{profile}: should document date field");
+            assert!(content.contains("participants"), "{profile}: should document participants field");
+            // Verify lifecycle states
+            assert!(content.contains("proposed"), "{profile}: should document proposed status");
+            assert!(content.contains("accepted"), "{profile}: should document accepted status");
+            assert!(content.contains("superseded"), "{profile}: should document superseded status");
+        }
+    }
+
+    #[test]
+    fn process_md_references_agreements() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let output = tempfile::tempdir().unwrap();
+            extract_profile_from(&base, &profile, output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(output.path().join("PROCESS.md")).unwrap();
+            let lower = content.to_lowercase();
+            assert!(lower.contains("agreements"), "{profile}: PROCESS.md should reference agreements");
+            assert!(lower.contains("team agreements"), "{profile}: PROCESS.md should reference team agreements convention");
+        }
     }
 
     #[test]
