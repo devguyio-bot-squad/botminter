@@ -262,12 +262,16 @@ are running. The test polls for brain responses to prove autonomous behavior.
 
 **Integrated journeys covered** (per `exploratory-test-user-journey.md` and `exploratory-test-single-journey-smell.md`):
 
-1. **Happy path:** bm start → send messages → poll for brain response → bm stop (H25-H33)
-2. **Edge case:** Send malformed/empty message while brain running → verify brain survives (H31)
-3. **Cross-member (while brain alive):** Alice sends message while brain running → bob verifies → brain alive (H34-H35)
-4. **Recovery (fully integrated):** bm stop → bm start → send message → poll for brain response → bm stop (H38-H41)
+1. **Interactive session** (H25-H37): bm start → greeting → work request → follow-up (multi-turn) →
+   malformed input (error handling) → cross-member messaging (alice sends, bob sees) → brain survives
+   all interaction → bm stop. This single-session journey proves the brain handles diverse interaction
+   patterns within one lifecycle, reflecting how a real user interacts during a work session.
+2. **Recovery** (H38-H41): bm stop → bm start → send message → poll for brain response → bm stop.
+   Independent lifecycle that proves the system recovers and the brain responds after restart.
 
-Each integrated journey crosses all subsystems: CLI (start/stop), bridge (Matrix), brain (response).
+Journey categories spanned: interaction variations (single question, multi-turn, cross-member),
+lifecycle variations (start/stop, restart), error handling (malformed input), recovery (restart + response).
+Each journey crosses all subsystems: CLI (start/stop), bridge (Matrix), brain (response polling).
 
 **Prerequisites:** Phases B-E must run first (team init + hire + bridge + workspace sync).
 
