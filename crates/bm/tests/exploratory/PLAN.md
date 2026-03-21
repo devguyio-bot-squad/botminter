@@ -266,12 +266,21 @@ are running. The test polls for brain responses to prove autonomous behavior.
    malformed input (error handling) → cross-member messaging (alice sends, bob sees) → brain survives
    all interaction → bm stop. This single-session journey proves the brain handles diverse interaction
    patterns within one lifecycle, reflecting how a real user interacts during a work session.
-2. **Recovery** (H38-H41): bm stop → bm start → send message → poll for brain response → bm stop.
+   - H26 validates the brain process IS `bm brain-run` / `claude-code-acp-rs` (not just any PID)
+   - H32 validates the brain response content is meaningful (operational indicators checked)
+   - H29b validates the brain response addressed the work request (not just generic chat)
+2. **Recovery** (H38-H41): bm stop → bm start → send message → poll for NEW brain response → bm stop.
    Independent lifecycle that proves the system recovers and the brain responds after restart.
+   Uses pre-recovery baseline count to prevent false positives from stale responses.
+3. **Task execution** (H46-H51): Create GitHub issue → bm start → ask brain to check board →
+   poll for brain response mentioning the issue/board → verify brain survived → bm stop → close issue.
+   This proves the brain does meaningful work — not just responds to chat, but engages with the
+   project board, which is the core value proposition of brain-mode members.
 
 Journey categories spanned: interaction variations (single question, multi-turn, cross-member),
-lifecycle variations (start/stop, restart), error handling (malformed input), recovery (restart + response).
-Each journey crosses all subsystems: CLI (start/stop), bridge (Matrix), brain (response polling).
+lifecycle variations (start/stop, restart), error handling (malformed input), recovery (restart + response),
+task execution (board scanning, issue discovery).
+Each journey crosses all subsystems: CLI (start/stop), bridge (Matrix), brain (response polling), GitHub (board).
 
 **Prerequisites:** Phases B-E must run first (team init + hire + bridge + workspace sync).
 
@@ -284,13 +293,14 @@ Each journey crosses all subsystems: CLI (start/stop), bridge (Matrix), brain (r
 | H23 | Room resolution | `curl` room alias API | Room ID returned for team general room |
 | H24 | Clean state before lifecycle | `bm stop --force`, rm state.json | Clean slate |
 | H25 | Start brain members | `bm start` | Brain mode detected in output |
-| H26 | Brain process alive | Check PID from state.json | Process running (or NOTE if ACP auth fails) |
+| H26 | Brain process verified | Check PID from state.json + validate process command is brain-run/acp | Process running AND command contains brain-run or claude-code-acp-rs |
 | H27 | Status shows brain label | `bm status` | "brain" label shown during lifecycle |
 | H28 | Send greeting while brain running | `curl` PUT room/send as admin | Message delivered to room with brain alive |
 | H29 | Send work request while brain running | `curl` PUT room/send as admin | Message delivered to room |
 | H30 | Send follow-up question | `curl` PUT room/send as admin | Multi-turn conversation simulated |
 | H31 | Edge case: malformed message | Send empty-body + unicode garbage via Matrix while brain running | Brain process survives (no crash) |
-| H32 | Poll for brain response (autonomy proof) | Poll room for messages from brain identity (30s) | Brain responds autonomously (or NOTE if pipeline not wired) |
+| H32 | Poll for brain response (autonomy proof) | Poll room for messages from brain identity (30s), validate content is meaningful | Brain responds with operational content (or NOTE if pipeline not wired) |
+| H29b | Work request response check | Check brain responses for work-request-related content (project, status, tools) | Brain response addresses the work request (or NOTE) |
 | H33 | User messages visible in history | `curl` GET room/messages | All user messages visible |
 | H34 | Cross-member while brain alive | Alice sends message while brain running, bob verifies | Bob sees alice's message with brain process active |
 | H35 | Brain survived all interaction | Check brain PID still alive after normal + malformed + cross-member messages | Process stable during chat |
@@ -303,4 +313,19 @@ Each journey crosses all subsystems: CLI (start/stop), bridge (Matrix), brain (r
 | H42 | Status inquiry after lifecycle | Send message to room post-lifecycle | Message sent successfully |
 | H43 | Message persistence (incl. recovery + cross-member) | Poll room history for all messages | All messages persist including recovery and cross-member |
 | H44 | Multi-member visibility | Login as bob, poll room | Bob sees all messages |
-| H45 | Cleanup artifacts | Stop, rm state | Clean state |
+
+### H.6: Task Execution Journey
+
+The most important journey — validates the brain does meaningful work, not just chat.
+Creates a real GitHub issue, starts the brain, asks it to check the board, and validates
+the brain acknowledges the issue/board in its response.
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| H46 | Create GitHub issue for brain | `gh issue create` on team repo | Issue created successfully |
+| H47 | Start brain for task execution | `bm start` + verify brain PID alive | Brain running (or NOTE if ACP auth fails) |
+| H48 | Ask brain to check board | Send Matrix message requesting board check mentioning the issue | Message delivered |
+| H49 | Poll for board-aware response | Poll room for brain response mentioning board/issue/dependency (60s) | Brain acknowledges board/issue (or NOTE) |
+| H50 | Brain survived task execution | Check brain PID still alive | Process stable after task request |
+| H51 | Task journey cleanup | `bm stop`, close GitHub issue | Clean state |
+| H52 | Final cleanup | Stop all, rm state | All artifacts removed |

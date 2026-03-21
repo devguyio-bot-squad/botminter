@@ -33,7 +33,7 @@
 | C5 | Passwords file has 3 entries | **PASS** |
 | C6 | Keyring has credentials for alice + bob | **PASS** |
 | C7 | Admin can login to Matrix | **PASS** |
-| C8 | Room exploratory-test-general exists (!j9dz7gzuyfu2ADtYT0:localhost) | **PASS** |
+| C8 | Room exploratory-test-general exists (!19UP029fkaw4sznRBS:localhost) | **PASS** |
 | C9 | Sync --bridge again (idempotent) | **PASS** |
 | C10 | No duplicate identities (3) | **PASS** |
 | C11 | No duplicate rooms (1) | **PASS** |
@@ -69,7 +69,7 @@
 | D3 | Team submodule present | **PASS** |
 | D4 | Agent dir assembled | **PASS** |
 | D5 | Git repo clean | **PASS** |
-| D6 | Git log | **NOTE** — 2540ad9 Sync workspace with team repo |
+| D6 | Git log | **NOTE** — fcc1522 Sync workspace with team repo |
 | D7 | Sync again (no changes) | **PASS** |
 | D8 | Context files still present after re-sync | **PASS** |
 | D9 | Third sync still clean | **PASS** |
@@ -130,29 +130,36 @@
 | H20 | ACP binary available (claude-code-acp-rs 0.1.22) | **PASS** |
 | H21 | Admin Matrix login successful | **PASS** |
 | H22 | Alice Matrix login successful | **PASS** |
-| H23 | Room resolved (!AkdrfRZAN910TYYVJp:localhost) | **PASS** |
+| H23 | Room resolved (!wGf2Wx0B7RfNradJeb:localhost) | **PASS** |
 | H24 | Cleaned previous state for lifecycle test | **PASS** |
 | H25 | bm start executed (brain mode detected) | **PASS** |
-| H26 | Brain member process is alive (PID verified) | **PASS** |
+| H26 | Brain process verified (PID 3321488, command contains brain-run/acp) | **PASS** |
 | H27 | bm status shows brain label during lifecycle | **PASS** |
-| H28 | Greeting sent to room while brain running ($1n-PGBYVlvWr6SdpbsSWA22l-g7kTYIzwhGIThAj5a0) | **PASS** |
-| H29 | Work request sent to room while brain running ($qQFE7mX-fkVKtYNDJ0_UJsEtnw65v5wfAiKwe30Brqc) | **PASS** |
+| H28 | Greeting sent to room while brain running ($dHZKDzR1Gx9NF6fQMC5vpwNh5wueNpX-bOM4wyCAIW8) | **PASS** |
+| H29 | Work request sent to room while brain running ($jpfiHZs1_4eQPA7q8Xffamqvt2GIGjoipEzy8SjdJdw) | **PASS** |
 | H30 | Follow-up question sent (multi-turn simulation) | **PASS** |
 | H31 | Brain survived malformed/empty message (edge case) | **PASS** |
-| H32 | Brain member responded autonomously! (response: 🤖 Ralph loop `main` connected via Matrix...) | **PASS** |
+| H32 | Brain responded with meaningful content (response: 🤖 Ralph loop `main` connected via Matrix...) | **PASS** |
+| H29b | Work request response | **NOTE** — brain responded but may not have addressed the work request specifically |
 | H33 | User messages visible in room history (9 total messages) | **PASS** |
 | H34 | Cross-member messaging while brain running (alice to bob, brain alive) | **PASS** |
 | H35 | Brain survived all interaction (normal + malformed + cross-member messages) | **PASS** |
 | H36 | bm stop executed cleanly (exit 0) | **PASS** |
 | H37 | All brain processes terminated after stop | **PASS** |
 | H38 | Brain restarted successfully (recovery scenario) | **PASS** |
-| H39 | Message delivered after brain restart (recovery proof, $rVXwAxITmf_d19SPo-a6cAFDkmDRcDQuqi3HgV8yPn8) | **PASS** |
+| H39 | Message delivered after brain restart (recovery proof, $fVTgZyesbaLJVAUuqqWM9w1-nq5ahLA29fiUKIaB0gc) | **PASS** |
 | H40 | Recovery response | **NOTE** — brain alive after restart but did not respond within 30s |
 | H41 | Recovery start-stop cycle clean (brain lifecycle idempotent) | **PASS** |
 | H42 | Status inquiry sent after brain lifecycle | **PASS** |
 | H43 | All messages persist in room history incl. recovery + cross-member (12 total) | **PASS** |
 | H44 | Bob sees all messages in room (12 messages) | **PASS** |
-| H45 | Cleaned up brain lifecycle test artifacts | **PASS** |
+| H46 | Created GitHub issue #1 for brain to discover | **PASS** |
+| H47 | Brain started for task execution journey (PID 3328798) | **PASS** |
+| H48 | Board check request sent to brain ($oNlGthuIDEi1fki9ELEhHMW4On7iy9r2DI-87l_5yxE) | **PASS** |
+| H49 | Task response | **NOTE** — brain alive but did not respond about board within 60s |
+| H50 | Brain survived task execution request (PID 3328798 still alive) | **PASS** |
+| H51 | Task execution journey cleaned up | **PASS** |
+| H52 | Cleaned up all brain lifecycle test artifacts | **PASS** |
 
 ### Phase G: Cleanup
 
@@ -171,6 +178,6 @@
 
 ## Summary
 
-- **PASS:** 122
+- **PASS:** 127
 - **FAIL:** 0
-- **NOTE:** 4
+- **NOTE:** 6

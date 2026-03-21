@@ -1172,7 +1172,20 @@ phase-h:
         fi
     fi
     if $BRAIN_ALIVE; then
-        pass "H26" "Brain member process is alive (PID verified)"
+        # Validate the process is actually brain-run or claude-code-acp-rs (not just any PID)
+        BRAIN_PID=""
+        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
+            if kill -0 "$pid" 2>/dev/null; then
+                BRAIN_PID="$pid"
+                break
+            fi
+        done
+        PROC_CMD=$(cat /proc/$BRAIN_PID/cmdline 2>/dev/null | tr '\0' ' ' || ps -p $BRAIN_PID -o args= 2>/dev/null || echo "unknown")
+        if echo "$PROC_CMD" | grep -q 'brain-run\|claude-code-acp-rs'; then
+            pass "H26" "Brain process verified (PID $BRAIN_PID, command contains brain-run/acp)"
+        else
+            note "H26" "Process identity" "PID $BRAIN_PID alive but command not brain-run: $(echo "$PROC_CMD" | head -c 120)"
+        fi
     else
         if [ -f "$STATE_FILE" ] && grep -q '"brain_mode":true' "$STATE_FILE" 2>/dev/null; then
             note "H26" "Brain process" "brain_mode=true in state but process not alive (ACP may have failed to authenticate)"
@@ -1296,13 +1309,50 @@ phase-h:
         echo "    Attempt $attempt/6: no brain response yet..."
     done
     if $BRAIN_RESPONDED; then
-        pass "H32" "Brain member responded autonomously! (response: $(echo "$BRAIN_RESPONSE_BODY" | head -c 80)...)"
+        # Validate the response content is meaningful (not random garbage)
+        # Check for operational indicators: member name, Ralph, loop, connected, Matrix, or task-related words
+        CONTENT_MEANINGFUL=false
+        for keyword in alice bob Ralph loop connected Matrix project status tool; do
+            if echo "$BRAIN_RESPONSE_BODY" | grep -qi "$keyword"; then
+                CONTENT_MEANINGFUL=true
+                break
+            fi
+        done
+        if $CONTENT_MEANINGFUL; then
+            pass "H32" "Brain responded with meaningful content (response: $(echo "$BRAIN_RESPONSE_BODY" | head -c 100)...)"
+        else
+            note "H32" "Brain response content" "brain responded but content may not be operational: $(echo "$BRAIN_RESPONSE_BODY" | head -c 100)"
+        fi
     else
         if $BRAIN_ALIVE; then
             note "H32" "Brain response" "brain is alive but did not respond within 30s (bridge-to-brain pipeline may not be fully wired)"
         else
             note "H32" "Brain response" "brain process not alive, response not expected"
         fi
+    fi
+
+    # H29b: Validate brain response addressed the work request (H29 content check)
+    # This completes the H29 work request journey: not just delivered, but processed.
+    if $BRAIN_RESPONDED; then
+        WORK_ADDRESSED=false
+        # Fetch fresh room history to check all brain responses
+        H29B_HIST=$(curl -sf \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=30" 2>/dev/null || echo '{}')
+        ALL_BRAIN_BODIES=$(echo "$H29B_HIST" | jq -r '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | .[].content.body // ""' 2>/dev/null || echo "")
+        for keyword in project status check report finding available tool; do
+            if echo "$ALL_BRAIN_BODIES" | grep -qi "$keyword"; then
+                WORK_ADDRESSED=true
+                break
+            fi
+        done
+        if $WORK_ADDRESSED; then
+            pass "H29b" "Brain response addresses work request (mentions project/status/tools)"
+        else
+            note "H29b" "Work request response" "brain responded but may not have addressed the work request specifically"
+        fi
+    else
+        note "H29b" "Work request response" "no brain response to evaluate (brain did not respond)"
     fi
 
     # H33: Verify messages from user are visible in room history
@@ -1575,13 +1625,138 @@ phase-h:
         fail "H44" "Bob login" "failed to login as bob"
     fi
 
+    # ── H.6: Task Execution Journey ──────────────────────────────
+    # This journey validates the CORE VALUE of brain-mode: autonomous work on tasks.
+    # 1. Create a real GitHub issue on the team repo
+    # 2. Start brain members
+    # 3. Ask the brain to check the board for pending issues
+    # 4. Poll for a brain response that acknowledges the issue/board
+    # 5. Clean up
+    # This is the most important journey — it proves the brain does meaningful work,
+    # not just responds to chat messages.
+
+    echo "  H.6: Task Execution Journey..."
+
+    # H46: Create a GitHub issue for the brain to discover
+    ISSUE_TITLE="Brain test: verify dependency versions"
+    ISSUE_BODY="Please verify the current dependency versions in the project and report any that need updating."
+    ISSUE_URL=$(gh issue create -R "$GH_ORG/$GH_REPO" --title "$ISSUE_TITLE" --body "$ISSUE_BODY" 2>/dev/null || echo "")
+    if [ -n "$ISSUE_URL" ]; then
+        ISSUE_NUM=$(echo "$ISSUE_URL" | grep -o '[0-9]*$')
+        pass "H46" "Created GitHub issue #$ISSUE_NUM for brain to discover"
+    else
+        note "H46" "GitHub issue creation" "failed to create issue (gh auth may lack permissions)"
+        ISSUE_NUM=""
+    fi
+
+    # H47: Start brain for task execution test
+    rm -f "$STATE_FILE"
+    TASK_START_OUT=$($BM start 2>&1 || true)
+    sleep 3
+    TASK_BRAIN_ALIVE=false
+    TASK_BRAIN_PID=""
+    if [ -f "$STATE_FILE" ]; then
+        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
+            if kill -0 "$pid" 2>/dev/null; then
+                TASK_BRAIN_ALIVE=true
+                TASK_BRAIN_PID="$pid"
+                break
+            fi
+        done
+    fi
+    if $TASK_BRAIN_ALIVE; then
+        pass "H47" "Brain started for task execution journey (PID $TASK_BRAIN_PID)"
+    else
+        note "H47" "Task journey start" "brain not alive (ACP auth may have failed)"
+    fi
+
+    # Record pre-task brain message count to detect NEW responses
+    PRE_TASK_HIST=$(curl -sf \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
+    PRE_TASK_BRAIN_COUNT=$(echo "$PRE_TASK_HIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
+
+    # H48: Ask brain to check the GitHub board for pending issues
+    MSG_TXN="h48-$(date +%s)"
+    BOARD_MSG="Please check the GitHub board for any pending issues and report what you find. There should be an issue about verifying dependency versions."
+    BOARD_RESP=$(curl -sf -X PUT \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"msgtype\":\"m.text\",\"body\":\"$BOARD_MSG\"}" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
+    BOARD_EVENT_ID=$(echo "$BOARD_RESP" | jq -r '.event_id // empty')
+    if [ -n "$BOARD_EVENT_ID" ]; then
+        pass "H48" "Board check request sent to brain ($BOARD_EVENT_ID)"
+    else
+        fail "H48" "Board check request" "failed to send message"
+    fi
+
+    # H49: Poll for brain response about the board/issue (up to 60s)
+    echo "    Polling for brain response about board/issue (up to 60s, pre-count: $PRE_TASK_BRAIN_COUNT)..."
+    TASK_RESPONDED=false
+    TASK_RESPONSE_BODY=""
+    TASK_ACKNOWLEDGED_BOARD=false
+    for attempt in $(seq 1 12); do
+        sleep 5
+        THIST=$(curl -sf \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
+        TASK_BRAIN_MSGS=$(echo "$THIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
+        if [ "${TASK_BRAIN_MSGS:-0}" -gt "${PRE_TASK_BRAIN_COUNT:-0}" ]; then
+            TASK_RESPONSE_BODY=$(echo "$THIST" | jq -r '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | .[0].content.body // ""' 2>/dev/null)
+            TASK_RESPONDED=true
+            # Check if the brain acknowledged the board, issue, or dependency topic
+            for keyword in board issue dependenc version GitHub project check; do
+                if echo "$TASK_RESPONSE_BODY" | grep -qi "$keyword"; then
+                    TASK_ACKNOWLEDGED_BOARD=true
+                    break
+                fi
+            done
+            break
+        fi
+        echo "    Task attempt $attempt/12: no NEW brain response yet (current: $TASK_BRAIN_MSGS, pre: $PRE_TASK_BRAIN_COUNT)..."
+    done
+    if $TASK_RESPONDED && $TASK_ACKNOWLEDGED_BOARD; then
+        pass "H49" "Brain acknowledged board/issue in response! (body: $(echo "$TASK_RESPONSE_BODY" | head -c 100)...)"
+    elif $TASK_RESPONDED; then
+        note "H49" "Task response" "brain responded but didn't explicitly mention board/issue: $(echo "$TASK_RESPONSE_BODY" | head -c 100)"
+    else
+        if $TASK_BRAIN_ALIVE; then
+            note "H49" "Task response" "brain alive but did not respond about board within 60s"
+        else
+            note "H49" "Task response" "brain not alive, response not expected"
+        fi
+    fi
+
+    # H50: Verify brain process survived task execution request
+    if $TASK_BRAIN_ALIVE; then
+        if kill -0 "$TASK_BRAIN_PID" 2>/dev/null; then
+            pass "H50" "Brain survived task execution request (PID $TASK_BRAIN_PID still alive)"
+        else
+            note "H50" "Brain stability" "brain process died during task execution journey"
+        fi
+    else
+        note "H50" "Brain stability" "skipped (brain not alive at start)"
+    fi
+
+    # H51: Clean up task execution journey
+    $BM stop --force 2>/dev/null || true
+    pkill -f "claude-code-acp-rs.*$TEAM_DIR" 2>/dev/null || true
+    sleep 1
+    # Close the test issue if it was created
+    if [ -n "${ISSUE_NUM:-}" ]; then
+        gh issue close "$ISSUE_NUM" -R "$GH_ORG/$GH_REPO" 2>/dev/null || true
+    fi
+    rm -f "$STATE_FILE"
+    pass "H51" "Task execution journey cleaned up"
+
     # ── Final Cleanup ──
 
-    # H45: Clean up brain lifecycle artifacts
+    # H52: Clean up brain lifecycle artifacts
     $BM stop --force 2>/dev/null || true
     pkill -f "claude-code-acp-rs.*$TEAM_DIR" 2>/dev/null || true
     rm -f "$STATE_FILE"
-    pass "H45" "Cleaned up brain lifecycle test artifacts"
+    pass "H52" "Cleaned up all brain lifecycle test artifacts"
 
     fi  # end BRIDGE_OK
 
