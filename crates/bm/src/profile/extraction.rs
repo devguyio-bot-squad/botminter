@@ -1213,4 +1213,177 @@ mod tests {
             assert!(!readme_path.exists(), "{profile}: process-evolution/ should NOT have a README.md");
         }
     }
+
+    // ── Team Design Hub Skill ──────────────────────────────────────────
+
+    #[test]
+    fn team_design_skill_exists_in_all_profiles() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let skill_path = output.path().join("coding-agent/skills/team-design/SKILL.md");
+            assert!(skill_path.exists(), "{profile}: team-design/SKILL.md should exist after member extraction");
+        }
+    }
+
+    #[test]
+    fn team_design_skill_covered_by_ralph_yml_skill_dirs() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let ralph_yml = std::fs::read_to_string(output.path().join("ralph.yml")).unwrap();
+            let has_skill_dir = ralph_yml.lines().any(|line| {
+                let trimmed = line.trim().trim_start_matches("- ");
+                trimmed.contains("skills") && (trimmed.contains("team-manager") || trimmed.contains("coding-agent/skills"))
+            });
+            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
+        }
+    }
+
+    #[test]
+    fn team_design_skill_has_valid_frontmatter() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/team-design/SKILL.md"),
+            ).unwrap();
+
+            assert!(content.starts_with("---"), "{profile}: SKILL.md must start with YAML frontmatter");
+            assert!(content.contains("name: team-design"), "{profile}: frontmatter must have name: team-design");
+
+            let desc_area = &content[..content.find("\n---\n").unwrap_or(content.len())];
+            let desc_lower = desc_area.to_lowercase();
+            assert!(
+                desc_lower.contains("use when"),
+                "{profile}: description must contain trigger phrase 'Use when'"
+            );
+        }
+    }
+
+    #[test]
+    fn team_design_skill_no_readme() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let readme_path = output.path().join("coding-agent/skills/team-design/README.md");
+            assert!(!readme_path.exists(), "{profile}: team-design/ should NOT have a README.md");
+        }
+    }
+
+    #[test]
+    fn team_design_skill_body_under_word_limit() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/team-design/SKILL.md"),
+            ).unwrap();
+            let body = content.splitn(3, "---").nth(2).unwrap_or("");
+            let word_count = body.split_whitespace().count();
+            assert!(word_count < 5000, "{profile}: SKILL.md body has {word_count} words, must be under 5000");
+        }
+    }
+
+    #[test]
+    fn team_design_skill_includes_intent_routing_table() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/team-design/SKILL.md"),
+            ).unwrap();
+            let lower = content.to_lowercase();
+            assert!(lower.contains("retrospective"), "{profile}: routing table should reference retrospective");
+            assert!(lower.contains("role-management"), "{profile}: routing table should reference role-management");
+            assert!(lower.contains("member-tuning"), "{profile}: routing table should reference member-tuning");
+            assert!(lower.contains("process-evolution"), "{profile}: routing table should reference process-evolution");
+        }
+    }
+
+    #[test]
+    fn team_design_skill_references_skill_loading() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/team-design/SKILL.md"),
+            ).unwrap();
+            assert!(
+                content.contains("ralph tools skill load"),
+                "{profile}: should reference 'ralph tools skill load' for delegation to sub-skills"
+            );
+        }
+    }
+
+    #[test]
+    fn team_design_skill_includes_dashboard_procedure() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/team-design/SKILL.md"),
+            ).unwrap();
+            let lower = content.to_lowercase();
+            assert!(lower.contains("dashboard"), "{profile}: should include dashboard section");
+            assert!(lower.contains("roles") && lower.contains("members"), "{profile}: dashboard should cover roles and members");
+            assert!(lower.contains("agreements") || lower.contains("action items"), "{profile}: dashboard should cover agreements or action items");
+        }
+    }
 }
