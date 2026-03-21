@@ -252,10 +252,10 @@ These resolve the open questions from the design exploration:
 - [x] System prompt template exists in profile (Phase 5, 735df88)
 - [x] Template renders with member-specific variables (Phase 5, 735df88)
 - [x] Rendered prompt is surfaced to workspace during `bm teams sync` (Phase 5, 735df88)
-- [ ] Brain acts autonomously: picks tasks, starts loops, monitors progress (requires ACP binary — deferred to integration testing)
-- [ ] Brain responds conversationally to bridge messages (requires ACP binary — deferred to integration testing)
-- [ ] Brain uses both GitHub and bridge channels contextually (requires ACP binary — deferred to integration testing)
-- [ ] Manual E2E validation: start brain, verify it picks work and responds to chat (requires ACP binary — deferred to integration testing)
+- [x] Brain acts autonomously: picks tasks, starts loops, monitors progress (validated by exploratory test H35, 16be65e)
+- [x] Brain responds conversationally to bridge messages (validated by exploratory test H35, 16be65e)
+- [x] Brain uses both GitHub and bridge channels contextually (validated by exploratory test H35, 16be65e)
+- [x] Manual E2E validation: start brain, verify it picks work and responds to chat (automated as exploratory test H35, 16be65e)
 
 ### Phase 6: `bm` CLI Integration
 
@@ -281,7 +281,7 @@ These resolve the open questions from the design exploration:
 - [x] `bm chat <member>` interacts with the running brain (Phase 6, 224c305)
 - [x] State file tracks multiplexer PID (not ralph PID) (Phase 6, 224c305)
 - [x] Stale state cleanup works with multiplexer processes (Phase 6, 224c305)
-- [ ] E2E test: start -> status shows healthy -> chat works -> stop -> status shows stopped (requires ACP binary — deferred to integration testing)
+- [x] E2E test: start -> status shows healthy -> chat works -> stop -> status shows stopped (validated by exploratory tests H23-H45, 16be65e)
 - [x] Docs updated: `docs/content/reference/cli.md`, `docs/content/getting-started/index.md` (Phase 6, 224c305)
 
 ## Existing Code That Will Be Modified
