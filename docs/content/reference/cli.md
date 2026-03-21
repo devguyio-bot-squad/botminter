@@ -1,6 +1,6 @@
 # CLI Commands
 
-All BotMinter operations use the `bm` CLI binary. Install it with `cargo install --path crates/bm` or build with `cargo build -p bm`.
+BotMinter provides two CLI binaries: `bm` (operator-facing) and `bm-agent` (agent-facing). Install both with `cargo install --path crates/bm` or build with `cargo build -p bm`.
 
 ## Team creation
 
@@ -886,6 +886,81 @@ The generated script delegates to the `bm` binary at tab-time, so completions al
     ```bash
     echo 'eval (bm completions elvish | slurp)' >> ~/.elvish/rc.elv
     ```
+
+## Agent tools (`bm-agent`)
+
+The `bm-agent` binary provides agent-consumed tools that run inside member workspaces. It is separate from the operator-facing `bm` CLI per ADR-0010.
+
+!!! note "Not for operators"
+    These commands are designed for automated use by coding agents (e.g., Claude Code hooks), not for direct operator use. Operators can use `bm-agent inbox peek` for debugging.
+
+### `bm-agent inbox write`
+
+Send a message to the loop's inbox. Used by the brain process to send feedback to a coding agent.
+
+```bash
+bm-agent inbox write "fix the CI pipeline" [--from <sender>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<message>` | Yes | Message text (non-empty) |
+| `--from <sender>` | No | Sender identity (default: `brain`) |
+
+**Behavior:**
+
+- Appends a JSONL entry to `.ralph/loop-inbox.jsonl` in the workspace root
+- Uses `flock` for concurrent write safety
+- Requires being inside a BotMinter workspace (`.botminter.workspace` marker)
+- Rejects empty or whitespace-only messages
+
+### `bm-agent inbox read`
+
+Read and consume pending messages.
+
+```bash
+bm-agent inbox read [--format json|hook]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `--format <format>` | No | Output format: `json` or `hook` (default: `hook`) |
+
+**Behavior:**
+
+- Reads all pending messages and truncates the inbox file (best-effort consumption)
+- `json` format: outputs a JSON array of message objects
+- `hook` format: outputs a JSON object with `additionalContext` key (for Claude Code hooks)
+- Empty inbox produces no output in `hook` format, or `[]` in `json` format
+
+### `bm-agent inbox peek`
+
+View pending messages without consuming them.
+
+```bash
+bm-agent inbox peek
+```
+
+**Behavior:**
+
+- Displays pending messages with timestamp, sender, and content
+- Does not modify the inbox file
+- Shows "No pending messages." if the inbox is empty
+
+### `bm-agent claude hook post-tool-use`
+
+PostToolUse hook handler for Claude Code. Checks the inbox and returns `additionalContext` if messages are pending.
+
+```bash
+bm-agent claude hook post-tool-use
+```
+
+**Behavior:**
+
+- Always exits with code 0 — errors are silently swallowed
+- If messages are pending: outputs JSON with `additionalContext` and consumes the messages
+- If no messages or not in a workspace: outputs nothing
+- Designed to be referenced in `.claude/settings.json` as a PostToolUse hook
 
 ## Development commands
 
