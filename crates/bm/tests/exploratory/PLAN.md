@@ -207,3 +207,24 @@ For local-only teams (no per-member GitHub repos), use `--bridge` instead.
 | G5 | Remove local state | `rm -rf ~/.botminter ~/.config/botminter` | Clean state |
 | G6 | Verify clean | No leftover containers, repos, or config | Everything gone |
 | G7 | Delete Lima test VM (if created) | `limactl delete --force lima-idem-test` | VM removed |
+
+## Phase H: Brain Lifecycle Validation (Chat-First Member)
+
+Tests the brain/multiplexer infrastructure added by the chat-first member milestone.
+These tests validate the integration layer without requiring a real ACP binary.
+
+**Prerequisites:** Phases B-D must run first (team init + hire + workspace sync).
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| H1 | Brain prompt surfaced during sync | `ls` workspace for `brain-prompt.md` after `bm teams sync` | `brain-prompt.md` exists with rendered template variables |
+| H2 | Brain prompt contains member identity | `grep` brain-prompt.md for member name | Contains `superman-alice` or equivalent member name |
+| H3 | Brain prompt contains team context | `grep` brain-prompt.md for team name and GitHub repo | Contains team name and org/repo references |
+| H4 | Brain mode detection — with prompt | Create `brain-prompt.md` in workspace, check `is_brain_member` behavior via `bm start` | `bm start` attempts brain launch (may fail without ACP, but detects brain mode) |
+| H5 | Brain mode detection — without prompt | Remove `brain-prompt.md`, run `bm start` | Falls back to standard ralph launch (no brain mode) |
+| H6 | State file brain_mode field | After brain mode detection, inspect `state.json` | `brain_mode: true` when brain-prompt.md present |
+| H7 | Brain prompt re-surfaced on re-sync | Modify brain-prompt.md, re-run `bm teams sync` | brain-prompt.md restored from profile template |
+| H8 | Priority queue ordering (unit-level) | Verify via cargo test that human > loop events > heartbeat | Unit tests in `brain::queue` pass |
+| H9 | Event significance filter (unit-level) | Verify via cargo test that only significant events pass filter | Unit tests in `brain::event_watcher` pass |
+| H10 | Heartbeat skip-when-pending (unit-level) | Verify via cargo test that pending flag prevents heartbeat | Unit tests in `brain::heartbeat` pass |
+| H11 | Brain status label in `bm status` | With brain_mode state, run `bm status` | Shows "brain" instead of "running" for brain-mode members |
