@@ -298,7 +298,7 @@ Each journey crosses all subsystems: CLI (start/stop), bridge (Matrix), brain (r
 | H37 | Processes terminated | Check all PIDs dead | No leftover processes |
 | H38 | Recovery: restart brain | `bm start` after stop | Brain restarts successfully |
 | H39 | Recovery: send message | Send message via Matrix after brain restart | Message delivered (recovery proof) |
-| H40 | Recovery: poll for response | Poll room for brain response after restart (30s) | Brain responds after recovery (or NOTE) |
+| H40 | Recovery: poll for NEW response | Poll room for brain response after restart (30s), verify count increased vs pre-recovery baseline | NEW brain response detected after recovery (or NOTE) |
 | H41 | Recovery: stop cycle | `bm stop` again | Lifecycle idempotent |
 | H42 | Status inquiry after lifecycle | Send message to room post-lifecycle | Message sent successfully |
 | H43 | Message persistence (incl. recovery + cross-member) | Poll room history for all messages | All messages persist including recovery and cross-member |

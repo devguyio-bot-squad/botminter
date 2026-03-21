@@ -33,7 +33,7 @@
 | C5 | Passwords file has 3 entries | **PASS** |
 | C6 | Keyring has credentials for alice + bob | **PASS** |
 | C7 | Admin can login to Matrix | **PASS** |
-| C8 | Room exploratory-test-general exists (!rEvYnf3aWcOBNUJymK:localhost) | **PASS** |
+| C8 | Room exploratory-test-general exists (!j9dz7gzuyfu2ADtYT0:localhost) | **PASS** |
 | C9 | Sync --bridge again (idempotent) | **PASS** |
 | C10 | No duplicate identities (3) | **PASS** |
 | C11 | No duplicate rooms (1) | **PASS** |
@@ -69,7 +69,7 @@
 | D3 | Team submodule present | **PASS** |
 | D4 | Agent dir assembled | **PASS** |
 | D5 | Git repo clean | **PASS** |
-| D6 | Git log | **NOTE** — 87b865e Sync workspace with team repo |
+| D6 | Git log | **NOTE** — 2540ad9 Sync workspace with team repo |
 | D7 | Sync again (no changes) | **PASS** |
 | D8 | Context files still present after re-sync | **PASS** |
 | D9 | Third sync still clean | **PASS** |
@@ -130,13 +130,13 @@
 | H20 | ACP binary available (claude-code-acp-rs 0.1.22) | **PASS** |
 | H21 | Admin Matrix login successful | **PASS** |
 | H22 | Alice Matrix login successful | **PASS** |
-| H23 | Room resolved (!sUT981y6TnyFHFXtHV:localhost) | **PASS** |
+| H23 | Room resolved (!AkdrfRZAN910TYYVJp:localhost) | **PASS** |
 | H24 | Cleaned previous state for lifecycle test | **PASS** |
 | H25 | bm start executed (brain mode detected) | **PASS** |
 | H26 | Brain member process is alive (PID verified) | **PASS** |
 | H27 | bm status shows brain label during lifecycle | **PASS** |
-| H28 | Greeting sent to room while brain running ($i8x-U7aKcxgyyUZXYJi7SqrnNZE8kyLe_mqoRD3wXR8) | **PASS** |
-| H29 | Work request sent to room while brain running ($_SMb2oBb-FXO-NFquho9grEmcnwobqx1e6XPNkxaOsw) | **PASS** |
+| H28 | Greeting sent to room while brain running ($1n-PGBYVlvWr6SdpbsSWA22l-g7kTYIzwhGIThAj5a0) | **PASS** |
+| H29 | Work request sent to room while brain running ($qQFE7mX-fkVKtYNDJ0_UJsEtnw65v5wfAiKwe30Brqc) | **PASS** |
 | H30 | Follow-up question sent (multi-turn simulation) | **PASS** |
 | H31 | Brain survived malformed/empty message (edge case) | **PASS** |
 | H32 | Brain member responded autonomously! (response: 🤖 Ralph loop `main` connected via Matrix...) | **PASS** |
@@ -146,8 +146,8 @@
 | H36 | bm stop executed cleanly (exit 0) | **PASS** |
 | H37 | All brain processes terminated after stop | **PASS** |
 | H38 | Brain restarted successfully (recovery scenario) | **PASS** |
-| H39 | Message delivered after brain restart (recovery proof, $_7nfjj2wQX7zDDAi7x3Ae_D5n7XqbG7o0KKnmkNBoyI) | **PASS** |
-| H40 | Brain responded after recovery! (response: Cross-member test: alice sending to room while brain is active....) | **PASS** |
+| H39 | Message delivered after brain restart (recovery proof, $rVXwAxITmf_d19SPo-a6cAFDkmDRcDQuqi3HgV8yPn8) | **PASS** |
+| H40 | Recovery response | **NOTE** — brain alive after restart but did not respond within 30s |
 | H41 | Recovery start-stop cycle clean (brain lifecycle idempotent) | **PASS** |
 | H42 | Status inquiry sent after brain lifecycle | **PASS** |
 | H43 | All messages persist in room history incl. recovery + cross-member (12 total) | **PASS** |
@@ -171,6 +171,6 @@
 
 ## Summary
 
-- **PASS:** 123
+- **PASS:** 122
 - **FAIL:** 0
-- **NOTE:** 3
+- **NOTE:** 4

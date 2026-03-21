@@ -1423,6 +1423,14 @@ phase-h:
         fail "H37" "Process cleanup" "some processes still alive after force-kill"
     fi
 
+    # Record pre-recovery brain message count so H40 can detect NEW responses
+    # (prevents false positive from H32's old brain responses)
+    PRE_RECOVERY_HIST=$(curl -sf \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
+    PRE_RECOVERY_BRAIN_COUNT=$(echo "$PRE_RECOVERY_HIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
+    echo "    Pre-recovery brain message count: $PRE_RECOVERY_BRAIN_COUNT"
+
     # ── Recovery Scenario: restart + message + response polling ──
     # This is a fully integrated recovery journey per exploratory-test-user-journey.md:
     # stop -> start -> send message -> poll for brain response -> stop
@@ -1463,24 +1471,26 @@ phase-h:
 
     # H40: Poll for brain response after recovery (integrated recovery journey)
     # This makes recovery a fully integrated journey: restart -> send -> poll response
-    echo "    Polling for brain response after recovery (up to 30s)..."
+    # IMPORTANT: Compare against PRE_RECOVERY_BRAIN_COUNT to detect NEW responses only.
+    # Without this, stale responses from H32 (first lifecycle) would cause a false positive.
+    echo "    Polling for NEW brain response after recovery (up to 30s, pre-recovery count: $PRE_RECOVERY_BRAIN_COUNT)..."
     RECOVERY_RESPONDED=false
     RECOVERY_RESPONSE_BODY=""
     for attempt in $(seq 1 6); do
         sleep 5
         RHIST=$(curl -sf \
             -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=10" 2>/dev/null || echo '{}')
+            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
         RECOVERY_BRAIN_MSGS=$(echo "$RHIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
-        if [ "${RECOVERY_BRAIN_MSGS:-0}" -gt 0 ]; then
+        if [ "${RECOVERY_BRAIN_MSGS:-0}" -gt "${PRE_RECOVERY_BRAIN_COUNT:-0}" ]; then
             RECOVERY_RESPONSE_BODY=$(echo "$RHIST" | jq -r '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | .[0].content.body // "empty"' 2>/dev/null)
             RECOVERY_RESPONDED=true
             break
         fi
-        echo "    Recovery attempt $attempt/6: no brain response yet..."
+        echo "    Recovery attempt $attempt/6: no NEW brain response yet (current: $RECOVERY_BRAIN_MSGS, pre-recovery: $PRE_RECOVERY_BRAIN_COUNT)..."
     done
     if $RECOVERY_RESPONDED; then
-        pass "H40" "Brain responded after recovery! (response: $(echo "$RECOVERY_RESPONSE_BODY" | head -c 80)...)"
+        pass "H40" "Brain responded after recovery! NEW response detected (pre: $PRE_RECOVERY_BRAIN_COUNT, post: $RECOVERY_BRAIN_MSGS, body: $(echo "$RECOVERY_RESPONSE_BODY" | head -c 80)...)"
     else
         if $RECOVERY_BRAIN_ALIVE; then
             note "H40" "Recovery response" "brain alive after restart but did not respond within 30s"
