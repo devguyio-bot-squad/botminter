@@ -46,6 +46,10 @@ reqwest = { version = "0.12", features = ["blocking", "json"] }
 libtest-mimic = "0.8"
 dbus-secret-service = { version = "4.1.0", features = ["vendored"] }
 
+[[bin]]
+name = "bm-agent"
+path = "src/agent_main.rs"
+
 [[test]]
 name = "e2e"
 path = "tests/e2e/main.rs"
