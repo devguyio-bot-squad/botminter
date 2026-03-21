@@ -438,4 +438,207 @@ mod tests {
         assert!(!output.path().join("CLAUDE.md").exists(), "Mock agent should not produce CLAUDE.md in member dir");
         assert!(!output.path().join("context.md").exists(), "Mock agent should not produce context.md in member dir");
     }
+
+    // --- Retrospective Skill Tests (Task 02) ---
+
+    #[test]
+    fn retrospective_skill_exists_in_all_profiles() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let skill_path = output.path().join("coding-agent/skills/retrospective/SKILL.md");
+            assert!(skill_path.exists(), "{profile}: retrospective/SKILL.md should exist after member extraction");
+        }
+    }
+
+    #[test]
+    fn retrospective_skill_covered_by_ralph_yml_skill_dirs() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let ralph_yml_path = output.path().join("ralph.yml");
+            let content = std::fs::read_to_string(&ralph_yml_path)
+                .unwrap_or_else(|_| panic!("{profile}: team-manager ralph.yml should exist"));
+            let yaml: serde_yml::Value = serde_yml::from_str(&content).unwrap();
+            let dirs = yaml.get("skills")
+                .and_then(|s| s.get("dirs"))
+                .and_then(|d| d.as_sequence())
+                .unwrap_or_else(|| panic!("{profile}: skills.dirs should be a sequence"));
+
+            let has_skill_dir = dirs.iter().any(|d| {
+                d.as_str().map_or(false, |s| s.contains("team-manager/coding-agent/skills"))
+            });
+            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
+        }
+    }
+
+    #[test]
+    fn retrospective_skill_has_valid_frontmatter() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/retrospective/SKILL.md")
+            ).unwrap();
+
+            // Extract frontmatter between --- delimiters
+            let parts: Vec<&str> = content.splitn(3, "---").collect();
+            assert!(parts.len() >= 3, "{profile}: SKILL.md should have YAML frontmatter");
+            let frontmatter = parts[1];
+
+            let yaml: serde_yml::Value = serde_yml::from_str(frontmatter).unwrap();
+
+            let name = yaml.get("name").and_then(|n| n.as_str());
+            assert_eq!(name, Some("retrospective"), "{profile}: name should be 'retrospective'");
+
+            let desc = yaml.get("description").and_then(|d| d.as_str()).unwrap_or("");
+            assert!(!desc.is_empty(), "{profile}: description should be non-empty");
+            assert!(desc.len() < 1024, "{profile}: description should be under 1024 chars");
+            assert!(!desc.contains('<') && !desc.contains('>'), "{profile}: no XML angle brackets");
+
+            let desc_lower = desc.to_lowercase();
+            assert!(
+                desc_lower.contains("retro") || desc_lower.contains("retrospective"),
+                "{profile}: description should contain retro trigger phrase"
+            );
+            assert!(
+                desc_lower.contains("use when") || desc_lower.contains("use for"),
+                "{profile}: description should contain trigger phrasing"
+            );
+        }
+    }
+
+    #[test]
+    fn retrospective_skill_body_under_word_limit() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/retrospective/SKILL.md")
+            ).unwrap();
+
+            // Strip frontmatter
+            let parts: Vec<&str> = content.splitn(3, "---").collect();
+            let body = if parts.len() >= 3 { parts[2] } else { &content };
+            let word_count = body.split_whitespace().count();
+            assert!(word_count < 5000, "{profile}: SKILL.md body has {word_count} words, must be under 5000");
+        }
+    }
+
+    #[test]
+    fn retrospective_skill_covers_retro_sections() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/retrospective/SKILL.md")
+            ).unwrap();
+            let lower = content.to_lowercase();
+
+            assert!(lower.contains("scope"), "{profile}: should cover retro scope");
+            assert!(lower.contains("went well"), "{profile}: should cover what went well");
+            assert!(
+                lower.contains("didn\u{2019}t go well") || lower.contains("didn't go well") || lower.contains("pain point") || lower.contains("improvement"),
+                "{profile}: should cover what didn't go well"
+            );
+            assert!(lower.contains("action item"), "{profile}: should cover action items");
+        }
+    }
+
+    #[test]
+    fn retrospective_skill_documents_action_item_types() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/retrospective/SKILL.md")
+            ).unwrap();
+
+            assert!(content.contains("process-change"), "{profile}: should document process-change type");
+            assert!(content.contains("role-change"), "{profile}: should document role-change type");
+            assert!(content.contains("member-tuning"), "{profile}: should document member-tuning type");
+            assert!(content.contains("knowledge-update"), "{profile}: should document knowledge-update type");
+            assert!(content.contains("norm"), "{profile}: should document norm type");
+        }
+    }
+
+    #[test]
+    fn retrospective_skill_references_agreements_output() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/retrospective/SKILL.md")
+            ).unwrap();
+
+            assert!(content.contains("agreements/retros/"), "{profile}: should reference agreements/retros/ output path");
+            assert!(content.contains("agreements/norms/"), "{profile}: should reference agreements/norms/ path");
+        }
+    }
+
+    #[test]
+    fn retrospective_skill_no_readme() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let readme_path = output.path().join("coding-agent/skills/retrospective/README.md");
+            assert!(!readme_path.exists(), "{profile}: retrospective/ should NOT have a README.md");
+        }
+    }
 }
