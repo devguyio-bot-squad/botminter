@@ -33,7 +33,7 @@
 | C5 | Passwords file has 3 entries | **PASS** |
 | C6 | Keyring has credentials for alice + bob | **PASS** |
 | C7 | Admin can login to Matrix | **PASS** |
-| C8 | Room exploratory-test-general exists (!AHXPkKXG4BKeEZpuuW:localhost) | **PASS** |
+| C8 | Room exploratory-test-general exists (!W7aQcSQzWiFNE4t9dr:localhost) | **PASS** |
 | C9 | Sync --bridge again (idempotent) | **PASS** |
 | C10 | No duplicate identities (3) | **PASS** |
 | C11 | No duplicate rooms (1) | **PASS** |
@@ -69,7 +69,7 @@
 | D3 | Team submodule present | **PASS** |
 | D4 | Agent dir assembled | **PASS** |
 | D5 | Git repo clean | **PASS** |
-| D6 | Git log | **NOTE** — a2bda9f Sync workspace with team repo |
+| D6 | Git log | **NOTE** — f1a64e4 Sync workspace with team repo |
 | D7 | Sync again (no changes) | **PASS** |
 | D8 | Context files still present after re-sync | **PASS** |
 | D9 | Third sync still clean | **PASS** |
@@ -122,53 +122,37 @@
 | H12 | state.json has brain_mode=true for at least one member | **PASS** |
 | H13 | Without brain-prompt.md: no brain_mode=true in state | **PASS** |
 | H14 | Restored brain-prompt.md and cleaned up state | **PASS** |
-| H15 | bm brain-run --help works (shows workspace arg) | **PASS** |
-| H16 | brain-run with missing args: clean error (exit 2) | **PASS** |
-| H17 | brain-run with bad workspace: clean error (exit 1) | **PASS** |
-| H18 | bm status shows 'brain' label for brain_mode=true | **PASS** |
-| H19 | bm status does NOT show 'brain' for brain_mode=false | **PASS** |
-| H20 | Backward compat: missing brain_mode defaults to non-brain | **PASS** |
-| H21 | bm members show displays 'brain' status | **PASS** |
-| H22 | Modified brain-prompt.md restored on re-sync | **PASS** |
-| H23 | Deleted brain-prompt.md restored on re-sync | **PASS** |
-| H24 | brain-prompt.md content idempotent across syncs (hash match) | **PASS** |
-| H25 | Verbose sync mentions brain prompt surfacing | **PASS** |
-| H26 | brain::queue — 8 tests pass (expected >= 8) | **PASS** |
-| H27 | brain::types — 7 tests pass (expected >= 7) | **PASS** |
-| H28 | brain::multiplexer — 8 tests pass (expected >= 8) | **PASS** |
-| H29 | brain::event_watcher — 24 tests pass (expected >= 24) | **PASS** |
-| H30 | brain::heartbeat — 14 tests pass (expected >= 14) | **PASS** |
-| H31 | brain::prompt_template — 16 tests pass (expected >= 16) | **PASS** |
-| H32 | formation::launch brain tests — 2 pass | **PASS** |
-| H33 | state brain_mode tests — 1 pass | **PASS** |
-| H34 | Tuwunel bridge is running (Matrix server healthy) | **PASS** |
-| H35 | ACP binary available (claude-code-acp-rs 0.1.22) | **PASS** |
-| H36 | Admin Matrix login successful | **PASS** |
-| H37 | Alice Matrix login successful | **PASS** |
-| H38 | Room resolved (!OSeKkaqNWUSEKdUGIe:localhost) | **PASS** |
-| H39 | Greeting message sent to room ($tD54Z_tF2gDsa8aDcPStr125eORJPflLAoieGH29YWQ) | **PASS** |
-| H40 | Task request message sent to room ($M0DjrNOYUYkSJMMKrb7_4e-tke-IW_lyDBLrMNgvypY) | **PASS** |
-| H41 | Both messages visible in room history (6 total messages) | **PASS** |
-| H42 | Alice can send messages to room ($5S3_0eyzEQJSJYhwgS-rk9LQkduZKYh8csf8pD5ctXY) | **PASS** |
-| H43 | Admin sees alice's message in room (bidirectional messaging) | **PASS** |
-| H44 | Cleaned previous state for lifecycle test | **PASS** |
-| H45 | bm start executed (brain mode detected) | **PASS** |
-| H46 | Brain member process is alive (PID verified) | **PASS** |
-| H47 | bm status shows brain label during lifecycle | **PASS** |
-| H48 | Injected human.interact event into brain workspace | **PASS** |
-| H49 | Injected build.blocked event (2 events total) | **PASS** |
-| H50 | Injected task.close event (3 events total) | **PASS** |
-| H51 | Brain survived event processing (still alive after 3 injected events) | **PASS** |
-| H52 | bm stop graceful | **NOTE** — exit 1, retrying with --force |
-| H53 | All brain processes terminated after stop | **PASS** |
-| H54 | Second start-stop cycle clean (brain lifecycle idempotent) | **PASS** |
-| H55 | Status inquiry sent after brain lifecycle | **PASS** |
-| H56 | All messages persist in room history (9 total) | **PASS** |
-| H57 | Bob sees all messages in room (9 messages) | **PASS** |
-| H58 | Cross-member messaging works (alice → room → bob sees it) | **PASS** |
-| H59 | Multiple event files created (4 files) | **PASS** |
-| H60 | Event file with malformed line + valid events (3 lines) | **PASS** |
-| H61 | Cleaned up brain lifecycle test artifacts | **PASS** |
+| H15 | bm status shows 'brain' label for brain_mode=true | **PASS** |
+| H16 | bm status does NOT show 'brain' for brain_mode=false | **PASS** |
+| H17 | Backward compat: missing brain_mode defaults to non-brain | **PASS** |
+| H18 | bm members show displays 'brain' status | **PASS** |
+| H19 | Modified brain-prompt.md restored on re-sync | **PASS** |
+| H20 | Deleted brain-prompt.md restored on re-sync | **PASS** |
+| H21 | brain-prompt.md content idempotent across syncs (hash match) | **PASS** |
+| H22 | Verbose sync mentions brain prompt surfacing | **PASS** |
+| H23 | Tuwunel bridge is running (Matrix server healthy) | **PASS** |
+| H24 | ACP binary available (claude-code-acp-rs 0.1.22) | **PASS** |
+| H25 | Admin Matrix login successful | **PASS** |
+| H26 | Alice Matrix login successful | **PASS** |
+| H27 | Room resolved (!gDv9sRX7pSENaAyDBs:localhost) | **PASS** |
+| H28 | Cleaned previous state for lifecycle test | **PASS** |
+| H29 | bm start executed (brain mode detected) | **PASS** |
+| H30 | Brain member process is alive (PID verified) | **PASS** |
+| H31 | bm status shows brain label during lifecycle | **PASS** |
+| H32 | Greeting sent to room while brain running ($hpjF9rMdirsZIkhwrXwk9sckNYyMUgE66B8_e_XBUWk) | **PASS** |
+| H33 | Work request sent to room while brain running ($94UUCw1O2yS0dlJ7Xrup-_ZEjSJ6z91uv8z2duIrHmw) | **PASS** |
+| H34 | Follow-up question sent (multi-turn simulation) | **PASS** |
+| H35 | Brain member responded autonomously! (response: 🤖 Ralph loop `main` connected via Matrix...) | **PASS** |
+| H36 | User messages visible in room history (8 total messages) | **PASS** |
+| H37 | Brain survived user interaction (still alive after 3 messages) | **PASS** |
+| H38 | bm stop executed cleanly (exit 0) | **PASS** |
+| H39 | All brain processes terminated after stop | **PASS** |
+| H40 | Second start-stop cycle clean (brain lifecycle idempotent) | **PASS** |
+| H41 | Status inquiry sent after brain lifecycle | **PASS** |
+| H42 | All messages persist in room history (9 total) | **PASS** |
+| H43 | Bob sees all messages in room (9 messages) | **PASS** |
+| H44 | Cross-member messaging works (alice to bob via room) | **PASS** |
+| H45 | Cleaned up brain lifecycle test artifacts | **PASS** |
 
 ### Phase G: Cleanup
 
@@ -187,6 +171,6 @@
 
 ## Summary
 
-- **PASS:** 138
+- **PASS:** 123
 - **FAIL:** 0
-- **NOTE:** 5
+- **NOTE:** 4

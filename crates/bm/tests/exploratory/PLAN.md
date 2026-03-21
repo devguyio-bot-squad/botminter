@@ -210,11 +210,10 @@ For local-only teams (no per-member GitHub repos), use `--bridge` instead.
 
 ## Phase H: Brain Lifecycle Validation (Chat-First Member)
 
-Thorough tests for the brain/multiplexer infrastructure added by the chat-first member milestone.
-Covers template rendering, brain mode detection, CLI integration, state persistence, sync edge cases,
-and per-module unit test verification.
+End-to-end tests for the brain-mode feature. Tests simulate real user journeys:
+`bm start` → chat via Matrix → `bm stop`. No internal commands or file injection.
 
-**Prerequisites:** Phases B-D must run first (team init + hire + workspace sync).
+**Prerequisites:** Phases B-E must run first (team init + hire + bridge + workspace sync).
 
 ### H.1: Template Rendering & Content
 
@@ -245,80 +244,55 @@ and per-module unit test verification.
 | H13 | Remove brain-prompt.md disables brain | Remove file, run `bm start`, check state | No `brain_mode: true` or falls back to ralph |
 | H14 | Restore brain-prompt.md and stop | Restore file via re-sync, stop all | Clean state after stop |
 
-### H.4: Brain-Run Command
+### H.4: State Persistence & Status Display
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| H15 | brain-run hidden command exists | `bm brain-run --help` | Exits 0, shows workspace/system-prompt args |
-| H16 | brain-run with missing args | `bm brain-run` (no args) | Non-zero exit, no panic/crash |
-| H17 | brain-run with bad workspace | `bm brain-run --workspace /nonexistent --system-prompt /nonexistent` | Non-zero exit, error message (no panic) |
+| H15 | Mock state: brain label | Write state.json with `brain_mode: true`, run `bm status` | Shows "brain" in status table |
+| H16 | Mock state: running label | Write state.json with `brain_mode: false`, run `bm status` | Shows "running" (not "brain") |
+| H17 | Backward compat: missing brain_mode | Write state.json without `brain_mode` field | `bm status` works, shows "running" |
+| H18 | Members show: brain label | With brain_mode state, run `bm members show` | Shows "brain" status |
 
-### H.5: State Persistence & Status Display
-
-| # | Scenario | Method | Expected |
-|---|----------|--------|----------|
-| H18 | Mock state: brain label | Write state.json with `brain_mode: true`, run `bm status` | Shows "brain" in status table |
-| H19 | Mock state: running label | Write state.json with `brain_mode: false`, run `bm status` | Shows "running" (not "brain") |
-| H20 | Backward compat: missing brain_mode | Write state.json without `brain_mode` field | `bm status` works, shows "running" |
-| H21 | Members show: brain label | With brain_mode state, run `bm members show` | Shows "brain" status |
-
-### H.6: Sync Edge Cases
+### H.5: Sync Edge Cases
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| H22 | Modified brain-prompt.md restored | Overwrite with junk, re-sync | Original content restored from template |
-| H23 | Deleted brain-prompt.md restored | Delete file, re-sync | File recreated from template |
-| H24 | Content idempotent across syncs | Sync twice, diff results | Identical content after both syncs |
-| H25 | Verbose sync shows BrainPromptSurfaced | Run `bm teams sync -v` | Output contains brain prompt surfacing message |
+| H19 | Modified brain-prompt.md restored | Overwrite with junk, re-sync | Original content restored from template |
+| H20 | Deleted brain-prompt.md restored | Delete file, re-sync | File recreated from template |
+| H21 | Content idempotent across syncs | Sync twice, diff results | Identical content after both syncs |
+| H22 | Verbose sync shows BrainPromptSurfaced | Run `bm teams sync -v` | Output contains brain prompt surfacing message |
 
-### H.7: Unit Test Verification (per-module)
+### H.6: End-to-End Brain Autonomy Validation
 
-| # | Scenario | Method | Expected |
-|---|----------|--------|----------|
-| H26 | brain::queue tests | `cargo test -p bm brain::queue` | All 8 pass |
-| H27 | brain::types tests | `cargo test -p bm brain::types` | All 7 pass |
-| H28 | brain::multiplexer tests | `cargo test -p bm brain::multiplexer` | All 8 pass |
-| H29 | brain::event_watcher tests | `cargo test -p bm brain::event_watcher` | All 24 pass |
-| H30 | brain::heartbeat tests | `cargo test -p bm brain::heartbeat` | All 14 pass |
-| H31 | brain::prompt_template tests | `cargo test -p bm brain::prompt_template` | All 16 pass |
-| H32 | formation::launch brain tests | `cargo test -p bm formation::launch::tests::is_brain` | Both pass |
-| H33 | state brain_mode tests | `cargo test -p bm state::mod::tests::brain` | backward compat + label tests pass |
-
-### H.8: End-to-End Brain Autonomy Validation
-
-Real end-to-end tests that validate brain-mode members are truly autonomous via
-tuwunel Matrix API. Sends real messages, verifies delivery, tests bidirectional
-communication between members, and exercises the full brain lifecycle (start/stop).
+The core autonomy validation: tests the complete user journey of starting brain-mode
+members, chatting with them via the tuwunel Matrix bridge, and stopping them cleanly.
+Messages are sent via the Matrix API (simulating a real human user) while brain members
+are running. The test polls for brain responses to prove autonomous behavior.
 
 **Prerequisites:** Phases B-E must run first (team init + hire + bridge + workspace sync).
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| H34 | Bridge is running | `curl` Matrix versions endpoint | HTTP 200 (bridge auto-recovers if down) |
-| H35 | ACP binary available | `which claude-code-acp-rs` | Binary found in PATH |
-| H36 | Admin Matrix login | `curl` login API with admin creds | Access token returned |
-| H37 | Alice Matrix login | `curl` login API with alice creds | Access token returned |
-| H38 | Room resolution | `curl` room alias API | Room ID returned for team general room |
-| H39 | Send greeting message | `curl` PUT room/send as admin | Event ID returned (message sent) |
-| H40 | Send task request | `curl` PUT room/send as admin | Event ID returned |
-| H41 | Messages in room history | `curl` GET room/messages as alice | Both messages visible in history |
-| H42 | Alice sends message | `curl` PUT room/send as alice | Event ID returned (member can message) |
-| H43 | Bidirectional messaging | Admin polls room history | Sees alice's response message |
-| H44 | Clean state before lifecycle | `bm stop --force`, rm state.json | Clean slate |
-| H45 | Start brain member | `bm start` | Brain mode detected in output |
-| H46 | Brain process alive | Check PID from state.json | Process running (or NOTE if ACP auth fails) |
-| H47 | Status shows brain label | `bm status` | "brain" label shown during lifecycle |
-| H48 | Inject human.interact event | Write event to `.ralph/events-*.jsonl` | Event file created in brain workspace |
-| H49 | Inject build.blocked event | Append event to event file | 2 events in file |
-| H50 | Inject task.close event | Append event to event file | 3 events in file |
-| H51 | Brain survives event processing | Check PID still alive after events | Process alive (or NOTE if ACP failed) |
-| H52 | Stop brain member | `bm stop` | Clean exit |
-| H53 | Processes terminated | Check all PIDs dead | No leftover processes |
-| H54 | Second start-stop cycle | `bm start` + `bm stop` again | Lifecycle idempotent |
-| H55 | Status inquiry after lifecycle | Send message to room post-lifecycle | Message sent successfully |
-| H56 | Message persistence | Poll room history for all messages | All previous messages persist |
-| H57 | Multi-member visibility | Login as bob, poll room | Bob sees all messages |
-| H58 | Cross-member messaging | Alice sends, bob verifies | Bob sees alice's cross-member message |
-| H59 | Multiple event files | Create events in multiple loop files | 3+ event files in `.ralph/` |
-| H60 | Malformed event resilience | Add garbage line + valid event | File has both (unit tests verify parsing) |
-| H61 | Cleanup artifacts | Stop, rm state, rm event files | Clean state |
+| H23 | Bridge is running | `curl` Matrix versions endpoint | HTTP 200 (bridge auto-recovers if down) |
+| H24 | ACP binary available | `which claude-code-acp-rs` | Binary found in PATH |
+| H25 | Admin Matrix login | `curl` login API with admin creds | Access token returned |
+| H26 | Alice Matrix login | `curl` login API with alice creds | Access token returned |
+| H27 | Room resolution | `curl` room alias API | Room ID returned for team general room |
+| H28 | Clean state before lifecycle | `bm stop --force`, rm state.json | Clean slate |
+| H29 | Start brain members | `bm start` | Brain mode detected in output |
+| H30 | Brain process alive | Check PID from state.json | Process running (or NOTE if ACP auth fails) |
+| H31 | Status shows brain label | `bm status` | "brain" label shown during lifecycle |
+| H32 | Send greeting while brain running | `curl` PUT room/send as admin | Message delivered to room with brain alive |
+| H33 | Send work request while brain running | `curl` PUT room/send as admin | Message delivered to room |
+| H34 | Send follow-up question | `curl` PUT room/send as admin | Multi-turn conversation simulated |
+| H35 | Poll for brain response (autonomy proof) | Poll room for messages from brain identity (30s) | Brain responds autonomously (or NOTE if pipeline not wired) |
+| H36 | User messages visible in history | `curl` GET room/messages | All 3 user messages visible |
+| H37 | Brain survived interaction | Check brain PID still alive after messages | Process stable during chat |
+| H38 | Stop brain member | `bm stop` | Clean exit |
+| H39 | Processes terminated | Check all PIDs dead | No leftover processes |
+| H40 | Second start-stop cycle | `bm start` + `bm stop` again | Lifecycle idempotent |
+| H41 | Status inquiry after lifecycle | Send message to room post-lifecycle | Message sent successfully |
+| H42 | Message persistence | Poll room history for all messages | All previous messages persist |
+| H43 | Multi-member visibility | Login as bob, poll room | Bob sees all messages |
+| H44 | Cross-member messaging | Alice sends, bob verifies | Bob sees alice's message |
+| H45 | Cleanup artifacts | Stop, rm state | Clean state |
