@@ -641,4 +641,201 @@ mod tests {
             assert!(!readme_path.exists(), "{profile}: retrospective/ should NOT have a README.md");
         }
     }
+
+    // --- Role Management Skill Tests (Task 03) ---
+
+    #[test]
+    fn role_management_skill_exists_in_all_profiles() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let skill_path = output.path().join("coding-agent/skills/role-management/SKILL.md");
+            assert!(skill_path.exists(), "{profile}: role-management/SKILL.md should exist after member extraction");
+        }
+    }
+
+    #[test]
+    fn role_management_skill_covered_by_ralph_yml_skill_dirs() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let ralph_yml_path = output.path().join("ralph.yml");
+            let content = std::fs::read_to_string(&ralph_yml_path)
+                .unwrap_or_else(|_| panic!("{profile}: team-manager ralph.yml should exist"));
+            let yaml: serde_yml::Value = serde_yml::from_str(&content).unwrap();
+            let dirs = yaml.get("skills")
+                .and_then(|s| s.get("dirs"))
+                .and_then(|d| d.as_sequence())
+                .unwrap_or_else(|| panic!("{profile}: skills.dirs should be a sequence"));
+
+            let has_skill_dir = dirs.iter().any(|d| {
+                d.as_str().map_or(false, |s| s.contains("team-manager/coding-agent/skills"))
+            });
+            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
+        }
+    }
+
+    #[test]
+    fn role_management_skill_has_valid_frontmatter() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/role-management/SKILL.md")
+            ).unwrap();
+
+            let parts: Vec<&str> = content.splitn(3, "---").collect();
+            assert!(parts.len() >= 3, "{profile}: SKILL.md should have YAML frontmatter");
+            let frontmatter = parts[1];
+
+            let yaml: serde_yml::Value = serde_yml::from_str(frontmatter).unwrap();
+
+            let name = yaml.get("name").and_then(|n| n.as_str());
+            assert_eq!(name, Some("role-management"), "{profile}: name should be 'role-management'");
+
+            let desc = yaml.get("description").and_then(|d| d.as_str()).unwrap_or("");
+            assert!(!desc.is_empty(), "{profile}: description should be non-empty");
+            assert!(desc.len() < 1024, "{profile}: description should be under 1024 chars");
+            assert!(!desc.contains('<') && !desc.contains('>'), "{profile}: no XML angle brackets");
+
+            let desc_lower = desc.to_lowercase();
+            assert!(
+                desc_lower.contains("role"),
+                "{profile}: description should mention 'role'"
+            );
+            assert!(
+                desc_lower.contains("use when") || desc_lower.contains("use for"),
+                "{profile}: description should contain trigger phrasing"
+            );
+        }
+    }
+
+    #[test]
+    fn role_management_skill_body_under_word_limit() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/role-management/SKILL.md")
+            ).unwrap();
+
+            let parts: Vec<&str> = content.splitn(3, "---").collect();
+            let body = if parts.len() >= 3 { parts[2] } else { &content };
+            let word_count = body.split_whitespace().count();
+            assert!(word_count < 5000, "{profile}: SKILL.md body has {word_count} words, must be under 5000");
+        }
+    }
+
+    #[test]
+    fn role_management_skill_covers_four_operations() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/role-management/SKILL.md")
+            ).unwrap();
+            let lower = content.to_lowercase();
+
+            assert!(lower.contains("list role"), "{profile}: should cover list roles operation");
+            assert!(lower.contains("add role"), "{profile}: should cover add role operation");
+            assert!(lower.contains("remove role"), "{profile}: should cover remove role operation");
+            assert!(lower.contains("inspect role"), "{profile}: should cover inspect role operation");
+        }
+    }
+
+    #[test]
+    fn role_management_skill_includes_impact_analysis() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/role-management/SKILL.md")
+            ).unwrap();
+            let lower = content.to_lowercase();
+
+            assert!(lower.contains("impact"), "{profile}: should cover impact analysis");
+            assert!(lower.contains("status"), "{profile}: impact analysis should mention statuses");
+            assert!(lower.contains("hat"), "{profile}: impact analysis should mention hats");
+            assert!(lower.contains("knowledge"), "{profile}: impact analysis should mention knowledge");
+        }
+    }
+
+    #[test]
+    fn role_management_skill_references_agreements() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/role-management/SKILL.md")
+            ).unwrap();
+
+            assert!(content.contains("agreements/decisions/"), "{profile}: should reference agreements/decisions/ path");
+        }
+    }
+
+    #[test]
+    fn role_management_skill_no_readme() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let readme_path = output.path().join("coding-agent/skills/role-management/README.md");
+            assert!(!readme_path.exists(), "{profile}: role-management/ should NOT have a README.md");
+        }
+    }
 }
