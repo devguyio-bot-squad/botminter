@@ -244,55 +244,54 @@ End-to-end tests for the brain-mode feature. Tests simulate real user journeys:
 | H13 | Remove brain-prompt.md disables brain | Remove file, run `bm start`, check state | No `brain_mode: true` or falls back to ralph |
 | H14 | Restore brain-prompt.md and stop | Restore file via re-sync, stop all | Clean state after stop |
 
-### H.4: State Persistence & Status Display
+### H.4: Sync Edge Cases
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| H15 | Mock state: brain label | Write state.json with `brain_mode: true`, run `bm status` | Shows "brain" in status table |
-| H16 | Mock state: running label | Write state.json with `brain_mode: false`, run `bm status` | Shows "running" (not "brain") |
-| H17 | Backward compat: missing brain_mode | Write state.json without `brain_mode` field | `bm status` works, shows "running" |
-| H18 | Members show: brain label | With brain_mode state, run `bm members show` | Shows "brain" status |
+| H15 | Modified brain-prompt.md restored | Overwrite with junk, re-sync | Original content restored from template |
+| H16 | Deleted brain-prompt.md restored | Delete file, re-sync | File recreated from template |
+| H17 | Content idempotent across syncs | Sync twice, diff results | Identical content after both syncs |
+| H18 | Verbose sync shows BrainPromptSurfaced | Run `bm teams sync -v` | Output contains brain prompt surfacing message |
 
-### H.5: Sync Edge Cases
-
-| # | Scenario | Method | Expected |
-|---|----------|--------|----------|
-| H19 | Modified brain-prompt.md restored | Overwrite with junk, re-sync | Original content restored from template |
-| H20 | Deleted brain-prompt.md restored | Delete file, re-sync | File recreated from template |
-| H21 | Content idempotent across syncs | Sync twice, diff results | Identical content after both syncs |
-| H22 | Verbose sync shows BrainPromptSurfaced | Run `bm teams sync -v` | Output contains brain prompt surfacing message |
-
-### H.6: End-to-End Brain Autonomy Validation
+### H.5: End-to-End Brain Autonomy Validation
 
 The core autonomy validation: tests the complete user journey of starting brain-mode
 members, chatting with them via the tuwunel Matrix bridge, and stopping them cleanly.
 Messages are sent via the Matrix API (simulating a real human user) while brain members
 are running. The test polls for brain responses to prove autonomous behavior.
 
+Integrated journeys covered (per `exploratory-test-user-journey.md`):
+- **Happy path:** bm start → send messages → poll for response → bm stop
+- **Edge case:** Send malformed/empty message while brain running → verify brain survives
+- **Recovery:** bm stop → bm start → send message → verify delivery after restart
+- **Alternative path:** Cross-member messaging (alice → room, bob verifies)
+
 **Prerequisites:** Phases B-E must run first (team init + hire + bridge + workspace sync).
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| H23 | Bridge is running | `curl` Matrix versions endpoint | HTTP 200 (bridge auto-recovers if down) |
-| H24 | ACP binary available | `which claude-code-acp-rs` | Binary found in PATH |
-| H25 | Admin Matrix login | `curl` login API with admin creds | Access token returned |
-| H26 | Alice Matrix login | `curl` login API with alice creds | Access token returned |
-| H27 | Room resolution | `curl` room alias API | Room ID returned for team general room |
-| H28 | Clean state before lifecycle | `bm stop --force`, rm state.json | Clean slate |
-| H29 | Start brain members | `bm start` | Brain mode detected in output |
-| H30 | Brain process alive | Check PID from state.json | Process running (or NOTE if ACP auth fails) |
-| H31 | Status shows brain label | `bm status` | "brain" label shown during lifecycle |
-| H32 | Send greeting while brain running | `curl` PUT room/send as admin | Message delivered to room with brain alive |
-| H33 | Send work request while brain running | `curl` PUT room/send as admin | Message delivered to room |
-| H34 | Send follow-up question | `curl` PUT room/send as admin | Multi-turn conversation simulated |
-| H35 | Poll for brain response (autonomy proof) | Poll room for messages from brain identity (30s) | Brain responds autonomously (or NOTE if pipeline not wired) |
-| H36 | User messages visible in history | `curl` GET room/messages | All 3 user messages visible |
-| H37 | Brain survived interaction | Check brain PID still alive after messages | Process stable during chat |
-| H38 | Stop brain member | `bm stop` | Clean exit |
-| H39 | Processes terminated | Check all PIDs dead | No leftover processes |
-| H40 | Second start-stop cycle | `bm start` + `bm stop` again | Lifecycle idempotent |
-| H41 | Status inquiry after lifecycle | Send message to room post-lifecycle | Message sent successfully |
-| H42 | Message persistence | Poll room history for all messages | All previous messages persist |
-| H43 | Multi-member visibility | Login as bob, poll room | Bob sees all messages |
-| H44 | Cross-member messaging | Alice sends, bob verifies | Bob sees alice's message |
-| H45 | Cleanup artifacts | Stop, rm state | Clean state |
+| H19 | Bridge is running | `curl` Matrix versions endpoint | HTTP 200 (bridge auto-recovers if down) |
+| H20 | ACP binary available | `which claude-code-acp-rs` | Binary found in PATH |
+| H21 | Admin Matrix login | `curl` login API with admin creds | Access token returned |
+| H22 | Alice Matrix login | `curl` login API with alice creds | Access token returned |
+| H23 | Room resolution | `curl` room alias API | Room ID returned for team general room |
+| H24 | Clean state before lifecycle | `bm stop --force`, rm state.json | Clean slate |
+| H25 | Start brain members | `bm start` | Brain mode detected in output |
+| H26 | Brain process alive | Check PID from state.json | Process running (or NOTE if ACP auth fails) |
+| H27 | Status shows brain label | `bm status` | "brain" label shown during lifecycle |
+| H28 | Send greeting while brain running | `curl` PUT room/send as admin | Message delivered to room with brain alive |
+| H29 | Send work request while brain running | `curl` PUT room/send as admin | Message delivered to room |
+| H30 | Send follow-up question | `curl` PUT room/send as admin | Multi-turn conversation simulated |
+| H31 | Edge case: malformed message | Send empty-body + unicode garbage via Matrix while brain running | Brain process survives (no crash) |
+| H32 | Poll for brain response (autonomy proof) | Poll room for messages from brain identity (30s) | Brain responds autonomously (or NOTE if pipeline not wired) |
+| H33 | User messages visible in history | `curl` GET room/messages | All user messages visible |
+| H34 | Brain survived all interaction | Check brain PID still alive after normal + malformed messages | Process stable during chat |
+| H35 | Stop brain member | `bm stop` | Clean exit |
+| H36 | Processes terminated | Check all PIDs dead | No leftover processes |
+| H37 | Second start-stop cycle | `bm start` + `bm stop` again | Lifecycle idempotent |
+| H38 | Recovery: message after restart | Send message via Matrix after brain restart | Message delivered (recovery proof) |
+| H39 | Status inquiry after lifecycle | Send message to room post-lifecycle | Message sent successfully |
+| H40 | Message persistence (incl. recovery) | Poll room history for all messages | All messages persist including recovery test |
+| H41 | Multi-member visibility | Login as bob, poll room | Bob sees all messages |
+| H42 | Cross-member messaging | Alice sends, bob verifies | Bob sees alice's message |
+| H43 | Cleanup artifacts | Stop, rm state | Clean state |

@@ -112,6 +112,7 @@ hats:
       - [ ] **Security:** Any obvious vulnerabilities? No unsafe code?
       - [ ] **Conventions:** Commits follow `<type>(<scope>): <subject>`? No Ralph files committed?
       - [ ] **Invariants:** Are all constraints in `invariants/` satisfied for affected areas?
+      - [ ] **Exploratory tests:** Apply `knowledge/reviewer-exploratory-test-checklist.md` — check intent alignment and integration depth BEFORE technical correctness.
       - [ ] **Docs:** If CLI behavior changed, were docs in `docs/content/` updated?
 
       ### Invariant Audit (mandatory, run after checklist)
