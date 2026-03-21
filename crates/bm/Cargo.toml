@@ -34,6 +34,7 @@ tokio-util = { version = "0.7", features = ["compat"] }
 sacp = "10.1.0"
 futures = "0.3"
 tracing = "0.1"
+fs2 = "0.4"
 
 [features]
 e2e = []

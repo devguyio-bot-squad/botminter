@@ -1,5 +1,6 @@
 mod event_watcher;
 mod heartbeat;
+pub mod inbox;
 mod multiplexer;
 mod prompt_template;
 mod queue;
