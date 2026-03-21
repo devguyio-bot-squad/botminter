@@ -1386,4 +1386,110 @@ mod tests {
             assert!(lower.contains("agreements") || lower.contains("action items"), "{profile}: dashboard should cover agreements or action items");
         }
     }
+
+    // --- Minty Profile Design Skill Tests (Task 07) ---
+
+    fn minty_skill_path() -> std::path::PathBuf {
+        let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        manifest_dir.join("../../minty/.claude/skills/profile-design/SKILL.md")
+    }
+
+    #[test]
+    fn minty_profile_design_skill_exists() {
+        let path = minty_skill_path();
+        assert!(path.exists(), "minty/.claude/skills/profile-design/SKILL.md should exist in source tree");
+    }
+
+    #[test]
+    fn minty_profile_design_skill_has_valid_frontmatter() {
+        let content = std::fs::read_to_string(minty_skill_path()).unwrap();
+        assert!(content.starts_with("---"), "SKILL.md should start with YAML frontmatter delimiter");
+
+        let end = content[3..].find("---").expect("SKILL.md should have closing frontmatter delimiter");
+        let frontmatter = &content[3..3 + end];
+
+        assert!(frontmatter.contains("name: profile-design"), "frontmatter should have name: profile-design");
+        assert!(frontmatter.contains("description:"), "frontmatter should have description field");
+
+        // Extract description content (multi-line YAML scalar)
+        let desc_start = frontmatter.find("description:").unwrap();
+        let desc_section = &frontmatter[desc_start..];
+        // Find next top-level key or end
+        let desc_end = desc_section[12..].find("\nmetadata:")
+            .or_else(|| desc_section[12..].find("\nlicense:"))
+            .unwrap_or(desc_section.len() - 12);
+        let description = &desc_section[12..12 + desc_end];
+        // Strip YAML block scalar indicators (>-, |-, etc.) before checking content
+        let desc_flat: String = description.lines()
+            .map(|l| l.trim())
+            .filter(|l| *l != ">-" && *l != "|-" && *l != ">" && *l != "|")
+            .collect::<Vec<_>>().join(" ");
+
+        assert!(desc_flat.len() < 1024, "description should be under 1024 characters, got {}", desc_flat.len());
+        assert!(!desc_flat.contains('<') && !desc_flat.contains('>'), "description must not contain XML angle brackets");
+        assert!(
+            desc_flat.to_lowercase().contains("use when"),
+            "description should include 'Use when' trigger phrase"
+        );
+    }
+
+    #[test]
+    fn minty_profile_design_skill_no_readme() {
+        let readme_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../minty/.claude/skills/profile-design/README.md");
+        assert!(!readme_path.exists(), "No README.md should exist in the profile-design skill folder");
+    }
+
+    #[test]
+    fn minty_profile_design_skill_body_under_word_limit() {
+        let content = std::fs::read_to_string(minty_skill_path()).unwrap();
+        let end_of_frontmatter = content[3..].find("---").unwrap() + 3 + 3;
+        let body = &content[end_of_frontmatter..];
+        let word_count = body.split_whitespace().count();
+        assert!(word_count < 5000, "SKILL.md body should be under 5000 words, got {word_count}");
+    }
+
+    #[test]
+    fn minty_profile_design_skill_covers_six_operations() {
+        let content = std::fs::read_to_string(minty_skill_path()).unwrap();
+        let lower = content.to_lowercase();
+
+        assert!(lower.contains("browse"), "should cover browse operation");
+        assert!(lower.contains("role") && lower.contains("design"), "should cover role design operation");
+        assert!(lower.contains("process") && lower.contains("design"), "should cover process design operation");
+        assert!(lower.contains("hat") && lower.contains("design"), "should cover hat design operation");
+        assert!(lower.contains("fork"), "should cover fork operation");
+        assert!(lower.contains("troubleshoot"), "should cover troubleshoot operation");
+    }
+
+    #[test]
+    fn minty_profile_design_skill_includes_validation_checklist() {
+        let content = std::fs::read_to_string(minty_skill_path()).unwrap();
+        let lower = content.to_lowercase();
+
+        assert!(lower.contains("validation"), "should include validation section");
+        assert!(lower.contains("statuses") || lower.contains("status"), "validation should check statuses");
+        assert!(lower.contains("hat trigger") || lower.contains("triggers"), "validation should check hat triggers");
+        assert!(lower.contains("skeleton") || lower.contains("prompt.md"), "validation should check skeleton files");
+    }
+
+    #[test]
+    fn minty_profile_design_skill_includes_troubleshooting() {
+        let content = std::fs::read_to_string(minty_skill_path()).unwrap();
+        let lower = content.to_lowercase();
+
+        assert!(lower.contains("troubleshoot"), "should include troubleshooting section");
+        assert!(lower.contains("diagnostic") || lower.contains("diagnose"), "should include diagnostic procedures");
+        assert!(lower.contains("symptom") || lower.contains("common issues"), "should describe symptoms or common issues");
+    }
+
+    #[test]
+    fn minty_profile_design_skill_defers_to_team_manager() {
+        let content = std::fs::read_to_string(minty_skill_path()).unwrap();
+
+        assert!(
+            content.contains("bm chat team-manager"),
+            "should reference `bm chat team-manager` for live team changes"
+        );
+    }
 }
