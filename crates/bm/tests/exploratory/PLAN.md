@@ -260,11 +260,14 @@ members, chatting with them via the tuwunel Matrix bridge, and stopping them cle
 Messages are sent via the Matrix API (simulating a real human user) while brain members
 are running. The test polls for brain responses to prove autonomous behavior.
 
-Integrated journeys covered (per `exploratory-test-user-journey.md`):
-- **Happy path:** bm start → send messages → poll for response → bm stop
-- **Edge case:** Send malformed/empty message while brain running → verify brain survives
-- **Recovery:** bm stop → bm start → send message → verify delivery after restart
-- **Alternative path:** Cross-member messaging (alice → room, bob verifies)
+**Integrated journeys covered** (per `exploratory-test-user-journey.md` and `exploratory-test-single-journey-smell.md`):
+
+1. **Happy path:** bm start → send messages → poll for brain response → bm stop (H25-H33)
+2. **Edge case:** Send malformed/empty message while brain running → verify brain survives (H31)
+3. **Cross-member (while brain alive):** Alice sends message while brain running → bob verifies → brain alive (H34-H35)
+4. **Recovery (fully integrated):** bm stop → bm start → send message → poll for brain response → bm stop (H38-H41)
+
+Each integrated journey crosses all subsystems: CLI (start/stop), bridge (Matrix), brain (response).
 
 **Prerequisites:** Phases B-E must run first (team init + hire + bridge + workspace sync).
 
@@ -285,13 +288,15 @@ Integrated journeys covered (per `exploratory-test-user-journey.md`):
 | H31 | Edge case: malformed message | Send empty-body + unicode garbage via Matrix while brain running | Brain process survives (no crash) |
 | H32 | Poll for brain response (autonomy proof) | Poll room for messages from brain identity (30s) | Brain responds autonomously (or NOTE if pipeline not wired) |
 | H33 | User messages visible in history | `curl` GET room/messages | All user messages visible |
-| H34 | Brain survived all interaction | Check brain PID still alive after normal + malformed messages | Process stable during chat |
-| H35 | Stop brain member | `bm stop` | Clean exit |
-| H36 | Processes terminated | Check all PIDs dead | No leftover processes |
-| H37 | Second start-stop cycle | `bm start` + `bm stop` again | Lifecycle idempotent |
-| H38 | Recovery: message after restart | Send message via Matrix after brain restart | Message delivered (recovery proof) |
-| H39 | Status inquiry after lifecycle | Send message to room post-lifecycle | Message sent successfully |
-| H40 | Message persistence (incl. recovery) | Poll room history for all messages | All messages persist including recovery test |
-| H41 | Multi-member visibility | Login as bob, poll room | Bob sees all messages |
-| H42 | Cross-member messaging | Alice sends, bob verifies | Bob sees alice's message |
-| H43 | Cleanup artifacts | Stop, rm state | Clean state |
+| H34 | Cross-member while brain alive | Alice sends message while brain running, bob verifies | Bob sees alice's message with brain process active |
+| H35 | Brain survived all interaction | Check brain PID still alive after normal + malformed + cross-member messages | Process stable during chat |
+| H36 | Stop brain member | `bm stop` | Clean exit |
+| H37 | Processes terminated | Check all PIDs dead | No leftover processes |
+| H38 | Recovery: restart brain | `bm start` after stop | Brain restarts successfully |
+| H39 | Recovery: send message | Send message via Matrix after brain restart | Message delivered (recovery proof) |
+| H40 | Recovery: poll for response | Poll room for brain response after restart (30s) | Brain responds after recovery (or NOTE) |
+| H41 | Recovery: stop cycle | `bm stop` again | Lifecycle idempotent |
+| H42 | Status inquiry after lifecycle | Send message to room post-lifecycle | Message sent successfully |
+| H43 | Message persistence (incl. recovery + cross-member) | Poll room history for all messages | All messages persist including recovery and cross-member |
+| H44 | Multi-member visibility | Login as bob, poll room | Bob sees all messages |
+| H45 | Cleanup artifacts | Stop, rm state | Clean state |

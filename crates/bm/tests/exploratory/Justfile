@@ -1318,7 +1318,49 @@ phase-h:
         fail "H33" "Message visibility" "greeting=$GREETING_FOUND task=$TASK_FOUND total=$MSG_COUNT"
     fi
 
-    # H34: Brain process survived all interaction (didn't crash from messages)
+    # H34: Cross-member messaging while brain is running (integrated journey)
+    # This tests cross-member interaction as a distinct user journey WHILE the brain
+    # is alive — proving brain autonomy applies to multi-member scenarios.
+    MSG_TXN="h34-$(date +%s)"
+    curl -sf -X PUT \
+        -H "Authorization: Bearer $ALICE_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"msgtype\":\"m.text\",\"body\":\"Cross-member test: alice sending to room while brain is active.\"}" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" >/dev/null 2>&1
+    sleep 1
+    if [ -n "$BOB_TOKEN" ]; then
+        BOB_CROSS=$(curl -sf \
+            -H "Authorization: Bearer $BOB_TOKEN" \
+            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=5" 2>/dev/null || echo '{}')
+        CROSS_FOUND=$(echo "$BOB_CROSS" | jq '[.chunk[] | select(.content.body? // "" | contains("Cross-member test"))] | length' 2>/dev/null || echo "0")
+        if [ "${CROSS_FOUND:-0}" -ge 1 ]; then
+            pass "H34" "Cross-member messaging while brain running (alice to bob, brain alive)"
+        else
+            fail "H34" "Cross-member" "bob does not see alice's message while brain is running"
+        fi
+    else
+        # Need bob token — login if we don't have it yet
+        BOB_PASS=$(jq -r '.["superman-bob"]' "$PWFILE" 2>/dev/null)
+        BOB_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+            -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-bob\"},\"password\":\"$BOB_PASS\"}" \
+            "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+        BOB_TOKEN=$(echo "$BOB_LOGIN" | jq -r '.access_token // empty')
+        if [ -n "$BOB_TOKEN" ]; then
+            BOB_CROSS=$(curl -sf \
+                -H "Authorization: Bearer $BOB_TOKEN" \
+                "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=5" 2>/dev/null || echo '{}')
+            CROSS_FOUND=$(echo "$BOB_CROSS" | jq '[.chunk[] | select(.content.body? // "" | contains("Cross-member test"))] | length' 2>/dev/null || echo "0")
+            if [ "${CROSS_FOUND:-0}" -ge 1 ]; then
+                pass "H34" "Cross-member messaging while brain running (alice to bob, brain alive)"
+            else
+                fail "H34" "Cross-member" "bob does not see alice's message"
+            fi
+        else
+            fail "H34" "Cross-member" "could not login as bob"
+        fi
+    fi
+
+    # H35: Brain process survived all interaction (didn't crash from messages + cross-member)
     if $BRAIN_ALIVE; then
         STILL_ALIVE=false
         for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
@@ -1328,27 +1370,27 @@ phase-h:
             fi
         done
         if $STILL_ALIVE; then
-            pass "H34" "Brain survived all interaction (alive after normal + malformed messages)"
+            pass "H35" "Brain survived all interaction (normal + malformed + cross-member messages)"
         else
-            note "H34" "Brain stability" "brain process died during user interaction"
+            note "H35" "Brain stability" "brain process died during user interaction"
         fi
     else
-        note "H34" "Brain stability" "skipped (brain not alive)"
+        note "H35" "Brain stability" "skipped (brain not alive)"
     fi
 
     # ── Graceful Stop & Cleanup ──
 
-    # H35: Stop brain member (graceful first, then force cleanup)
+    # H36: Stop brain member (graceful first, then force cleanup)
     STOP_OUT=$($BM stop 2>&1)
     STOP_EC=$?
     if [ $STOP_EC -eq 0 ]; then
-        pass "H35" "bm stop executed cleanly (exit 0)"
+        pass "H36" "bm stop executed cleanly (exit 0)"
     else
-        note "H35" "bm stop graceful" "exit $STOP_EC, retrying with --force"
+        note "H36" "bm stop graceful" "exit $STOP_EC, retrying with --force"
         $BM stop --force 2>&1 || true
     fi
 
-    # H36: Verify brain processes are gone after stop
+    # H37: Verify brain processes are gone after stop
     sleep 2
     ALL_DEAD=true
     if [ -f "$STATE_FILE" ]; then
@@ -1372,26 +1414,40 @@ phase-h:
     fi
     if ! $STILL_ALIVE; then
         if $ALL_DEAD; then
-            pass "H36" "All brain processes terminated after stop"
+            pass "H37" "All brain processes terminated after stop"
         else
-            pass "H36" "All brain processes terminated (required force-kill for stragglers)"
+            pass "H37" "All brain processes terminated (required force-kill for stragglers)"
         fi
     else
-        fail "H36" "Process cleanup" "some processes still alive after force-kill"
+        fail "H37" "Process cleanup" "some processes still alive after force-kill"
     fi
 
-    # ── Recovery Scenario: restart + message delivery ──
-    # Tests that after stop → start, the brain accepts messages (user-path recovery).
-    # Required by exploratory-test-user-journey.md recovery scenario invariant.
+    # ── Recovery Scenario: restart + message + response polling ──
+    # This is a fully integrated recovery journey per exploratory-test-user-journey.md:
+    # stop -> start -> send message -> poll for brain response -> stop
+    # Proves the system recovers AND the brain responds after restart.
 
-    # H37: Second start-stop cycle with recovery validation
+    # H38: Restart brain members (recovery scenario)
     rm -f "$STATE_FILE"
     START2_OUT=$($BM start 2>&1 || true)
     sleep 3
+    RECOVERY_BRAIN_ALIVE=false
+    if [ -f "$STATE_FILE" ]; then
+        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
+            if kill -0 "$pid" 2>/dev/null; then
+                RECOVERY_BRAIN_ALIVE=true
+                break
+            fi
+        done
+    fi
+    if echo "$START2_OUT" | grep -qi "brain\|launch\|started"; then
+        pass "H38" "Brain restarted successfully (recovery scenario)"
+    else
+        note "H38" "Recovery restart" "output: $(echo "$START2_OUT" | tail -2 | tr '\n' ' ')"
+    fi
 
-    # H38: Send message after brain restart (recovery proof)
-    # This proves the system recovers and accepts input after restart.
-    MSG_TXN="h38-$(date +%s)"
+    # H39: Send message after brain restart (recovery proof)
+    MSG_TXN="h39-$(date +%s)"
     RECOVERY_RESP=$(curl -sf -X PUT \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
         -H "Content-Type: application/json" \
@@ -1399,12 +1455,40 @@ phase-h:
         "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
     RECOVERY_EVENT_ID=$(echo "$RECOVERY_RESP" | jq -r '.event_id // empty')
     if [ -n "$RECOVERY_EVENT_ID" ]; then
-        pass "H38" "Message delivered after brain restart (recovery proof, $RECOVERY_EVENT_ID)"
+        pass "H39" "Message delivered after brain restart (recovery proof, $RECOVERY_EVENT_ID)"
     else
-        fail "H38" "Recovery message" "failed to send message after restart"
+        fail "H39" "Recovery message" "failed to send message after restart"
     fi
 
-    # Stop and clean up second cycle
+    # H40: Poll for brain response after recovery (integrated recovery journey)
+    # This makes recovery a fully integrated journey: restart -> send -> poll response
+    echo "    Polling for brain response after recovery (up to 30s)..."
+    RECOVERY_RESPONDED=false
+    RECOVERY_RESPONSE_BODY=""
+    for attempt in $(seq 1 6); do
+        sleep 5
+        RHIST=$(curl -sf \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=10" 2>/dev/null || echo '{}')
+        RECOVERY_BRAIN_MSGS=$(echo "$RHIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
+        if [ "${RECOVERY_BRAIN_MSGS:-0}" -gt 0 ]; then
+            RECOVERY_RESPONSE_BODY=$(echo "$RHIST" | jq -r '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | .[0].content.body // "empty"' 2>/dev/null)
+            RECOVERY_RESPONDED=true
+            break
+        fi
+        echo "    Recovery attempt $attempt/6: no brain response yet..."
+    done
+    if $RECOVERY_RESPONDED; then
+        pass "H40" "Brain responded after recovery! (response: $(echo "$RECOVERY_RESPONSE_BODY" | head -c 80)...)"
+    else
+        if $RECOVERY_BRAIN_ALIVE; then
+            note "H40" "Recovery response" "brain alive after restart but did not respond within 30s"
+        else
+            note "H40" "Recovery response" "brain not alive after restart, response not expected"
+        fi
+    fi
+
+    # H41: Stop and verify recovery cycle cleanup
     $BM stop --force 2>&1 || true
     sleep 2
     pkill -f "claude-code-acp-rs.*$TEAM_DIR" 2>/dev/null || true
@@ -1425,23 +1509,23 @@ phase-h:
         done
     fi
     if ! $STILL2; then
-        pass "H37" "Second start-stop cycle clean (brain lifecycle idempotent)"
+        pass "H41" "Recovery start-stop cycle clean (brain lifecycle idempotent)"
     else
-        fail "H37" "Second cycle" "processes still alive after force-kill"
+        fail "H41" "Recovery cycle" "processes still alive after force-kill"
     fi
 
-    # ── Matrix Room Persistence & Multi-User Interaction ──
+    # ── Matrix Room Persistence & Multi-User Visibility ──
 
-    # H39: Send a status inquiry message as admin after brain lifecycle
-    MSG_TXN="h39-$(date +%s)"
+    # H42: Send a status inquiry message as admin after full lifecycle
+    MSG_TXN="h42-$(date +%s)"
     curl -sf -X PUT \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
         -H "Content-Type: application/json" \
         -d "{\"msgtype\":\"m.text\",\"body\":\"Status check: Are all brain members operational?\"}" \
         "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" >/dev/null 2>&1
-    pass "H39" "Status inquiry sent after brain lifecycle"
+    pass "H42" "Status inquiry sent after brain lifecycle"
 
-    # H40: Verify all previous messages persist in room history
+    # H43: Verify all previous messages persist in room history
     sleep 1
     HISTORY=$(curl -sf \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
@@ -1451,57 +1535,42 @@ phase-h:
     HAS_TASK=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("project status"))] | length' 2>/dev/null || echo "0")
     HAS_STATUS=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("brain members operational"))] | length' 2>/dev/null || echo "0")
     HAS_RECOVERY=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("Recovery test"))] | length' 2>/dev/null || echo "0")
-    if [ "${HAS_GREETING:-0}" -ge 1 ] && [ "${HAS_TASK:-0}" -ge 1 ] && [ "${HAS_STATUS:-0}" -ge 1 ] && [ "${HAS_RECOVERY:-0}" -ge 1 ]; then
-        pass "H40" "All messages persist in room history including recovery ($TOTAL_MSGS total)"
+    HAS_CROSS=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("Cross-member test"))] | length' 2>/dev/null || echo "0")
+    if [ "${HAS_GREETING:-0}" -ge 1 ] && [ "${HAS_TASK:-0}" -ge 1 ] && [ "${HAS_STATUS:-0}" -ge 1 ] && [ "${HAS_RECOVERY:-0}" -ge 1 ] && [ "${HAS_CROSS:-0}" -ge 1 ]; then
+        pass "H43" "All messages persist in room history incl. recovery + cross-member ($TOTAL_MSGS total)"
     else
-        fail "H40" "Message persistence" "greeting=$HAS_GREETING task=$HAS_TASK status=$HAS_STATUS recovery=$HAS_RECOVERY total=$TOTAL_MSGS"
+        fail "H43" "Message persistence" "greeting=$HAS_GREETING task=$HAS_TASK status=$HAS_STATUS recovery=$HAS_RECOVERY cross=$HAS_CROSS total=$TOTAL_MSGS"
     fi
 
-    # H41: Login as bob and verify he sees messages too (multi-member visibility)
-    BOB_PASS=$(jq -r '.["superman-bob"]' "$PWFILE" 2>/dev/null)
-    BOB_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
-        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-bob\"},\"password\":\"$BOB_PASS\"}" \
-        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
-    BOB_TOKEN=$(echo "$BOB_LOGIN" | jq -r '.access_token // empty')
-    if [ -n "$BOB_TOKEN" ]; then
+    # H44: Login as bob and verify he sees messages too (multi-member visibility)
+    if [ -z "${BOB_TOKEN:-}" ]; then
+        BOB_PASS=$(jq -r '.["superman-bob"]' "$PWFILE" 2>/dev/null)
+        BOB_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+            -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-bob\"},\"password\":\"$BOB_PASS\"}" \
+            "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+        BOB_TOKEN=$(echo "$BOB_LOGIN" | jq -r '.access_token // empty')
+    fi
+    if [ -n "${BOB_TOKEN:-}" ]; then
         BOB_MSGS=$(curl -sf \
             -H "Authorization: Bearer $BOB_TOKEN" \
             "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
         BOB_SEES=$(echo "$BOB_MSGS" | jq '[.chunk[] | select(.type == "m.room.message")] | length' 2>/dev/null || echo "0")
         if [ "${BOB_SEES:-0}" -ge 4 ]; then
-            pass "H41" "Bob sees all messages in room ($BOB_SEES messages)"
+            pass "H44" "Bob sees all messages in room ($BOB_SEES messages)"
         else
-            fail "H41" "Bob visibility" "bob only sees $BOB_SEES messages (expected >= 4)"
+            fail "H44" "Bob visibility" "bob only sees $BOB_SEES messages (expected >= 4)"
         fi
     else
-        fail "H41" "Bob login" "failed to login as bob"
-    fi
-
-    # H42: Cross-member messaging (alice -> room, bob verifies)
-    MSG_TXN="h42-$(date +%s)"
-    curl -sf -X PUT \
-        -H "Authorization: Bearer $ALICE_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"msgtype\":\"m.text\",\"body\":\"Cross-member test: alice to bob via room.\"}" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" >/dev/null 2>&1
-    sleep 1
-    BOB_CROSS=$(curl -sf \
-        -H "Authorization: Bearer $BOB_TOKEN" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=5" 2>/dev/null || echo '{}')
-    CROSS_FOUND=$(echo "$BOB_CROSS" | jq '[.chunk[] | select(.content.body? // "" | contains("Cross-member test"))] | length' 2>/dev/null || echo "0")
-    if [ "${CROSS_FOUND:-0}" -ge 1 ]; then
-        pass "H42" "Cross-member messaging works (alice to bob via room)"
-    else
-        fail "H42" "Cross-member" "bob does not see alice's cross-member message"
+        fail "H44" "Bob login" "failed to login as bob"
     fi
 
     # ── Final Cleanup ──
 
-    # H43: Clean up brain lifecycle artifacts
+    # H45: Clean up brain lifecycle artifacts
     $BM stop --force 2>/dev/null || true
     pkill -f "claude-code-acp-rs.*$TEAM_DIR" 2>/dev/null || true
     rm -f "$STATE_FILE"
-    pass "H43" "Cleaned up brain lifecycle test artifacts"
+    pass "H45" "Cleaned up brain lifecycle test artifacts"
 
     fi  # end BRIDGE_OK
 
