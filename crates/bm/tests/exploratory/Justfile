@@ -1071,6 +1071,7 @@ phase-h:
     BSTATE="$TEAM_DIR/bridge-state.json"
     PWFILE="$TEAM_DIR/tuwunel-passwords.json"
     CONTAINER="bm-tuwunel-$TEAM_NAME"
+    BOB_TOKEN=""
 
     # ── Prerequisites: ensure bridge is running ──
 
