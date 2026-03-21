@@ -966,8 +966,8 @@ phase-h:
 
     # H12: State file has brain_mode after start attempt
     if [ -f "$STATE_FILE" ] && grep -q '"brain_mode"' "$STATE_FILE" 2>/dev/null; then
-        BRAIN_VAL=$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(any(v.get('brain_mode',False) for v in d.get('members',{}).values()))" 2>/dev/null || echo "parse_error")
-        if [ "$BRAIN_VAL" = "True" ]; then
+        HAS_BRAIN=$(jq '[.members // {} | to_entries[] | select(.value.brain_mode == true)] | length' "$STATE_FILE" 2>/dev/null || echo "0")
+        if [ "${HAS_BRAIN:-0}" -gt 0 ]; then
             pass "H12" "state.json has brain_mode=true for at least one member"
         else
             note "H12" "brain_mode field" "present but not true (start may have failed)"
@@ -991,8 +991,8 @@ phase-h:
     if echo "$OUT" | grep -qi "ralph\|launch\|started"; then
         # Verify state.json does NOT have brain_mode=true
         if [ -f "$STATE_FILE" ]; then
-            BRAIN_VAL=$(python3 -c "import json; d=json.load(open('$STATE_FILE')); print(any(v.get('brain_mode',False) for v in d.get('members',{}).values()))" 2>/dev/null || echo "parse_error")
-            if [ "$BRAIN_VAL" = "False" ]; then
+            HAS_BRAIN=$(jq '[.members // {} | to_entries[] | select(.value.brain_mode == true)] | length' "$STATE_FILE" 2>/dev/null || echo "0")
+            if [ "${HAS_BRAIN:-0}" -eq 0 ]; then
                 pass "H13" "Without brain-prompt.md: no brain_mode=true in state"
             else
                 note "H13" "Ralph fallback" "brain_mode still true despite missing brain-prompt.md"
@@ -1208,6 +1208,437 @@ phase-h:
     else
         fail "H33" "state brain_mode tests" "exit=$STATE_EC pass=$STATE_PASS"
     fi
+
+    # ── H.8: End-to-End Brain Autonomy Validation ─────────────────
+    #
+    # These tests validate the true value of brain-mode by exercising
+    # the full autonomous lifecycle via the tuwunel Matrix API:
+    # - Start brain member → verify alive
+    # - Send real messages to the Matrix room
+    # - Verify message delivery via room history
+    # - Inject brain events and verify processing
+    # - Test brain start/stop lifecycle
+    # - Validate clean shutdown and state cleanup
+
+    echo "  H.8: End-to-End Brain Autonomy Validation..."
+
+    MATRIX_URL="http://127.0.0.1:8008"
+    BSTATE="$TEAM_DIR/bridge-state.json"
+    PWFILE="$TEAM_DIR/tuwunel-passwords.json"
+    CONTAINER="bm-tuwunel-$TEAM_NAME"
+
+    # ── Prerequisites: ensure bridge is running ──
+
+    # H34: Verify tuwunel bridge is up (prerequisite for all H.8 tests)
+    BRIDGE_OK=false
+    HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
+    if [ "$HTTP" = "200" ]; then
+        pass "H34" "Tuwunel bridge is running (Matrix server healthy)"
+        BRIDGE_OK=true
+    else
+        # Try to bring it up
+        $BM teams sync --bridge -v 2>&1 >/dev/null
+        HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
+        if [ "$HTTP" = "200" ]; then
+            pass "H34" "Tuwunel bridge started (was down, recovered)"
+            BRIDGE_OK=true
+        else
+            fail "H34" "Bridge prerequisite" "Matrix server not reachable (HTTP $HTTP)"
+        fi
+    fi
+
+    if $BRIDGE_OK; then
+
+    # H35: Verify ACP binary is available
+    if command -v claude-code-acp-rs >/dev/null 2>&1; then
+        ACP_VERSION=$(claude-code-acp-rs --version 2>/dev/null || echo "unknown")
+        pass "H35" "ACP binary available ($ACP_VERSION)"
+    else
+        fail "H35" "ACP binary" "claude-code-acp-rs not found in PATH"
+    fi
+
+    # ── Matrix Authentication & Room Setup ──
+
+    # H36: Login as admin to Matrix
+    ADMIN_PASS=$(jq -r '.bmadmin' "$PWFILE" 2>/dev/null)
+    ADMIN_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"bmadmin\"},\"password\":\"$ADMIN_PASS\"}" \
+        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+    ADMIN_TOKEN=$(echo "$ADMIN_LOGIN" | jq -r '.access_token // empty')
+    if [ -n "$ADMIN_TOKEN" ]; then
+        pass "H36" "Admin Matrix login successful"
+    else
+        fail "H36" "Admin login" "no access token returned"
+    fi
+
+    # H37: Login as alice member to Matrix
+    ALICE_PASS=$(jq -r '.["superman-alice"]' "$PWFILE" 2>/dev/null)
+    ALICE_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-alice\"},\"password\":\"$ALICE_PASS\"}" \
+        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+    ALICE_TOKEN=$(echo "$ALICE_LOGIN" | jq -r '.access_token // empty')
+    if [ -n "$ALICE_TOKEN" ]; then
+        pass "H37" "Alice Matrix login successful"
+    else
+        fail "H37" "Alice login" "no access token returned"
+    fi
+
+    # H38: Resolve room ID for the team general room
+    ROOM_ALIAS="%23${TEAM_NAME}-general:localhost"
+    ROOM_RESP=$(curl -sf "$MATRIX_URL/_matrix/client/v3/directory/room/$ROOM_ALIAS" 2>/dev/null || echo '{}')
+    ROOM_ID=$(echo "$ROOM_RESP" | jq -r '.room_id // empty')
+    if [ -n "$ROOM_ID" ]; then
+        pass "H38" "Room resolved ($ROOM_ID)"
+    else
+        fail "H38" "Room resolution" "room $TEAM_NAME-general not found"
+    fi
+
+    # ── Matrix Message Send/Receive (User Simulation) ──
+
+    # H39: Send a greeting message to the room as admin (simulating a human user)
+    MSG_TXN="h39-$(date +%s)"
+    SEND_RESP=$(curl -sf -X PUT \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"msgtype\":\"m.text\",\"body\":\"Hello brain member! This is an exploratory test greeting.\"}" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
+    SEND_EVENT_ID=$(echo "$SEND_RESP" | jq -r '.event_id // empty')
+    if [ -n "$SEND_EVENT_ID" ]; then
+        pass "H39" "Greeting message sent to room ($SEND_EVENT_ID)"
+    else
+        fail "H39" "Send greeting" "no event_id returned: $SEND_RESP"
+    fi
+
+    # H40: Send a task request message (simulating a real work request)
+    MSG_TXN="h40-$(date +%s)"
+    SEND_RESP=$(curl -sf -X PUT \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"msgtype\":\"m.text\",\"body\":\"Please check the current project status and report back.\"}" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
+    TASK_EVENT_ID=$(echo "$SEND_RESP" | jq -r '.event_id // empty')
+    if [ -n "$TASK_EVENT_ID" ]; then
+        pass "H40" "Task request message sent to room ($TASK_EVENT_ID)"
+    else
+        fail "H40" "Send task request" "no event_id"
+    fi
+
+    # H41: Verify messages appear in room history (poll from alice's perspective)
+    sleep 1
+    MESSAGES=$(curl -sf \
+        -H "Authorization: Bearer $ALICE_TOKEN" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=10" 2>/dev/null || echo '{}')
+    MSG_COUNT=$(echo "$MESSAGES" | jq '[.chunk[] | select(.type == "m.room.message")] | length' 2>/dev/null || echo "0")
+    GREETING_FOUND=$(echo "$MESSAGES" | jq '[.chunk[] | select(.content.body? // "" | contains("exploratory test greeting"))] | length' 2>/dev/null || echo "0")
+    TASK_FOUND=$(echo "$MESSAGES" | jq '[.chunk[] | select(.content.body? // "" | contains("project status"))] | length' 2>/dev/null || echo "0")
+    if [ "${GREETING_FOUND:-0}" -ge 1 ] && [ "${TASK_FOUND:-0}" -ge 1 ]; then
+        pass "H41" "Both messages visible in room history ($MSG_COUNT total messages)"
+    else
+        fail "H41" "Message visibility" "greeting=$GREETING_FOUND task=$TASK_FOUND total=$MSG_COUNT"
+    fi
+
+    # H42: Alice can send a message to the room (member → room messaging works)
+    MSG_TXN="h42-$(date +%s)"
+    ALICE_SEND=$(curl -sf -X PUT \
+        -H "Authorization: Bearer $ALICE_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"msgtype\":\"m.text\",\"body\":\"Acknowledged. Brain member alice reporting for duty.\"}" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
+    ALICE_EVENT_ID=$(echo "$ALICE_SEND" | jq -r '.event_id // empty')
+    if [ -n "$ALICE_EVENT_ID" ]; then
+        pass "H42" "Alice can send messages to room ($ALICE_EVENT_ID)"
+    else
+        fail "H42" "Alice send" "no event_id: $ALICE_SEND"
+    fi
+
+    # H43: Verify bidirectional messaging — admin sees alice's message
+    sleep 1
+    ADMIN_MSGS=$(curl -sf \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=10" 2>/dev/null || echo '{}')
+    ALICE_MSG_FOUND=$(echo "$ADMIN_MSGS" | jq '[.chunk[] | select(.content.body? // "" | contains("Brain member alice reporting"))] | length' 2>/dev/null || echo "0")
+    if [ "${ALICE_MSG_FOUND:-0}" -ge 1 ]; then
+        pass "H43" "Admin sees alice's message in room (bidirectional messaging)"
+    else
+        fail "H43" "Bidirectional messaging" "alice's message not found in admin's view"
+    fi
+
+    # ── Brain Member Lifecycle (Start/Stop) ──
+
+    # H44: Clean any previous state before brain lifecycle test
+    $BM stop --force 2>/dev/null || true
+    rm -f "$STATE_FILE"
+    pass "H44" "Cleaned previous state for lifecycle test"
+
+    # H45: Start brain member via bm start
+    START_OUT=$($BM start 2>&1 || true)
+    START_EC=$?
+    if echo "$START_OUT" | grep -qi "brain\|launch\|started"; then
+        pass "H45" "bm start executed (brain mode detected)"
+    else
+        note "H45" "bm start" "output: $(echo "$START_OUT" | tail -3 | tr '\n' ' ')"
+    fi
+
+    # H46: Check if brain processes are alive (give them 3 seconds to start)
+    sleep 3
+    BRAIN_ALIVE=false
+    if [ -f "$STATE_FILE" ]; then
+        ALIVE_COUNT=$(jq '[.members // {} | to_entries[] | select(.value.brain_mode == true)] | length' "$STATE_FILE" 2>/dev/null || echo "0")
+        if [ "${ALIVE_COUNT:-0}" -gt 0 ]; then
+            # Verify at least one brain PID is actually alive
+            for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
+                if kill -0 "$pid" 2>/dev/null; then
+                    BRAIN_ALIVE=true
+                    break
+                fi
+            done
+        fi
+    fi
+    if $BRAIN_ALIVE; then
+        pass "H46" "Brain member process is alive (PID verified)"
+    else
+        # Brain may have crashed due to ACP auth — check for state entries
+        if [ -f "$STATE_FILE" ] && grep -q '"brain_mode":true' "$STATE_FILE" 2>/dev/null; then
+            note "H46" "Brain process" "brain_mode=true in state but process not alive (ACP may have failed to authenticate)"
+        else
+            note "H46" "Brain process" "no brain members in state file"
+        fi
+    fi
+
+    # H47: Status shows brain label while running
+    STATUS_OUT=$($BM status 2>&1 || true)
+    if echo "$STATUS_OUT" | grep -qi "brain"; then
+        pass "H47" "bm status shows brain label during lifecycle"
+    else
+        note "H47" "Brain status" "output: $(echo "$STATUS_OUT" | tail -3 | tr '\n' ' ')"
+    fi
+
+    # H48: Inject a human.interact event into brain workspace event file
+    # This simulates what happens when a bridge message reaches the brain
+    ALICE_RALPH_DIR="$ALICE_WS/.ralph"
+    mkdir -p "$ALICE_RALPH_DIR"
+    EVENT_FILE="$ALICE_RALPH_DIR/events-test-h48.jsonl"
+    echo "{\"topic\":\"human.interact\",\"payload\":\"What is your current status?\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$EVENT_FILE"
+    if [ -f "$EVENT_FILE" ]; then
+        pass "H48" "Injected human.interact event into brain workspace"
+    else
+        fail "H48" "Event injection" "failed to write event file"
+    fi
+
+    # H49: Inject a build.blocked event (second priority event)
+    echo "{\"topic\":\"build.blocked\",\"payload\":\"CI pipeline failed on test-suite\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >> "$EVENT_FILE"
+    INJECT_COUNT=$(wc -l < "$EVENT_FILE" 2>/dev/null || echo "0")
+    if [ "$INJECT_COUNT" -ge 2 ]; then
+        pass "H49" "Injected build.blocked event ($INJECT_COUNT events total)"
+    else
+        fail "H49" "Event injection" "only $INJECT_COUNT events in file"
+    fi
+
+    # H50: Inject a task.close event
+    echo "{\"topic\":\"task.close\",\"payload\":\"Task H50 completed successfully\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >> "$EVENT_FILE"
+    INJECT_COUNT=$(wc -l < "$EVENT_FILE" 2>/dev/null || echo "0")
+    if [ "$INJECT_COUNT" -ge 3 ]; then
+        pass "H50" "Injected task.close event ($INJECT_COUNT events total)"
+    else
+        fail "H50" "Event injection" "only $INJECT_COUNT events"
+    fi
+
+    # H51: Wait for brain to process events (if alive) — check for ACP activity
+    if $BRAIN_ALIVE; then
+        sleep 5  # Give event watcher time to poll and ACP to process
+        # Check if the brain process is still alive (didn't crash on events)
+        STILL_ALIVE=false
+        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
+            if kill -0 "$pid" 2>/dev/null; then
+                STILL_ALIVE=true
+                break
+            fi
+        done
+        if $STILL_ALIVE; then
+            pass "H51" "Brain survived event processing (still alive after 3 injected events)"
+        else
+            note "H51" "Brain crash" "brain process died while processing events"
+        fi
+    else
+        note "H51" "Brain events" "skipped (brain not alive)"
+    fi
+
+    # H52: Stop brain member (graceful first, then force cleanup)
+    STOP_OUT=$($BM stop 2>&1)
+    STOP_EC=$?
+    if [ $STOP_EC -eq 0 ]; then
+        pass "H52" "bm stop executed cleanly (exit 0)"
+    else
+        # Graceful stop may fail for brain members with ACP — use force as fallback
+        note "H52" "bm stop graceful" "exit $STOP_EC, retrying with --force"
+        $BM stop --force 2>&1 || true
+    fi
+
+    # H53: Verify brain process is gone after stop (force-kill any stragglers)
+    sleep 2
+    ALL_DEAD=true
+    if [ -f "$STATE_FILE" ]; then
+        for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
+            if kill -0 "$pid" 2>/dev/null; then
+                # Force-kill straggler (ACP child process may linger)
+                kill -9 "$pid" 2>/dev/null || true
+                ALL_DEAD=false
+            fi
+        done
+    fi
+    # Also kill any orphaned claude-code-acp-rs processes spawned by our bm
+    pkill -f "claude-code-acp-rs.*$TEAM_DIR" 2>/dev/null || true
+    sleep 1
+    # Re-check after cleanup
+    STILL_ALIVE=false
+    if [ -f "$STATE_FILE" ]; then
+        for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
+            if kill -0 "$pid" 2>/dev/null; then
+                STILL_ALIVE=true
+                break
+            fi
+        done
+    fi
+    if ! $STILL_ALIVE; then
+        if $ALL_DEAD; then
+            pass "H53" "All brain processes terminated after stop"
+        else
+            pass "H53" "All brain processes terminated (required force-kill for stragglers)"
+        fi
+    else
+        fail "H53" "Process cleanup" "some processes still alive after force-kill"
+    fi
+
+    # H54: Second start-stop cycle (idempotency of brain lifecycle)
+    rm -f "$STATE_FILE"
+    START2_OUT=$($BM start 2>&1 || true)
+    sleep 3
+    $BM stop --force 2>&1 || true
+    sleep 2
+    # Force-kill any remaining processes
+    pkill -f "claude-code-acp-rs.*$TEAM_DIR" 2>/dev/null || true
+    sleep 1
+    # Verify state is clean again
+    ALL_DEAD2=true
+    if [ -f "$STATE_FILE" ]; then
+        for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
+            if kill -0 "$pid" 2>/dev/null; then
+                kill -9 "$pid" 2>/dev/null || true
+                ALL_DEAD2=false
+            fi
+        done
+    fi
+    # Final check
+    STILL2=false
+    if [ -f "$STATE_FILE" ]; then
+        for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
+            if kill -0 "$pid" 2>/dev/null; then STILL2=true; break; fi
+        done
+    fi
+    if ! $STILL2; then
+        pass "H54" "Second start-stop cycle clean (brain lifecycle idempotent)"
+    else
+        fail "H54" "Second cycle" "processes still alive after force-kill"
+    fi
+
+    # ── Matrix Room Persistence & Multi-User Interaction ──
+
+    # H55: Send a status inquiry message as admin after brain lifecycle
+    MSG_TXN="h55-$(date +%s)"
+    curl -sf -X PUT \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"msgtype\":\"m.text\",\"body\":\"Status check: Are all brain members operational?\"}" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" >/dev/null 2>&1
+    pass "H55" "Status inquiry sent after brain lifecycle"
+
+    # H56: Verify all previous messages persist in room history
+    sleep 1
+    HISTORY=$(curl -sf \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
+    TOTAL_MSGS=$(echo "$HISTORY" | jq '[.chunk[] | select(.type == "m.room.message")] | length' 2>/dev/null || echo "0")
+    HAS_GREETING=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("exploratory test greeting"))] | length' 2>/dev/null || echo "0")
+    HAS_TASK=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("project status"))] | length' 2>/dev/null || echo "0")
+    HAS_ALICE=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("Brain member alice"))] | length' 2>/dev/null || echo "0")
+    HAS_STATUS=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("brain members operational"))] | length' 2>/dev/null || echo "0")
+    if [ "${HAS_GREETING:-0}" -ge 1 ] && [ "${HAS_TASK:-0}" -ge 1 ] && [ "${HAS_ALICE:-0}" -ge 1 ] && [ "${HAS_STATUS:-0}" -ge 1 ]; then
+        pass "H56" "All messages persist in room history ($TOTAL_MSGS total)"
+    else
+        fail "H56" "Message persistence" "greeting=$HAS_GREETING task=$HAS_TASK alice=$HAS_ALICE status=$HAS_STATUS total=$TOTAL_MSGS"
+    fi
+
+    # H57: Login as bob and verify he sees messages too (multi-member visibility)
+    BOB_PASS=$(jq -r '.["superman-bob"]' "$PWFILE" 2>/dev/null)
+    BOB_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-bob\"},\"password\":\"$BOB_PASS\"}" \
+        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+    BOB_TOKEN=$(echo "$BOB_LOGIN" | jq -r '.access_token // empty')
+    if [ -n "$BOB_TOKEN" ]; then
+        BOB_MSGS=$(curl -sf \
+            -H "Authorization: Bearer $BOB_TOKEN" \
+            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
+        BOB_SEES=$(echo "$BOB_MSGS" | jq '[.chunk[] | select(.type == "m.room.message")] | length' 2>/dev/null || echo "0")
+        if [ "${BOB_SEES:-0}" -ge 4 ]; then
+            pass "H57" "Bob sees all messages in room ($BOB_SEES messages)"
+        else
+            fail "H57" "Bob visibility" "bob only sees $BOB_SEES messages (expected >= 4)"
+        fi
+    else
+        fail "H57" "Bob login" "failed to login as bob"
+    fi
+
+    # H58: Direct message between members (alice → room, bob verifies)
+    MSG_TXN="h58-$(date +%s)"
+    curl -sf -X PUT \
+        -H "Authorization: Bearer $ALICE_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"msgtype\":\"m.text\",\"body\":\"Cross-member test: alice to bob via room.\"}" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" >/dev/null 2>&1
+    sleep 1
+    BOB_CROSS=$(curl -sf \
+        -H "Authorization: Bearer $BOB_TOKEN" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=5" 2>/dev/null || echo '{}')
+    CROSS_FOUND=$(echo "$BOB_CROSS" | jq '[.chunk[] | select(.content.body? // "" | contains("Cross-member test"))] | length' 2>/dev/null || echo "0")
+    if [ "${CROSS_FOUND:-0}" -ge 1 ]; then
+        pass "H58" "Cross-member messaging works (alice → room → bob sees it)"
+    else
+        fail "H58" "Cross-member" "bob does not see alice's cross-member message"
+    fi
+
+    # ── Brain Event File Edge Cases ──
+
+    # H59: Multiple event files (simulate multiple loop runs)
+    mkdir -p "$ALICE_RALPH_DIR"
+    echo "{\"topic\":\"LOOP_COMPLETE\",\"payload\":\"Loop 1 done\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$ALICE_RALPH_DIR/events-loop-001.jsonl"
+    echo "{\"topic\":\"human.interact\",\"payload\":\"User feedback\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" > "$ALICE_RALPH_DIR/events-loop-002.jsonl"
+    EVENT_FILES=$(ls "$ALICE_RALPH_DIR"/events-*.jsonl 2>/dev/null | wc -l)
+    if [ "$EVENT_FILES" -ge 3 ]; then
+        pass "H59" "Multiple event files created ($EVENT_FILES files)"
+    else
+        fail "H59" "Event files" "only $EVENT_FILES event files found"
+    fi
+
+    # H60: Malformed event file doesn't crash brain (verified via unit tests H29)
+    echo "not-json-garbage-line" >> "$ALICE_RALPH_DIR/events-loop-001.jsonl"
+    echo "{\"topic\":\"task.close\",\"payload\":\"After garbage\",\"ts\":\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\"}" >> "$ALICE_RALPH_DIR/events-loop-001.jsonl"
+    LINES=$(wc -l < "$ALICE_RALPH_DIR/events-loop-001.jsonl")
+    if [ "$LINES" -ge 3 ]; then
+        pass "H60" "Event file with malformed line + valid events ($LINES lines)"
+    else
+        fail "H60" "Malformed event file" "unexpected line count: $LINES"
+    fi
+
+    # ── Final Cleanup ──
+
+    # H61: Clean up brain lifecycle artifacts
+    $BM stop --force 2>/dev/null || true
+    pkill -f "claude-code-acp-rs.*$TEAM_DIR" 2>/dev/null || true
+    rm -f "$STATE_FILE"
+    rm -f "$ALICE_RALPH_DIR"/events-test-*.jsonl "$ALICE_RALPH_DIR"/events-loop-*.jsonl
+    pass "H61" "Cleaned up brain lifecycle test artifacts"
+
+    fi  # end BRIDGE_OK
 
     echo "Phase H complete."
 

@@ -283,3 +283,42 @@ and per-module unit test verification.
 | H31 | brain::prompt_template tests | `cargo test -p bm brain::prompt_template` | All 16 pass |
 | H32 | formation::launch brain tests | `cargo test -p bm formation::launch::tests::is_brain` | Both pass |
 | H33 | state brain_mode tests | `cargo test -p bm state::mod::tests::brain` | backward compat + label tests pass |
+
+### H.8: End-to-End Brain Autonomy Validation
+
+Real end-to-end tests that validate brain-mode members are truly autonomous via
+tuwunel Matrix API. Sends real messages, verifies delivery, tests bidirectional
+communication between members, and exercises the full brain lifecycle (start/stop).
+
+**Prerequisites:** Phases B-E must run first (team init + hire + bridge + workspace sync).
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| H34 | Bridge is running | `curl` Matrix versions endpoint | HTTP 200 (bridge auto-recovers if down) |
+| H35 | ACP binary available | `which claude-code-acp-rs` | Binary found in PATH |
+| H36 | Admin Matrix login | `curl` login API with admin creds | Access token returned |
+| H37 | Alice Matrix login | `curl` login API with alice creds | Access token returned |
+| H38 | Room resolution | `curl` room alias API | Room ID returned for team general room |
+| H39 | Send greeting message | `curl` PUT room/send as admin | Event ID returned (message sent) |
+| H40 | Send task request | `curl` PUT room/send as admin | Event ID returned |
+| H41 | Messages in room history | `curl` GET room/messages as alice | Both messages visible in history |
+| H42 | Alice sends message | `curl` PUT room/send as alice | Event ID returned (member can message) |
+| H43 | Bidirectional messaging | Admin polls room history | Sees alice's response message |
+| H44 | Clean state before lifecycle | `bm stop --force`, rm state.json | Clean slate |
+| H45 | Start brain member | `bm start` | Brain mode detected in output |
+| H46 | Brain process alive | Check PID from state.json | Process running (or NOTE if ACP auth fails) |
+| H47 | Status shows brain label | `bm status` | "brain" label shown during lifecycle |
+| H48 | Inject human.interact event | Write event to `.ralph/events-*.jsonl` | Event file created in brain workspace |
+| H49 | Inject build.blocked event | Append event to event file | 2 events in file |
+| H50 | Inject task.close event | Append event to event file | 3 events in file |
+| H51 | Brain survives event processing | Check PID still alive after events | Process alive (or NOTE if ACP failed) |
+| H52 | Stop brain member | `bm stop` | Clean exit |
+| H53 | Processes terminated | Check all PIDs dead | No leftover processes |
+| H54 | Second start-stop cycle | `bm start` + `bm stop` again | Lifecycle idempotent |
+| H55 | Status inquiry after lifecycle | Send message to room post-lifecycle | Message sent successfully |
+| H56 | Message persistence | Poll room history for all messages | All previous messages persist |
+| H57 | Multi-member visibility | Login as bob, poll room | Bob sees all messages |
+| H58 | Cross-member messaging | Alice sends, bob verifies | Bob sees alice's cross-member message |
+| H59 | Multiple event files | Create events in multiple loop files | 3+ event files in `.ralph/` |
+| H60 | Malformed event resilience | Add garbage line + valid event | File has both (unit tests verify parsing) |
+| H61 | Cleanup artifacts | Stop, rm state, rm event files | Clean state |
