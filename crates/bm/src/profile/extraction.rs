@@ -1044,4 +1044,173 @@ mod tests {
             assert!(!readme_path.exists(), "{profile}: member-tuning/ should NOT have a README.md");
         }
     }
+
+    // ── Process Evolution Skill Tests ──────────────────────────────────
+
+    #[test]
+    fn process_evolution_skill_exists_in_all_profiles() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let skill_path = output.path().join("coding-agent/skills/process-evolution/SKILL.md");
+            assert!(skill_path.exists(), "{profile}: process-evolution/SKILL.md should exist after member extraction");
+        }
+    }
+
+    #[test]
+    fn process_evolution_skill_covered_by_ralph_yml_skill_dirs() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let ralph_yml = std::fs::read_to_string(output.path().join("ralph.yml")).unwrap();
+            let has_skill_dir = ralph_yml.lines().any(|line| {
+                let trimmed = line.trim().trim_start_matches("- ");
+                trimmed.contains("skills") && (trimmed.contains("team-manager") || trimmed.contains("coding-agent/skills"))
+            });
+            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
+        }
+    }
+
+    #[test]
+    fn process_evolution_skill_has_valid_frontmatter() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
+            ).unwrap();
+
+            assert!(content.starts_with("---"), "{profile}: SKILL.md must start with YAML frontmatter");
+            assert!(content.contains("name: process-evolution"), "{profile}: frontmatter must have name: process-evolution");
+
+            let desc_area = &content[..content.find("\n---\n").unwrap_or(content.len())];
+            let desc_lower = desc_area.to_lowercase();
+            assert!(
+                desc_lower.contains("process") || desc_lower.contains("workflow") || desc_lower.contains("status"),
+                "{profile}: description should mention process, workflow, or status triggers"
+            );
+        }
+    }
+
+    #[test]
+    fn process_evolution_skill_body_under_word_limit() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
+            ).unwrap();
+            let body = content.splitn(3, "---").nth(2).unwrap_or("");
+            let word_count = body.split_whitespace().count();
+            assert!(word_count < 5000, "{profile}: SKILL.md body has {word_count} words, must be under 5000");
+        }
+    }
+
+    #[test]
+    fn process_evolution_skill_covers_status_graph_operations() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
+            ).unwrap();
+            let lower = content.to_lowercase();
+            assert!(lower.contains("show") && lower.contains("current process"), "{profile}: should cover showing current process");
+            assert!(lower.contains("adding a status"), "{profile}: should cover adding a status");
+            assert!(lower.contains("removing a status"), "{profile}: should cover removing a status");
+        }
+    }
+
+    #[test]
+    fn process_evolution_skill_includes_validation_rules() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
+            ).unwrap();
+            let lower = content.to_lowercase();
+            assert!(lower.contains("orphan"), "{profile}: should include orphan status validation");
+            assert!(lower.contains("dead") || lower.contains("dead-end") || lower.contains("dead end"), "{profile}: should include dead-end validation");
+            assert!(lower.contains("loop"), "{profile}: should include loop validation");
+        }
+    }
+
+    #[test]
+    fn process_evolution_skill_references_agreements() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let content = std::fs::read_to_string(
+                output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
+            ).unwrap();
+            assert!(content.contains("agreements/decisions"), "{profile}: should reference agreements/decisions for recording changes");
+        }
+    }
+
+    #[test]
+    fn process_evolution_skill_no_readme() {
+        let (_profiles_tmp, base) = setup_disk_profiles();
+
+        for profile in crate::profile::list_profiles_from(&base).unwrap() {
+            let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
+            if !roles.contains(&"team-manager".to_string()) {
+                continue;
+            }
+            let output = tempfile::tempdir().unwrap();
+            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+
+            let readme_path = output.path().join("coding-agent/skills/process-evolution/README.md");
+            assert!(!readme_path.exists(), "{profile}: process-evolution/ should NOT have a README.md");
+        }
+    }
 }
