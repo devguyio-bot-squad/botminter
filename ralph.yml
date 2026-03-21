@@ -60,8 +60,9 @@ hats:
          ```bash
          just clippy
          just test
+         just exploratory-test
          ```
-         If E2E tests are relevant: `just e2e`
+         Skip `just exploratory-test` only for documentation-only changes.
 
       5. **COMMIT** — One task, one commit
 
@@ -100,11 +101,13 @@ hats:
       ### Verification (mandatory, run first)
       ```bash
       just clippy && just test
+      just exploratory-test
       ```
-      If either fails, reject immediately with the failure output.
+      Skip `just exploratory-test` only for documentation-only changes.
+      If any stage fails, reject immediately with the failure output.
 
       ### Checklist
-      - [ ] **Verification passed:** Did `just clippy && just test` pass when YOU ran them?
+      - [ ] **Verification passed:** Did `just clippy && just test && just exploratory-test` pass when YOU ran them?
       - [ ] **Correctness:** Does it match the task requirements?
       - [ ] **Tests:** Are there tests? Do they cover edge cases? No stubs?
       - [ ] **Patterns:** Does it follow existing `crates/bm/` patterns?
@@ -122,7 +125,7 @@ hats:
       4. If any invariant is violated, reject immediately — invariant violations are not "minor issues to fix later."
 
       ### DON'T
-      - ❌ Approve without running `just clippy && just test` yourself
+      - ❌ Approve without running `just clippy && just test && just exploratory-test` yourself
       - ❌ Approve with failing tests or lint warnings
       - ❌ Approve with "minor issues to fix later"
       - ❌ Approve without completing the invariant audit
