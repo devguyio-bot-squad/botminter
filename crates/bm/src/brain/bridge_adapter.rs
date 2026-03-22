@@ -103,18 +103,34 @@ impl MatrixBridgeReader {
         }
     }
 
+    /// Build the server-side filter JSON to limit `/sync` to only
+    /// `m.room.message` events in the target room.
+    fn sync_filter(&self) -> String {
+        serde_json::json!({
+            "room": {
+                "rooms": [self.config.room_id],
+                "timeline": {
+                    "types": ["m.room.message"]
+                }
+            }
+        })
+        .to_string()
+    }
+
     /// Perform an initial sync with `timeout=0` to get the `since` token
     /// without processing historical messages.
     async fn initial_sync(&self) -> Result<String, BridgeAdapterError> {
         let url = format!(
-            "{}/_matrix/client/v3/sync?timeout=0",
+            "{}/_matrix/client/v3/sync",
             self.config.homeserver_url
         );
 
         let resp = self
             .client
             .get(&url)
+            .query(&[("timeout", "0"), ("filter", &self.sync_filter())])
             .bearer_auth(&self.config.access_token)
+            .timeout(std::time::Duration::from_secs(30))
             .send()
             .await
             .map_err(|e| BridgeAdapterError::Http(e.to_string()))?;
@@ -141,17 +157,22 @@ impl MatrixBridgeReader {
         &self,
         since: Option<&str>,
     ) -> Result<(String, Vec<(String, String)>), BridgeAdapterError> {
-        let mut url = format!(
-            "{}/_matrix/client/v3/sync?timeout=30000",
+        let url = format!(
+            "{}/_matrix/client/v3/sync",
             self.config.homeserver_url
         );
+
+        let filter = self.sync_filter();
+        let mut params: Vec<(&str, &str)> =
+            vec![("timeout", "30000"), ("filter", &filter)];
         if let Some(since) = since {
-            url.push_str(&format!("&since={since}"));
+            params.push(("since", since));
         }
 
         let resp = self
             .client
             .get(&url)
+            .query(&params)
             .bearer_auth(&self.config.access_token)
             .timeout(std::time::Duration::from_secs(60))
             .send()
