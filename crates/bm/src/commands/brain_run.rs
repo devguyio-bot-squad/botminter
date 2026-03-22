@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
 
 use crate::brain::{
+    bridge_adapter::{MatrixBridgeConfig, MatrixBridgeReader, MatrixBridgeWriter},
     EventWatcher, EventWatcherConfig, Heartbeat, HeartbeatConfig, Multiplexer, MultiplexerConfig,
 };
 
@@ -52,11 +53,42 @@ async fn run_brain(
         env_vars: collect_env_vars(),
     };
 
-    let (mux, input, _output, shutdown) = Multiplexer::new(config);
+    let (mux, input, output, shutdown) = Multiplexer::new(config);
 
-    // Get raw senders for event watcher and heartbeat
+    // Get raw senders for event watcher, heartbeat, and bridge reader
     let event_sender = input.sender();
     let heartbeat_sender = input.sender();
+
+    // Spawn bridge adapter (reader + writer) if all env vars are present
+    let bridge_config = resolve_bridge_config();
+    let bridge_reader_shutdown_tx = if let Some(cfg) = bridge_config {
+        tracing::info!(
+            room_id = %cfg.room_id,
+            own_user_id = %cfg.own_user_id,
+            "Bridge adapter enabled — spawning reader and writer"
+        );
+
+        let bridge_sender = input.sender();
+
+        // Spawn reader
+        let reader = MatrixBridgeReader::new(cfg.clone(), bridge_sender);
+        let (reader_shutdown_tx, reader_shutdown_rx) = tokio::sync::mpsc::channel(1);
+        tokio::spawn(async move {
+            reader.run(reader_shutdown_rx).await;
+        });
+
+        // Spawn writer
+        let writer = MatrixBridgeWriter::new(cfg);
+        tokio::spawn(async move {
+            writer.run(output).await;
+        });
+
+        Some(reader_shutdown_tx)
+    } else {
+        tracing::info!("Bridge adapter disabled (missing env vars), output will be dropped");
+        drop(output);
+        None
+    };
 
     // Spawn event watcher
     let event_config = EventWatcherConfig {
@@ -98,6 +130,9 @@ async fn run_brain(
     let result = mux.run().await;
 
     // Clean up
+    if let Some(tx) = bridge_reader_shutdown_tx {
+        let _ = tx.send(()).await;
+    }
     heartbeat_shutdown.shutdown().await;
     let _ = event_shutdown_tx.send(()).await;
     let _ = event_handle.await;
@@ -110,6 +145,22 @@ async fn run_brain(
             anyhow::bail!("Brain multiplexer failed: {e}")
         }
     }
+}
+
+/// Attempt to build a `MatrixBridgeConfig` from environment variables.
+/// Returns `None` if any required variable is missing.
+fn resolve_bridge_config() -> Option<MatrixBridgeConfig> {
+    let homeserver_url = std::env::var("RALPH_MATRIX_HOMESERVER_URL").ok()?;
+    let access_token = std::env::var("RALPH_MATRIX_ACCESS_TOKEN").ok()?;
+    let room_id = std::env::var("BM_BRAIN_ROOM_ID").ok()?;
+    let own_user_id = std::env::var("BM_BRAIN_USER_ID").ok()?;
+
+    Some(MatrixBridgeConfig {
+        homeserver_url,
+        access_token,
+        room_id,
+        own_user_id,
+    })
 }
 
 /// Collect relevant environment variables for the ACP process.
