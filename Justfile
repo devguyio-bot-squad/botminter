@@ -57,9 +57,9 @@ exploratory-test-full:
 exploratory-test-clean:
     just -f crates/bm/tests/exploratory/Justfile clean
 
-# Run console (frontend) tests
+# Run console (frontend) tests and type checking
 console-test:
-    cd {{ generator_root }}/console && npm test
+    cd {{ generator_root }}/console && npm test && npm run check
 
 # Run console dev server (Vite + HMR at localhost:5173)
 console-dev:

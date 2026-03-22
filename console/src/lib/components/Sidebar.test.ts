@@ -1,5 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/svelte';
+import { readable } from 'svelte/store';
 import Sidebar from './Sidebar.svelte';
 import type { TeamSummary } from '$lib/types.js';
 
@@ -8,15 +9,12 @@ const mockTeams: TeamSummary[] = [
 ];
 
 // Mock $app/stores
-vi.mock('$app/stores', () => {
-	const { readable } = require('svelte/store');
-	return {
-		page: readable({
-			url: new URL('http://localhost/teams/my-team/overview'),
-			params: { team: 'my-team' }
-		})
-	};
-});
+vi.mock('$app/stores', () => ({
+	page: readable({
+		url: new URL('http://localhost/teams/my-team/overview'),
+		params: { team: 'my-team' }
+	})
+}));
 
 describe('Sidebar', () => {
 	it('renders all navigation items', () => {

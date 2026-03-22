@@ -14,7 +14,7 @@
 	let teams = $state<TeamSummary[]>([]);
 	let error = $state<string | null>(null);
 
-	const team = $derived($page.params.team);
+	const team = $derived($page.params.team ?? '');
 
 	onMount(async () => {
 		try {
