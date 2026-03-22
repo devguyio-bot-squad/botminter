@@ -227,45 +227,56 @@ async fn run_poll_loop(
             break;
         }
 
-        let github_repo = match resolve_github_repo(team_name) {
-            Ok(repo) => repo,
-            Err(e) => {
+        // All poll operations (resolve_github_repo, poll_github_events,
+        // handle_member_launch) are blocking sync calls that spawn subprocesses
+        // or do file I/O. Run them on the blocking thread pool to avoid starving
+        // the async runtime's worker threads.
+        let poll_team = team_name.to_string();
+        let poll_state_clone = poll_state.clone();
+        let poll_paths = paths.clone();
+        let poll_shutdown = Arc::clone(shutdown);
+
+        let result = tokio::task::spawn_blocking(move || {
+            let github_repo = resolve_github_repo(&poll_team)?;
+            let events = poll_github_events(&github_repo, &poll_state_clone)?;
+            let relevant_count = events
+                .iter()
+                .filter(|e| is_relevant_event(&e.event_type))
+                .count();
+
+            if relevant_count > 0 {
                 daemon_log(
-                    paths,
-                    "ERROR",
-                    &format!("Failed to resolve GitHub repo: {}", e),
+                    &poll_paths,
+                    "INFO",
+                    &format!("Found {} relevant event(s)", relevant_count),
                 );
-                continue;
+                handle_member_launch(&poll_team, &poll_paths, &poll_shutdown);
             }
-        };
 
-        match poll_github_events(&github_repo, &poll_state) {
-            Ok(events) => {
-                let relevant_count = events
-                    .iter()
-                    .filter(|e| is_relevant_event(&e.event_type))
-                    .count();
+            Ok::<_, anyhow::Error>(events)
+        })
+        .await;
 
-                if relevant_count > 0 {
-                    daemon_log(
-                        paths,
-                        "INFO",
-                        &format!("Found {} relevant event(s)", relevant_count),
-                    );
-                    handle_member_launch(team_name, paths, shutdown);
-                }
-
+        match result {
+            Ok(Ok(events)) => {
                 if let Some(latest) = events.first() {
                     poll_state.last_event_id = Some(latest.id.clone());
                 }
                 poll_state.last_poll_at = Some(chrono::Utc::now().to_rfc3339());
                 save_poll_state(&poll_state_file, &poll_state);
             }
+            Ok(Err(e)) => {
+                daemon_log(
+                    paths,
+                    "ERROR",
+                    &format!("Poll cycle failed: {}", e),
+                );
+            }
             Err(e) => {
                 daemon_log(
                     paths,
                     "ERROR",
-                    &format!("Failed to poll GitHub events: {}", e),
+                    &format!("Poll task panicked: {}", e),
                 );
             }
         }

@@ -1900,6 +1900,7 @@ fn daemon_cli_parsing_start_flags() {
     assert!(stdout.contains("--mode"), "Help should mention --mode: {}", stdout);
     assert!(stdout.contains("--port"), "Help should mention --port: {}", stdout);
     assert!(stdout.contains("--interval"), "Help should mention --interval: {}", stdout);
+    assert!(stdout.contains("--bind"), "Help should mention --bind: {}", stdout);
 }
 
 // ── Webhook endpoint tests ───────────────────────────────────────────
@@ -2031,6 +2032,49 @@ fn daemon_webhook_returns_404_for_wrong_path() {
             eprintln!("Warning: could not connect to webhook server: {}", e);
         }
     }
+}
+
+// ── Health endpoint tests ────────────────────────────────────────────
+
+#[test]
+fn daemon_health_endpoint_returns_ok() {
+    let tmp = tempfile::tempdir().unwrap();
+    setup_team(tmp.path(), "daemon-health", "scrum");
+    let _guard = DaemonGuard::new(tmp.path(), "daemon-health");
+
+    let port = get_free_port();
+
+    bm_run(
+        tmp.path(),
+        &[
+            "daemon", "start",
+            "--mode", "webhook",
+            "--port", &port.to_string(),
+            "-t", "daemon-health",
+        ],
+    );
+
+    assert!(
+        wait_for_port(port, Duration::from_secs(5)),
+        "Server should be ready on port {}",
+        port
+    );
+
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .get(format!("http://127.0.0.1:{}/health", port))
+        .send()
+        .expect("Failed to GET /health");
+
+    assert_eq!(resp.status().as_u16(), 200, "Health should return 200");
+
+    let body: serde_json::Value = resp.json().expect("Health response should be valid JSON");
+    assert_eq!(body["ok"], true, "Health response should have ok:true");
+    assert!(
+        body["version"].is_string(),
+        "Health response should include version string: {:?}",
+        body
+    );
 }
 
 // ── Projects sync tests ──────────────────────────────────────────────
