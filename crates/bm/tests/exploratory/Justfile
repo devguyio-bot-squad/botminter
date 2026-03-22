@@ -1,1887 +1,212 @@
-# Exploratory test execution recipes for sync & bridge idempotency
+# Exploratory test execution recipes for sync, bridge & brain lifecycle
 # Usage: just -f crates/bm/tests/exploratory/Justfile <phase>
-# Full run: just -f crates/bm/tests/exploratory/Justfile all
+# Full run: just -f crates/bm/tests/exploratory/Justfile all-no-lima
+#
+# Tests run on an isolated user account (TEST_USER@localhost) via SSH
+# to prevent test cleanup from affecting the operator's home directory.
+# This avoids destructive cleanup (rm -rf ~/.claude etc.) hitting the
+# operator's real home. The test user's home is disposable.
 
 set positional-arguments
 set dotenv-load := false
 
-BM := justfile_directory() + "/../../../../target/debug/bm"
-BM_AGENT := justfile_directory() + "/../../../../target/debug/bm-agent"
+# ─── Variables ─────────────────────────────────────────────────
+# Local paths (operator machine — build + orchestration)
+CARGO_ROOT := justfile_directory() + "/../../../.."
+LOCAL_REPORT := justfile_directory() + "/REPORT.md"
+LOCAL_PHASES := justfile_directory() + "/phases"
+LOCAL_LIB := justfile_directory() + "/lib.sh"
+
+# Remote test user (SSH-accessible, isolated home directory)
+TEST_USER := "bm-test-user"
+TEST_HOST := TEST_USER + "@localhost"
+
+# Remote paths (test user machine — execution)
+REMOTE_HOME := "/home/" + TEST_USER
+REMOTE_BIN := REMOTE_HOME + "/.local/bin"
+REMOTE_STAGING := REMOTE_HOME + "/.bm-exploratory-tests"
+REMOTE_PHASES := REMOTE_STAGING + "/phases"
+REMOTE_LIB := REMOTE_STAGING + "/lib.sh"
+REMOTE_REPORT := REMOTE_STAGING + "/REPORT.md"
+REMOTE_ENV := REMOTE_STAGING + "/env.sh"
+
+# Test configuration
 TEAM := "exploratory-test"
 ORG := "devguyio-bot-squad"
 REPO := "exploratory-test-team"
 FULL_REPO := ORG + "/" + REPO
 PROFILE := "scrum-compact"
 BOARD := "Exploratory Test Board"
-TEAM_DIR := env("HOME") + "/.botminter/workspaces/" + TEAM
-TEAM_REPO := TEAM_DIR + "/team"
-REPORT := justfile_directory() + "/REPORT.md"
 LIMA_VM := "lima-idem-test"
 
-# ─── Helpers ────────────────────────────────────────────────────
+# Remote paths derived from test user's HOME
+REMOTE_TEAM_DIR := REMOTE_HOME + "/.botminter/workspaces/" + TEAM
+REMOTE_TEAM_REPO := REMOTE_TEAM_DIR + "/team"
 
-[private]
-header section:
-    echo "" >> "{{REPORT}}"
-    echo "### {{section}}" >> "{{REPORT}}"
-    echo "" >> "{{REPORT}}"
-    echo "| # | Test | Result |" >> "{{REPORT}}"
-    echo "|---|------|--------|" >> "{{REPORT}}"
+# ─── Setup ─────────────────────────────────────────────────────
 
-[private]
-pass id desc:
-    echo "| {{id}} | {{desc}} | **PASS** |" >> "{{REPORT}}"
-    echo "  ✓ {{id}}: {{desc}}"
-
-[private]
-fail id desc detail:
-    echo "| {{id}} | {{desc}} | **FAIL** — {{detail}} |" >> "{{REPORT}}"
-    echo "  ✗ {{id}}: {{desc}} — {{detail}}"
-
-[private]
-note id desc detail:
-    echo "| {{id}} | {{desc}} | **NOTE** — {{detail}} |" >> "{{REPORT}}"
-    echo "  ℹ {{id}}: {{desc}} — {{detail}}"
-
-# ─── Setup ──────────────────────────────────────────────────────
-
-# Build bm from source
+# Build bm from source (local)
 build:
-    cd {{justfile_directory()}}/../../../.. && just build
+    cd {{CARGO_ROOT}} && just build
 
-# Full cleanup — remove all test artifacts
+# Deploy binaries + test scripts to the remote test user
+deploy: build
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Deploying to {{TEST_HOST}}..."
+    # Create remote directories
+    ssh {{TEST_HOST}} 'mkdir -p {{REMOTE_BIN}} {{REMOTE_PHASES}}'
+    # Copy binaries (bm + bm-agent from build, others from operator's PATH)
+    scp -q {{CARGO_ROOT}}/target/debug/bm {{TEST_HOST}}:{{REMOTE_BIN}}/bm
+    scp -q {{CARGO_ROOT}}/target/debug/bm-agent {{TEST_HOST}}:{{REMOTE_BIN}}/bm-agent
+    # Deploy ralph, claude, and claude-code-acp-rs from operator's PATH
+    for bin in ralph claude claude-code-acp-rs; do
+        LOCAL_BIN=$(which "$bin" 2>/dev/null || true)
+        if [ -n "$LOCAL_BIN" ]; then
+            scp -q "$LOCAL_BIN" {{TEST_HOST}}:{{REMOTE_BIN}}/"$bin"
+        fi
+    done
+    # Copy test scripts
+    scp -q "{{LOCAL_LIB}}" {{TEST_HOST}}:{{REMOTE_LIB}}
+    scp -q {{LOCAL_PHASES}}/*.sh {{TEST_HOST}}:{{REMOTE_PHASES}}/
+    ssh {{TEST_HOST}} 'chmod +x {{REMOTE_PHASES}}/*.sh'
+    # Ensure git identity is configured (required for bm init)
+    ssh {{TEST_HOST}} 'git config --global user.email 2>/dev/null || git config --global user.email "bm-test-user@botminter.dev"'
+    ssh {{TEST_HOST}} 'git config --global user.name 2>/dev/null || git config --global user.name "BM Test User"'
+    # Generate env.sh on the remote — sourced by run-phase before each phase
+    printf '%s\n' \
+        'export BM="{{REMOTE_BIN}}/bm"' \
+        'export BM_AGENT="{{REMOTE_BIN}}/bm-agent"' \
+        'export TEAM="{{TEAM}}"' \
+        'export ORG="{{ORG}}"' \
+        'export REPO="{{REPO}}"' \
+        'export FULL_REPO="{{FULL_REPO}}"' \
+        'export PROFILE="{{PROFILE}}"' \
+        'export BOARD="{{BOARD}}"' \
+        'export TEAM_DIR="{{REMOTE_TEAM_DIR}}"' \
+        'export TEAM_REPO="{{REMOTE_TEAM_REPO}}"' \
+        'export REPORT="{{REMOTE_REPORT}}"' \
+        'export LIMA_VM="{{LIMA_VM}}"' \
+        'export LIB="{{REMOTE_LIB}}"' \
+        'export CARGO_ROOT="{{REMOTE_STAGING}}"' \
+        'export PATH="{{REMOTE_BIN}}:$PATH"' \
+        | ssh {{TEST_HOST}} 'cat > {{REMOTE_ENV}}'
+    echo "Deploy complete."
+
+# Full cleanup — remove all test artifacts on remote
 clean:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "Cleaning up..."
-    podman rm -f bm-tuwunel-{{TEAM}} 2>/dev/null || true
-    podman volume rm bm-tuwunel-{{TEAM}}-data 2>/dev/null || true
-    gh repo delete {{FULL_REPO}} --yes 2>/dev/null || true
-    # Find and delete project board
-    PROJ_NUM=$(gh project list --owner {{ORG}} --format json 2>/dev/null \
-        | jq -r '.projects[] | select(.title=="{{BOARD}}") | .number' 2>/dev/null || true)
-    if [ -n "$PROJ_NUM" ]; then
-        gh project delete "$PROJ_NUM" --owner {{ORG}} --format json 2>/dev/null || true
-    fi
-    limactl delete --force {{LIMA_VM}} 2>/dev/null || true
-    rm -rf ~/.botminter ~/.config/botminter 2>/dev/null || true
-    # Clear keyring entries
-    for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing; do
-        secret-tool clear service "botminter.exploratory-test.tuwunel" username "$u" 2>/dev/null || true
-    done
+    echo "Cleaning up on {{TEST_HOST}}..."
+    ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && source {{REMOTE_LIB}} && \
+        podman rm -f bm-tuwunel-$TEAM 2>/dev/null; \
+        podman volume rm bm-tuwunel-$TEAM-data 2>/dev/null; \
+        gh repo delete $FULL_REPO --yes 2>/dev/null; \
+        PROJ_NUM=\$(gh project list --owner $ORG --format json 2>/dev/null | jq -r \".projects[] | select(.title==\\\"$BOARD\\\") | .number\" 2>/dev/null); \
+        [ -n \"\$PROJ_NUM\" ] && gh project delete \"\$PROJ_NUM\" --owner $ORG --format json 2>/dev/null; \
+        limactl delete --force $LIMA_VM 2>/dev/null; \
+        rm -rf ~/.botminter ~/.config/botminter 2>/dev/null; \
+        if load_isolated_keyring; then \
+            for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing; do \
+                secret_tool clear service botminter.$TEAM.tuwunel username \$u 2>/dev/null; \
+            done; \
+        fi; \
+        stop_isolated_keyring"' || true
     echo "Clean."
 
-# Initialize report file
+# Initialize report file on remote
 init-report:
     #!/usr/bin/env bash
-    BM_VERSION=$({{BM}} --version 2>/dev/null || echo "unknown")
-    LIMA_VERSION=$(limactl --version 2>/dev/null | head -1 || echo "unknown")
-    GH_USER=$(gh api user --jq .login 2>/dev/null || echo "unknown")
-    cat > "{{REPORT}}" << EOF
-    # Exploratory Test Report: Sync, Bridge & Lima Idempotency
-
-    **Date:** $(date +%Y-%m-%d)
-    **Build:** $BM_VERSION (local debug)
-    **Environment:** $(uname -sm), podman rootless, limactl $LIMA_VERSION, gh ($GH_USER)
-
-    ## Results
-    EOF
-    # Fix heredoc indentation
-    sed -i 's/^    //' "{{REPORT}}"
-
-# ─── Phase A: Lima VM Boot Script ──────────────────────────────
-
-phase-a: init-report
-    #!/usr/bin/env bash
-    set -uo pipefail
-    export GH_TOKEN=$(gh auth token)
-    BM="{{BM}}"
-    REPORT="{{REPORT}}"
-    LIMA_VM="{{LIMA_VM}}"
-
-    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
-    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
-    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
-
-    echo "" >> "$REPORT"
-    echo "### Phase A: Lima VM Boot Script Idempotency" >> "$REPORT"
-    echo "" >> "$REPORT"
-    echo "| # | Test | Result |" >> "$REPORT"
-    echo "|---|------|--------|" >> "$REPORT"
-
-    echo "Phase A: Lima VM Boot Script Idempotency"
-    echo "========================================="
-
-    # A0: Set up a minimal team so bm runtime create works
-    $BM init --non-interactive --profile {{PROFILE}} --team-name {{TEAM}} \
-        --org {{ORG}} --repo {{REPO}} --bridge tuwunel \
-        --github-project-board "{{BOARD}}" 2>&1 || true
-    pass "A0" "Set up team for bm runtime create"
-
-    # A0.5: Verify template has --overwrite
-    TEMPLATE=$($BM runtime create --render --name "$LIMA_VM" 2>/dev/null)
-    if echo "$TEMPLATE" | grep -q "addrepo --overwrite"; then
-        pass "A0.5" "Template has --overwrite (idempotent addrepo)"
-    else
-        fail "A0.5" "Template check" "--overwrite not found"
-    fi
-
-    # A1: Create VM with bm runtime create
-    echo "  Creating VM (this takes 5-10 minutes)..."
-    OUT=$($BM runtime create --non-interactive --name "$LIMA_VM" 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ]; then pass "A1" "Create VM with bm runtime create"; else fail "A1" "Create VM" "exit $EC: $(echo "$OUT" | tail -3)"; echo "$OUT"; fi
-
-    # A2: Verify tools inside VM
-    TOOLS_OK=true
-    for tool in bm ralph gh git just; do
-        if ! limactl shell "$LIMA_VM" -- which "$tool" >/dev/null 2>&1; then
-            fail "A2" "Verify tools installed" "$tool not found"
-            TOOLS_OK=false
-            break
-        fi
-    done
-    # claude may be npm-installed — check separately
-    if $TOOLS_OK; then
-        if limactl shell "$LIMA_VM" -- which claude >/dev/null 2>&1; then
-            pass "A2" "All tools installed (bm, ralph, claude, gh, git, just)"
-        else
-            note "A2" "Tools installed" "claude not found (npm install may have failed), others OK"
-        fi
-    fi
-
-    # A3: Stop VM
-    echo "  Stopping VM..."
-    limactl stop "$LIMA_VM" 2>&1
-    if [ $? -eq 0 ]; then pass "A3" "Stop VM cleanly"; else fail "A3" "Stop VM" "exit $?"; fi
-
-    # A4: Restart VM (provision scripts re-run — tests --overwrite)
-    echo "  Restarting VM (tests boot script idempotency)..."
-    OUT=$(limactl start "$LIMA_VM" 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ]; then pass "A4" "Restart VM — boot scripts idempotent"; else fail "A4" "Restart VM" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
-
-    # A5: Tools still present after restart
-    TOOLS_OK=true
-    for tool in bm ralph gh git just; do
-        if ! limactl shell "$LIMA_VM" -- which "$tool" >/dev/null 2>&1; then
-            fail "A5" "Tools present after restart" "$tool missing"
-            TOOLS_OK=false
-            break
-        fi
-    done
-    if $TOOLS_OK; then pass "A5" "All tools present after restart"; fi
-
-    # A6: GH auth survives restart
-    GH_STATUS=$(limactl shell "$LIMA_VM" -- gh auth status 2>&1 || true)
-    if echo "$GH_STATUS" | grep -q "Logged in"; then
-        pass "A6" "gh auth survives restart"
-    else
-        note "A6" "gh auth after restart" "Not logged in (expected if no token was passed)"
-    fi
-
-    # A7: Third boot cycle
-    echo "  Third boot cycle (stop + start)..."
-    limactl stop "$LIMA_VM" 2>&1
-    OUT=$(limactl start "$LIMA_VM" 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ]; then pass "A7" "Third boot — no cumulative drift"; else fail "A7" "Third boot" "exit $EC"; fi
-
-    # A8: Delete VM
-    echo "  Deleting VM..."
-    limactl delete --force "$LIMA_VM" 2>&1
-    if [ $? -eq 0 ]; then pass "A8" "Delete VM"; else fail "A8" "Delete VM" "exit $?"; fi
-
-    # A9: Cleanup team created for Phase A
-    gh repo delete {{FULL_REPO}} --yes 2>/dev/null || true
-    PROJ_NUM=$(gh project list --owner {{ORG}} --format json 2>/dev/null \
-        | jq -r '.projects[] | select(.title=="{{BOARD}}") | .number' 2>/dev/null || true)
-    [ -n "$PROJ_NUM" ] && gh project delete "$PROJ_NUM" --owner {{ORG}} --format json 2>/dev/null || true
-    rm -rf ~/.botminter ~/.config/botminter 2>/dev/null || true
-    pass "A9" "Cleaned up Phase A team artifacts"
-
-    echo "Phase A complete."
-
-# ─── Phase B: Team Init + Hire ─────────────────────────────────
-
-phase-b:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    export GH_TOKEN=$(gh auth token)
-    BM="{{BM}}"
-    REPORT="{{REPORT}}"
-    TEAM_DIR="{{TEAM_DIR}}"
-    TEAM_REPO="{{TEAM_REPO}}"
-
-    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
-    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
-    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
-
-    echo "" >> "$REPORT"
-    echo "### Phase B: Team Init + Hire" >> "$REPORT"
-    echo "" >> "$REPORT"
-    echo "| # | Test | Result |" >> "$REPORT"
-    echo "|---|------|--------|" >> "$REPORT"
-
-    echo "Phase B: Team Init + Hire"
-    echo "========================="
-
-    # B1: Fresh init
-    OUT=$($BM init --non-interactive --profile {{PROFILE}} --team-name {{TEAM}} --org {{ORG}} --repo {{REPO}} --bridge tuwunel --github-project-board "{{BOARD}}" 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ] && echo "$OUT" | grep -q "created"; then pass "B1" "Fresh init with tuwunel bridge"; else fail "B1" "Fresh init" "exit $EC"; echo "$OUT"; fi
-
-    # B2: GitHub repo
-    OUT=$(gh repo view {{FULL_REPO}} --json name,visibility 2>&1)
-    if echo "$OUT" | grep -q "PRIVATE"; then pass "B2" "GitHub repo exists (private)"; else fail "B2" "GitHub repo" "$OUT"; fi
-
-    # B3: Project board
-    OUT=$(gh project list --owner {{ORG}} --format json 2>&1)
-    if echo "$OUT" | grep -q "{{BOARD}}"; then pass "B3" "Project board exists"; else fail "B3" "Project board" "not found"; fi
-
-    # B4: Labels bootstrapped
-    LABELS=$(gh label list -R {{FULL_REPO}} --json name --jq '.[].name' 2>&1)
-    if echo "$LABELS" | grep -q "kind/"; then pass "B4" "Kind labels bootstrapped"; else fail "B4" "Labels" "no kind/ labels found"; fi
-
-    # B5: Config registered
-    if grep -q "{{TEAM}}" ~/.botminter/config.yml 2>/dev/null && grep -q "{{FULL_REPO}}" ~/.botminter/config.yml 2>/dev/null; then
-        pass "B5" "Team registered in config.yml"
-    else
-        fail "B5" "Config" "team not found in config"
-    fi
-
-    # B6: Profile content
-    if [ -f "$TEAM_REPO/PROCESS.md" ] && [ -d "$TEAM_REPO/knowledge" ]; then
-        pass "B6" "Team repo has profile content (PROCESS.md, knowledge/)"
-    else
-        fail "B6" "Profile content" "missing PROCESS.md or knowledge/"
-    fi
-
-    # B7: Init again (not idempotent by design)
-    OUT=$($BM init --non-interactive --profile {{PROFILE}} --team-name {{TEAM}} --org {{ORG}} --repo {{REPO}} --bridge tuwunel --github-project-board "{{BOARD}}" 2>&1)
-    EC=$?
-    if [ $EC -ne 0 ]; then note "B7" "Init again" "Correctly rejects: 'directory exists' (exit $EC)"; else fail "B7" "Init duplicate" "Should have failed but succeeded"; fi
-
-    # B8: Hire alice
-    OUT=$($BM hire superman --name alice 2>&1)
-    if echo "$OUT" | grep -q "Hired"; then pass "B8" "Hire alice"; else fail "B8" "Hire alice" "$OUT"; fi
-
-    # B9: Hire bob
-    OUT=$($BM hire superman --name bob 2>&1)
-    if echo "$OUT" | grep -q "Hired"; then pass "B9" "Hire bob"; else fail "B9" "Hire bob" "$OUT"; fi
-
-    # B10: Verify member config
-    ALICE_DIR="$TEAM_REPO/members/superman-alice"
-    if [ -f "$ALICE_DIR/PROMPT.md" ] && [ -f "$ALICE_DIR/CLAUDE.md" ] && [ -f "$ALICE_DIR/ralph.yml" ]; then
-        pass "B10" "Member config files present"
-    else
-        fail "B10" "Member config" "missing files in $ALICE_DIR"
-    fi
-
-    # B11: Hire duplicate
-    OUT=$($BM hire superman --name alice 2>&1)
-    EC=$?
-    if [ $EC -ne 0 ]; then note "B11" "Hire duplicate alice" "Correctly rejects: 'already exists'"; else fail "B11" "Hire duplicate" "Should have failed"; fi
-
-    echo "Phase B complete."
-
-# ─── Phase C: Bridge Lifecycle ─────────────────────────────────
-
-phase-c:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    export GH_TOKEN=$(gh auth token)
-    BM="{{BM}}"
-    REPORT="{{REPORT}}"
-    TEAM_DIR="{{TEAM_DIR}}"
-    BSTATE="$TEAM_DIR/bridge-state.json"
-    PWFILE="$TEAM_DIR/tuwunel-passwords.json"
-    CONTAINER="bm-tuwunel-{{TEAM}}"
-    MATRIX_URL="http://127.0.0.1:8008"
-
-    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
-    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
-    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
-
-    echo "" >> "$REPORT"
-    echo "### Phase C: Bridge Lifecycle (Tuwunel)" >> "$REPORT"
-    echo "" >> "$REPORT"
-    echo "| # | Test | Result |" >> "$REPORT"
-    echo "|---|------|--------|" >> "$REPORT"
-
-    echo "Phase C: Bridge Lifecycle"
-    echo "========================="
-
-    # ── C.1: First provisioning ──
-
-    echo "  C.1: First bridge provisioning..."
-    OUT=$($BM teams sync --bridge -v 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ]; then pass "C1" "First sync --bridge"; else fail "C1" "First sync --bridge" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
-
-    # C2: Container running
-    CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{{{.Status}}' 2>&1)
-    if echo "$CSTATUS" | grep -q "Up"; then pass "C2" "Container running"; else fail "C2" "Container" "status=$CSTATUS"; fi
-
-    # C3: Matrix healthy
-    HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
-    if [ "$HTTP" = "200" ]; then pass "C3" "Matrix server healthy"; else fail "C3" "Matrix health" "HTTP $HTTP"; fi
-
-    # C4: Bridge state
-    STATUS=$(jq -r '.status' "$BSTATE" 2>/dev/null)
-    ID_COUNT=$(jq '.identities | length' "$BSTATE" 2>/dev/null)
-    ROOM_COUNT=$(jq '.rooms | length' "$BSTATE" 2>/dev/null)
-    if [ "$STATUS" = "running" ] && [ "$ID_COUNT" = "3" ] && [ "$ROOM_COUNT" = "1" ]; then
-        pass "C4" "Bridge state: running, 3 identities, 1 room"
-    else
-        fail "C4" "Bridge state" "status=$STATUS ids=$ID_COUNT rooms=$ROOM_COUNT"
-    fi
-
-    # C5: Passwords
-    PW_COUNT=$(jq 'length' "$PWFILE" 2>/dev/null || echo "0")
-    if [ "$PW_COUNT" = "3" ]; then pass "C5" "Passwords file has 3 entries"; else fail "C5" "Passwords" "count=$PW_COUNT"; fi
-
-    # C6: Keyring
-    KR_ALICE=$(secret-tool lookup service "botminter.{{TEAM}}.tuwunel" username superman-alice 2>/dev/null || true)
-    KR_BOB=$(secret-tool lookup service "botminter.{{TEAM}}.tuwunel" username superman-bob 2>/dev/null || true)
-    if [ -n "$KR_ALICE" ] && [ -n "$KR_BOB" ]; then
-        pass "C6" "Keyring has credentials for alice + bob"
-    else
-        fail "C6" "Keyring" "alice='${KR_ALICE:+set}${KR_ALICE:-empty}' bob='${KR_BOB:+set}${KR_BOB:-empty}'"
-    fi
-
-    # C7: Admin login works
-    ADMIN_PASS=$(jq -r '.bmadmin' "$PWFILE" 2>/dev/null)
-    LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
-        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"bmadmin\"},\"password\":\"$ADMIN_PASS\"}" \
-        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
-    ADMIN_TOKEN=$(echo "$LOGIN" | jq -r '.access_token // empty')
-    if [ -n "$ADMIN_TOKEN" ]; then pass "C7" "Admin can login to Matrix"; else fail "C7" "Admin login" "no token"; fi
-
-    # C8: Room exists
-    ROOM_RESP=$(curl -sf "$MATRIX_URL/_matrix/client/v3/directory/room/%23exploratory-test-general:localhost" 2>/dev/null || echo '{}')
-    ROOM_ID=$(echo "$ROOM_RESP" | jq -r '.room_id // empty')
-    if [ -n "$ROOM_ID" ]; then pass "C8" "Room exploratory-test-general exists ($ROOM_ID)"; else fail "C8" "Room" "not found"; fi
-
-    # ── C.2: Idempotency ──
-
-    echo "  C.2: Bridge idempotency..."
-    ALICE_TOKEN_BEFORE=$KR_ALICE
-
-    OUT=$($BM teams sync --bridge -v 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ] && echo "$OUT" | grep -q "already provisioned\|AlreadyProvisioned"; then
-        pass "C9" "Sync --bridge again (idempotent)"
-    elif [ $EC -eq 0 ]; then
-        pass "C9" "Sync --bridge again (no error)"
-    else
-        fail "C9" "Sync --bridge again" "exit $EC"
-    fi
-
-    ID_COUNT2=$(jq '.identities | length' "$BSTATE" 2>/dev/null)
-    if [ "$ID_COUNT2" = "$ID_COUNT" ]; then pass "C10" "No duplicate identities ($ID_COUNT2)"; else fail "C10" "Duplicates" "before=$ID_COUNT after=$ID_COUNT2"; fi
-
-    ROOM_COUNT2=$(jq '.rooms | length' "$BSTATE" 2>/dev/null)
-    if [ "$ROOM_COUNT2" = "$ROOM_COUNT" ]; then pass "C11" "No duplicate rooms ($ROOM_COUNT2)"; else fail "C11" "Rooms" "before=$ROOM_COUNT after=$ROOM_COUNT2"; fi
-
-    KR_ALICE2=$(secret-tool lookup service "botminter.{{TEAM}}.tuwunel" username superman-alice 2>/dev/null || true)
-    if [ "$KR_ALICE2" = "$ALICE_TOKEN_BEFORE" ]; then pass "C12" "Keyring token unchanged"; else note "C12" "Keyring token" "changed (may be expected if re-onboarded)"; fi
-
-    OUT=$($BM teams sync --bridge -v 2>&1)
-    if [ $? -eq 0 ]; then pass "C13" "Third sync --bridge still idempotent"; else fail "C13" "Third sync" "exit $?"; fi
-
-    # ── C.3: Recovery — container stopped ──
-
-    echo "  C.3: Recovery from stopped container..."
-    podman stop "$CONTAINER" 2>/dev/null
-    pass "C14" "Stopped container externally"
-
-    STATUS_AFTER_STOP=$(jq -r '.status' "$BSTATE" 2>/dev/null)
-    if [ "$STATUS_AFTER_STOP" = "running" ]; then pass "C15" "Bridge state still says 'running' (stale)"; else note "C15" "Bridge state" "status=$STATUS_AFTER_STOP"; fi
-
-    HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
-    if [ "$HTTP" != "200" ]; then pass "C16" "Matrix server unreachable after stop"; else note "C16" "Matrix" "still responding (container may auto-restart)"; fi
-
-    OUT=$($BM teams sync --bridge -v 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ]; then pass "C17" "Sync --bridge recovers stopped container"; else fail "C17" "Recovery" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
-
-    CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{{{.Status}}' 2>&1)
-    if echo "$CSTATUS" | grep -q "Up"; then pass "C18" "Container running again"; else fail "C18" "Container" "status=$CSTATUS"; fi
-
-    HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
-    if [ "$HTTP" = "200" ]; then pass "C19" "Matrix server healthy after recovery"; else fail "C19" "Matrix health" "HTTP $HTTP"; fi
-
-    ID_COUNT3=$(jq '.identities | length' "$BSTATE" 2>/dev/null)
-    if [ "$ID_COUNT3" = "3" ]; then pass "C20" "Identities intact after recovery ($ID_COUNT3)"; else fail "C20" "Identities" "count=$ID_COUNT3"; fi
-
-    # ── C.4: Recovery — container removed ──
-
-    echo "  C.4: Recovery from removed container..."
-    podman rm -f "$CONTAINER" 2>/dev/null
-    pass "C21" "Force-removed container"
-
-    OUT=$($BM teams sync --bridge -v 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ]; then pass "C22" "Sync --bridge recreates from scratch"; else fail "C22" "Recreation" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
-
-    CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{{{.Status}}' 2>&1)
-    if echo "$CSTATUS" | grep -q "Up"; then pass "C23" "New container running"; else fail "C23" "Container" "status=$CSTATUS"; fi
-
-    ID_COUNT4=$(jq '.identities | length' "$BSTATE" 2>/dev/null)
-    if [ "$ID_COUNT4" -ge 3 ]; then pass "C24" "Identities re-provisioned ($ID_COUNT4)"; else fail "C24" "Identities" "count=$ID_COUNT4"; fi
-
-    ROOM_COUNT3=$(jq '.rooms | length' "$BSTATE" 2>/dev/null)
-    if [ "$ROOM_COUNT3" -ge 1 ]; then pass "C25" "Room recovered ($ROOM_COUNT3)"; else fail "C25" "Rooms" "count=$ROOM_COUNT3"; fi
-
-    KR_ALICE3=$(secret-tool lookup service "botminter.{{TEAM}}.tuwunel" username superman-alice 2>/dev/null || true)
-    if [ -n "$KR_ALICE3" ]; then
-        # Verify alice can actually login
-        ALICE_PASS=$(jq -r '.["superman-alice"]' "$PWFILE" 2>/dev/null)
-        LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
-            -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-alice\"},\"password\":\"$ALICE_PASS\"}" \
-            "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
-        if echo "$LOGIN" | jq -r '.access_token // empty' | grep -q .; then
-            pass "C26" "Keyring + Matrix login valid after full recreation"
-        else
-            fail "C26" "Login" "keyring set but Matrix login failed"
-        fi
-    else
-        fail "C26" "Keyring" "no credential for alice"
-    fi
-
-    # ── C.5: Recovery — volume removed (full reset) ──
-
-    echo "  C.5: Recovery from full reset (container + volume + state)..."
-    podman rm -f "$CONTAINER" 2>/dev/null
-    podman volume rm "bm-tuwunel-{{TEAM}}-data" 2>/dev/null
-    rm -f "$BSTATE"
-    pass "C27" "Removed container + volume"
-    pass "C28" "Removed bridge-state.json"
-
-    OUT=$($BM teams sync --bridge -v 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ]; then pass "C29" "Sync --bridge from scratch (full reset)"; else fail "C29" "Full reset" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
-
-    CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{{{.Status}}' 2>&1)
-    HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
-    ID_COUNT5=$(jq '.identities | length' "$BSTATE" 2>/dev/null || echo "0")
-    if echo "$CSTATUS" | grep -q "Up" && [ "$HTTP" = "200" ] && [ "$ID_COUNT5" -ge 3 ]; then
-        pass "C30" "Full recovery: container up, Matrix healthy, $ID_COUNT5 identities"
-    else
-        fail "C30" "Full recovery" "container=$CSTATUS http=$HTTP ids=$ID_COUNT5"
-    fi
-
-    # ── C.6: Onboard edge cases — pre-existing Matrix user ──
-
-    echo "  C.6: Pre-existing user onboard..."
-
-    # C31: Register a user directly via Matrix API (outside bm)
-    ADMIN_PASS2=$(jq -r '.bmadmin' "$PWFILE" 2>/dev/null)
-    ADMIN_LOGIN2=$(curl -sf -X POST -H "Content-Type: application/json" \
-        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"bmadmin\"},\"password\":\"$ADMIN_PASS2\"}" \
-        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
-    ADMIN_TOKEN2=$(echo "$ADMIN_LOGIN2" | jq -r '.access_token // empty')
-
-    # Register pre-existing user via UIAA
-    PRE_PASS="pre-existing-pass-123"
-    REG1=$(curl -s -X POST -H "Content-Type: application/json" \
-        -d "{\"username\":\"superman-pre-existing\",\"password\":\"$PRE_PASS\"}" \
-        "$MATRIX_URL/_matrix/client/v3/register" 2>/dev/null || echo '{}')
-    SESSION=$(echo "$REG1" | jq -r '.session // empty')
-    REG_TOKEN="bm-tuwunel-reg-default"
-    if [ -n "$SESSION" ]; then
-        REG2=$(curl -sf -X POST -H "Content-Type: application/json" \
-            -d "{\"username\":\"superman-pre-existing\",\"password\":\"$PRE_PASS\",\"auth\":{\"type\":\"m.login.registration_token\",\"token\":\"$REG_TOKEN\",\"session\":\"$SESSION\"}}" \
-            "$MATRIX_URL/_matrix/client/v3/register" 2>/dev/null || echo '{}')
-        PRE_UID=$(echo "$REG2" | jq -r '.user_id // empty')
-        if [ -n "$PRE_UID" ]; then
-            pass "C31" "Pre-registered user via Matrix API ($PRE_UID)"
-        else
-            fail "C31" "Pre-register user" "registration failed: $REG2"
-        fi
-    else
-        fail "C31" "Pre-register user" "no session: $REG1"
-    fi
-
-    # C32: Hire + sync onboards the pre-existing user
-    $BM hire superman --name pre-existing 2>&1 || true
-    OUT=$($BM teams sync --bridge -v 2>&1)
-    EC=$?
-    PRE_ID=$(jq -r '.identities["superman-pre-existing"].username // empty' "$BSTATE" 2>/dev/null)
-    if [ $EC -eq 0 ] && [ -n "$PRE_ID" ]; then
-        pass "C32" "Sync onboards pre-existing user (M_USER_IN_USE handled)"
-    else
-        fail "C32" "Pre-existing onboard" "exit $EC, identity='$PRE_ID'"
-    fi
-
-    # C33: Verify pre-existing user has valid credentials in keyring and can login
-    KR_PRE=$(secret-tool lookup service "botminter.{{TEAM}}.tuwunel" username superman-pre-existing 2>/dev/null || true)
-    if [ -n "$KR_PRE" ]; then
-        # Try to login with stored password
-        PRE_STORED=$(jq -r '.["superman-pre-existing"]' "$PWFILE" 2>/dev/null)
-        PRE_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
-            -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-pre-existing\"},\"password\":\"$PRE_STORED\"}" \
-            "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
-        PRE_TOKEN=$(echo "$PRE_LOGIN" | jq -r '.access_token // empty')
-        if [ -n "$PRE_TOKEN" ]; then
-            pass "C33" "Pre-existing user: keyring + Matrix login valid"
-        else
-            fail "C33" "Pre-existing login" "keyring set but login failed"
-        fi
-    else
-        fail "C33" "Pre-existing keyring" "no credential stored"
-    fi
-
-    echo "Phase C complete."
-
-# ─── Phase D: Workspace Sync ──────────────────────────────────
-
-phase-d:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    export GH_TOKEN=$(gh auth token)
-    BM="{{BM}}"
-    REPORT="{{REPORT}}"
-    TEAM_DIR="{{TEAM_DIR}}"
-    ALICE_WS="$TEAM_DIR/superman-alice"
-    BOB_WS="$TEAM_DIR/superman-bob"
-
-    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
-    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
-    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
-
-    echo "" >> "$REPORT"
-    echo "### Phase D: Workspace Sync Idempotency" >> "$REPORT"
-    echo "" >> "$REPORT"
-    echo "| # | Test | Result |" >> "$REPORT"
-    echo "|---|------|--------|" >> "$REPORT"
-
-    echo "Phase D: Workspace Sync"
-    echo "========================"
-
-    # ── D.1: Verify initial state (workspaces created by phase C) ──
-
-    check_ws() {
-        local WS="$1" NAME="$2"
-        local OK=true
-        for f in ralph.yml CLAUDE.md PROMPT.md .botminter.workspace; do
-            if [ ! -f "$WS/$f" ]; then OK=false; break; fi
-        done
-        echo "$OK"
-    }
-
-    if [ "$(check_ws "$ALICE_WS" alice)" = "true" ]; then pass "D1" "Alice workspace has all context files"; else fail "D1" "Alice workspace" "missing files"; fi
-    if [ "$(check_ws "$BOB_WS" bob)" = "true" ]; then pass "D2" "Bob workspace has all context files"; else fail "D2" "Bob workspace" "missing files"; fi
-
-    if [ -d "$ALICE_WS/team/members" ]; then pass "D3" "Team submodule present"; else fail "D3" "Team submodule" "team/members/ not found"; fi
-
-    if [ -d "$ALICE_WS/.claude/agents" ]; then pass "D4" "Agent dir assembled"; else fail "D4" "Agent dir" ".claude/agents/ not found"; fi
-
-    GIT_STATUS=$(git -C "$ALICE_WS" status --porcelain 2>/dev/null)
-    if [ -z "$GIT_STATUS" ]; then pass "D5" "Git repo clean"; else note "D5" "Git status" "not clean: $GIT_STATUS"; fi
-
-    GIT_LOG=$(git -C "$ALICE_WS" log --oneline -1 2>/dev/null)
-    if echo "$GIT_LOG" | grep -q "Initial workspace setup"; then pass "D6" "Git has initial commit"; else note "D6" "Git log" "$GIT_LOG"; fi
-
-    # ── D.2: Sync idempotency ──
-
-    echo "  D.2: Sync idempotency..."
-    OUT=$($BM teams sync -v 2>&1)
-    if [ $? -eq 0 ]; then pass "D7" "Sync again (no changes)"; else fail "D7" "Sync" "exit $?"; fi
-
-    if [ "$(check_ws "$ALICE_WS" alice)" = "true" ]; then pass "D8" "Context files still present after re-sync"; else fail "D8" "Context files" "missing after re-sync"; fi
-
-    OUT=$($BM teams sync -v 2>&1)
-    if [ $? -eq 0 ]; then pass "D9" "Third sync still clean"; else fail "D9" "Third sync" "exit $?"; fi
-
-    # ── D.3: Stale workspace recovery ──
-
-    echo "  D.3: Stale workspace recovery..."
-    rm -f "$ALICE_WS/.botminter.workspace"
-    pass "D10" "Removed .botminter.workspace marker"
-
-    OUT=$($BM teams sync -v 2>&1)
-    if [ $? -eq 0 ]; then pass "D11" "Sync recovers stale workspace"; else fail "D11" "Recovery" "exit $?: $(echo "$OUT" | tail -3)"; fi
-
-    if [ "$(check_ws "$ALICE_WS" alice)" = "true" ]; then
-        pass "D12" "All context files restored after recovery"
-    else
-        fail "D12" "Recovery" "missing files"
-    fi
-
-    if [ -d "$ALICE_WS/team/members" ]; then pass "D13" "Team submodule intact after recovery"; else fail "D13" "Team submodule" "missing"; fi
-
-    # ── D.4: Missing context file recovery ──
-
-    echo "  D.4: Missing context file recovery..."
-    rm -f "$BOB_WS/CLAUDE.md"
-    pass "D14" "Deleted CLAUDE.md from bob workspace"
-
-    OUT=$($BM teams sync -v 2>&1)
-    if [ $? -eq 0 ] && [ -f "$BOB_WS/CLAUDE.md" ]; then
-        pass "D15" "Sync restores CLAUDE.md"
-    else
-        fail "D15" "Restore CLAUDE.md" "file still missing or sync failed"
-    fi
-
-    rm -f "$BOB_WS/ralph.yml"
-    pass "D16" "Deleted ralph.yml from bob workspace"
-
-    OUT=$($BM teams sync -v 2>&1)
-    if [ $? -eq 0 ] && [ -f "$BOB_WS/ralph.yml" ]; then
-        pass "D17" "Sync restores ralph.yml"
-    else
-        fail "D17" "Restore ralph.yml" "file still missing or sync failed"
-    fi
-
-    # ── D.5: Junk directory cleanup ──
-
-    echo "  D.5: Junk directory cleanup..."
-    CAROL_WS="$TEAM_DIR/superman-carol"
-    mkdir -p "$CAROL_WS"
-    echo "leftover junk" > "$CAROL_WS/junk.txt"
-    pass "D18" "Created junk dir at future carol workspace path"
-
-    $BM hire superman --name carol 2>&1
-    pass "D19" "Hired carol"
-
-    OUT=$($BM teams sync -v 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ] && [ ! -f "$CAROL_WS/junk.txt" ] && [ -f "$CAROL_WS/.botminter.workspace" ]; then
-        pass "D20" "Junk cleaned, proper workspace created for carol"
-    elif [ $EC -eq 0 ] && [ -f "$CAROL_WS/junk.txt" ]; then
-        fail "D20" "Junk cleanup" "junk.txt still present"
-    else
-        fail "D20" "Workspace creation" "exit $EC"
-    fi
-
-    # ── D.6: Settings.json & Inbox ──
-
-    echo "  D.6: Settings.json & Inbox..."
-    BM_AGENT="{{BM_AGENT}}"
-
-    # D21: Settings.json surfaced after sync
-    if [ -f "$ALICE_WS/.claude/settings.json" ]; then
-        HOOK_CONTENT=$(cat "$ALICE_WS/.claude/settings.json")
-        if echo "$HOOK_CONTENT" | grep -q "bm-agent claude hook post-tool-use"; then
-            pass "D21" "Settings.json surfaced with PostToolUse hook"
-        else
-            fail "D21" "Settings.json content" "missing PostToolUse hook reference"
-        fi
-    else
-        fail "D21" "Settings.json" ".claude/settings.json not found in workspace"
-    fi
-
-    # D22: Inbox write/peek/read lifecycle
-    cd "$ALICE_WS"
-    WRITE_OUT=$($BM_AGENT inbox write "exploratory test message" --from brain 2>&1)
-    WRITE_EC=$?
-    if [ $WRITE_EC -eq 0 ]; then
-        PEEK_OUT=$($BM_AGENT inbox peek 2>&1)
-        if echo "$PEEK_OUT" | grep -q "exploratory test message"; then
-            READ_OUT=$($BM_AGENT inbox read --format json 2>&1)
-            if echo "$READ_OUT" | grep -q "exploratory test message"; then
-                PEEK_AFTER=$($BM_AGENT inbox peek 2>&1)
-                if echo "$PEEK_AFTER" | grep -qi "no pending"; then
-                    pass "D22" "Inbox write/peek/read lifecycle complete"
-                else
-                    fail "D22" "Inbox consume" "messages still present after read: $PEEK_AFTER"
-                fi
-            else
-                fail "D22" "Inbox read" "message not in JSON output: $READ_OUT"
-            fi
-        else
-            fail "D22" "Inbox peek" "message not visible: $PEEK_OUT"
-        fi
-    else
-        fail "D22" "Inbox write" "exit $WRITE_EC: $WRITE_OUT"
-    fi
-
-    # D23: Hook graceful degradation
-    # In workspace with no inbox file — should exit 0, empty output
-    HOOK_OUT=$($BM_AGENT claude hook post-tool-use 2>&1)
-    HOOK_EC=$?
-    if [ $HOOK_EC -eq 0 ]; then
-        pass "D23" "Hook exits 0 in workspace (no pending messages)"
-    else
-        fail "D23" "Hook in workspace" "exit $HOOK_EC: $HOOK_OUT"
-    fi
-    # In non-workspace dir — should also exit 0
-    cd /tmp
-    HOOK_OUT2=$($BM_AGENT claude hook post-tool-use 2>&1)
-    HOOK_EC2=$?
-    cd "$ALICE_WS"
-    if [ $HOOK_EC2 -eq 0 ]; then
-        pass "D23b" "Hook exits 0 outside workspace"
-    else
-        fail "D23b" "Hook outside workspace" "exit $HOOK_EC2: $HOOK_OUT2"
-    fi
-
-    # D24: Re-sync preserves inbox messages
-    $BM_AGENT inbox write "survive sync" --from brain 2>&1
-    cd "{{justfile_directory()}}/../../../.."
-    OUT=$($BM teams sync -v 2>&1)
-    cd "$ALICE_WS"
-    PEEK_SYNC=$($BM_AGENT inbox peek 2>&1)
-    if echo "$PEEK_SYNC" | grep -q "survive sync"; then
-        pass "D24" "Re-sync preserves inbox messages"
-        # Clean up
-        $BM_AGENT inbox read > /dev/null 2>&1
-    else
-        fail "D24" "Inbox after sync" "message lost: $PEEK_SYNC"
-    fi
-
-    echo "Phase D complete."
-
-# ─── Phase E: Full Sync (-a) ──────────────────────────────────
-
-phase-e:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    export GH_TOKEN=$(gh auth token)
-    BM="{{BM}}"
-    REPORT="{{REPORT}}"
-    TEAM_DIR="{{TEAM_DIR}}"
-
-    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
-    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
-    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
-
-    echo "" >> "$REPORT"
-    echo "### Phase E: Full Sync (-a flag)" >> "$REPORT"
-    echo "" >> "$REPORT"
-    echo "| # | Test | Result |" >> "$REPORT"
-    echo "|---|------|--------|" >> "$REPORT"
-
-    echo "Phase E: Full Sync (--bridge)"
-    echo "==============================="
-    # Note: -a includes --repos which requires GitHub workspace repos per member.
-    # For local-only teams, use --bridge (bridge + workspace, no git push).
-
-    OUT=$($BM teams sync --bridge -v 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ]; then pass "E1" "Full sync --bridge -v"; else fail "E1" "Full sync" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
-
-    OUT=$($BM teams sync --bridge -v 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ]; then pass "E2" "Full sync again (idempotent)"; else fail "E2" "Idempotent sync" "exit $EC"; fi
-
-    $BM hire superman --name dave 2>&1
-    OUT=$($BM teams sync --bridge -v 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ] && [ -f "$TEAM_DIR/superman-dave/.botminter.workspace" ]; then
-        pass "E3" "Hire dave + sync creates new workspace"
-    else
-        fail "E3" "Dave workspace" "exit $EC or missing marker"
-    fi
-
-    # Count workspaces
-    WS_COUNT=$(ls -d "$TEAM_DIR"/superman-*/. 2>/dev/null | wc -l)
-    if [ "$WS_COUNT" -ge 4 ]; then pass "E4" "All $WS_COUNT member workspaces present"; else fail "E4" "Workspaces" "only $WS_COUNT found"; fi
-
-    # Count bridge identities
-    ID_COUNT=$(jq '.identities | length' "$TEAM_DIR/bridge-state.json" 2>/dev/null || echo "0")
-    if [ "$ID_COUNT" -ge 5 ]; then pass "E5" "Bridge has $ID_COUNT identities (admin + 4 members)"; else fail "E5" "Identities" "count=$ID_COUNT"; fi
-
-    echo "Phase E complete."
-
-# ─── Phase F: Error Handling ──────────────────────────────────
-
-phase-f:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    export GH_TOKEN=$(gh auth token)
-    BM="{{BM}}"
-    REPORT="{{REPORT}}"
-
-    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
-    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
-    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
-
-    echo "" >> "$REPORT"
-    echo "### Phase F: Error Handling" >> "$REPORT"
-    echo "" >> "$REPORT"
-    echo "| # | Test | Result |" >> "$REPORT"
-    echo "|---|------|--------|" >> "$REPORT"
-
-    echo "Phase F: Error Handling"
-    echo "========================"
-
-    # F1: Without just
-    OUT=$(PATH=/usr/bin:/bin $BM teams sync --bridge -v 2>&1)
-    # Should not crash — either skips or errors gracefully
-    if echo "$OUT" | grep -qi "just\|skip\|not found"; then
-        pass "F1" "Graceful handling when just not in PATH"
-    else
-        note "F1" "Without just" "Output: $(echo "$OUT" | tail -2)"
-    fi
-
-    # F2: bm status
-    OUT=$($BM status -v 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ]; then pass "F2" "bm status -v works"; else fail "F2" "bm status" "exit $EC"; fi
-
-    # F3: bm members list
-    OUT=$($BM members list 2>&1)
-    EC=$?
-    MEMBER_COUNT=$(echo "$OUT" | grep -c "superman-" || true)
-    if [ $EC -eq 0 ] && [ "$MEMBER_COUNT" -ge 3 ]; then pass "F3" "bm members list shows $MEMBER_COUNT members"; else fail "F3" "members list" "exit $EC, count=$MEMBER_COUNT"; fi
-
-    # F4: bm teams show
-    OUT=$($BM teams show 2>&1)
-    EC=$?
-    if [ $EC -eq 0 ] && echo "$OUT" | grep -q "{{TEAM}}"; then pass "F4" "bm teams show works"; else fail "F4" "teams show" "exit $EC"; fi
-
-    echo "Phase F complete."
-
-# ─── Phase G: Cleanup ────────────────────────────────────────
-
-phase-g:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    export GH_TOKEN=$(gh auth token)
-    REPORT="{{REPORT}}"
-    CONTAINER="bm-tuwunel-{{TEAM}}"
-
-    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
-    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
-
-    echo "" >> "$REPORT"
-    echo "### Phase G: Cleanup" >> "$REPORT"
-    echo "" >> "$REPORT"
-    echo "| # | Test | Result |" >> "$REPORT"
-    echo "|---|------|--------|" >> "$REPORT"
-
-    echo "Phase G: Cleanup"
-    echo "================"
-
-    podman stop "$CONTAINER" 2>/dev/null; podman rm "$CONTAINER" 2>/dev/null
-    pass "G1" "Removed bridge container"
-
-    podman volume rm "bm-tuwunel-{{TEAM}}-data" 2>/dev/null
-    pass "G2" "Removed bridge volume"
-
-    gh repo delete {{FULL_REPO}} --yes 2>/dev/null
-    pass "G3" "Deleted GitHub repo"
-
-    PROJ_NUM=$(gh project list --owner {{ORG}} --format json 2>/dev/null \
-        | jq -r '.projects[] | select(.title=="{{BOARD}}") | .number' 2>/dev/null || true)
-    if [ -n "$PROJ_NUM" ]; then
-        gh project delete "$PROJ_NUM" --owner {{ORG}} --format json 2>/dev/null
-    fi
-    pass "G4" "Deleted GitHub project"
-
-    rm -rf ~/.botminter ~/.config/botminter
-    pass "G5" "Removed local state"
-
-    # Clear keyring
-    for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing; do
-        secret-tool clear service "botminter.{{TEAM}}.tuwunel" username "$u" 2>/dev/null || true
-    done
-    pass "G6" "Cleared keyring entries"
-
-    limactl delete --force {{LIMA_VM}} 2>/dev/null || true
-    pass "G7" "Deleted Lima VM (if exists)"
-
-    # Verify clean
-    CONTAINERS=$(podman ps -a --filter "name=bm-tuwunel-{{TEAM}}" --format '{{{{.Names}}' 2>/dev/null)
-    REPO_EXISTS=$(gh repo view {{FULL_REPO}} --json name 2>/dev/null && echo "yes" || echo "no")
-    if [ -z "$CONTAINERS" ] && [ "$REPO_EXISTS" = "no" ] && [ ! -d ~/.botminter ]; then
-        pass "G8" "Verified clean: no containers, no repo, no local state"
-    else
-        fail "G8" "Verify clean" "containers='$CONTAINERS' repo=$REPO_EXISTS botminter=$(test -d ~/.botminter && echo exists || echo gone)"
-    fi
-
-    echo "" >> "$REPORT"
-    echo "---" >> "$REPORT"
-    echo "" >> "$REPORT"
-    echo "## Summary" >> "$REPORT"
-    PASS_COUNT=$(grep -c '**PASS**' "$REPORT" || true)
-    FAIL_COUNT=$(grep -c '**FAIL**' "$REPORT" || true)
-    NOTE_COUNT=$(grep -c '**NOTE**' "$REPORT" || true)
-    echo "" >> "$REPORT"
-    echo "- **PASS:** $PASS_COUNT" >> "$REPORT"
-    echo "- **FAIL:** $FAIL_COUNT" >> "$REPORT"
-    echo "- **NOTE:** $NOTE_COUNT" >> "$REPORT"
-
-    echo ""
-    echo "Phase G complete."
-    echo "================================"
-    echo "PASS: $PASS_COUNT | FAIL: $FAIL_COUNT | NOTE: $NOTE_COUNT"
-    echo "Report: $REPORT"
-
-# ─── Phase H: Brain Lifecycle ────────────────────────────────
-
-phase-h:
-    #!/usr/bin/env bash
-    set -uo pipefail
-    export GH_TOKEN=$(gh auth token)
-    BM="{{BM}}"
-    REPORT="{{REPORT}}"
-    TEAM_DIR="{{TEAM_DIR}}"
-    TEAM_REPO="{{TEAM_REPO}}"
-    TEAM_NAME="{{TEAM}}"
-    GH_ORG="{{ORG}}"
-    GH_REPO="{{REPO}}"
-    ALICE_WS="$TEAM_DIR/superman-alice"
-    BOB_WS="$TEAM_DIR/superman-bob"
-    STATE_FILE="$HOME/.botminter/state.json"
-    CARGO_ROOT="{{justfile_directory()}}/../../../.."
-
-    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
-    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
-    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
-
-    echo "" >> "$REPORT"
-    echo "### Phase H: Brain Lifecycle (Chat-First Member)" >> "$REPORT"
-    echo "" >> "$REPORT"
-    echo "| # | Test | Result |" >> "$REPORT"
-    echo "|---|------|--------|" >> "$REPORT"
-
-    echo "Phase H: Brain Lifecycle"
-    echo "========================="
-
-    # ── H.1: Template Rendering & Content ─────────────────────────
-
-    echo "  H.1: Template Rendering & Content..."
-
-    # H1: Brain prompt exists after sync
-    if [ -f "$ALICE_WS/brain-prompt.md" ] && [ -s "$ALICE_WS/brain-prompt.md" ]; then
-        pass "H1" "brain-prompt.md exists and is non-empty"
-    else
-        fail "H1" "brain-prompt.md" "missing or empty in $ALICE_WS"
-    fi
-
-    # H2: No unrendered template variables remain
-    UNRENDERED=$(grep -o '{{{{' "$ALICE_WS/brain-prompt.md" 2>/dev/null | wc -l || true)
-    if [ "${UNRENDERED:-0}" -eq 0 ]; then
-        pass "H2" "No unrendered template variables"
-    else
-        fail "H2" "Unrendered vars" "$UNRENDERED occurrences of mustache-style vars found"
-    fi
-
-    # H3: Contains rendered member name
-    if grep -q "alice" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
-        pass "H3" "Contains rendered member name (alice)"
-    else
-        fail "H3" "Member name" "alice not found in brain-prompt.md"
-    fi
-
-    # H4: Contains rendered team name
-    if grep -q "$TEAM_NAME" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
-        pass "H4" "Contains rendered team name ($TEAM_NAME)"
-    else
-        fail "H4" "Team name" "$TEAM_NAME not found in brain-prompt.md"
-    fi
-
-    # H5: Contains rendered GitHub org
-    if grep -q "$GH_ORG" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
-        pass "H5" "Contains rendered GitHub org ($GH_ORG)"
-    else
-        fail "H5" "GitHub org" "$GH_ORG not found in brain-prompt.md"
-    fi
-
-    # H6: Contains rendered GitHub repo
-    if grep -q "$GH_REPO" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
-        pass "H6" "Contains rendered GitHub repo ($GH_REPO)"
-    else
-        fail "H6" "GitHub repo" "$GH_REPO not found in brain-prompt.md"
-    fi
-
-    # H7: Contains expected sections from the template
-    SECTIONS_OK=true
-    MISSING_SECTIONS=""
-    for section in "Identity" "Board Awareness" "Work Loop" "Human Interaction" "Dual-Channel"; do
-        if ! grep -q "$section" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
-            SECTIONS_OK=false
-            MISSING_SECTIONS="$MISSING_SECTIONS $section"
-        fi
-    done
-    if $SECTIONS_OK; then
-        pass "H7" "All expected sections present (Identity, Board Awareness, Work Loop, Human Interaction, Dual-Channel)"
-    else
-        fail "H7" "Missing sections" "$MISSING_SECTIONS"
-    fi
-
-    # ── H.2: Per-Member Differentiation ──────────────────────────
-
-    echo "  H.2: Per-Member Differentiation..."
-
-    # H8: Bob also has brain-prompt.md
-    if [ -f "$BOB_WS/brain-prompt.md" ] && [ -s "$BOB_WS/brain-prompt.md" ]; then
-        pass "H8" "Bob workspace also has brain-prompt.md"
-    else
-        fail "H8" "Bob brain-prompt.md" "missing or empty in $BOB_WS"
-    fi
-
-    # H9: Alice and bob brain-prompt.md differ
-    if ! diff -q "$ALICE_WS/brain-prompt.md" "$BOB_WS/brain-prompt.md" >/dev/null 2>&1; then
-        pass "H9" "Alice and bob brain-prompt.md differ (per-member rendering)"
-    else
-        fail "H9" "Per-member diff" "alice and bob have identical brain-prompt.md"
-    fi
-
-    # H10: Bob contains bob's name, not alice
-    if grep -q "bob" "$BOB_WS/brain-prompt.md" 2>/dev/null && ! grep -q "alice" "$BOB_WS/brain-prompt.md" 2>/dev/null; then
-        pass "H10" "Bob's brain-prompt.md contains 'bob', not 'alice'"
-    else
-        fail "H10" "Bob content" "expected 'bob' only, got mixed or wrong names"
-    fi
-
-    # ── H.3: Brain Mode Detection ────────────────────────────────
-
-    echo "  H.3: Brain Mode Detection..."
-
-    # H11: bm start detects brain mode when brain-prompt.md is present
-    OUT=$($BM start 2>&1 || true)
-    if echo "$OUT" | grep -qi "brain"; then
-        pass "H11" "bm start detects brain mode (output mentions brain)"
-    else
-        note "H11" "Brain mode detection" "output: $(echo "$OUT" | tail -2 | tr '\n' ' ')"
-    fi
-
-    # H12: State file has brain_mode after start attempt
-    if [ -f "$STATE_FILE" ] && grep -q '"brain_mode"' "$STATE_FILE" 2>/dev/null; then
-        HAS_BRAIN=$(jq '[.members // {} | to_entries[] | select(.value.brain_mode == true)] | length' "$STATE_FILE" 2>/dev/null || echo "0")
-        if [ "${HAS_BRAIN:-0}" -gt 0 ]; then
-            pass "H12" "state.json has brain_mode=true for at least one member"
-        else
-            note "H12" "brain_mode field" "present but not true (start may have failed)"
-        fi
-    else
-        note "H12" "State file" "brain_mode field not found (start may have failed before writing state)"
-    fi
-
-    # H13: Remove brain-prompt.md from ALL workspaces and verify no brain mode
-    # Save backups for all members
-    for ws in "$TEAM_DIR"/superman-*/; do
-        if [ -f "$ws/brain-prompt.md" ]; then
-            cp "$ws/brain-prompt.md" "$ws/brain-prompt.md.bak"
-            rm "$ws/brain-prompt.md"
-        fi
-    done
-    # Stop any previous processes
-    $BM stop --force 2>/dev/null || true
-    rm -f "$STATE_FILE"
-    OUT=$($BM start 2>&1 || true)
-    if echo "$OUT" | grep -qi "ralph\|launch\|started"; then
-        # Verify state.json does NOT have brain_mode=true
-        if [ -f "$STATE_FILE" ]; then
-            HAS_BRAIN=$(jq '[.members // {} | to_entries[] | select(.value.brain_mode == true)] | length' "$STATE_FILE" 2>/dev/null || echo "0")
-            if [ "${HAS_BRAIN:-0}" -eq 0 ]; then
-                pass "H13" "Without brain-prompt.md: no brain_mode=true in state"
-            else
-                note "H13" "Ralph fallback" "brain_mode still true despite missing brain-prompt.md"
-            fi
-        else
-            pass "H13" "Without brain-prompt.md: standard launch path (no state written)"
-        fi
-    else
-        note "H13" "Ralph fallback" "start output: $(echo "$OUT" | tail -2 | tr '\n' ' ')"
-    fi
-
-    # H14: Restore brain-prompt.md and clean up
-    for ws in "$TEAM_DIR"/superman-*/; do
-        if [ -f "$ws/brain-prompt.md.bak" ]; then
-            mv "$ws/brain-prompt.md.bak" "$ws/brain-prompt.md"
-        fi
-    done
-    $BM stop --force 2>/dev/null || true
-    rm -f "$STATE_FILE"
-    pass "H14" "Restored brain-prompt.md and cleaned up state"
-
-    # ── H.4: Sync Edge Cases ─────────────────────────────────────
-
-    echo "  H.4: Sync Edge Cases..."
-
-    # H15: Modified brain-prompt.md restored on re-sync
-    echo "JUNK CONTENT — this should be overwritten" > "$ALICE_WS/brain-prompt.md"
-    $BM teams sync -v 2>&1 >/dev/null
-    CONTENT=$(cat "$ALICE_WS/brain-prompt.md" 2>/dev/null)
-    if [ "$CONTENT" != "JUNK CONTENT — this should be overwritten" ] && echo "$CONTENT" | grep -q "Identity"; then
-        pass "H15" "Modified brain-prompt.md restored on re-sync"
-    else
-        fail "H15" "Re-sync restore" "brain-prompt.md not restored from template"
-    fi
-
-    # H16: Deleted brain-prompt.md restored on re-sync
-    rm -f "$ALICE_WS/brain-prompt.md"
-    $BM teams sync -v 2>&1 >/dev/null
-    if [ -f "$ALICE_WS/brain-prompt.md" ] && [ -s "$ALICE_WS/brain-prompt.md" ]; then
-        pass "H16" "Deleted brain-prompt.md restored on re-sync"
-    else
-        fail "H16" "Re-sync recreate" "brain-prompt.md not recreated"
-    fi
-
-    # H17: Content idempotent across multiple syncs
-    HASH1=$(md5sum "$ALICE_WS/brain-prompt.md" 2>/dev/null | cut -d' ' -f1)
-    $BM teams sync -v 2>&1 >/dev/null
-    HASH2=$(md5sum "$ALICE_WS/brain-prompt.md" 2>/dev/null | cut -d' ' -f1)
-    if [ "$HASH1" = "$HASH2" ]; then
-        pass "H17" "brain-prompt.md content idempotent across syncs (hash match)"
-    else
-        fail "H17" "Idempotency" "hash changed: $HASH1 -> $HASH2"
-    fi
-
-    # H18: Verbose sync shows brain prompt surfacing
-    OUT=$($BM teams sync -v 2>&1)
-    if echo "$OUT" | grep -qi "brain\|BrainPrompt"; then
-        pass "H18" "Verbose sync mentions brain prompt surfacing"
-    else
-        note "H18" "Verbose output" "no brain-related output in sync -v"
-    fi
-
-    # ── H.5: End-to-End Brain Autonomy Validation ─────────────────
-    #
-    # These tests validate the true value of brain-mode: autonomous members
-    # that users interact with via chat. The flow simulates real production use:
-    # - User runs `bm start` to launch brain members
-    # - User sends messages to the Matrix room (via tuwunel bridge)
-    # - Brain member processes messages and responds autonomously
-    # - User runs `bm stop` to shut down gracefully
-    # No internal commands (bm brain-run) or file injection — pure user journey.
-
-    echo "  H.5: End-to-End Brain Autonomy Validation..."
-
-    MATRIX_URL="http://127.0.0.1:8008"
-    BSTATE="$TEAM_DIR/bridge-state.json"
-    PWFILE="$TEAM_DIR/tuwunel-passwords.json"
-    CONTAINER="bm-tuwunel-$TEAM_NAME"
-    BOB_TOKEN=""
-
-    # ── Prerequisites: ensure bridge is running ──
-
-    # H19: Verify tuwunel bridge is up (prerequisite for all autonomy tests)
-    BRIDGE_OK=false
-    HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
-    if [ "$HTTP" = "200" ]; then
-        pass "H19" "Tuwunel bridge is running (Matrix server healthy)"
-        BRIDGE_OK=true
-    else
-        # Try to bring it up
-        $BM teams sync --bridge -v 2>&1 >/dev/null
-        HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
-        if [ "$HTTP" = "200" ]; then
-            pass "H19" "Tuwunel bridge started (was down, recovered)"
-            BRIDGE_OK=true
-        else
-            fail "H19" "Bridge prerequisite" "Matrix server not reachable (HTTP $HTTP)"
-        fi
-    fi
-
-    if $BRIDGE_OK; then
-
-    # H20: Verify ACP binary is available
-    if command -v claude-code-acp-rs >/dev/null 2>&1; then
-        ACP_VERSION=$(claude-code-acp-rs --version 2>/dev/null || echo "unknown")
-        pass "H20" "ACP binary available ($ACP_VERSION)"
-    else
-        fail "H20" "ACP binary" "claude-code-acp-rs not found in PATH"
-    fi
-
-    # ── Matrix Authentication & Room Setup ──
-
-    # H21: Login as admin to Matrix
-    ADMIN_PASS=$(jq -r '.bmadmin' "$PWFILE" 2>/dev/null)
-    ADMIN_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
-        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"bmadmin\"},\"password\":\"$ADMIN_PASS\"}" \
-        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
-    ADMIN_TOKEN=$(echo "$ADMIN_LOGIN" | jq -r '.access_token // empty')
-    if [ -n "$ADMIN_TOKEN" ]; then
-        pass "H21" "Admin Matrix login successful"
-    else
-        fail "H21" "Admin login" "no access token returned"
-    fi
-
-    # H22: Login as alice member to Matrix
-    ALICE_PASS=$(jq -r '.["superman-alice"]' "$PWFILE" 2>/dev/null)
-    ALICE_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
-        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-alice\"},\"password\":\"$ALICE_PASS\"}" \
-        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
-    ALICE_TOKEN=$(echo "$ALICE_LOGIN" | jq -r '.access_token // empty')
-    if [ -n "$ALICE_TOKEN" ]; then
-        pass "H22" "Alice Matrix login successful"
-    else
-        fail "H22" "Alice login" "no access token returned"
-    fi
-
-    # H23: Resolve room ID for the team general room
-    ROOM_ALIAS="%23${TEAM_NAME}-general:localhost"
-    ROOM_RESP=$(curl -sf "$MATRIX_URL/_matrix/client/v3/directory/room/$ROOM_ALIAS" 2>/dev/null || echo '{}')
-    ROOM_ID=$(echo "$ROOM_RESP" | jq -r '.room_id // empty')
-    if [ -n "$ROOM_ID" ]; then
-        pass "H23" "Room resolved ($ROOM_ID)"
-    else
-        fail "H23" "Room resolution" "room $TEAM_NAME-general not found"
-    fi
-
-    # ── Brain Member Lifecycle — User Journey ──
-    # This is the core autonomy test: bm start → chat via Matrix → bm stop
-    # Simulates exactly what a real user does with brain-mode members.
-
-    # H24: Clean any previous state before brain lifecycle test
-    $BM stop --force 2>/dev/null || true
-    rm -f "$STATE_FILE"
-    pass "H24" "Cleaned previous state for lifecycle test"
-
-    # H25: Start brain members via bm start (the user's primary command)
-    START_OUT=$($BM start 2>&1 || true)
-    START_EC=$?
-    if echo "$START_OUT" | grep -qi "brain\|launch\|started"; then
-        pass "H25" "bm start executed (brain mode detected)"
-    else
-        note "H25" "bm start" "output: $(echo "$START_OUT" | tail -3 | tr '\n' ' ')"
-    fi
-
-    # H26: Check if brain processes are alive (give them 3 seconds to start)
-    sleep 3
-    BRAIN_ALIVE=false
-    if [ -f "$STATE_FILE" ]; then
-        ALIVE_COUNT=$(jq '[.members // {} | to_entries[] | select(.value.brain_mode == true)] | length' "$STATE_FILE" 2>/dev/null || echo "0")
-        if [ "${ALIVE_COUNT:-0}" -gt 0 ]; then
-            for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-                if kill -0 "$pid" 2>/dev/null; then
-                    BRAIN_ALIVE=true
-                    break
-                fi
-            done
-        fi
-    fi
-    if $BRAIN_ALIVE; then
-        # Validate the process is actually brain-run or claude-code-acp-rs (not just any PID)
-        BRAIN_PID=""
-        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            if kill -0 "$pid" 2>/dev/null; then
-                BRAIN_PID="$pid"
-                break
-            fi
-        done
-        PROC_CMD=$(cat /proc/$BRAIN_PID/cmdline 2>/dev/null | tr '\0' ' ' || ps -p $BRAIN_PID -o args= 2>/dev/null || echo "unknown")
-        if echo "$PROC_CMD" | grep -q 'brain-run\|claude-code-acp-rs'; then
-            pass "H26" "Brain process verified (PID $BRAIN_PID, command contains brain-run/acp)"
-        else
-            note "H26" "Process identity" "PID $BRAIN_PID alive but command not brain-run: $(echo "$PROC_CMD" | head -c 120)"
-        fi
-    else
-        if [ -f "$STATE_FILE" ] && grep -q '"brain_mode":true' "$STATE_FILE" 2>/dev/null; then
-            note "H26" "Brain process" "brain_mode=true in state but process not alive (ACP may have failed to authenticate)"
-        else
-            note "H26" "Brain process" "no brain members in state file"
-        fi
-    fi
-
-    # H27: Status shows brain label while running
-    STATUS_OUT=$($BM status 2>&1 || true)
-    if echo "$STATUS_OUT" | grep -qi "brain"; then
-        pass "H27" "bm status shows brain label during lifecycle"
-    else
-        note "H27" "Brain status" "output: $(echo "$STATUS_OUT" | tail -3 | tr '\n' ' ')"
-    fi
-
-    # ── User Chat Interaction While Brain Running ──
-    # This is the KEY autonomy validation: send messages to the room while brain
-    # is alive, poll for brain's response. This simulates real production use.
-
-    # H28: Send greeting message to room while brain is running (user -> room)
-    MSG_TXN="h28-$(date +%s)"
-    SEND_RESP=$(curl -sf -X PUT \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"msgtype\":\"m.text\",\"body\":\"Hello brain member! Please introduce yourself and confirm you are operational.\"}" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
-    SEND_EVENT_ID=$(echo "$SEND_RESP" | jq -r '.event_id // empty')
-    if [ -n "$SEND_EVENT_ID" ]; then
-        pass "H28" "Greeting sent to room while brain running ($SEND_EVENT_ID)"
-    else
-        fail "H28" "Send greeting" "no event_id returned: $SEND_RESP"
-    fi
-
-    # H29: Send work request message while brain is running
-    MSG_TXN="h29-$(date +%s)"
-    SEND_RESP=$(curl -sf -X PUT \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"msgtype\":\"m.text\",\"body\":\"Please check the current project status and report back with your findings.\"}" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
-    TASK_EVENT_ID=$(echo "$SEND_RESP" | jq -r '.event_id // empty')
-    if [ -n "$TASK_EVENT_ID" ]; then
-        pass "H29" "Work request sent to room while brain running ($TASK_EVENT_ID)"
-    else
-        fail "H29" "Send work request" "no event_id"
-    fi
-
-    # H30: Send a follow-up question (multi-turn conversation simulation)
-    MSG_TXN="h30-$(date +%s)"
-    SEND_RESP=$(curl -sf -X PUT \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"msgtype\":\"m.text\",\"body\":\"What tools and capabilities do you have available?\"}" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
-    FOLLOWUP_EVENT_ID=$(echo "$SEND_RESP" | jq -r '.event_id // empty')
-    if [ -n "$FOLLOWUP_EVENT_ID" ]; then
-        pass "H30" "Follow-up question sent (multi-turn simulation)"
-    else
-        fail "H30" "Send follow-up" "no event_id"
-    fi
-
-    # H31: Edge case — send malformed/garbage message while brain is running
-    # Tests that the brain process survives receiving bad input through the bridge.
-    # This exercises the edge case path required by exploratory-test-user-journey.md.
-    MSG_TXN="h31-$(date +%s)"
-    GARBAGE_RESP=$(curl -sf -X PUT \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"msgtype\":\"m.text\",\"body\":\"\"}" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
-    GARBAGE_EVENT_ID=$(echo "$GARBAGE_RESP" | jq -r '.event_id // empty')
-    # Also send a message with unusual unicode content
-    MSG_TXN2="h31b-$(date +%s)"
-    curl -sf -X PUT \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"msgtype\":\"m.text\",\"body\":\"\u0000\u001f\uffff\ud800\"}" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN2" 2>/dev/null || true
-    sleep 2
-    if $BRAIN_ALIVE; then
-        # Verify brain process is still alive after garbage input
-        SURVIVED=false
-        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            if kill -0 "$pid" 2>/dev/null; then
-                SURVIVED=true
-                break
-            fi
-        done
-        if $SURVIVED; then
-            pass "H31" "Brain survived malformed/empty message (edge case)"
-        else
-            fail "H31" "Edge case" "brain process died after receiving malformed message"
-        fi
-    else
-        if [ -n "$GARBAGE_EVENT_ID" ]; then
-            pass "H31" "Malformed message delivered to room (brain not alive to test survival)"
-        else
-            note "H31" "Edge case" "empty body rejected by Matrix server (expected)"
-        fi
-    fi
-
-    # H32: Poll for brain response — the autonomy proof
-    # Wait up to 30 seconds for the brain to respond via its Matrix identity.
-    # The brain member processes messages from the room and responds autonomously.
-    echo "    Polling for brain response (up to 30s)..."
-    BRAIN_RESPONDED=false
-    BRAIN_RESPONSE_BODY=""
-    for attempt in $(seq 1 6); do
-        sleep 5
-        HISTORY=$(curl -sf \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=20" 2>/dev/null || echo '{}')
-        # Look for messages from any member identity (superman-alice, superman-bob, etc.)
-        BRAIN_MSGS=$(echo "$HISTORY" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
-        if [ "${BRAIN_MSGS:-0}" -gt 0 ]; then
-            BRAIN_RESPONSE_BODY=$(echo "$HISTORY" | jq -r '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | .[0].content.body // "empty"' 2>/dev/null)
-            BRAIN_RESPONDED=true
-            break
-        fi
-        echo "    Attempt $attempt/6: no brain response yet..."
-    done
-    if $BRAIN_RESPONDED; then
-        # Validate the response content is meaningful (not random garbage)
-        # Check for operational indicators: member name, Ralph, loop, connected, Matrix, or task-related words
-        CONTENT_MEANINGFUL=false
-        for keyword in alice bob Ralph loop connected Matrix project status tool; do
-            if echo "$BRAIN_RESPONSE_BODY" | grep -qi "$keyword"; then
-                CONTENT_MEANINGFUL=true
-                break
-            fi
-        done
-        if $CONTENT_MEANINGFUL; then
-            pass "H32" "Brain responded with meaningful content (response: $(echo "$BRAIN_RESPONSE_BODY" | head -c 100)...)"
-        else
-            note "H32" "Brain response content" "brain responded but content may not be operational: $(echo "$BRAIN_RESPONSE_BODY" | head -c 100)"
-        fi
-    else
-        if $BRAIN_ALIVE; then
-            note "H32" "Brain response" "brain is alive but did not respond within 30s (bridge-to-brain pipeline may not be fully wired)"
-        else
-            note "H32" "Brain response" "brain process not alive, response not expected"
-        fi
-    fi
-
-    # H29b: Validate brain response addressed the work request (H29 content check)
-    # This completes the H29 work request journey: not just delivered, but processed.
-    if $BRAIN_RESPONDED; then
-        WORK_ADDRESSED=false
-        # Fetch fresh room history to check all brain responses
-        H29B_HIST=$(curl -sf \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=30" 2>/dev/null || echo '{}')
-        ALL_BRAIN_BODIES=$(echo "$H29B_HIST" | jq -r '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | .[].content.body // ""' 2>/dev/null || echo "")
-        for keyword in project status check report finding available tool; do
-            if echo "$ALL_BRAIN_BODIES" | grep -qi "$keyword"; then
-                WORK_ADDRESSED=true
-                break
-            fi
-        done
-        if $WORK_ADDRESSED; then
-            pass "H29b" "Brain response addresses work request (mentions project/status/tools)"
-        else
-            note "H29b" "Work request response" "brain responded but may not have addressed the work request specifically"
-        fi
-    else
-        note "H29b" "Work request response" "no brain response to evaluate (brain did not respond)"
-    fi
-
-    # H33: Verify messages from user are visible in room history
-    sleep 1
-    MESSAGES=$(curl -sf \
-        -H "Authorization: Bearer $ALICE_TOKEN" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=20" 2>/dev/null || echo '{}')
-    MSG_COUNT=$(echo "$MESSAGES" | jq '[.chunk[] | select(.type == "m.room.message")] | length' 2>/dev/null || echo "0")
-    GREETING_FOUND=$(echo "$MESSAGES" | jq '[.chunk[] | select(.content.body? // "" | contains("introduce yourself"))] | length' 2>/dev/null || echo "0")
-    TASK_FOUND=$(echo "$MESSAGES" | jq '[.chunk[] | select(.content.body? // "" | contains("project status"))] | length' 2>/dev/null || echo "0")
-    if [ "${GREETING_FOUND:-0}" -ge 1 ] && [ "${TASK_FOUND:-0}" -ge 1 ]; then
-        pass "H33" "User messages visible in room history ($MSG_COUNT total messages)"
-    else
-        fail "H33" "Message visibility" "greeting=$GREETING_FOUND task=$TASK_FOUND total=$MSG_COUNT"
-    fi
-
-    # H34: Cross-member messaging while brain is running (integrated journey)
-    # This tests cross-member interaction as a distinct user journey WHILE the brain
-    # is alive — proving brain autonomy applies to multi-member scenarios.
-    MSG_TXN="h34-$(date +%s)"
-    curl -sf -X PUT \
-        -H "Authorization: Bearer $ALICE_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"msgtype\":\"m.text\",\"body\":\"Cross-member test: alice sending to room while brain is active.\"}" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" >/dev/null 2>&1
-    sleep 1
-    if [ -n "$BOB_TOKEN" ]; then
-        BOB_CROSS=$(curl -sf \
-            -H "Authorization: Bearer $BOB_TOKEN" \
-            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=5" 2>/dev/null || echo '{}')
-        CROSS_FOUND=$(echo "$BOB_CROSS" | jq '[.chunk[] | select(.content.body? // "" | contains("Cross-member test"))] | length' 2>/dev/null || echo "0")
-        if [ "${CROSS_FOUND:-0}" -ge 1 ]; then
-            pass "H34" "Cross-member messaging while brain running (alice to bob, brain alive)"
-        else
-            fail "H34" "Cross-member" "bob does not see alice's message while brain is running"
-        fi
-    else
-        # Need bob token — login if we don't have it yet
-        BOB_PASS=$(jq -r '.["superman-bob"]' "$PWFILE" 2>/dev/null)
-        BOB_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
-            -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-bob\"},\"password\":\"$BOB_PASS\"}" \
-            "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
-        BOB_TOKEN=$(echo "$BOB_LOGIN" | jq -r '.access_token // empty')
-        if [ -n "$BOB_TOKEN" ]; then
-            BOB_CROSS=$(curl -sf \
-                -H "Authorization: Bearer $BOB_TOKEN" \
-                "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=5" 2>/dev/null || echo '{}')
-            CROSS_FOUND=$(echo "$BOB_CROSS" | jq '[.chunk[] | select(.content.body? // "" | contains("Cross-member test"))] | length' 2>/dev/null || echo "0")
-            if [ "${CROSS_FOUND:-0}" -ge 1 ]; then
-                pass "H34" "Cross-member messaging while brain running (alice to bob, brain alive)"
-            else
-                fail "H34" "Cross-member" "bob does not see alice's message"
-            fi
-        else
-            fail "H34" "Cross-member" "could not login as bob"
-        fi
-    fi
-
-    # H35: Brain process survived all interaction (didn't crash from messages + cross-member)
-    if $BRAIN_ALIVE; then
-        STILL_ALIVE=false
-        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            if kill -0 "$pid" 2>/dev/null; then
-                STILL_ALIVE=true
-                break
-            fi
-        done
-        if $STILL_ALIVE; then
-            pass "H35" "Brain survived all interaction (normal + malformed + cross-member messages)"
-        else
-            note "H35" "Brain stability" "brain process died during user interaction"
-        fi
-    else
-        note "H35" "Brain stability" "skipped (brain not alive)"
-    fi
-
-    # ── Graceful Stop & Cleanup ──
-
-    # H36: Stop brain member (graceful first, then force cleanup)
-    STOP_OUT=$($BM stop 2>&1)
-    STOP_EC=$?
-    if [ $STOP_EC -eq 0 ]; then
-        pass "H36" "bm stop executed cleanly (exit 0)"
-    else
-        note "H36" "bm stop graceful" "exit $STOP_EC, retrying with --force"
-        $BM stop --force 2>&1 || true
-    fi
-
-    # H37: Verify brain processes are gone after stop
-    sleep 2
-    ALL_DEAD=true
-    if [ -f "$STATE_FILE" ]; then
-        for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            if kill -0 "$pid" 2>/dev/null; then
-                kill -9 "$pid" 2>/dev/null || true
-                ALL_DEAD=false
-            fi
-        done
-    fi
-    pkill -f "claude-code-acp-rs.*$TEAM_DIR" 2>/dev/null || true
-    sleep 1
-    STILL_ALIVE=false
-    if [ -f "$STATE_FILE" ]; then
-        for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            if kill -0 "$pid" 2>/dev/null; then
-                STILL_ALIVE=true
-                break
-            fi
-        done
-    fi
-    if ! $STILL_ALIVE; then
-        if $ALL_DEAD; then
-            pass "H37" "All brain processes terminated after stop"
-        else
-            pass "H37" "All brain processes terminated (required force-kill for stragglers)"
-        fi
-    else
-        fail "H37" "Process cleanup" "some processes still alive after force-kill"
-    fi
-
-    # Record pre-recovery brain message count so H40 can detect NEW responses
-    # (prevents false positive from H32's old brain responses)
-    PRE_RECOVERY_HIST=$(curl -sf \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
-    PRE_RECOVERY_BRAIN_COUNT=$(echo "$PRE_RECOVERY_HIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
-    echo "    Pre-recovery brain message count: $PRE_RECOVERY_BRAIN_COUNT"
-
-    # ── Recovery Scenario: restart + message + response polling ──
-    # This is a fully integrated recovery journey per exploratory-test-user-journey.md:
-    # stop -> start -> send message -> poll for brain response -> stop
-    # Proves the system recovers AND the brain responds after restart.
-
-    # H38: Restart brain members (recovery scenario)
-    rm -f "$STATE_FILE"
-    START2_OUT=$($BM start 2>&1 || true)
-    sleep 3
-    RECOVERY_BRAIN_ALIVE=false
-    if [ -f "$STATE_FILE" ]; then
-        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            if kill -0 "$pid" 2>/dev/null; then
-                RECOVERY_BRAIN_ALIVE=true
-                break
-            fi
-        done
-    fi
-    if echo "$START2_OUT" | grep -qi "brain\|launch\|started"; then
-        pass "H38" "Brain restarted successfully (recovery scenario)"
-    else
-        note "H38" "Recovery restart" "output: $(echo "$START2_OUT" | tail -2 | tr '\n' ' ')"
-    fi
-
-    # H39: Send message after brain restart (recovery proof)
-    MSG_TXN="h39-$(date +%s)"
-    RECOVERY_RESP=$(curl -sf -X PUT \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"msgtype\":\"m.text\",\"body\":\"Recovery test: message sent after brain restart. Are you still operational?\"}" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
-    RECOVERY_EVENT_ID=$(echo "$RECOVERY_RESP" | jq -r '.event_id // empty')
-    if [ -n "$RECOVERY_EVENT_ID" ]; then
-        pass "H39" "Message delivered after brain restart (recovery proof, $RECOVERY_EVENT_ID)"
-    else
-        fail "H39" "Recovery message" "failed to send message after restart"
-    fi
-
-    # H40: Poll for brain response after recovery (integrated recovery journey)
-    # This makes recovery a fully integrated journey: restart -> send -> poll response
-    # IMPORTANT: Compare against PRE_RECOVERY_BRAIN_COUNT to detect NEW responses only.
-    # Without this, stale responses from H32 (first lifecycle) would cause a false positive.
-    echo "    Polling for NEW brain response after recovery (up to 30s, pre-recovery count: $PRE_RECOVERY_BRAIN_COUNT)..."
-    RECOVERY_RESPONDED=false
-    RECOVERY_RESPONSE_BODY=""
-    for attempt in $(seq 1 6); do
-        sleep 5
-        RHIST=$(curl -sf \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
-        RECOVERY_BRAIN_MSGS=$(echo "$RHIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
-        if [ "${RECOVERY_BRAIN_MSGS:-0}" -gt "${PRE_RECOVERY_BRAIN_COUNT:-0}" ]; then
-            RECOVERY_RESPONSE_BODY=$(echo "$RHIST" | jq -r '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | .[0].content.body // "empty"' 2>/dev/null)
-            RECOVERY_RESPONDED=true
-            break
-        fi
-        echo "    Recovery attempt $attempt/6: no NEW brain response yet (current: $RECOVERY_BRAIN_MSGS, pre-recovery: $PRE_RECOVERY_BRAIN_COUNT)..."
-    done
-    if $RECOVERY_RESPONDED; then
-        pass "H40" "Brain responded after recovery! NEW response detected (pre: $PRE_RECOVERY_BRAIN_COUNT, post: $RECOVERY_BRAIN_MSGS, body: $(echo "$RECOVERY_RESPONSE_BODY" | head -c 80)...)"
-    else
-        if $RECOVERY_BRAIN_ALIVE; then
-            note "H40" "Recovery response" "brain alive after restart but did not respond within 30s"
-        else
-            note "H40" "Recovery response" "brain not alive after restart, response not expected"
-        fi
-    fi
-
-    # H41: Stop and verify recovery cycle cleanup
-    $BM stop --force 2>&1 || true
-    sleep 2
-    pkill -f "claude-code-acp-rs.*$TEAM_DIR" 2>/dev/null || true
-    sleep 1
-    ALL_DEAD2=true
-    if [ -f "$STATE_FILE" ]; then
-        for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            if kill -0 "$pid" 2>/dev/null; then
-                kill -9 "$pid" 2>/dev/null || true
-                ALL_DEAD2=false
-            fi
-        done
-    fi
-    STILL2=false
-    if [ -f "$STATE_FILE" ]; then
-        for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            if kill -0 "$pid" 2>/dev/null; then STILL2=true; break; fi
-        done
-    fi
-    if ! $STILL2; then
-        pass "H41" "Recovery start-stop cycle clean (brain lifecycle idempotent)"
-    else
-        fail "H41" "Recovery cycle" "processes still alive after force-kill"
-    fi
-
-    # ── Matrix Room Persistence & Multi-User Visibility ──
-
-    # H42: Send a status inquiry message as admin after full lifecycle
-    MSG_TXN="h42-$(date +%s)"
-    curl -sf -X PUT \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"msgtype\":\"m.text\",\"body\":\"Status check: Are all brain members operational?\"}" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" >/dev/null 2>&1
-    pass "H42" "Status inquiry sent after brain lifecycle"
-
-    # H43: Verify all previous messages persist in room history
-    sleep 1
-    HISTORY=$(curl -sf \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
-    TOTAL_MSGS=$(echo "$HISTORY" | jq '[.chunk[] | select(.type == "m.room.message")] | length' 2>/dev/null || echo "0")
-    HAS_GREETING=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("introduce yourself"))] | length' 2>/dev/null || echo "0")
-    HAS_TASK=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("project status"))] | length' 2>/dev/null || echo "0")
-    HAS_STATUS=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("brain members operational"))] | length' 2>/dev/null || echo "0")
-    HAS_RECOVERY=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("Recovery test"))] | length' 2>/dev/null || echo "0")
-    HAS_CROSS=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("Cross-member test"))] | length' 2>/dev/null || echo "0")
-    if [ "${HAS_GREETING:-0}" -ge 1 ] && [ "${HAS_TASK:-0}" -ge 1 ] && [ "${HAS_STATUS:-0}" -ge 1 ] && [ "${HAS_RECOVERY:-0}" -ge 1 ] && [ "${HAS_CROSS:-0}" -ge 1 ]; then
-        pass "H43" "All messages persist in room history incl. recovery + cross-member ($TOTAL_MSGS total)"
-    else
-        fail "H43" "Message persistence" "greeting=$HAS_GREETING task=$HAS_TASK status=$HAS_STATUS recovery=$HAS_RECOVERY cross=$HAS_CROSS total=$TOTAL_MSGS"
-    fi
-
-    # H44: Login as bob and verify he sees messages too (multi-member visibility)
-    if [ -z "${BOB_TOKEN:-}" ]; then
-        BOB_PASS=$(jq -r '.["superman-bob"]' "$PWFILE" 2>/dev/null)
-        BOB_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
-            -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-bob\"},\"password\":\"$BOB_PASS\"}" \
-            "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
-        BOB_TOKEN=$(echo "$BOB_LOGIN" | jq -r '.access_token // empty')
-    fi
-    if [ -n "${BOB_TOKEN:-}" ]; then
-        BOB_MSGS=$(curl -sf \
-            -H "Authorization: Bearer $BOB_TOKEN" \
-            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
-        BOB_SEES=$(echo "$BOB_MSGS" | jq '[.chunk[] | select(.type == "m.room.message")] | length' 2>/dev/null || echo "0")
-        if [ "${BOB_SEES:-0}" -ge 4 ]; then
-            pass "H44" "Bob sees all messages in room ($BOB_SEES messages)"
-        else
-            fail "H44" "Bob visibility" "bob only sees $BOB_SEES messages (expected >= 4)"
-        fi
-    else
-        fail "H44" "Bob login" "failed to login as bob"
-    fi
-
-    # ── H.6: Task Execution Journey ──────────────────────────────
-    # This journey validates the CORE VALUE of brain-mode: autonomous work on tasks.
-    # 1. Create a real GitHub issue on the team repo
-    # 2. Start brain members
-    # 3. Ask the brain to check the board for pending issues
-    # 4. Poll for a brain response that acknowledges the issue/board
-    # 5. Clean up
-    # This is the most important journey — it proves the brain does meaningful work,
-    # not just responds to chat messages.
-
-    echo "  H.6: Task Execution Journey..."
-
-    # H46: Create a GitHub issue for the brain to discover
-    ISSUE_TITLE="Brain test: verify dependency versions"
-    ISSUE_BODY="Please verify the current dependency versions in the project and report any that need updating."
-    ISSUE_URL=$(gh issue create -R "$GH_ORG/$GH_REPO" --title "$ISSUE_TITLE" --body "$ISSUE_BODY" 2>/dev/null || echo "")
-    if [ -n "$ISSUE_URL" ]; then
-        ISSUE_NUM=$(echo "$ISSUE_URL" | grep -o '[0-9]*$')
-        pass "H46" "Created GitHub issue #$ISSUE_NUM for brain to discover"
-    else
-        note "H46" "GitHub issue creation" "failed to create issue (gh auth may lack permissions)"
-        ISSUE_NUM=""
-    fi
-
-    # H47: Start brain for task execution test
-    rm -f "$STATE_FILE"
-    TASK_START_OUT=$($BM start 2>&1 || true)
-    sleep 3
-    TASK_BRAIN_ALIVE=false
-    TASK_BRAIN_PID=""
-    if [ -f "$STATE_FILE" ]; then
-        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            if kill -0 "$pid" 2>/dev/null; then
-                TASK_BRAIN_ALIVE=true
-                TASK_BRAIN_PID="$pid"
-                break
-            fi
-        done
-    fi
-    if $TASK_BRAIN_ALIVE; then
-        pass "H47" "Brain started for task execution journey (PID $TASK_BRAIN_PID)"
-    else
-        note "H47" "Task journey start" "brain not alive (ACP auth may have failed)"
-    fi
-
-    # Record pre-task brain message count to detect NEW responses
-    PRE_TASK_HIST=$(curl -sf \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
-    PRE_TASK_BRAIN_COUNT=$(echo "$PRE_TASK_HIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
-
-    # H48: Ask brain to check the GitHub board for pending issues
-    MSG_TXN="h48-$(date +%s)"
-    BOARD_MSG="Please check the GitHub board for any pending issues and report what you find. There should be an issue about verifying dependency versions."
-    BOARD_RESP=$(curl -sf -X PUT \
-        -H "Authorization: Bearer $ADMIN_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"msgtype\":\"m.text\",\"body\":\"$BOARD_MSG\"}" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
-    BOARD_EVENT_ID=$(echo "$BOARD_RESP" | jq -r '.event_id // empty')
-    if [ -n "$BOARD_EVENT_ID" ]; then
-        pass "H48" "Board check request sent to brain ($BOARD_EVENT_ID)"
-    else
-        fail "H48" "Board check request" "failed to send message"
-    fi
-
-    # H49: Poll for brain response about the board/issue (up to 60s)
-    echo "    Polling for brain response about board/issue (up to 60s, pre-count: $PRE_TASK_BRAIN_COUNT)..."
-    TASK_RESPONDED=false
-    TASK_RESPONSE_BODY=""
-    TASK_ACKNOWLEDGED_BOARD=false
-    for attempt in $(seq 1 12); do
-        sleep 5
-        THIST=$(curl -sf \
-            -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
-        TASK_BRAIN_MSGS=$(echo "$THIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
-        if [ "${TASK_BRAIN_MSGS:-0}" -gt "${PRE_TASK_BRAIN_COUNT:-0}" ]; then
-            TASK_RESPONSE_BODY=$(echo "$THIST" | jq -r '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | .[0].content.body // ""' 2>/dev/null)
-            TASK_RESPONDED=true
-            # Check if the brain acknowledged the board, issue, or dependency topic
-            for keyword in board issue dependenc version GitHub project check; do
-                if echo "$TASK_RESPONSE_BODY" | grep -qi "$keyword"; then
-                    TASK_ACKNOWLEDGED_BOARD=true
-                    break
-                fi
-            done
-            break
-        fi
-        echo "    Task attempt $attempt/12: no NEW brain response yet (current: $TASK_BRAIN_MSGS, pre: $PRE_TASK_BRAIN_COUNT)..."
-    done
-    if $TASK_RESPONDED && $TASK_ACKNOWLEDGED_BOARD; then
-        pass "H49" "Brain acknowledged board/issue in response! (body: $(echo "$TASK_RESPONSE_BODY" | head -c 100)...)"
-    elif $TASK_RESPONDED; then
-        note "H49" "Task response" "brain responded but didn't explicitly mention board/issue: $(echo "$TASK_RESPONSE_BODY" | head -c 100)"
-    else
-        if $TASK_BRAIN_ALIVE; then
-            note "H49" "Task response" "brain alive but did not respond about board within 60s"
-        else
-            note "H49" "Task response" "brain not alive, response not expected"
-        fi
-    fi
-
-    # H50: Verify brain process survived task execution request
-    if $TASK_BRAIN_ALIVE; then
-        if kill -0 "$TASK_BRAIN_PID" 2>/dev/null; then
-            pass "H50" "Brain survived task execution request (PID $TASK_BRAIN_PID still alive)"
-        else
-            note "H50" "Brain stability" "brain process died during task execution journey"
-        fi
-    else
-        note "H50" "Brain stability" "skipped (brain not alive at start)"
-    fi
-
-    # H51: Clean up task execution journey
-    $BM stop --force 2>/dev/null || true
-    pkill -f "claude-code-acp-rs.*$TEAM_DIR" 2>/dev/null || true
-    sleep 1
-    # Close the test issue if it was created
-    if [ -n "${ISSUE_NUM:-}" ]; then
-        gh issue close "$ISSUE_NUM" -R "$GH_ORG/$GH_REPO" 2>/dev/null || true
-    fi
-    rm -f "$STATE_FILE"
-    pass "H51" "Task execution journey cleaned up"
-
-    # ── Final Cleanup ──
-
-    # H52: Clean up brain lifecycle artifacts
-    $BM stop --force 2>/dev/null || true
-    pkill -f "claude-code-acp-rs.*$TEAM_DIR" 2>/dev/null || true
-    rm -f "$STATE_FILE"
-    pass "H52" "Cleaned up all brain lifecycle test artifacts"
-
-    fi  # end BRIDGE_OK
-
-    echo "Phase H complete."
-
-# ─── Run all phases ───────────────────────────────────────────
-
-# Pre-flight check: verify environment is ready
-preflight:
+    ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && \
+        BM_VERSION=\$(\$BM --version 2>/dev/null || echo unknown) && \
+        LIMA_VERSION=\$(limactl --version 2>/dev/null | head -1 || echo unknown) && \
+        GH_USER=\$(gh api user --jq .login 2>/dev/null || echo unknown) && \
+        printf \"%s\n\" \
+            \"# Exploratory Test Report: Sync, Bridge & Lima Idempotency\" \
+            \"\" \
+            \"**Date:** \$(date +%Y-%m-%d)\" \
+            \"**Build:** \$BM_VERSION (local debug)\" \
+            \"**Environment:** \$(uname -sm), podman rootless, limactl \$LIMA_VERSION, gh (\$GH_USER)\" \
+            \"**Test User:** {{TEST_USER}}@localhost (isolated)\" \
+            \"\" \
+            \"## Results\" \
+            > \$REPORT"'
+
+# Fetch report from remote to local
+fetch-report:
+    scp -q {{TEST_HOST}}:{{REMOTE_REPORT}} "{{LOCAL_REPORT}}" 2>/dev/null || echo "No report to fetch."
+
+# ─── Keyring ───────────────────────────────────────────────────
+
+# Idempotent: starts isolated keyring on remote if not running, reuses if alive
+ensure-keyring:
+    ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && source {{REMOTE_LIB}} && ensure_keyring"'
+
+# ─── Preflight ─────────────────────────────────────────────────
+
+# Pre-flight check: verify remote environment is ready
+preflight: ensure-keyring
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "Pre-flight checks..."
-    # Port 8008 must be free for Tuwunel
-    if ss -tlnp sport = :8008 2>/dev/null | grep -q LISTEN; then
-        echo "FATAL: Port 8008 is in use. Free it before running tests."
-        ss -tlnp sport = :8008
-        exit 1
-    fi
-    echo "  ✓ Port 8008 is free"
-    # Keyring must be unlocked
-    if ! (secret-tool store --label "bm-preflight" service bm-preflight user probe <<< "x" 2>/dev/null \
-          && secret-tool clear service bm-preflight user probe 2>/dev/null); then
-        echo "FATAL: Keyring is locked. Unlock it first."
-        exit 1
-    fi
-    echo "  ✓ Keyring is unlocked"
-    # Required tools
-    for tool in podman just gh curl jq; do
-        if ! command -v "$tool" >/dev/null 2>&1; then
-            echo "FATAL: $tool not found in PATH"
-            exit 1
-        fi
-    done
-    echo "  ✓ All required tools available"
-    # GH auth
-    if ! gh auth status >/dev/null 2>&1; then
-        echo "FATAL: gh not authenticated"
-        exit 1
-    fi
-    echo "  ✓ gh authenticated"
-    echo "Pre-flight OK."
+    echo "Pre-flight checks on {{TEST_HOST}}..."
+    ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && source {{REMOTE_LIB}} && \
+        set -euo pipefail && \
+        if ss -tlnp sport = :8008 2>/dev/null | grep -q LISTEN; then \
+            echo \"FATAL: Port 8008 is in use\"; exit 1; \
+        fi && \
+        echo \"  ✓ Port 8008 is free\" && \
+        if load_isolated_keyring; then \
+            echo \"  ✓ Isolated keyring running (pid=\$ISOLATED_DBUS_PID)\"; \
+        else \
+            echo \"FATAL: Isolated keyring not running\"; exit 1; \
+        fi && \
+        for tool in podman just gh curl jq; do \
+            command -v \$tool >/dev/null 2>&1 || { echo \"FATAL: \$tool not found\"; exit 1; }; \
+        done && \
+        echo \"  ✓ All required tools available\" && \
+        for bin in \$BM \$BM_AGENT; do \
+            [ -x \$bin ] || { echo \"FATAL: \$bin not executable (run just deploy)\"; exit 1; }; \
+        done && \
+        echo \"  ✓ bm + bm-agent deployed\" && \
+        gh auth status >/dev/null 2>&1 || { echo \"FATAL: gh not authenticated on {{TEST_USER}}\"; exit 1; } && \
+        echo \"  ✓ gh authenticated\" && \
+        echo \"Pre-flight OK.\""'
+
+# ─── Phase recipes ─────────────────────────────────────────────
+# Each phase runs on the remote test user via SSH.
+# env.sh provides all configuration; the phase script runs in a login shell.
+
+[private]
+run-phase phase timeout="300":
+    timeout --signal=KILL {{timeout}} ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && exec {{REMOTE_PHASES}}/{{phase}}"'
+
+phase-a: init-report (run-phase "phase-a.sh" "600")
+
+phase-b: ensure-keyring (run-phase "phase-b.sh")
+
+phase-c: ensure-keyring (run-phase "phase-c.sh")
+
+phase-d: ensure-keyring (run-phase "phase-d.sh")
+
+phase-e: ensure-keyring (run-phase "phase-e.sh")
+
+phase-f: ensure-keyring (run-phase "phase-f.sh")
+
+phase-g: (run-phase "phase-g.sh")
+
+phase-h: ensure-keyring (run-phase "phase-h.sh" "900")
+
+# Isolated ACP diagnostic test (requires team to exist — run after phase-e)
+phase-acp-isolated: ensure-keyring (run-phase "phase-acp-isolated.sh" "600")
+
+# ─── Orchestration ─────────────────────────────────────────────
 
 # Run all phases except Lima (B through H)
-all-no-lima: build preflight init-report phase-b phase-c phase-d phase-e phase-f phase-h phase-g
+all-no-lima: deploy preflight init-report phase-b phase-c phase-d phase-e phase-f phase-h phase-g fetch-report
 
 # Run all phases including Lima VM test
 # Phase A creates+destroys its own team; clean ensures no state leaks to Phase B.
-all: build preflight init-report phase-a clean phase-b phase-c phase-d phase-e phase-f phase-h phase-g
+all: deploy preflight init-report phase-a clean phase-b phase-c phase-d phase-e phase-f phase-h phase-g fetch-report
 
 # Run only bridge + workspace phases (skip init, assume team exists)
-bridge-and-workspace: phase-c phase-d phase-e
+bridge-and-workspace: ensure-keyring phase-c phase-d phase-e
