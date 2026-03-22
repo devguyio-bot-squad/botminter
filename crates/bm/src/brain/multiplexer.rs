@@ -166,7 +166,9 @@ impl Multiplexer {
     ///
     /// Returns when a shutdown signal is received or the ACP session ends.
     pub async fn run(mut self) -> Result<(), MultiplexerError> {
-        // Spawn ACP client
+        // Spawn ACP client with timeout — if the ACP binary hangs during
+        // initialization (e.g., after a restart with stale server-side state),
+        // we fail fast instead of blocking forever.
         let acp_config = AcpConfig {
             binary: self.config.acp_binary.clone(),
             cwd: self.config.cwd.clone(),
@@ -174,12 +176,26 @@ impl Multiplexer {
             env_vars: self.config.env_vars.clone(),
         };
 
-        let client = AcpClient::spawn(acp_config).await?;
+        let client = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            AcpClient::spawn(acp_config),
+        )
+        .await
+        .map_err(|_| {
+            tracing::error!("ACP spawn timed out after 60s");
+            MultiplexerError::Acp(AcpError::SpawnFailed("spawn timed out after 60s".into()))
+        })??;
 
-        // Create a session
-        let session_id = client
-            .create_session(&self.config.cwd, self.config.system_prompt.as_deref())
-            .await?;
+        // Create a session with timeout
+        let session_id = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            client.create_session(&self.config.cwd, self.config.system_prompt.as_deref()),
+        )
+        .await
+        .map_err(|_| {
+            tracing::error!("ACP session creation timed out after 120s");
+            MultiplexerError::Acp(AcpError::InitFailed("session creation timed out after 120s".into()))
+        })??;
 
         tracing::info!(session_id = %session_id, "Brain multiplexer session started");
 
