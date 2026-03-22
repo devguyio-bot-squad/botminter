@@ -276,6 +276,7 @@ impl MatrixBridgeWriter {
                 .put(&url)
                 .bearer_auth(&self.config.access_token)
                 .json(&payload)
+                .timeout(std::time::Duration::from_secs(30))
                 .send()
                 .await;
 
@@ -287,7 +288,9 @@ impl MatrixBridgeWriter {
                 Ok(resp) => {
                     let status = resp.status();
                     let resp_body = resp.text().await.unwrap_or_default();
-                    if attempt < MAX_RETRIES && status.is_server_error() {
+                    if attempt < MAX_RETRIES
+                        && (status.is_server_error() || status.as_u16() == 429)
+                    {
                         tracing::warn!(
                             status = %status,
                             attempt = attempt,
