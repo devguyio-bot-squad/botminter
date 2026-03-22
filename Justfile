@@ -57,6 +57,30 @@ exploratory-test-full:
 exploratory-test-clean:
     just -f crates/bm/tests/exploratory/Justfile clean
 
+# Run console (frontend) tests
+console-test:
+    cd {{ generator_root }}/console && npm test
+
+# Run console dev server (Vite + HMR at localhost:5173)
+console-dev:
+    cd {{ generator_root }}/console && npm run dev
+
+# Run daemon + console dev server concurrently
+dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Starting daemon on :8484 and console dev server on :5173..."
+    echo "Press Ctrl+C to stop both."
+    cd "{{ generator_root }}"
+    cargo run -p bm -- daemon start --mode poll --port 8484 &
+    DAEMON_PID=$!
+    trap "kill $DAEMON_PID 2>/dev/null; wait $DAEMON_PID 2>/dev/null" EXIT
+    cd console && npm run dev
+
+# Build console for production (static SPA output to console/build/)
+console-build:
+    cd {{ generator_root }}/console && npm run build
+
 # Run clippy with warnings as errors
 clippy:
     cargo clippy -p bm -- -D warnings
