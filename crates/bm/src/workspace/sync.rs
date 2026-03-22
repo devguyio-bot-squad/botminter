@@ -167,21 +167,8 @@ pub fn sync_workspace(
         }
     }
 
-    // Re-copy settings.json if source is newer (team-level — shared hooks)
-    let team_settings_src = team_dir
-        .join("coding-agent")
-        .join("settings.json");
-    let team_settings_dst = ws_root
-        .join(&coding_agent.agent_dir)
-        .join("settings.json");
-    let team_settings_copied = copy_if_newer_verbose(&team_settings_src, &team_settings_dst)?;
-    if verbose && team_settings_src.exists() {
-        if team_settings_copied {
-            result.events.push(SyncEvent::FileCopied("settings.json".to_string()));
-        } else {
-            result.events.push(SyncEvent::FileSkipped("settings.json".to_string()));
-        }
-    }
+    // NOTE: settings.json (team-level) is copied unconditionally by
+    // assemble_agent_dir_submodule below — no need to copy_if_newer here.
 
     // Discover project names from projects/ submodules
     let project_names: Vec<String> = if projects_dir.is_dir() {
@@ -500,18 +487,7 @@ mod tests {
         fs::remove_file(ws.join(".claude/settings.json")).unwrap();
         assert!(!ws.join(".claude/settings.json").exists());
 
-        // Make the source newer so copy_if_newer_verbose copies it
-        let source = ws.join("team/coding-agent/settings.json");
-        let now = filetime::FileTime::from_unix_time(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64
-                + 2,
-            0,
-        );
-        filetime::set_file_mtime(&source, now).unwrap();
-
+        // assemble_agent_dir_submodule always copies settings.json unconditionally
         sync_workspace(&ws, &member, &agent, false, false).unwrap();
 
         assert!(

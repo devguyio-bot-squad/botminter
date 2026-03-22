@@ -330,11 +330,11 @@ impl TestEnv {
     pub fn command(&self, binary: &str) -> TestCommand {
         let resolved = self.resolved_env(binary);
 
-        // Resolve actual binary path — for "bm" use the cargo-built binary
-        let actual_binary = if binary == "bm" {
-            env!("CARGO_BIN_EXE_bm").to_string()
-        } else {
-            binary.to_string()
+        // Resolve actual binary path — for crate binaries use cargo-built paths
+        let actual_binary = match binary {
+            "bm" => env!("CARGO_BIN_EXE_bm").to_string(),
+            "bm-agent" => env!("CARGO_BIN_EXE_bm-agent").to_string(),
+            _ => binary.to_string(),
         };
 
         let mut cmd = Command::new(&actual_binary);

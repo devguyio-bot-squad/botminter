@@ -388,6 +388,16 @@ fn sync_bridge_and_repos_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send +
             assert!(ws.join(file).exists(), "{} missing", file);
         }
 
+        // Verify settings.json was surfaced with PostToolUse hook
+        let settings_path = ws.join(".claude/settings.json");
+        assert!(settings_path.exists(), ".claude/settings.json should exist after sync");
+        let settings_content = fs::read_to_string(&settings_path).unwrap();
+        assert!(
+            settings_content.contains("bm-agent claude hook post-tool-use"),
+            "settings.json should contain PostToolUse hook command, got: {}",
+            settings_content
+        );
+
         // If bridge is running, verify ralph.yml has RObot.matrix config
         if env.get_export("tuwunel_port").is_some() {
             let ralph_contents = fs::read_to_string(ws.join("ralph.yml")).unwrap();
@@ -422,6 +432,11 @@ fn sync_idempotent_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::
         let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
         assert!(ws.join(".botminter.workspace").exists());
         assert!(ws.join("PROMPT.md").exists());
+        // settings.json should persist after idempotent re-sync
+        assert!(
+            ws.join(".claude/settings.json").exists(),
+            ".claude/settings.json should still exist after idempotent sync"
+        );
     }
 }
 
@@ -836,6 +851,90 @@ fn bridge_stop_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::pani
     }
 }
 
+fn inbox_lifecycle_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
+
+        // Write a message
+        let stdout = env.command("bm-agent")
+            .args(["inbox", "write", "fix CI pipeline"])
+            .current_dir(&ws)
+            .run();
+        assert!(stdout.contains("Message written") || stdout.is_empty() || stdout.contains("fix CI"),
+            "inbox write should succeed, got: {}", stdout);
+
+        // Peek shows the message
+        let stdout = env.command("bm-agent")
+            .args(["inbox", "peek"])
+            .current_dir(&ws)
+            .run();
+        assert!(
+            stdout.contains("fix CI pipeline"),
+            "peek should show the written message, got: {}",
+            stdout
+        );
+
+        // Read consumes the message (JSON format)
+        let stdout = env.command("bm-agent")
+            .args(["inbox", "read", "--format", "json"])
+            .current_dir(&ws)
+            .run();
+        assert!(
+            stdout.contains("fix CI pipeline"),
+            "read --format json should return the message, got: {}",
+            stdout
+        );
+
+        // Peek now shows empty
+        let stdout = env.command("bm-agent")
+            .args(["inbox", "peek"])
+            .current_dir(&ws)
+            .run();
+        assert!(
+            stdout.contains("No pending messages"),
+            "peek after read should show no messages, got: {}",
+            stdout
+        );
+    }
+}
+
+fn inbox_resync_preserves_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
+
+        // Write a message
+        env.command("bm-agent")
+            .args(["inbox", "write", "survive resync"])
+            .current_dir(&ws)
+            .run();
+
+        // Run teams sync
+        let mut cmd = env.command("bm");
+        cmd.args(["teams", "sync", "--repos", "-t", TEAM_NAME]);
+        if let Some(port) = env.get_export("tuwunel_port") {
+            cmd.env("TUWUNEL_PORT", port);
+        }
+        cmd.run();
+
+        // Peek should still show the message
+        let stdout = env.command("bm-agent")
+            .args(["inbox", "peek"])
+            .current_dir(&ws)
+            .run();
+        assert!(
+            stdout.contains("survive resync"),
+            "inbox message should survive teams sync, got: {}",
+            stdout
+        );
+
+        // Clean up: consume the message
+        env.command("bm-agent")
+            .args(["inbox", "read", "--format", "json"])
+            .current_dir(&ws)
+            .run();
+    }
+}
+
 // ── Scenario construction ────────────────────────────────────────────
 
 fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
@@ -872,6 +971,8 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         .case("bridge_room_create_fresh", bridge_room_create_fn(gh_token.clone()))
         .case("sync_bridge_and_repos_fresh", sync_bridge_and_repos_fn(gh_token.clone()))
         .case("sync_idempotent_fresh", sync_idempotent_fn(gh_token.clone()))
+        .case("inbox_lifecycle_fresh", inbox_lifecycle_fn())
+        .case("inbox_resync_preserves_fresh", inbox_resync_preserves_fn(gh_token.clone()))
         .case("projects_sync_fresh", projects_sync_fn(gh_org.clone(), gh_token.clone()))
         .case("start_without_ralph_errors_fresh", start_without_ralph_errors_fn())
         .case("start_status_healthy_fresh", start_status_healthy_fn(gh_token.clone()))
@@ -947,6 +1048,8 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         .case("bridge_room_create_existing", bridge_room_create_fn(gh_token.clone()))
         .case("sync_bridge_and_repos_existing", sync_bridge_and_repos_fn(gh_token.clone()))
         .case("sync_idempotent_existing", sync_idempotent_fn(gh_token.clone()))
+        .case("inbox_lifecycle_existing", inbox_lifecycle_fn())
+        .case("inbox_resync_preserves_existing", inbox_resync_preserves_fn(gh_token.clone()))
         .case("projects_sync_existing", projects_sync_fn(gh_org.clone(), gh_token.clone()))
         .case("start_without_ralph_errors_existing", start_without_ralph_errors_fn())
         .case("start_status_healthy_existing", start_status_healthy_fn(gh_token.clone()))
@@ -1015,29 +1118,34 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
             }
         });
 
-    // Groups: bridge start through bridge_functional in both passes, webhook start→stop in both
+    // Groups: start_status_healthy through bridge_functional, webhook start→stop in both passes
     // First pass case indices (0-indexed):
-    //   0: init, 1: hire, 2: projects_add, 3: teams_show
-    //   4: bridge_start, 5: bridge_start_idempotent
-    //   6: bridge_identity_add, 7: bridge_identity_show, 8: bridge_identity_list
-    //   9: bridge_room_create
-    //   10: sync_bridge_and_repos, 11: sync_idempotent, 12: projects_sync
-    //   13: start_without_ralph_errors
-    //   14: start_status_healthy, 15: start_skips_running, 16: bridge_functional
-    //   17: stop_clean_shutdown
-    //   18: start_single_member, 19: stop_single_member
-    //   20: stop_force_kills, 21: status_detects_crashed
-    //   22: members_list, 23: teams_list
-    //   24: daemon_start_poll, 25: daemon_poll_launches, 26: daemon_stop_poll
-    //   27: daemon_start_webhook, 28: daemon_stop_webhook
-    //   29: daemon_sigkill_escalation, 30: daemon_stale_pid
-    //   31: daemon_already_running, 32: daemon_crashed_detection
-    //   33: bridge_stop
-    //   34: reset_home
-    // Second pass offset = 35
+    //   0: init
+    //   1-4: bootstrap_vm, bootstrap_idempotent, bootstrap_tools, bootstrap_teardown
+    //   5: hire, 6: projects_add, 7: teams_show
+    //   8: bridge_start, 9: bridge_start_idempotent
+    //   10: bridge_identity_add, 11: bridge_identity_show, 12: bridge_identity_list
+    //   13: bridge_room_create
+    //   14: sync_bridge_and_repos, 15: sync_idempotent
+    //   16: inbox_lifecycle, 17: inbox_resync_preserves
+    //   18: projects_sync
+    //   19: start_without_ralph_errors
+    //   20: start_status_healthy, 21: start_skips_running, 22: bridge_functional
+    //   23: stop_clean_shutdown
+    //   24: start_single_member, 25: stop_single_member
+    //   26: stop_force_kills, 27: status_detects_crashed
+    //   28: members_list, 29: teams_list
+    //   30: daemon_start_poll, 31: daemon_poll_launches, 32: daemon_stop_poll
+    //   33: daemon_start_webhook, 34: daemon_stop_webhook
+    //   35-38: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
+    //   39: bridge_stop
+    //   40: reset_home, 41: verify_board_survives_reset
+    // Second pass starts at 42, same shape minus bootstrap (+16 cases, so offset = 42)
+    //   58: start_status_healthy, 59: start_skips_running, 60: bridge_functional
+    //   71: daemon_start_webhook, 72: daemon_stop_webhook
     suite
-        .group(14, 16).group(27, 28)
-        .group(14 + 35, 16 + 35).group(27 + 35, 28 + 35)
+        .group(20, 22).group(33, 34)
+        .group(58, 60).group(71, 72)
 }
 
 pub fn scenario(config: &E2eConfig) -> Trial {
