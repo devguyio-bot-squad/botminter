@@ -81,7 +81,7 @@ Skills, sub-agents, and settings are scoped across multiple levels using a `codi
 <!-- +agent:claude-code -->
 **Agents** — symlinked into `.claude/agents/` at workspace creation. All agent files from team, project, and member scopes are merged into one directory via symlinks.
 
-**Settings** — `.claude/settings.local.json` is copied from the member's `coding-agent/settings.local.json` if it exists.
+**Settings** — `.claude/settings.json` is copied from the team's `coding-agent/settings.json` (shared hooks like PostToolUse). `.claude/settings.local.json` is copied from the member's `coding-agent/settings.local.json` if it exists.
 <!-- -agent -->
 
 ## Propagation Model
@@ -94,6 +94,7 @@ Skills, sub-agents, and settings are scoped across multiple levels using a `codi
 | Skills, agents (all levels) | Auto — read via `team/` paths (skills.dirs) or symlinks (.claude/agents/) |
 <!-- -agent -->
 | ralph.yml | **Manual** — requires `just sync` + agent restart |
+| settings.json (team hooks) | Auto — copied from `coding-agent/settings.json` on every sync |
 | settings.local.json | **Manual** — requires `just sync` (re-copy) |
 
 ## Team Repo Access Paths
