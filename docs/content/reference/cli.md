@@ -778,14 +778,15 @@ bm bridge room list [-t <team>]
 Start the event-driven daemon for a team.
 
 ```bash
-bm daemon start [-t <team>] [--mode <mode>] [--port <port>] [--interval <interval>]
+bm daemon start [-t <team>] [--mode <mode>] [--port <port>] [--interval <interval>] [--bind <addr>]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `--mode <mode>` | No | `webhook` or `poll` (default: `webhook`) |
-| `--port <port>` | No | HTTP listener port for webhook mode (default: `8484`) |
+| `--port <port>` | No | HTTP listener port (default: `8484`) |
 | `--interval <interval>` | No | Poll interval in seconds for poll mode (default: `60`) |
+| `--bind <addr>` | No | Bind address for the HTTP server (default: `0.0.0.0`) |
 | `-t <team>` | No | Team to operate on |
 
 **Behavior:**

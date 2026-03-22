@@ -41,6 +41,7 @@ pub fn start_daemon(
     mode: &str,
     port: u16,
     interval: u64,
+    bind: &str,
 ) -> Result<DaemonStartResult> {
     // Schema v2 gate
     let team_schema = read_team_schema(team_repo)?;
@@ -98,6 +99,8 @@ pub fn start_daemon(
             &port.to_string(),
             "--interval",
             &interval.to_string(),
+            "--bind",
+            bind,
         ])
         .stdin(std::process::Stdio::null())
         .stdout(log_file)

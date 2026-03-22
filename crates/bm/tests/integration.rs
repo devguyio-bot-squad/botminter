@@ -1717,9 +1717,10 @@ fn daemon_start_creates_pid_and_config_files() {
     setup_team(tmp.path(), "daemon-test", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-test");
 
+    let port = get_free_port();
     let output = bm_run(
         tmp.path(),
-        &["daemon", "start", "--mode", "poll", "-t", "daemon-test"],
+        &["daemon", "start", "--mode", "poll", "--port", &port.to_string(), "-t", "daemon-test"],
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -1746,10 +1747,11 @@ fn daemon_status_shows_running() {
     setup_team(tmp.path(), "daemon-status-test", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-status-test");
 
+    let port = get_free_port();
     // Start daemon
     bm_run(
         tmp.path(),
-        &["daemon", "start", "--mode", "poll", "-t", "daemon-status-test"],
+        &["daemon", "start", "--mode", "poll", "--port", &port.to_string(), "-t", "daemon-status-test"],
     );
 
     // Check status
@@ -1766,10 +1768,11 @@ fn daemon_stop_cleans_up() {
     setup_team(tmp.path(), "daemon-stop-test", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-stop-test");
 
+    let port = get_free_port();
     // Start daemon
     bm_run(
         tmp.path(),
-        &["daemon", "start", "--mode", "poll", "-t", "daemon-stop-test"],
+        &["daemon", "start", "--mode", "poll", "--port", &port.to_string(), "-t", "daemon-stop-test"],
     );
 
     // Stop daemon
@@ -1791,16 +1794,17 @@ fn daemon_start_already_running_errors() {
     setup_team(tmp.path(), "daemon-dup-test", "scrum");
     let _guard = DaemonGuard::new(tmp.path(), "daemon-dup-test");
 
+    let port = get_free_port();
     // Start daemon
     bm_run(
         tmp.path(),
-        &["daemon", "start", "--mode", "poll", "-t", "daemon-dup-test"],
+        &["daemon", "start", "--mode", "poll", "--port", &port.to_string(), "-t", "daemon-dup-test"],
     );
 
-    // Try starting again
+    // Try starting again (same port doesn't matter — PID file check catches it first)
     let stderr = bm_run_fail(
         tmp.path(),
-        &["daemon", "start", "--mode", "poll", "-t", "daemon-dup-test"],
+        &["daemon", "start", "--mode", "poll", "--port", &port.to_string(), "-t", "daemon-dup-test"],
     );
     assert!(stderr.contains("already running"), "Should say already running: {}", stderr);
 }

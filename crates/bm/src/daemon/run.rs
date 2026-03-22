@@ -1,8 +1,14 @@
-use std::sync::atomic::Ordering;
+use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{Context, Result};
+use axum::body::Bytes;
+use axum::extract::State;
+use axum::http::{HeaderMap, StatusCode};
+use axum::response::IntoResponse;
+use axum::routing::{get, post};
+use axum::Router;
 
 use super::config::{load_poll_state, save_poll_state, DaemonPaths};
 use super::event::{
@@ -10,150 +16,191 @@ use super::event::{
     validate_webhook_signature,
 };
 use super::log::daemon_log;
-use super::process::{handle_member_launch, setup_signal_handlers, sleep_interruptible};
+use super::process::handle_member_launch;
+
+/// Shared state for axum handlers.
+#[derive(Clone)]
+struct DaemonState {
+    team_name: String,
+    paths: Arc<DaemonPaths>,
+    webhook_secret: Option<String>,
+    shutdown: Arc<AtomicBool>,
+}
 
 /// Runs the daemon event loop. Called by the hidden `bm daemon-run` command.
 /// This function does not return until the daemon is signaled to stop.
-pub fn run_daemon(team_name: &str, mode: &str, port: u16, interval: u64) -> Result<()> {
-    let paths = DaemonPaths::new(team_name)?;
-    let shutdown = setup_signal_handlers();
+pub fn run_daemon(
+    team_name: &str,
+    mode: &str,
+    port: u16,
+    interval: u64,
+    bind: &str,
+) -> Result<()> {
+    let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
+    rt.block_on(run_daemon_async(team_name, mode, port, interval, bind))
+}
+
+async fn run_daemon_async(
+    team_name: &str,
+    mode: &str,
+    port: u16,
+    interval: u64,
+    bind: &str,
+) -> Result<()> {
+    let paths = Arc::new(DaemonPaths::new(team_name)?);
+    let shutdown = Arc::new(AtomicBool::new(false));
 
     daemon_log(&paths, "INFO", &format!("Daemon starting in {} mode", mode));
 
-    match mode {
-        "webhook" => run_webhook_mode(team_name, &paths, port, &shutdown),
-        "poll" => run_poll_mode(team_name, &paths, interval, &shutdown),
-        _ => bail!("Invalid daemon mode: {}", mode),
-    }
-}
+    let state = DaemonState {
+        team_name: team_name.to_string(),
+        paths: Arc::clone(&paths),
+        webhook_secret: load_webhook_secret(team_name),
+        shutdown: Arc::clone(&shutdown),
+    };
 
-/// Runs the daemon in webhook mode using tiny_http.
-fn run_webhook_mode(
-    team_name: &str,
-    paths: &DaemonPaths,
-    port: u16,
-    shutdown: &Arc<std::sync::atomic::AtomicBool>,
-) -> Result<()> {
-    let addr = format!("0.0.0.0:{}", port);
-    let server = tiny_http::Server::http(&addr)
-        .map_err(|e| anyhow::anyhow!("Failed to bind to {}: {}", addr, e))?;
+    let app = Router::new()
+        .route("/webhook", post(webhook_handler))
+        .route("/health", get(health_handler))
+        .with_state(state.clone());
+
+    // In poll mode, spawn the background poll loop
+    if mode == "poll" {
+        let poll_team = team_name.to_string();
+        let poll_paths = Arc::clone(&paths);
+        let poll_shutdown = Arc::clone(&shutdown);
+        tokio::spawn(async move {
+            run_poll_loop(&poll_team, &poll_paths, interval, &poll_shutdown).await;
+        });
+    }
+
+    let addr: SocketAddr = format!("{}:{}", bind, port)
+        .parse()
+        .with_context(|| format!("Invalid bind address: {}:{}", bind, port))?;
 
     daemon_log(
-        paths,
+        &paths,
         "INFO",
-        &format!("Webhook server listening on port {}", port),
+        &format!(
+            "{} server listening on {}",
+            match mode {
+                "webhook" => "Webhook",
+                "poll" => "Poll",
+                _ => mode,
+            },
+            addr
+        ),
     );
 
-    let webhook_secret = load_webhook_secret(team_name);
+    let listener = tokio::net::TcpListener::bind(addr)
+        .await
+        .with_context(|| format!("Failed to bind to {}", addr))?;
 
-    loop {
-        if shutdown.load(Ordering::SeqCst) {
-            daemon_log(
-                paths,
-                "INFO",
-                "Received shutdown signal, stopping webhook server",
-            );
-            break;
-        }
+    let shutdown_flag = Arc::clone(&shutdown);
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal(shutdown_flag))
+        .await
+        .context("Server error")?;
 
-        match server.recv_timeout(Duration::from_secs(1)) {
-            Ok(Some(mut request)) => {
-                let path = request.url().to_string();
-                let method = request.method().to_string();
-
-                if method != "POST" || path != "/webhook" {
-                    let response =
-                        tiny_http::Response::from_string("Not Found").with_status_code(404);
-                    let _ = request.respond(response);
-                    continue;
-                }
-
-                // Read body
-                let mut body = String::new();
-                if let Err(e) = request.as_reader().read_to_string(&mut body) {
-                    daemon_log(
-                        paths,
-                        "ERROR",
-                        &format!("Failed to read request body: {}", e),
-                    );
-                    let response =
-                        tiny_http::Response::from_string("Bad Request").with_status_code(400);
-                    let _ = request.respond(response);
-                    continue;
-                }
-
-                // Validate signature if webhook secret is configured
-                if let Some(ref secret) = webhook_secret {
-                    let sig_header = request
-                        .headers()
-                        .iter()
-                        .find(|h| {
-                            h.field.as_str() == "X-Hub-Signature-256"
-                                || h.field.as_str() == "x-hub-signature-256"
-                        })
-                        .map(|h| h.value.as_str().to_string());
-
-                    if !validate_webhook_signature(secret, &body, sig_header.as_deref()) {
-                        daemon_log(paths, "WARN", "Webhook signature validation failed");
-                        let response = tiny_http::Response::from_string("Forbidden")
-                            .with_status_code(403);
-                        let _ = request.respond(response);
-                        continue;
-                    }
-                }
-
-                // Parse event type from header
-                let event_type = request
-                    .headers()
-                    .iter()
-                    .find(|h| {
-                        h.field.as_str() == "X-GitHub-Event"
-                            || h.field.as_str() == "x-github-event"
-                    })
-                    .map(|h| h.value.as_str().to_string());
-
-                let response =
-                    tiny_http::Response::from_string("OK").with_status_code(200);
-                let _ = request.respond(response);
-
-                if let Some(event_type) = event_type {
-                    if is_relevant_event(&event_type) {
-                        daemon_log(
-                            paths,
-                            "INFO",
-                            &format!("Received relevant event: {}", event_type),
-                        );
-                        handle_member_launch(team_name, paths, shutdown);
-                    } else {
-                        daemon_log(
-                            paths,
-                            "DEBUG",
-                            &format!("Ignoring irrelevant event: {}", event_type),
-                        );
-                    }
-                }
-            }
-            Ok(None) => {
-                // Timeout — no request, check shutdown flag on next iteration
-            }
-            Err(e) => {
-                daemon_log(paths, "ERROR", &format!("Server error: {}", e));
-                std::thread::sleep(Duration::from_secs(1));
-            }
-        }
-    }
-
-    daemon_log(paths, "INFO", "Daemon stopped");
+    daemon_log(&paths, "INFO", "Daemon stopped");
     Ok(())
 }
 
-/// Runs the daemon in poll mode using gh API.
-fn run_poll_mode(
+/// Waits for SIGTERM or SIGINT, then sets the shutdown flag.
+async fn shutdown_signal(shutdown: Arc<AtomicBool>) {
+    let ctrl_c = tokio::signal::ctrl_c();
+
+    #[cfg(unix)]
+    let terminate = async {
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .expect("failed to install SIGTERM handler")
+            .recv()
+            .await;
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
+
+    shutdown.store(true, Ordering::SeqCst);
+}
+
+/// Axum handler for POST /webhook.
+async fn webhook_handler(
+    State(state): State<DaemonState>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> impl IntoResponse {
+    let body_str = match std::str::from_utf8(&body) {
+        Ok(s) => s.to_string(),
+        Err(_) => {
+            daemon_log(&state.paths, "ERROR", "Failed to read request body as UTF-8");
+            return StatusCode::BAD_REQUEST;
+        }
+    };
+
+    // Validate signature if webhook secret is configured
+    if let Some(ref secret) = state.webhook_secret {
+        let sig_header = headers
+            .get("x-hub-signature-256")
+            .and_then(|v| v.to_str().ok())
+            .map(|s| s.to_string());
+
+        if !validate_webhook_signature(secret, &body_str, sig_header.as_deref()) {
+            daemon_log(&state.paths, "WARN", "Webhook signature validation failed");
+            return StatusCode::FORBIDDEN;
+        }
+    }
+
+    // Parse event type from header
+    let event_type = headers
+        .get("x-github-event")
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+
+    if let Some(event_type) = event_type {
+        if is_relevant_event(&event_type) {
+            daemon_log(
+                &state.paths,
+                "INFO",
+                &format!("Received relevant event: {}", event_type),
+            );
+            let team = state.team_name.clone();
+            let paths = Arc::clone(&state.paths);
+            let shutdown = Arc::clone(&state.shutdown);
+            tokio::task::spawn_blocking(move || {
+                handle_member_launch(&team, &paths, &shutdown);
+            });
+        } else {
+            daemon_log(
+                &state.paths,
+                "DEBUG",
+                &format!("Ignoring irrelevant event: {}", event_type),
+            );
+        }
+    }
+
+    StatusCode::OK
+}
+
+/// Axum handler for GET /health.
+async fn health_handler() -> impl IntoResponse {
+    let version = env!("CARGO_PKG_VERSION");
+    let body = serde_json::json!({ "ok": true, "version": version });
+    (StatusCode::OK, axum::Json(body))
+}
+
+/// Runs the poll loop as a background async task.
+async fn run_poll_loop(
     team_name: &str,
     paths: &DaemonPaths,
     interval: u64,
-    shutdown: &Arc<std::sync::atomic::AtomicBool>,
-) -> Result<()> {
+    shutdown: &Arc<AtomicBool>,
+) {
     daemon_log(
         paths,
         "INFO",
@@ -163,7 +210,14 @@ fn run_poll_mode(
     let poll_state_file = paths.poll_state();
     let mut poll_state = load_poll_state(&poll_state_file);
 
+    let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(interval));
+    // First tick fires immediately — skip it to match original behavior of polling after
+    // a sleep. Actually, the original code polled first then slept, so let the first tick
+    // proceed.
+
     loop {
+        ticker.tick().await;
+
         if shutdown.load(Ordering::SeqCst) {
             daemon_log(
                 paths,
@@ -181,7 +235,6 @@ fn run_poll_mode(
                     "ERROR",
                     &format!("Failed to resolve GitHub repo: {}", e),
                 );
-                sleep_interruptible(interval, shutdown);
                 continue;
             }
         };
@@ -216,10 +269,7 @@ fn run_poll_mode(
                 );
             }
         }
-
-        sleep_interruptible(interval, shutdown);
     }
 
-    daemon_log(paths, "INFO", "Daemon stopped");
-    Ok(())
+    daemon_log(paths, "INFO", "Poll loop stopped");
 }

@@ -218,6 +218,10 @@ pub enum Command {
         /// Polling interval in seconds for poll mode
         #[arg(long)]
         interval: u64,
+
+        /// Bind address for the HTTP server
+        #[arg(long, default_value = "0.0.0.0")]
+        bind: String,
     },
 
     /// Internal: run the brain multiplexer event loop (not user-facing)
@@ -504,6 +508,10 @@ pub enum DaemonCommand {
         /// Polling interval in seconds for poll mode
         #[arg(long, default_value = "60")]
         interval: u64,
+
+        /// Bind address for the HTTP server
+        #[arg(long, default_value = "0.0.0.0")]
+        bind: String,
     },
 
     /// Stop the running daemon

@@ -14,43 +14,6 @@ use crate::workspace;
 use super::config::DaemonPaths;
 use super::log::daemon_log;
 
-/// Global flag set by the SIGTERM/SIGINT signal handler.
-pub static SHUTDOWN_FLAG: AtomicBool = AtomicBool::new(false);
-
-/// Signal handler that sets the global shutdown flag.
-pub extern "C" fn sigterm_handler(_sig: libc::c_int) {
-    SHUTDOWN_FLAG.store(true, Ordering::SeqCst);
-}
-
-/// Installs signal handlers and returns a shutdown flag that gets set
-/// when SIGTERM or SIGINT is received.
-pub fn setup_signal_handlers() -> Arc<AtomicBool> {
-    let shutdown = Arc::new(AtomicBool::new(false));
-    unsafe {
-        libc::signal(
-            libc::SIGTERM,
-            sigterm_handler as *const () as libc::sighandler_t,
-        );
-        libc::signal(
-            libc::SIGINT,
-            sigterm_handler as *const () as libc::sighandler_t,
-        );
-    }
-    SHUTDOWN_FLAG.store(false, Ordering::SeqCst);
-
-    // Poll the global flag and propagate to the Arc-based flag
-    let s = Arc::clone(&shutdown);
-    thread::spawn(move || loop {
-        if SHUTDOWN_FLAG.load(Ordering::SeqCst) {
-            s.store(true, Ordering::SeqCst);
-            break;
-        }
-        thread::sleep(Duration::from_millis(200));
-    });
-
-    shutdown
-}
-
 /// Waits for a child process to exit, checking the shutdown flag every 500ms.
 ///
 /// If the shutdown flag is set while the child is still running, sends SIGTERM
@@ -89,16 +52,6 @@ pub fn wait_interruptible(
             }
             Err(_) => return None,
         }
-    }
-}
-
-/// Sleeps for the given duration, checking the shutdown flag every second.
-pub fn sleep_interruptible(seconds: u64, shutdown: &Arc<AtomicBool>) {
-    for _ in 0..seconds {
-        if shutdown.load(Ordering::SeqCst) {
-            break;
-        }
-        thread::sleep(Duration::from_secs(1));
     }
 }
 

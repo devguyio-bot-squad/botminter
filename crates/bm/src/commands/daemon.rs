@@ -4,7 +4,13 @@ use crate::config;
 use crate::daemon::{self, DaemonStatusInfo};
 
 /// Handles `bm daemon start`.
-pub fn start(team_flag: Option<&str>, mode: &str, port: u16, interval: u64) -> Result<()> {
+pub fn start(
+    team_flag: Option<&str>,
+    mode: &str,
+    port: u16,
+    interval: u64,
+    bind: &str,
+) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
     let team_repo = team.path.join("team");
@@ -14,7 +20,7 @@ pub fn start(team_flag: Option<&str>, mode: &str, port: u16, interval: u64) -> R
         team.name, mode
     );
 
-    let result = daemon::start_daemon(&team.name, &team_repo, mode, port, interval)?;
+    let result = daemon::start_daemon(&team.name, &team_repo, mode, port, interval, bind)?;
 
     println!("Daemon started (PID {})", result.pid);
     Ok(())
@@ -64,8 +70,8 @@ pub fn status(team_flag: Option<&str>) -> Result<()> {
 }
 
 /// Handles the hidden `bm daemon-run` command.
-pub fn run_daemon(team: &str, mode: &str, port: u16, interval: u64) -> Result<()> {
-    daemon::run_daemon(team, mode, port, interval)
+pub fn run_daemon(team: &str, mode: &str, port: u16, interval: u64, bind: &str) -> Result<()> {
+    daemon::run_daemon(team, mode, port, interval, bind)
 }
 
 /// Formats an ISO 8601 timestamp for display.
