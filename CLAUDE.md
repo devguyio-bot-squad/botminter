@@ -134,7 +134,9 @@ workzone/
       PROMPT.md                      # Copied from team/members/<member>/
       CLAUDE.md                      # Copied from team/members/<member>/
       ralph.yml                      # Copied from team/members/<member>/
-      .claude/agents/                # Symlinks into team/ submodule paths
+      .claude/
+        agents/                      # Symlinks into team/ submodule paths
+        settings.json                # Team-level hooks (from coding-agent/settings.json)
       .botminter.workspace           # Workspace marker file
 ```
 

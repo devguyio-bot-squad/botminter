@@ -87,7 +87,7 @@ To reset a profile to its built-in defaults, run `bm profiles init` and confirm 
 | Team knowledge | `knowledge/` | Shared norms (commit conventions, PR standards, communication protocols) |
 | Team invariants | `invariants/` | Quality rules (code review required, test coverage) |
 | Member skeletons | `roles/` | Pre-configured role definitions with Ralph configs and prompts |
-| Shared coding-agent files | `coding-agent/` | Skills and sub-agents available to all members |
+| Shared coding-agent files | `coding-agent/` | Skills, sub-agents, and hooks (e.g., `settings.json`) available to all members |
 | Profile skills | `skills/` | Profile-level skills (e.g., `knowledge-manager` for interactive knowledge management) |
 | Formations | `formations/` | Deployment targets (`local`, `k8s`) with formation configs and optional manager hats |
 | Schema definition | `.schema/` | Expected directory layout for schema validation |

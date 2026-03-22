@@ -18,7 +18,8 @@ workzone/
       ralph.yml                                   # Copied from team/members/<member>/ralph.yml
       .claude/
         agents/                                   # Symlinks into team/ submodule paths
-        settings.local.json                       # Copy
+        settings.json                             # Team-level (from coding-agent/settings.json)
+        settings.local.json                       # Member-level (from members/<member>/coding-agent/)
       .botminter.workspace                        # Marker file
       .ralph/                                     # Ralph runtime state (gitignored)
 ```
@@ -36,7 +37,8 @@ Context files (CLAUDE.md, PROMPT.md, ralph.yml) are **copied** from the team sub
 | `CLAUDE.md` | Copy | `bm teams sync` re-copies if team submodule version is newer |
 | `PROMPT.md` | Copy | `bm teams sync` re-copies if team submodule version is newer |
 | `ralph.yml` | Copy | `bm teams sync` re-copies if team submodule version is newer |
-| `settings.local.json` | Copy | `bm teams sync` re-copies if present |
+| `settings.json` | Copy | `bm teams sync` re-copies from `team/coding-agent/settings.json` (team-level hooks) |
+| `settings.local.json` | Copy | `bm teams sync` re-copies from `team/members/<member>/coding-agent/` |
 | Agent files (`.claude/agents/`) | Symlink | `bm teams sync` re-assembles symlinks into `team/` submodule paths |
 | Skills | Direct read | Ralph reads from `team/` submodule paths via `skills.dirs` |
 
@@ -102,9 +104,10 @@ Run `bm teams sync` to create or update workspaces:
 5. For each assigned project: add as `projects/<project>/` submodule
 6. Checkout member branch in each project submodule
 7. Copy context files from `team/members/<member>/` to workspace root
-8. Assemble `.claude/agents/` with symlinks into `team/` submodule paths
-9. Write `.gitignore` and `.botminter.workspace` marker
-10. Commit and push
+8. Copy `.claude/settings.json` from `team/coding-agent/settings.json` (if present)
+9. Assemble `.claude/agents/` with symlinks into `team/` submodule paths
+10. Write `.gitignore` and `.botminter.workspace` marker
+11. Commit and push
 
 **Existing workspace:**
 
