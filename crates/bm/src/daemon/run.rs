@@ -9,6 +9,7 @@ use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use axum::Router;
+use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use super::config::{load_poll_state, save_poll_state, DaemonPaths};
 use super::event::{
@@ -17,6 +18,9 @@ use super::event::{
 };
 use super::log::daemon_log;
 use super::process::handle_member_launch;
+use crate::config as app_config;
+use crate::web::state::WebState;
+use crate::web::web_router;
 
 /// Shared state for axum handlers.
 #[derive(Clone)]
@@ -59,10 +63,36 @@ async fn run_daemon_async(
         shutdown: Arc::clone(&shutdown),
     };
 
+    // Resolve config path for the web API (console routes)
+    let config_path = app_config::config_path()
+        .unwrap_or_else(|_| std::path::PathBuf::from("~/.botminter/config.yml"));
+    let web_state = WebState {
+        config_path: Arc::new(config_path),
+    };
+
+    // CORS: allow requests from localhost dev servers (Vite on :5173, etc.)
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin, _| {
+            origin
+                .to_str()
+                .map(|o| {
+                    o.starts_with("http://localhost:") || o.starts_with("http://127.0.0.1:")
+                })
+                .unwrap_or(false)
+        }))
+        .allow_methods([
+            axum::http::Method::GET,
+            axum::http::Method::POST,
+            axum::http::Method::PUT,
+        ])
+        .allow_headers([axum::http::header::CONTENT_TYPE]);
+
     let app = Router::new()
         .route("/webhook", post(webhook_handler))
         .route("/health", get(health_handler))
-        .with_state(state.clone());
+        .with_state(state.clone())
+        .merge(web_router(web_state))
+        .layer(cors);
 
     // In poll mode, spawn the background poll loop
     if mode == "poll" {
