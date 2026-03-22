@@ -1,1 +1,1 @@
-.planning/plans/loop-inbox/PROMPT.md
+.planning/plans/brain-bridge-io-PROMPT.md

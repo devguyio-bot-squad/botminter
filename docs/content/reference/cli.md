@@ -467,13 +467,14 @@ bm up [<member>] [-t <team>] [--formation <name>]
 Stop members (all, or a specific one).
 
 ```bash
-bm stop [<member>] [-t <team>] [--force]
+bm stop [<member>] [-t <team>] [-f|--force] [--bridge]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `<member>` | No | Stop only this member (stops all if omitted) |
-| `--force` | No | Send SIGTERM instead of graceful stop |
+| `-f` / `--force` | No | Send SIGTERM instead of graceful stop |
+| `--bridge` | No | Also stop the bridge service |
 | `-t <team>` | No | Team to operate on |
 
 **Behavior:**
@@ -483,7 +484,7 @@ bm stop [<member>] [-t <team>] [--force]
 - Cleans state.json entries
 - Suggests `bm stop -f` on graceful failure
 - When stopping a single member, bridge lifecycle is not affected
-- When stopping all members, also stops local bridges if running
+- Bridge is left running unless `--bridge` is passed (prints a reminder to use `bm stop --bridge`)
 
 ### `bm status`
 

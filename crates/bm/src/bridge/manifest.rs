@@ -54,6 +54,11 @@ pub struct BridgeIdentitySpec {
     #[serde(rename = "rotate-credentials")]
     pub rotate_credentials: String,
     pub remove: String,
+    /// Optional verify recipe for local bridges. When present, provisioning
+    /// calls this recipe to confirm credentials are valid against the actual
+    /// bridge backend before deciding a member is already provisioned.
+    #[serde(default)]
+    pub verify: Option<String>,
 }
 
 /// Room command spec (optional).

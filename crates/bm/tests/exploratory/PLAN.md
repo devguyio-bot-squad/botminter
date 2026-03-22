@@ -1,7 +1,7 @@
 # Exploratory Test Plan: Sync, Bridge & Lima Idempotency
 
-**Date:** 2026-03-20
-**Build:** bm 0.2.0-pre-alpha (local debug, post-RemoteRepoOps + Lima --overwrite)
+**Date:** 2026-03-20 (updated 2026-03-22)
+**Build:** bm 0.2.0-pre-alpha (local debug)
 **Environment:** Linux x86_64, podman rootless, limactl 2.1.0, gh authenticated (devguyio)
 **Org:** devguyio-bot-squad
 
@@ -14,13 +14,33 @@ Four features under test:
 3. **Bridge provisioning idempotency** — Tuwunel onboard/start lifecycle, recovery from container failures
 4. **Full sync (`-a`) idempotency** — all subsystems together, repeated runs, member additions
 
+## Execution Model
+
+Tests run on a **separate user account** (`bm-test-user@localhost`) via SSH, not on the operator's machine directly. This two-layer model keeps destructive cleanup operations (`rm -rf ~/.botminter`, keyring clearing, etc.) from affecting the operator's real home directory.
+
+| Layer | Role | What happens here |
+|-------|------|-------------------|
+| **Operator machine** | Build + orchestration | `cargo build`, `just exploratory-test`, Justfile recipes |
+| **Test user** (`bm-test-user@localhost`) | Execution | All phase scripts, `bm` commands, podman containers, keyring ops |
+
+The `deploy` recipe builds binaries locally, then copies `bm`, `bm-agent`, `ralph`, `claude`, and `claude-code-acp-rs` to the test user's `~/.local/bin/`. Test scripts (`lib.sh`, `phases/*.sh`) are staged at `~/.bm-exploratory-tests/`. An `env.sh` is generated on the remote with all test configuration.
+
+An **isolated D-Bus + gnome-keyring-daemon** is started automatically on the test user's session (see `lib.sh`). This avoids any dependency on a system keyring or PAM-unlocked session.
+
 ## Prerequisites
 
+**On the operator machine (where `just exploratory-test` is invoked):**
+- Rust toolchain (`cargo build` must work)
+- SSH access to `bm-test-user@localhost` (passwordless key recommended)
+
+**On the test user account (`bm-test-user`):**
+- `podman` (rootless), `just`, `curl`, `jq` available in PATH
+- `limactl` (only for Phase A / Lima VM tests)
+- `gh` authenticated with delete permission on the test org (devguyio-bot-squad)
+- `dbus-daemon` and `gnome-keyring-daemon` available (isolated keyring started automatically)
 - Port 8008 free (Tuwunel default)
-- Keyring unlocked (`secret-tool store/lookup` works)
-- `gh` authenticated with delete permission on devguyio-bot-squad
-- `podman`, `just`, `limactl`, `curl`, `jq` available
-- No existing `exploratory-test` team state
+- `git` configured with user.email and user.name (set automatically by `deploy` if missing)
+- No existing `exploratory-test` team state (run `just exploratory-test-clean` first if needed)
 
 ---
 

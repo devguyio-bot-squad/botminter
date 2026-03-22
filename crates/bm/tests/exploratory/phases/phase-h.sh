@@ -670,22 +670,45 @@ for ws in "$TEAM_DIR"/superman-*/; do
 done
 # Clean global ACP/Claude caches that may hold stale sessions
 rm -rf "$HOME/.cache/claude-cli-nodejs" "$HOME/.local/state/claude" 2>/dev/null || true
+# Clean Claude Code global state — stale sessions prevent ACP restart
+rm -rf "$HOME/.claude" 2>/dev/null || true
 # Start only alice to avoid ACP session contention with 5 concurrent brains
 START2_OUT=$(bm start superman-alice 2>&1 || true)
 echo "    [H38 diag] start output: $(echo "$START2_OUT" | tail -3 | tr '\n' ' ')"
-# Brain needs time to establish ACP session and connect to Matrix
-sleep 20
-# Check workspace for ACP session indicators
-echo "    [H38 diag] alice ws state: $(ls "$ALICE_WS/.ralph/" 2>/dev/null | head -5 || echo 'no .ralph dir')"
+# Readiness check: wait for brain to establish ACP session or die trying
+# ACP spawn timeout is 60s, so we wait up to 120s total
 RECOVERY_BRAIN_ALIVE=false
-if [ -f "$STATE_FILE" ]; then
-    for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-        if kill -0 "$pid" 2>/dev/null; then
+RECOVERY_BRAIN_PID=""
+echo "    Waiting for brain readiness (up to 120s)..."
+for ready_check in $(seq 1 24); do
+    sleep 5
+    # Find brain PID from state file
+    if [ -f "$STATE_FILE" ] && [ -z "$RECOVERY_BRAIN_PID" ]; then
+        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
+            RECOVERY_BRAIN_PID="$pid"
+            break
+        done
+    fi
+    # Check if brain is alive
+    if [ -n "$RECOVERY_BRAIN_PID" ]; then
+        if kill -0 "$RECOVERY_BRAIN_PID" 2>/dev/null; then
             RECOVERY_BRAIN_ALIVE=true
+        else
+            echo "    Brain process died (PID $RECOVERY_BRAIN_PID) at check $ready_check"
+            echo "    [diag] brain stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
+            RECOVERY_BRAIN_ALIVE=false
             break
         fi
-    done
-fi
+    fi
+    # If brain is alive and .ralph/ exists, ACP session established
+    if $RECOVERY_BRAIN_ALIVE && [ -d "$ALICE_WS/.ralph" ]; then
+        echo "    Brain ready at check $ready_check: process alive + .ralph/ exists"
+        break
+    fi
+    echo "    Readiness check $ready_check/24: PID=${RECOVERY_BRAIN_PID:-none} alive=$RECOVERY_BRAIN_ALIVE"
+done
+echo "    [H38 diag] alice ws state: $(ls "$ALICE_WS/.ralph/" 2>/dev/null | head -5 || echo 'no .ralph dir')"
+echo "    [H38 diag] brain stderr: $(tail -3 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
 if echo "$START2_OUT" | grep -qi "brain\|launch\|started"; then
     pass "H38" "Brain restarted successfully (recovery scenario)"
 else
@@ -715,6 +738,13 @@ RECOVERY_RESPONDED=false
 RECOVERY_RESPONSE_BODY=""
 for attempt in $(seq 1 18); do
     sleep 5
+    # Re-check brain liveness — fail fast if process died
+    if [ -n "$RECOVERY_BRAIN_PID" ] && ! kill -0 "$RECOVERY_BRAIN_PID" 2>/dev/null; then
+        echo "    Brain process died during polling (PID $RECOVERY_BRAIN_PID)"
+        echo "    [diag] brain stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
+        RECOVERY_BRAIN_ALIVE=false
+        break
+    fi
     RHIST=$(curl -sf \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
         "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
@@ -730,9 +760,9 @@ if $RECOVERY_RESPONDED; then
     pass "H40" "Brain responded after recovery! NEW response detected (pre: $PRE_RECOVERY_BRAIN_COUNT, post: $RECOVERY_BRAIN_MSGS, body: $(echo "$RECOVERY_RESPONSE_BODY" | head -c 80)...)"
 else
     if $RECOVERY_BRAIN_ALIVE; then
-        fail "H40" "Recovery response" "brain alive after restart but did not respond within 90s"
+        fail "H40" "Recovery response" "brain alive after restart but did not respond within 90s (stderr: $(tail -3 "$ALICE_WS/brain-stderr.log" 2>/dev/null | tr '\n' ' ' || echo 'no log'))"
     else
-        fail "H40" "Recovery response" "brain not alive after restart, no response"
+        fail "H40" "Recovery response" "brain not alive after restart, no response (stderr: $(tail -3 "$ALICE_WS/brain-stderr.log" 2>/dev/null | tr '\n' ' ' || echo 'no log'))"
     fi
 fi
 else  # RECOVERY_SEND_OK=false
@@ -850,26 +880,48 @@ for ws in "$TEAM_DIR"/superman-*/; do
     rm -rf "$ws/.ralph" "$ws/.claude" "$ws/.claude-code-acp" "$ws/.cache" 2>/dev/null || true
 done
 rm -rf "$HOME/.cache/claude-cli-nodejs" "$HOME/.local/state/claude" 2>/dev/null || true
+# Clean Claude Code global state — stale sessions prevent ACP restart
+rm -rf "$HOME/.claude" 2>/dev/null || true
 # Start only alice to avoid ACP session contention
 TASK_START_OUT=$(bm start superman-alice 2>&1 || true)
 echo "    [H47 diag] start output: $(echo "$TASK_START_OUT" | tail -3 | tr '\n' ' ')"
-# Brain needs time to establish ACP session and connect to Matrix
-sleep 20
+# Readiness check: wait for brain to establish ACP session or die trying
 TASK_BRAIN_ALIVE=false
 TASK_BRAIN_PID=""
-if [ -f "$STATE_FILE" ]; then
-    for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-        if kill -0 "$pid" 2>/dev/null; then
-            TASK_BRAIN_ALIVE=true
+echo "    Waiting for brain readiness (up to 120s)..."
+for ready_check in $(seq 1 24); do
+    sleep 5
+    # Find brain PID from state file
+    if [ -f "$STATE_FILE" ] && [ -z "$TASK_BRAIN_PID" ]; then
+        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
             TASK_BRAIN_PID="$pid"
             break
+        done
+    fi
+    # Check if brain is alive
+    if [ -n "$TASK_BRAIN_PID" ]; then
+        if kill -0 "$TASK_BRAIN_PID" 2>/dev/null; then
+            TASK_BRAIN_ALIVE=true
+        else
+            echo "    Brain process died (PID $TASK_BRAIN_PID) at check $ready_check"
+            echo "    [diag] brain stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
+            TASK_BRAIN_ALIVE=false
+            break
         fi
-    done
-fi
+    fi
+    # If brain is alive and .ralph/ exists, ACP session established
+    if $TASK_BRAIN_ALIVE && [ -d "$ALICE_WS/.ralph" ]; then
+        echo "    Brain ready at check $ready_check: process alive + .ralph/ exists"
+        break
+    fi
+    echo "    Readiness check $ready_check/24: PID=${TASK_BRAIN_PID:-none} alive=$TASK_BRAIN_ALIVE"
+done
+echo "    [H47 diag] alice ws state: $(ls "$ALICE_WS/.ralph/" 2>/dev/null | head -5 || echo 'no .ralph dir')"
+echo "    [H47 diag] brain stderr: $(tail -3 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
 if $TASK_BRAIN_ALIVE; then
     pass "H47" "Brain started for task execution journey (PID $TASK_BRAIN_PID)"
 else
-    note "H47" "Task journey start" "brain not alive (ACP auth may have failed)"
+    note "H47" "Task journey start" "brain not alive (ACP auth may have failed, stderr: $(tail -3 "$ALICE_WS/brain-stderr.log" 2>/dev/null | tr '\n' ' ' || echo 'no log'))"
 fi
 
 # Record pre-task brain message count to detect NEW responses
@@ -903,6 +955,13 @@ TASK_RESPONSE_BODY=""
 TASK_ACKNOWLEDGED_BOARD=false
 for attempt in $(seq 1 24); do
     sleep 5
+    # Re-check brain liveness — fail fast if process died
+    if [ -n "$TASK_BRAIN_PID" ] && ! kill -0 "$TASK_BRAIN_PID" 2>/dev/null; then
+        echo "    Brain process died during polling (PID $TASK_BRAIN_PID)"
+        echo "    [diag] brain stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
+        TASK_BRAIN_ALIVE=false
+        break
+    fi
     THIST=$(curl -sf \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
         "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
@@ -927,9 +986,9 @@ elif $TASK_RESPONDED; then
     note "H49" "Task response" "brain responded but didn't explicitly mention board/issue: $(echo "$TASK_RESPONSE_BODY" | head -c 100)"
 else
     if $TASK_BRAIN_ALIVE; then
-        fail "H49" "Task response" "brain alive but did not respond about board within 120s"
+        fail "H49" "Task response" "brain alive but did not respond about board within 120s (stderr: $(tail -3 "$ALICE_WS/brain-stderr.log" 2>/dev/null | tr '\n' ' ' || echo 'no log'))"
     else
-        fail "H49" "Task response" "brain not alive, no response"
+        fail "H49" "Task response" "brain not alive, no response (stderr: $(tail -3 "$ALICE_WS/brain-stderr.log" 2>/dev/null | tr '\n' ' ' || echo 'no log'))"
     fi
 fi
 else  # TASK_SEND_OK=false

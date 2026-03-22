@@ -447,6 +447,50 @@ rotate username:
     {"username": "${USERNAME}", "user_id": "${BOT_USER_ID}", "token": "${BOT_TOKEN}"}
     ENDJSON
 
+# Verify a user's credentials are valid against the Matrix homeserver.
+# Exits 0 if the stored password produces a valid login, exits 1 otherwise.
+# Used by provisioning to detect stale credentials (e.g., after volume loss).
+verify username:
+    #!/usr/bin/env bash
+    set -euo pipefail
+
+    MATRIX_URL="{{MATRIX_URL}}"
+    USERNAME="{{username}}"
+    PASSWORDS_FILE="{{PASSWORDS_FILE}}"
+    CONTAINER="{{CONTAINER_NAME}}"
+
+    # Restore from container backup if local copy missing
+    if [ ! -f "$PASSWORDS_FILE" ] && podman container exists "$CONTAINER" 2>/dev/null; then
+        mkdir -p "$(dirname "$PASSWORDS_FILE")"
+        podman cp "${CONTAINER}:{{PASSWORDS_BACKUP}}" "$PASSWORDS_FILE" 2>/dev/null || true
+        [ -f "$PASSWORDS_FILE" ] && chmod 0600 "$PASSWORDS_FILE" || true
+    fi
+
+    if [ ! -f "$PASSWORDS_FILE" ]; then
+        echo >&2 "[tuwunel-bridge] verify: no passwords file — cannot verify ${USERNAME}"
+        exit 1
+    fi
+
+    BOT_PASS=$(jq -r --arg user "$USERNAME" '.[$user] // empty' "$PASSWORDS_FILE")
+    if [ -z "$BOT_PASS" ]; then
+        echo >&2 "[tuwunel-bridge] verify: no stored password for ${USERNAME}"
+        exit 1
+    fi
+
+    LOGIN_RESP=$(curl -sf -X POST \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${USERNAME}\"},\"password\":\"${BOT_PASS}\"}" \
+        "${MATRIX_URL}/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+
+    TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // empty')
+    if [ -n "$TOKEN" ]; then
+        echo >&2 "[tuwunel-bridge] verify: ${USERNAME} credentials valid"
+        exit 0
+    else
+        echo >&2 "[tuwunel-bridge] verify: ${USERNAME} credentials INVALID (login failed)"
+        exit 1
+    fi
+
 # Remove a bot user -- deactivate via Matrix CS API.
 remove username:
     #!/usr/bin/env bash
