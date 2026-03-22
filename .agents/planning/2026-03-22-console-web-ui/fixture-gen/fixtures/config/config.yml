@@ -1,0 +1,10 @@
+workzone: /home/bm-dashboard-test-user/.botminter/workspaces
+default_team: dashboard-test
+teams:
+- name: dashboard-test
+  path: /home/bm-dashboard-test-user/.botminter/workspaces/dashboard-test
+  profile: scrum-compact
+  github_repo: devguyio-bot-squad/dashboard-test-team
+  credentials:
+    gh_token: REDACTED
+  project_number: 622

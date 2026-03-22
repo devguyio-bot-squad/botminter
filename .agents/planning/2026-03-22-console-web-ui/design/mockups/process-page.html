@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BotMinter Console - Process</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            surface: { DEFAULT: '#0f1117', raised: '#161922', border: '#252a37' },
+            accent: { DEFAULT: '#6366f1', muted: '#4f46e5' },
+            role: {
+              po: '#f59e0b',
+              arch: '#6366f1',
+              dev: '#22c55e',
+              qe: '#06b6d4',
+              lead: '#a855f7',
+              sre: '#ef4444',
+              cw: '#ec4899',
+              mgr: '#8b5cf6',
+            }
+          },
+          fontFamily: {
+            mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+    .pipeline-arrow {
+      position: relative;
+    }
+    .pipeline-arrow::after {
+      content: '';
+      position: absolute;
+      right: -12px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 0;
+      height: 0;
+      border-left: 6px solid #374151;
+      border-top: 5px solid transparent;
+      border-bottom: 5px solid transparent;
+    }
+    .pipeline-connector {
+      width: 24px;
+      height: 2px;
+      background: #374151;
+      flex-shrink: 0;
+    }
+  </style>
+</head>
+<body class="bg-surface text-gray-200 min-h-screen flex">
+
+  <!-- Sidebar -->
+  <aside class="w-56 bg-surface-raised border-r border-surface-border flex flex-col min-h-screen sticky top-0">
+    <div class="p-4 border-b border-surface-border">
+      <div class="flex items-center gap-2 mb-1">
+        <div class="w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white text-xs font-bold">BM</div>
+        <span class="font-semibold text-sm text-white">BotMinter</span>
+      </div>
+      <div class="text-xs text-gray-500 ml-9">Console</div>
+    </div>
+
+    <!-- Team Selector -->
+    <div class="px-3 py-3 border-b border-surface-border">
+      <button class="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm bg-surface border border-surface-border rounded-md hover:border-gray-600 transition-colors">
+        <div class="flex items-center gap-2">
+          <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+          <span class="text-white font-medium">my-team</span>
+        </div>
+        <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+      </button>
+    </div>
+
+    <nav class="flex-1 py-3">
+      <a href="team-page.html" class="flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-white/5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+        Overview
+      </a>
+      <a href="process-page.html" class="flex items-center gap-3 px-4 py-2 text-sm bg-accent/10 text-accent border-r-2 border-accent">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/></svg>
+        Process
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-white/5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        Members
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-white/5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+        Knowledge
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-white/5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        Invariants
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-white/5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        Settings
+      </a>
+    </nav>
+
+    <div class="p-4 border-t border-surface-border">
+      <div class="text-xs text-gray-500">BotMinter v0.7.0</div>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="flex-1 overflow-y-auto">
+    <!-- Header -->
+    <header class="border-b border-surface-border px-8 py-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-xl font-semibold text-white">Process</h1>
+          <p class="text-sm text-gray-400 mt-0.5">Workflow definition and status lifecycle</p>
+        </div>
+        <div class="flex items-center gap-2">
+          <button class="text-xs text-gray-400 hover:text-white bg-surface-raised border border-surface-border rounded-md px-3 py-1.5">
+            Edit PROCESS.md
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="p-8 space-y-8">
+
+      <!-- Tab Bar -->
+      <div class="flex border-b border-surface-border">
+        <button class="px-4 py-2 text-sm text-accent border-b-2 border-accent -mb-px">Pipeline</button>
+        <button class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200">Statuses</button>
+        <button class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200">Labels</button>
+        <button class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200">Views</button>
+        <button class="px-4 py-2 text-sm text-gray-400 hover:text-gray-200">PROCESS.md</button>
+      </div>
+
+      <!-- Role Legend -->
+      <div class="flex items-center gap-4 text-xs">
+        <span class="text-gray-500">Roles:</span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-role-po"></span> <span class="text-gray-400">PO</span></span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-role-arch"></span> <span class="text-gray-400">Architecture</span></span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-role-lead"></span> <span class="text-gray-400">Lead</span></span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-role-dev"></span> <span class="text-gray-400">Development</span></span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-role-qe"></span> <span class="text-gray-400">QE</span></span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-role-sre"></span> <span class="text-gray-400">SRE</span></span>
+        <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-role-cw"></span> <span class="text-gray-400">Content</span></span>
+      </div>
+
+      <!-- Epic Pipeline -->
+      <div class="bg-surface-raised border border-surface-border rounded-lg">
+        <div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-medium text-gray-300">Epic Workflow</h2>
+            <span class="text-xs text-gray-600">14 statuses</span>
+          </div>
+          <span class="text-xs text-gray-500 mono">po:triage &rarr; done</span>
+        </div>
+        <div class="p-6 overflow-x-auto">
+          <div class="flex items-start gap-0 min-w-max">
+
+            <!-- po:triage -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-po/30 bg-role-po/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-po/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-po font-medium mb-0.5">PO</div>
+                <div class="text-xs text-white mono">triage</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- po:backlog -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-po/30 bg-role-po/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-po/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-po font-medium mb-0.5">PO</div>
+                <div class="text-xs text-white mono">backlog</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- arch:design -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-arch/30 bg-role-arch/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-arch/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-arch font-medium mb-0.5">ARCH</div>
+                <div class="text-xs text-white mono">design</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- lead:design-review -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-lead/30 bg-role-lead/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-lead/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-lead font-medium mb-0.5">LEAD</div>
+                <div class="text-xs text-white mono">design-review</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- po:design-review -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-po/30 bg-role-po/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-po/60 cursor-pointer transition-colors relative">
+                <div class="absolute -top-2 -right-2">
+                  <span class="text-[9px] bg-role-po/20 text-role-po px-1 py-0.5 rounded border border-role-po/30">GATE</span>
+                </div>
+                <div class="text-[10px] text-role-po font-medium mb-0.5">PO</div>
+                <div class="text-xs text-white mono">design-review</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- arch:plan -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-arch/30 bg-role-arch/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-arch/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-arch font-medium mb-0.5">ARCH</div>
+                <div class="text-xs text-white mono">plan</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- lead:plan-review -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-lead/30 bg-role-lead/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-lead/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-lead font-medium mb-0.5">LEAD</div>
+                <div class="text-xs text-white mono">plan-review</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- po:plan-review (GATE) -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-po/30 bg-role-po/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-po/60 cursor-pointer transition-colors relative">
+                <div class="absolute -top-2 -right-2">
+                  <span class="text-[9px] bg-role-po/20 text-role-po px-1 py-0.5 rounded border border-role-po/30">GATE</span>
+                </div>
+                <div class="text-[10px] text-role-po font-medium mb-0.5">PO</div>
+                <div class="text-xs text-white mono">plan-review</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- arch:breakdown -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-arch/30 bg-role-arch/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-arch/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-arch font-medium mb-0.5">ARCH</div>
+                <div class="text-xs text-white mono">breakdown</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- po:ready -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-po/30 bg-role-po/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-po/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-po font-medium mb-0.5">PO</div>
+                <div class="text-xs text-white mono">ready</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- arch:in-progress -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-arch/30 bg-role-arch/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-arch/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-arch font-medium mb-0.5">ARCH</div>
+                <div class="text-xs text-white mono">in-progress</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- po:accept (GATE) -->
+            <div class="flex items-center">
+              <div class="border-2 border-role-po/30 bg-role-po/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-po/60 cursor-pointer transition-colors relative">
+                <div class="absolute -top-2 -right-2">
+                  <span class="text-[9px] bg-role-po/20 text-role-po px-1 py-0.5 rounded border border-role-po/30">GATE</span>
+                </div>
+                <div class="text-[10px] text-role-po font-medium mb-0.5">PO</div>
+                <div class="text-xs text-white mono">accept</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <!-- done -->
+            <div>
+              <div class="border-2 border-gray-600/30 bg-gray-600/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-gray-500/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-gray-500 font-medium mb-0.5">TERMINAL</div>
+                <div class="text-xs text-gray-300 mono">done</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- Story Pipeline -->
+      <div class="bg-surface-raised border border-surface-border rounded-lg">
+        <div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-medium text-gray-300">Story Workflow</h2>
+            <span class="text-xs text-gray-600">8 statuses</span>
+          </div>
+          <span class="text-xs text-gray-500 mono">dev:ready &rarr; done</span>
+        </div>
+        <div class="p-6 overflow-x-auto">
+          <div class="flex items-start gap-0 min-w-max">
+
+            <div class="flex items-center">
+              <div class="border-2 border-role-dev/30 bg-role-dev/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-dev/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-dev font-medium mb-0.5">DEV</div>
+                <div class="text-xs text-white mono">ready</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <div class="flex items-center">
+              <div class="border-2 border-role-qe/30 bg-role-qe/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-qe/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-qe font-medium mb-0.5">QE</div>
+                <div class="text-xs text-white mono">test-design</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <div class="flex items-center">
+              <div class="border-2 border-role-dev/30 bg-role-dev/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-dev/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-dev font-medium mb-0.5">DEV</div>
+                <div class="text-xs text-white mono">implement</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <div class="flex items-center">
+              <div class="border-2 border-role-dev/30 bg-role-dev/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-dev/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-dev font-medium mb-0.5">DEV</div>
+                <div class="text-xs text-white mono">code-review</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <div class="flex items-center">
+              <div class="border-2 border-role-qe/30 bg-role-qe/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-qe/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-qe font-medium mb-0.5">QE</div>
+                <div class="text-xs text-white mono">verify</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <div class="flex items-center">
+              <div class="border-2 border-role-arch/30 bg-role-arch/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-arch/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-arch font-medium mb-0.5">ARCH</div>
+                <div class="text-xs text-white mono">sign-off</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <div class="flex items-center">
+              <div class="border-2 border-role-po/30 bg-role-po/5 rounded-lg px-3 py-2 min-w-[100px] hover:border-role-po/60 cursor-pointer transition-colors">
+                <div class="text-[10px] text-role-po font-medium mb-0.5">PO</div>
+                <div class="text-xs text-white mono">merge</div>
+              </div>
+              <div class="pipeline-connector"></div>
+            </div>
+
+            <div>
+              <div class="border-2 border-gray-600/30 bg-gray-600/5 rounded-lg px-3 py-2 min-w-[100px]">
+                <div class="text-[10px] text-gray-500 font-medium mb-0.5">TERMINAL</div>
+                <div class="text-xs text-gray-300 mono">done</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- Specialist & Manager Pipelines -->
+      <div class="grid grid-cols-2 gap-6">
+
+        <div class="bg-surface-raised border border-surface-border rounded-lg">
+          <div class="px-5 py-3 border-b border-surface-border">
+            <div class="flex items-center gap-2">
+              <h2 class="text-sm font-medium text-gray-300">Specialist Workflows</h2>
+              <span class="text-xs text-gray-600">3 statuses</span>
+            </div>
+          </div>
+          <div class="p-5 space-y-4">
+            <!-- SRE -->
+            <div>
+              <div class="text-xs text-gray-500 mb-2">SRE Infrastructure</div>
+              <div class="flex items-center gap-0">
+                <div class="border-2 border-role-sre/30 bg-role-sre/5 rounded-lg px-3 py-1.5">
+                  <div class="text-[10px] text-role-sre font-medium">SRE</div>
+                  <div class="text-xs text-white mono">infra-setup</div>
+                </div>
+              </div>
+            </div>
+            <!-- CW -->
+            <div>
+              <div class="text-xs text-gray-500 mb-2">Content Writing</div>
+              <div class="flex items-center gap-0">
+                <div class="flex items-center">
+                  <div class="border-2 border-role-cw/30 bg-role-cw/5 rounded-lg px-3 py-1.5">
+                    <div class="text-[10px] text-role-cw font-medium">CW</div>
+                    <div class="text-xs text-white mono">write</div>
+                  </div>
+                  <div class="pipeline-connector"></div>
+                </div>
+                <div>
+                  <div class="border-2 border-role-cw/30 bg-role-cw/5 rounded-lg px-3 py-1.5">
+                    <div class="text-[10px] text-role-cw font-medium">CW</div>
+                    <div class="text-xs text-white mono">review</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-surface-raised border border-surface-border rounded-lg">
+          <div class="px-5 py-3 border-b border-surface-border">
+            <div class="flex items-center gap-2">
+              <h2 class="text-sm font-medium text-gray-300">Manager Workflow</h2>
+              <span class="text-xs text-gray-600">3 statuses</span>
+            </div>
+          </div>
+          <div class="p-5">
+            <div class="flex items-center gap-0">
+              <div class="flex items-center">
+                <div class="border-2 border-role-mgr/30 bg-role-mgr/5 rounded-lg px-3 py-1.5">
+                  <div class="text-[10px] text-role-mgr font-medium">MGR</div>
+                  <div class="text-xs text-white mono">todo</div>
+                </div>
+                <div class="pipeline-connector"></div>
+              </div>
+              <div class="flex items-center">
+                <div class="border-2 border-role-mgr/30 bg-role-mgr/5 rounded-lg px-3 py-2 min-w-[100px]">
+                  <div class="text-[10px] text-role-mgr font-medium">MGR</div>
+                  <div class="text-xs text-white mono">in-progress</div>
+                </div>
+                <div class="pipeline-connector"></div>
+              </div>
+              <div>
+                <div class="border-2 border-role-mgr/30 bg-role-mgr/5 rounded-lg px-3 py-1.5">
+                  <div class="text-[10px] text-role-mgr font-medium">MGR</div>
+                  <div class="text-xs text-white mono">done</div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Role Details -->
+      <div class="bg-surface-raised border border-surface-border rounded-lg">
+        <div class="px-5 py-3 border-b border-surface-border">
+          <h2 class="text-sm font-medium text-gray-300">Role Responsibilities</h2>
+        </div>
+        <div class="divide-y divide-surface-border">
+
+          <div class="px-5 py-4 hover:bg-white/[0.02] cursor-pointer">
+            <div class="flex items-center gap-3 mb-2">
+              <span class="w-3 h-3 rounded-sm bg-role-po"></span>
+              <span class="text-sm font-medium text-white">Product Owner (PO)</span>
+              <span class="text-xs text-gray-500">6 statuses owned</span>
+            </div>
+            <div class="ml-6 flex flex-wrap gap-1.5">
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-po/10 text-role-po border border-role-po/20">triage</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-po/10 text-role-po border border-role-po/20">backlog</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-po/10 text-role-po border border-role-po/20">design-review</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-po/10 text-role-po border border-role-po/20">plan-review</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-po/10 text-role-po border border-role-po/20">ready</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-po/10 text-role-po border border-role-po/20">accept</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-po/10 text-role-po border border-role-po/20">merge</span>
+            </div>
+            <div class="ml-6 mt-2 text-xs text-gray-500">
+              Gates: <span class="text-role-po">design-review</span>, <span class="text-role-po">plan-review</span>, <span class="text-role-po">accept</span> (require human approval)
+            </div>
+          </div>
+
+          <div class="px-5 py-4 hover:bg-white/[0.02] cursor-pointer">
+            <div class="flex items-center gap-3 mb-2">
+              <span class="w-3 h-3 rounded-sm bg-role-arch"></span>
+              <span class="text-sm font-medium text-white">Architecture (ARCH)</span>
+              <span class="text-xs text-gray-500">5 statuses owned</span>
+            </div>
+            <div class="ml-6 flex flex-wrap gap-1.5">
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-arch/10 text-role-arch border border-role-arch/20">design</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-arch/10 text-role-arch border border-role-arch/20">plan</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-arch/10 text-role-arch border border-role-arch/20">breakdown</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-arch/10 text-role-arch border border-role-arch/20">in-progress</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-arch/10 text-role-arch border border-role-arch/20">sign-off</span>
+            </div>
+          </div>
+
+          <div class="px-5 py-4 hover:bg-white/[0.02] cursor-pointer">
+            <div class="flex items-center gap-3 mb-2">
+              <span class="w-3 h-3 rounded-sm bg-role-dev"></span>
+              <span class="text-sm font-medium text-white">Development (DEV)</span>
+              <span class="text-xs text-gray-500">3 statuses owned</span>
+            </div>
+            <div class="ml-6 flex flex-wrap gap-1.5">
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-dev/10 text-role-dev border border-role-dev/20">ready</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-dev/10 text-role-dev border border-role-dev/20">implement</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-dev/10 text-role-dev border border-role-dev/20">code-review</span>
+            </div>
+          </div>
+
+          <div class="px-5 py-4 hover:bg-white/[0.02] cursor-pointer">
+            <div class="flex items-center gap-3 mb-2">
+              <span class="w-3 h-3 rounded-sm bg-role-qe"></span>
+              <span class="text-sm font-medium text-white">Quality Engineering (QE)</span>
+              <span class="text-xs text-gray-500">2 statuses owned</span>
+            </div>
+            <div class="ml-6 flex flex-wrap gap-1.5">
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-qe/10 text-role-qe border border-role-qe/20">test-design</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded mono bg-role-qe/10 text-role-qe border border-role-qe/20">verify</span>
+            </div>
+          </div>
+
+        </div>
+      </div>
+
+      <!-- Human Gates Summary -->
+      <div class="bg-surface-raised border border-surface-border rounded-lg">
+        <div class="px-5 py-3 border-b border-surface-border">
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-medium text-gray-300">Human Gates</h2>
+            <span class="text-xs px-1.5 py-0.5 rounded bg-role-po/10 text-role-po border border-role-po/20">Supervised Mode</span>
+          </div>
+        </div>
+        <div class="p-5">
+          <p class="text-xs text-gray-400 mb-4">These statuses require explicit human approval via GitHub issue comments before the workflow can advance.</p>
+          <div class="grid grid-cols-3 gap-4">
+            <div class="border border-role-po/20 bg-role-po/5 rounded-lg p-3">
+              <div class="text-xs font-medium text-role-po mb-1">po:design-review</div>
+              <div class="text-[11px] text-gray-500">Approves architectural design documents before story planning begins.</div>
+            </div>
+            <div class="border border-role-po/20 bg-role-po/5 rounded-lg p-3">
+              <div class="text-xs font-medium text-role-po mb-1">po:plan-review</div>
+              <div class="text-[11px] text-gray-500">Approves story breakdown plans before development work starts.</div>
+            </div>
+            <div class="border border-role-po/20 bg-role-po/5 rounded-lg p-3">
+              <div class="text-xs font-medium text-role-po mb-1">po:accept</div>
+              <div class="text-[11px] text-gray-500">Final acceptance of completed epic before marking as done.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+</body>
+</html>

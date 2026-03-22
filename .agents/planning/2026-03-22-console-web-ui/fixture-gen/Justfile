@@ -1,0 +1,229 @@
+# Dashboard fixture generator — stripped-down exploratory test
+# Runs: init (no bridge) + hire + sync, then captures artifacts as test fixtures
+# Usage: just -f .agents/planning/2026-03-22-console-web-ui/fixture-gen/Justfile generate
+
+set positional-arguments
+set dotenv-load := false
+
+BM := env("HOME") + "/.local/bin/bm"
+TEAM := "dashboard-test"
+ORG := "devguyio-bot-squad"
+REPO := "dashboard-test-team"
+FULL_REPO := ORG + "/" + REPO
+PROFILE := "scrum-compact"
+BOARD := "Dashboard Test Board"
+TEAM_DIR := env("HOME") + "/.botminter/workspaces/" + TEAM
+TEAM_REPO := TEAM_DIR + "/team"
+FIXTURE_DIR := justfile_directory() + "/fixtures"
+REPORT := justfile_directory() + "/REPORT.md"
+
+# ─── Helpers ────────────────────────────────────────────────────
+
+pass ID DESC:
+    echo "  ✓ {{ID}}: {{DESC}}"
+    echo "| {{ID}} | {{DESC}} | **PASS** |" >> "{{REPORT}}"
+
+fail ID DESC DETAIL:
+    echo "  ✗ {{ID}}: {{DESC}} — {{DETAIL}}"
+    echo "| {{ID}} | {{DESC}} | **FAIL** — {{DETAIL}} |" >> "{{REPORT}}"
+
+# ─── Clean ──────────────────────────────────────────────────────
+
+clean:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Cleaning up..."
+    export GH_TOKEN=$(gh auth token)
+    gh repo delete {{FULL_REPO}} --yes 2>/dev/null || true
+    PROJ_NUM=$(gh project list --owner {{ORG}} --format json 2>/dev/null \
+        | jq -r '.projects[] | select(.title=="{{BOARD}}") | .number' 2>/dev/null || true)
+    if [ -n "$PROJ_NUM" ]; then
+        gh project delete "$PROJ_NUM" --owner {{ORG}} --format json 2>/dev/null || true
+    fi
+    rm -rf ~/.botminter ~/.config/botminter 2>/dev/null || true
+    rm -rf "{{FIXTURE_DIR}}" 2>/dev/null || true
+    echo "Clean."
+
+# ─── Preflight ──────────────────────────────────────────────────
+
+preflight:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Pre-flight checks..."
+    for tool in gh git jq; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "FATAL: $tool not found in PATH"; exit 1
+        fi
+    done
+    echo "  ✓ Required tools available"
+    if ! gh auth status >/dev/null 2>&1; then
+        echo "FATAL: gh not authenticated"; exit 1
+    fi
+    echo "  ✓ gh authenticated"
+    if ! {{BM}} --version >/dev/null 2>&1; then
+        echo "FATAL: bm not found at {{BM}}"; exit 1
+    fi
+    echo "  ✓ bm available ($({{BM}} --version))"
+    # Git config
+    if ! git config --global user.email >/dev/null 2>&1; then
+        git config --global user.email "dashboard-test@botminter.dev"
+        git config --global user.name "Dashboard Test User"
+        echo "  ✓ Git config set"
+    else
+        echo "  ✓ Git config exists"
+    fi
+    echo "Pre-flight OK."
+
+# ─── Generate ──────────────────────────────────────────────────
+
+generate: preflight
+    #!/usr/bin/env bash
+    set -uo pipefail
+    export GH_TOKEN=$(gh auth token)
+    BM="{{BM}}"
+    REPORT="{{REPORT}}"
+    TEAM_DIR="{{TEAM_DIR}}"
+    TEAM_REPO="{{TEAM_REPO}}"
+    FIXTURE_DIR="{{FIXTURE_DIR}}"
+
+    pass()  { echo "  ✓ $1: $2"; echo "| $1 | $2 | **PASS** |" >> "$REPORT"; }
+    fail()  { echo "  ✗ $1: $2 — $3"; echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; }
+
+    echo "# Dashboard Fixture Generation Report" > "$REPORT"
+    echo "" >> "$REPORT"
+    echo "| # | Test | Result |" >> "$REPORT"
+    echo "|---|------|--------|" >> "$REPORT"
+
+    echo "=== Phase 1: Init (no bridge) ==="
+
+    # 1. Fresh init without bridge
+    OUT=$($BM init --non-interactive --profile {{PROFILE}} --team-name {{TEAM}} --org {{ORG}} --repo {{REPO}} --github-project-board "{{BOARD}}" 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "F1" "Init (scrum-compact, no bridge)"; else fail "F1" "Init" "exit $EC: $OUT"; exit 1; fi
+
+    # 2. Verify GitHub repo
+    OUT=$(gh repo view {{FULL_REPO}} --json name,visibility 2>&1)
+    if echo "$OUT" | grep -q "PRIVATE"; then pass "F2" "GitHub repo exists (private)"; else fail "F2" "GitHub repo" "$OUT"; fi
+
+    # 3. Verify project board
+    OUT=$(gh project list --owner {{ORG}} --format json 2>&1)
+    if echo "$OUT" | grep -q "{{BOARD}}"; then pass "F3" "Project board exists"; else fail "F3" "Project board" "not found"; fi
+
+    # 4. Verify config
+    if grep -q "{{TEAM}}" ~/.botminter/config.yml 2>/dev/null; then
+        pass "F4" "Team registered in config.yml"
+    else
+        fail "F4" "Config" "team not found"
+    fi
+
+    # 5. Verify profile content
+    if [ -f "$TEAM_REPO/PROCESS.md" ] && [ -d "$TEAM_REPO/knowledge" ] && [ -f "$TEAM_REPO/botminter.yml" ]; then
+        pass "F5" "Team repo has profile content"
+    else
+        fail "F5" "Profile content" "missing files"
+    fi
+
+    echo ""
+    echo "=== Phase 2: Hire members ==="
+
+    # 6. Hire alice
+    OUT=$($BM hire superman --name alice 2>&1)
+    if echo "$OUT" | grep -q "Hired"; then pass "F6" "Hired superman-alice"; else fail "F6" "Hire alice" "$OUT"; fi
+
+    # 7. Hire bob
+    OUT=$($BM hire superman --name bob 2>&1)
+    if echo "$OUT" | grep -q "Hired"; then pass "F7" "Hired superman-bob"; else fail "F7" "Hire bob" "$OUT"; fi
+
+    # 8. Hire team-manager
+    OUT=$($BM hire team-manager --name mgr 2>&1)
+    if echo "$OUT" | grep -q "Hired"; then pass "F8" "Hired team-mgr-mgr"; else fail "F8" "Hire team-manager" "$OUT"; fi
+
+    # 9. Verify member configs
+    ALICE_DIR="$TEAM_REPO/members/superman-alice"
+    if [ -f "$ALICE_DIR/PROMPT.md" ] && [ -f "$ALICE_DIR/CLAUDE.md" ] && [ -f "$ALICE_DIR/ralph.yml" ]; then
+        pass "F9" "Member config files present (alice)"
+    else
+        fail "F9" "Member config" "missing files in $ALICE_DIR"
+    fi
+
+    echo ""
+    echo "=== Phase 3: Workspace sync ==="
+
+    # 10. Sync workspaces (no bridge, no repos push)
+    OUT=$($BM teams sync -v 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "F10" "teams sync -v"; else fail "F10" "Sync" "exit $EC: $(echo "$OUT" | tail -5)"; fi
+
+    # 11. Verify alice workspace
+    ALICE_WS="$TEAM_DIR/superman-alice"
+    if [ -f "$ALICE_WS/ralph.yml" ] && [ -f "$ALICE_WS/CLAUDE.md" ] && [ -f "$ALICE_WS/PROMPT.md" ] && [ -f "$ALICE_WS/.botminter.workspace" ]; then
+        pass "F11" "Alice workspace complete"
+    else
+        fail "F11" "Alice workspace" "missing files"
+    fi
+
+    # 12. Verify bob workspace
+    BOB_WS="$TEAM_DIR/superman-bob"
+    if [ -f "$BOB_WS/ralph.yml" ] && [ -f "$BOB_WS/.botminter.workspace" ]; then
+        pass "F12" "Bob workspace complete"
+    else
+        fail "F12" "Bob workspace" "missing files"
+    fi
+
+    # 13. Verify team submodule
+    if [ -d "$ALICE_WS/team/members" ]; then pass "F13" "Team submodule present in workspace"; else fail "F13" "Team submodule" "not found"; fi
+
+    # 14. Verify settings.json
+    if [ -f "$ALICE_WS/.claude/settings.json" ]; then
+        pass "F14" "Settings.json surfaced in workspace"
+    else
+        fail "F14" "Settings.json" "not found"
+    fi
+
+    # 15. Re-sync idempotency
+    OUT=$($BM teams sync -v 2>&1)
+    if [ $? -eq 0 ]; then pass "F15" "Re-sync idempotent"; else fail "F15" "Re-sync" "exit $?"; fi
+
+    echo ""
+    echo "=== Phase 4: Capture fixtures ==="
+
+    # 16. Capture artifacts
+    mkdir -p "$FIXTURE_DIR"
+
+    # Copy team repo (the source of truth for the console)
+    cp -r "$TEAM_REPO" "$FIXTURE_DIR/team-repo"
+    # Remove .git to keep fixtures lightweight
+    rm -rf "$FIXTURE_DIR/team-repo/.git"
+    pass "F16" "Captured team repo ($(du -sh "$FIXTURE_DIR/team-repo" | cut -f1))"
+
+    # Copy config
+    mkdir -p "$FIXTURE_DIR/config"
+    cp ~/.botminter/config.yml "$FIXTURE_DIR/config/config.yml"
+    # Redact the GH token
+    sed -i 's/gh_token: .*/gh_token: REDACTED/' "$FIXTURE_DIR/config/config.yml"
+    pass "F17" "Captured config.yml (token redacted)"
+
+    # Copy a sample workspace (alice) — just the surfaced files, not .git
+    mkdir -p "$FIXTURE_DIR/workspace-sample"
+    for f in ralph.yml CLAUDE.md PROMPT.md .botminter.workspace; do
+        cp "$ALICE_WS/$f" "$FIXTURE_DIR/workspace-sample/" 2>/dev/null || true
+    done
+    cp -r "$ALICE_WS/.claude" "$FIXTURE_DIR/workspace-sample/.claude" 2>/dev/null || true
+    if [ -f "$ALICE_WS/brain-prompt.md" ]; then
+        cp "$ALICE_WS/brain-prompt.md" "$FIXTURE_DIR/workspace-sample/"
+    fi
+    pass "F18" "Captured workspace sample (alice)"
+
+    # List what we got
+    echo ""
+    echo "=== Fixtures captured ==="
+    find "$FIXTURE_DIR" -type f | sort | head -50
+    echo ""
+    echo "Total: $(find "$FIXTURE_DIR" -type f | wc -l) files, $(du -sh "$FIXTURE_DIR" | cut -f1)"
+
+    echo ""
+    PASS_COUNT=$(grep -c 'PASS' "$REPORT" || true)
+    FAIL_COUNT=$(grep -c 'FAIL' "$REPORT" || true)
+    echo "=== Done: $PASS_COUNT PASS, $FAIL_COUNT FAIL ==="
+    echo "Report: $REPORT"
+    echo "Fixtures: $FIXTURE_DIR"
