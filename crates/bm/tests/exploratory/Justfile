@@ -178,7 +178,7 @@ preflight: ensure-keyring
 
 [private]
 run-phase phase timeout="300":
-    timeout --signal=KILL {{timeout}} ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && exec {{REMOTE_PHASES}}/{{phase}}"'
+    timeout --signal=TERM --kill-after=15 {{timeout}} ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && exec {{REMOTE_PHASES}}/{{phase}}"'
 
 phase-a: init-report (run-phase "phase-a.sh" "600")
 
