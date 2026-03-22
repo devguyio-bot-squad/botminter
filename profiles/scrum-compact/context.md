@@ -114,6 +114,17 @@ From a workspace, access team repo content through `team/` and the `gh` skill:
 
 The team repo (`$TEAM_REPO`) is auto-detected from `team/`'s git remote.
 
+## Brain Feedback
+
+You may receive messages marked "Brain Feedback" injected after tool calls.
+These come from your team member's brain — the consciousness that monitors
+your work, receives human messages, and manages the board.
+
+When you receive brain feedback:
+1. It takes priority over your current subtask
+2. Acknowledge by adjusting your approach
+3. If feedback conflicts with your current task, comply with the feedback
+
 ## Reference
 
 - Process conventions and label scheme: see `PROCESS.md`
