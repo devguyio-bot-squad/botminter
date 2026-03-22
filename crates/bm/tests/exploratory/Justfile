@@ -49,8 +49,43 @@ REMOTE_TEAM_REPO := REMOTE_TEAM_DIR + "/team"
 build:
     cd {{CARGO_ROOT}} && just build
 
+# Reset runtime state: stop processes, containers, free ports, remove stale binaries.
+# Safe to run repeatedly — does NOT destroy persistent artifacts (GitHub repo, team config, keyring).
+# Ensures a clean slate so deploy and test phases can proceed without "locked binary" or "port in use" errors.
+reset:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Resetting test environment on {{TEST_HOST}}..."
+    ssh {{TEST_HOST}} 'bash -s' <<'RESET_SCRIPT'
+    # 1. Graceful stop via bm (members + bridge)
+    if [ -x {{REMOTE_BIN}}/bm ] && [ -f {{REMOTE_HOME}}/.botminter/config.yml ]; then
+        {{REMOTE_BIN}}/bm stop --force --bridge -t {{TEAM}} 2>/dev/null || true
+    fi
+    # 2. Force-stop bridge container (in case bm stop didn't handle it or state is stale)
+    podman rm -f bm-tuwunel-{{TEAM}} 2>/dev/null || true
+    # 3. Kill stale processes: brain-run, ACP, claude, ralph (SIGTERM first)
+    for pattern in '[b]m brain-run' '[c]laude-code-acp-rs' '[c]laude.*stream-json' '[r]alph run'; do
+        for pid in $(ps aux | grep "$pattern" | awk '{print $2}'); do
+            kill "$pid" 2>/dev/null || true
+        done
+    done
+    sleep 1
+    # 4. Force-kill survivors (SIGKILL)
+    for pattern in '[b]m brain-run' '[c]laude-code-acp-rs' '[c]laude.*stream-json' '[r]alph run'; do
+        for pid in $(ps aux | grep "$pattern" | awk '{print $2}'); do
+            kill -9 "$pid" 2>/dev/null || true
+        done
+    done
+    # 5. Remove old binaries so scp can write fresh copies
+    #    (Linux allows rm of a running binary — the kernel keeps the inode until the process exits)
+    rm -f {{REMOTE_BIN}}/bm {{REMOTE_BIN}}/bm-agent {{REMOTE_BIN}}/ralph {{REMOTE_BIN}}/claude {{REMOTE_BIN}}/claude-code-acp-rs
+    # 6. Clear stale state.json so bm start doesn't think members are running
+    find {{REMOTE_HOME}}/.botminter/workspaces/{{TEAM}} -name state.json -delete 2>/dev/null || true
+    echo "Reset complete."
+    RESET_SCRIPT
+
 # Deploy binaries + test scripts to the remote test user
-deploy: build
+deploy: build reset
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Deploying to {{TEST_HOST}}..."
@@ -70,6 +105,12 @@ deploy: build
     scp -q "{{LOCAL_LIB}}" {{TEST_HOST}}:{{REMOTE_LIB}}
     scp -q {{LOCAL_PHASES}}/*.sh {{TEST_HOST}}:{{REMOTE_PHASES}}/
     ssh {{TEST_HOST}} 'chmod +x {{REMOTE_PHASES}}/*.sh'
+    # Deploy GCP application default credentials for Vertex AI auth
+    GCP_CREDS="$HOME/.config/gcloud/application_default_credentials.json"
+    if [ -f "$GCP_CREDS" ]; then
+        ssh {{TEST_HOST}} 'mkdir -p ~/.config/gcloud'
+        scp -q "$GCP_CREDS" {{TEST_HOST}}:~/.config/gcloud/application_default_credentials.json
+    fi
     # Ensure git identity is configured (required for bm init)
     ssh {{TEST_HOST}} 'git config --global user.email 2>/dev/null || git config --global user.email "bm-test-user@botminter.dev"'
     ssh {{TEST_HOST}} 'git config --global user.name 2>/dev/null || git config --global user.name "BM Test User"'
@@ -93,8 +134,8 @@ deploy: build
         | ssh {{TEST_HOST}} 'cat > {{REMOTE_ENV}}'
     echo "Deploy complete."
 
-# Full cleanup — remove all test artifacts on remote
-clean:
+# Full cleanup — reset runtime state, then remove all test artifacts on remote
+clean: reset
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Cleaning up on {{TEST_HOST}}..."
@@ -170,6 +211,12 @@ preflight: ensure-keyring
         echo \"  ✓ bm + bm-agent deployed\" && \
         gh auth status >/dev/null 2>&1 || { echo \"FATAL: gh not authenticated on {{TEST_USER}}\"; exit 1; } && \
         echo \"  ✓ gh authenticated\" && \
+        CLAUDE_RESP=\$(echo \"say ok\" | claude --print --bare 2>&1) && \
+        if echo \"\$CLAUDE_RESP\" | grep -qi \"ok\"; then \
+            echo \"  ✓ Claude smoke test passed\"; \
+        else \
+            echo \"FATAL: Claude smoke test failed: \$CLAUDE_RESP\"; exit 1; \
+        fi && \
         echo \"Pre-flight OK.\""'
 
 # ─── Phase recipes ─────────────────────────────────────────────
@@ -202,11 +249,12 @@ phase-acp-isolated: ensure-keyring (run-phase "phase-acp-isolated.sh" "600")
 # ─── Orchestration ─────────────────────────────────────────────
 
 # Run all phases except Lima (B through H)
-all-no-lima: deploy preflight init-report phase-b phase-c phase-d phase-e phase-f phase-h phase-g fetch-report
+# Starts and ends with clean to ensure a known-good state.
+all-no-lima: clean deploy preflight init-report phase-b phase-c phase-d phase-e phase-f phase-h phase-g fetch-report clean
 
 # Run all phases including Lima VM test
-# Phase A creates+destroys its own team; clean ensures no state leaks to Phase B.
-all: deploy preflight init-report phase-a clean phase-b phase-c phase-d phase-e phase-f phase-h phase-g fetch-report
+# Starts with clean; phase-a creates+destroys its own team; clean between A and B resets for the main phases; ends with clean.
+all: clean deploy preflight init-report phase-a clean deploy preflight init-report phase-b phase-c phase-d phase-e phase-f phase-h phase-g fetch-report clean
 
 # Run only bridge + workspace phases (skip init, assume team exists)
 bridge-and-workspace: ensure-keyring phase-c phase-d phase-e
