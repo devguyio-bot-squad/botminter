@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use tracing_subscriber::EnvFilter;
 
 use crate::brain::{
     EventWatcher, EventWatcherConfig, Heartbeat, HeartbeatConfig, Multiplexer, MultiplexerConfig,
@@ -12,9 +13,25 @@ use crate::brain::{
 /// process by `bm start` for chat-first members. It creates a tokio runtime
 /// and runs the multiplexer with event watcher and heartbeat components.
 pub fn run(workspace: &str, system_prompt: &str, acp_binary: &str) -> Result<()> {
+    // Initialize tracing to stderr so diagnostics appear in brain-stderr.log.
+    // Without this, all tracing::info!/error!/warn! calls are no-ops.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .init();
+
     let workspace_path = PathBuf::from(workspace);
     let prompt_content = std::fs::read_to_string(system_prompt)
         .with_context(|| format!("Failed to read brain system prompt at {system_prompt}"))?;
+
+    tracing::info!(
+        workspace = %workspace,
+        acp_binary = %acp_binary,
+        "Brain multiplexer starting"
+    );
 
     let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
 
@@ -121,6 +138,9 @@ fn collect_env_vars() -> Vec<(String, String)> {
         "GOOGLE_CLOUD_PROJECT",
         "CLOUDSDK_CONFIG",
         "CLOUDSDK_CORE_PROJECT",
+        // Bridge adapter config (room + identity for Matrix bridge I/O)
+        "BM_BRAIN_ROOM_ID",
+        "BM_BRAIN_USER_ID",
     ] {
         if let Ok(val) = std::env::var(key) {
             vars.push((key.to_string(), val));
@@ -165,5 +185,47 @@ mod tests {
             .iter()
             .filter(|(k, _)| k.starts_with("ANTHROPIC_") || k.starts_with("CLOUD"))
             .count();
+    }
+
+    #[test]
+    fn collect_env_vars_includes_brain_room_id_when_set() {
+        // Safety: this test uses a unique env var name that won't collide
+        // with other tests. We set-then-remove to avoid pollution.
+        unsafe { std::env::set_var("BM_BRAIN_ROOM_ID", "!test-room:localhost") };
+        let vars = collect_env_vars();
+        unsafe { std::env::remove_var("BM_BRAIN_ROOM_ID") };
+        assert!(
+            vars.iter()
+                .any(|(k, v)| k == "BM_BRAIN_ROOM_ID" && v == "!test-room:localhost"),
+            "BM_BRAIN_ROOM_ID should be collected when set"
+        );
+    }
+
+    #[test]
+    fn collect_env_vars_includes_brain_user_id_when_set() {
+        unsafe { std::env::set_var("BM_BRAIN_USER_ID", "@bot:localhost") };
+        let vars = collect_env_vars();
+        unsafe { std::env::remove_var("BM_BRAIN_USER_ID") };
+        assert!(
+            vars.iter()
+                .any(|(k, v)| k == "BM_BRAIN_USER_ID" && v == "@bot:localhost"),
+            "BM_BRAIN_USER_ID should be collected when set"
+        );
+    }
+
+    #[test]
+    fn collect_env_vars_skips_brain_vars_when_absent() {
+        // Ensure BM_BRAIN_* vars are not present when not set in the environment
+        unsafe { std::env::remove_var("BM_BRAIN_ROOM_ID") };
+        unsafe { std::env::remove_var("BM_BRAIN_USER_ID") };
+        let vars = collect_env_vars();
+        assert!(
+            !vars.iter().any(|(k, _)| k == "BM_BRAIN_ROOM_ID"),
+            "BM_BRAIN_ROOM_ID should not appear when unset"
+        );
+        assert!(
+            !vars.iter().any(|(k, _)| k == "BM_BRAIN_USER_ID"),
+            "BM_BRAIN_USER_ID should not appear when unset"
+        );
     }
 }

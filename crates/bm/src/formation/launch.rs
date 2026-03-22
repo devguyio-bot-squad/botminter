@@ -51,18 +51,23 @@ pub fn launch_ralph(
     Ok(child.id())
 }
 
+/// Configuration for launching a brain process, bundling bridge-related params.
+pub struct BrainLaunchConfig<'a> {
+    pub workspace: &'a std::path::Path,
+    pub gh_token: &'a str,
+    pub system_prompt_path: &'a std::path::Path,
+    pub member_token: Option<&'a str>,
+    pub bridge_type: Option<&'a str>,
+    pub service_url: Option<&'a str>,
+    pub room_id: Option<&'a str>,
+    pub user_id: Option<&'a str>,
+}
+
 /// Launches the brain multiplexer for a chat-first member.
 ///
 /// Spawns `bm brain-run` as a background process, which runs the multiplexer
 /// event loop (ACP session + event watcher + heartbeat). Returns the child PID.
-pub fn launch_brain(
-    workspace: &std::path::Path,
-    gh_token: &str,
-    system_prompt_path: &std::path::Path,
-    member_token: Option<&str>,
-    bridge_type: Option<&str>,
-    service_url: Option<&str>,
-) -> Result<u32> {
+pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
     let bm_binary = std::env::current_exe()
         .context("Failed to determine bm binary path")?;
 
@@ -71,24 +76,24 @@ pub fn launch_brain(
         "brain-run",
         "--workspace",
     ])
-    .arg(workspace)
+    .arg(config.workspace)
     .arg("--system-prompt")
-    .arg(system_prompt_path)
-    .current_dir(workspace)
-    .env("GH_TOKEN", gh_token)
+    .arg(config.system_prompt_path)
+    .current_dir(config.workspace)
+    .env("GH_TOKEN", config.gh_token)
     .env_remove("CLAUDECODE");
 
-    if let Some(token) = member_token {
-        match bridge_type {
+    if let Some(token) = config.member_token {
+        match config.bridge_type {
             Some("rocketchat") => {
                 cmd.env("RALPH_ROCKETCHAT_AUTH_TOKEN", token);
-                if let Some(url) = service_url {
+                if let Some(url) = config.service_url {
                     cmd.env("RALPH_ROCKETCHAT_SERVER_URL", url);
                 }
             }
             Some("tuwunel") => {
                 cmd.env("RALPH_MATRIX_ACCESS_TOKEN", token);
-                if let Some(url) = service_url {
+                if let Some(url) = config.service_url {
                     cmd.env("RALPH_MATRIX_HOMESERVER_URL", url);
                 }
             }
@@ -98,15 +103,26 @@ pub fn launch_brain(
         }
     }
 
-    // Detach from current process group
+    // Bridge adapter config: room ID and member user ID for Matrix bridge I/O
+    if let Some(rid) = config.room_id {
+        cmd.env("BM_BRAIN_ROOM_ID", rid);
+    }
+    if let Some(uid) = config.user_id {
+        cmd.env("BM_BRAIN_USER_ID", uid);
+    }
+
+    // Detach from current process group — redirect stderr to log file for diagnostics
+    let log_path = config.workspace.join("brain-stderr.log");
+    let log_file = std::fs::File::create(&log_path)
+        .with_context(|| format!("Failed to create brain stderr log at {}", log_path.display()))?;
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
+        .stderr(std::process::Stdio::from(log_file));
 
     let child = cmd.spawn().with_context(|| {
         format!(
             "Failed to spawn brain in {}",
-            workspace.display()
+            config.workspace.display()
         )
     })?;
 
@@ -173,16 +189,10 @@ mod tests {
     }
 
     #[test]
-    fn launch_brain_signature_accepts_system_prompt_path() {
-        // Verify launch_brain compiles with the expected parameters
-        let _: fn(
-            &std::path::Path,
-            &str,
-            &std::path::Path,
-            Option<&str>,
-            Option<&str>,
-            Option<&str>,
-        ) -> Result<u32> = launch_brain;
+    fn launch_brain_signature_accepts_config_struct() {
+        // Verify launch_brain compiles with BrainLaunchConfig,
+        // including room_id and user_id for bridge adapter config.
+        let _: fn(&BrainLaunchConfig<'_>) -> Result<u32> = launch_brain;
     }
 
     #[test]
