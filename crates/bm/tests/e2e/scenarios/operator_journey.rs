@@ -312,6 +312,88 @@ fn bridge_room_create_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + st
     }
 }
 
+fn bridge_room_membership_verify_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        if env.get_export("tuwunel_port").is_none() {
+            eprintln!("SKIP: bridge not started (no podman)");
+            return;
+        }
+
+        let port = env.get_export("tuwunel_port").unwrap().to_string();
+        // Use 127.0.0.1 (not localhost) because the Tuwunel container only
+        // listens on IPv4. curl resolves "localhost" to [::1] (IPv6) first,
+        // which gets connection-reset (exit 56).
+        let homeserver_url = format!("http://127.0.0.1:{}", port);
+
+        // Get the room ID from bridge-state.json
+        let bstate_path = env.home
+            .join("workspaces")
+            .join(TEAM_NAME)
+            .join("bridge-state.json");
+        let bstate_contents = fs::read_to_string(&bstate_path).unwrap();
+        let bstate: serde_json::Value = serde_json::from_str(&bstate_contents).unwrap();
+        let room_id = bstate["rooms"].as_array()
+            .and_then(|rooms| rooms.first())
+            .and_then(|r| r["room_id"].as_str())
+            .expect("should have a room_id in bridge-state.json");
+
+        // Get the member's access token via identity show --reveal
+        let show_out = env.command("bm")
+            .args(["bridge", "identity", "show", MEMBER_DIR, "--reveal", "-t", TEAM_NAME])
+            .run();
+        let token = show_out.lines()
+            .find(|l| l.contains("Token:"))
+            .and_then(|l| l.split_whitespace().nth(1))
+            .expect("should be able to extract token from identity show output");
+
+        eprintln!("  membership_verify: room_id={}, token={}...{}", room_id,
+            &token[..token.len().min(4)],
+            &token[token.len().saturating_sub(4)..]);
+
+        // Join the room using the member's token (simulates what the brain does).
+        // Use -s (silent) without -f so we get the response body on HTTP errors.
+        let join_url = format!(
+            "{}/_matrix/client/v3/join/{}",
+            homeserver_url,
+            room_id.replace('!', "%21").replace(':', "%3A")
+        );
+        let auth_header = format!("Authorization: Bearer {}", token);
+        let join_out = env.command("curl")
+            .args([
+                "-s", "--max-time", "10",
+                "-X", "POST",
+                "-H", &auth_header,
+                "-H", "Content-Type: application/json",
+                "-d", "{}",
+                &join_url,
+            ])
+            .run();
+        assert!(
+            join_out.contains("room_id"),
+            "join should succeed and return room_id, got: {}",
+            join_out
+        );
+
+        // Verify the member can see the room in /joined_rooms
+        let joined_url = format!(
+            "{}/_matrix/client/v3/joined_rooms",
+            homeserver_url,
+        );
+        let joined_out = env.command("curl")
+            .args([
+                "-s", "--max-time", "10",
+                "-H", &auth_header,
+                &joined_url,
+            ])
+            .run();
+        assert!(
+            joined_out.contains(room_id),
+            "member should see room {} in /joined_rooms, got: {}",
+            room_id, joined_out
+        );
+    }
+}
+
 fn start_skips_running_bridge_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         // Member is already running from start_status_healthy. Starting again should
@@ -974,6 +1056,7 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         .case("bridge_identity_show_fresh", bridge_identity_show_fn())
         .case("bridge_identity_list_fresh", bridge_identity_list_fn())
         .case("bridge_room_create_fresh", bridge_room_create_fn(gh_token.clone()))
+        .case("bridge_room_membership_verify_fresh", bridge_room_membership_verify_fn())
         .case("sync_bridge_and_repos_fresh", sync_bridge_and_repos_fn(gh_token.clone()))
         .case("sync_idempotent_fresh", sync_idempotent_fn(gh_token.clone()))
         .case("inbox_lifecycle_fresh", inbox_lifecycle_fn())
@@ -1051,6 +1134,7 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         .case("bridge_identity_show_existing", bridge_identity_show_fn())
         .case("bridge_identity_list_existing", bridge_identity_list_fn())
         .case("bridge_room_create_existing", bridge_room_create_fn(gh_token.clone()))
+        .case("bridge_room_membership_verify_existing", bridge_room_membership_verify_fn())
         .case("sync_bridge_and_repos_existing", sync_bridge_and_repos_fn(gh_token.clone()))
         .case("sync_idempotent_existing", sync_idempotent_fn(gh_token.clone()))
         .case("inbox_lifecycle_existing", inbox_lifecycle_fn())
@@ -1130,27 +1214,27 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
     //   5: hire, 6: projects_add, 7: teams_show
     //   8: bridge_start, 9: bridge_start_idempotent
     //   10: bridge_identity_add, 11: bridge_identity_show, 12: bridge_identity_list
-    //   13: bridge_room_create
-    //   14: sync_bridge_and_repos, 15: sync_idempotent
-    //   16: inbox_lifecycle, 17: inbox_resync_preserves
-    //   18: projects_sync
-    //   19: start_without_ralph_errors
-    //   20: start_status_healthy, 21: start_skips_running, 22: bridge_functional
-    //   23: stop_clean_shutdown
-    //   24: start_single_member, 25: stop_single_member
-    //   26: stop_force_kills, 27: status_detects_crashed
-    //   28: members_list, 29: teams_list
-    //   30: daemon_start_poll, 31: daemon_poll_launches, 32: daemon_stop_poll
-    //   33: daemon_start_webhook, 34: daemon_stop_webhook
-    //   35-38: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
-    //   39: bridge_stop
-    //   40: reset_home, 41: verify_board_survives_reset
-    // Second pass starts at 42, same shape minus bootstrap (+16 cases, so offset = 42)
-    //   58: start_status_healthy, 59: start_skips_running, 60: bridge_functional
-    //   71: daemon_start_webhook, 72: daemon_stop_webhook
+    //   13: bridge_room_create, 14: bridge_room_membership_verify
+    //   15: sync_bridge_and_repos, 16: sync_idempotent
+    //   17: inbox_lifecycle, 18: inbox_resync_preserves
+    //   19: projects_sync
+    //   20: start_without_ralph_errors
+    //   21: start_status_healthy, 22: start_skips_running, 23: bridge_functional
+    //   24: stop_clean_shutdown
+    //   25: start_single_member, 26: stop_single_member
+    //   27: stop_force_kills, 28: status_detects_crashed
+    //   29: members_list, 30: teams_list
+    //   31: daemon_start_poll, 32: daemon_poll_launches, 33: daemon_stop_poll
+    //   34: daemon_start_webhook, 35: daemon_stop_webhook
+    //   36-39: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
+    //   40: bridge_stop
+    //   41: reset_home, 42: verify_board_survives_reset
+    // Second pass starts at 43, same shape minus bootstrap (+17 cases, so offset = 43)
+    //   60: start_status_healthy, 61: start_skips_running, 62: bridge_functional
+    //   73: daemon_start_webhook, 74: daemon_stop_webhook
     suite
-        .group(20, 22).group(33, 34)
-        .group(58, 60).group(71, 72)
+        .group(21, 23).group(34, 35)
+        .group(60, 62).group(73, 74)
 }
 
 pub fn scenario(config: &E2eConfig) -> Trial {
