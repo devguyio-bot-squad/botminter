@@ -140,12 +140,14 @@ pub fn build_cli_with_completions() -> clap::Command {
         })
         // ── start ─────────────────────────────────────────────
         .mut_subcommand("start", |c| {
-            c.mut_arg("team", |a| a.add(make(teams.clone())))
+            c.mut_arg("member", |a| a.add(make(members.clone())))
+                .mut_arg("team", |a| a.add(make(teams.clone())))
                 .mut_arg("formation", |a| a.add(make(formations)))
         })
         // ── stop ──────────────────────────────────────────────
         .mut_subcommand("stop", |c| {
-            c.mut_arg("team", |a| a.add(make(teams.clone())))
+            c.mut_arg("member", |a| a.add(make(members.clone())))
+                .mut_arg("team", |a| a.add(make(teams.clone())))
         })
         // ── status ────────────────────────────────────────────
         .mut_subcommand("status", |c| {
