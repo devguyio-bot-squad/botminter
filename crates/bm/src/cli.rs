@@ -648,6 +648,17 @@ pub enum BridgeRoomCommand {
         team: Option<String>,
     },
 
+    /// Create a private DM room for a brain member
+    #[command(name = "create-dm")]
+    CreateDm {
+        /// Member name
+        member: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
     /// List rooms
     List {
         /// Team to operate on

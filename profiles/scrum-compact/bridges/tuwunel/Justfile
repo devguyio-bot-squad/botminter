@@ -636,6 +636,70 @@ room-create name:
     {"name": "${ROOM_NAME}", "room_id": "${ROOM_ID}"}
     ENDJSON
 
+# Create a private DM room between the operator and a specific member.
+# The member name is used to look up the member's MXID from bridge-state.json.
+room-create-dm member_name:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{_MATRIX_FN}}
+
+    MATRIX_URL="{{MATRIX_URL}}"
+    ADMIN_USER="{{ADMIN_USER}}"
+    ADMIN_PASS="{{ADMIN_PASS}}"
+    MEMBER_NAME="{{member_name}}"
+
+    # Login as admin
+    LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
+        )
+
+    ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
+
+    if [ "$ADMIN_TOKEN" = "null" ] || [ -z "$ADMIN_TOKEN" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: Admin login returned no token."
+        echo >&2 "[tuwunel-bridge] Response: $LOGIN_RESP"
+        exit 1
+    fi
+
+    # Look up member's MXID from bridge-state.json
+    BRIDGE_STATE_PATH="${BM_BRIDGE_STATE_DIR}/bridge-state.json"
+    MEMBER_MXID=""
+    if [ -f "$BRIDGE_STATE_PATH" ]; then
+        MEMBER_MXID=$(jq -r --arg name "$MEMBER_NAME" '.identities[$name].user_id // empty' "$BRIDGE_STATE_PATH" 2>/dev/null || true)
+    fi
+
+    if [ -z "$MEMBER_MXID" ] || ! [[ "$MEMBER_MXID" == @* ]]; then
+        echo >&2 "[tuwunel-bridge] FATAL: No valid MXID found for member '${MEMBER_NAME}' in bridge-state.json."
+        exit 1
+    fi
+
+    echo >&2 "[tuwunel-bridge] Creating DM room for ${MEMBER_NAME} (${MEMBER_MXID})..."
+
+    # Check if a DM room already exists by looking for a room with this member
+    # Use a naming convention: dm-<member_name> as a discoverable room name
+    DM_ROOM_NAME="dm-${MEMBER_NAME}"
+
+    # Create private DM room — invite only the specific member
+    CREATE_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/createRoom" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+        -d "{\"name\":\"${DM_ROOM_NAME}\",\"preset\":\"trusted_private_chat\",\"is_direct\":true,\"invite\":[\"${MEMBER_MXID}\"]}" \
+        )
+
+    ROOM_ID=$(echo "$CREATE_RESP" | jq -r '.room_id')
+    if [ "$ROOM_ID" = "null" ] || [ -z "$ROOM_ID" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: DM room creation returned no room_id."
+        echo >&2 "[tuwunel-bridge] Response: $CREATE_RESP"
+        exit 1
+    fi
+    echo >&2 "[tuwunel-bridge] DM room for ${MEMBER_NAME} created. roomId=${ROOM_ID}"
+
+    mkdir -p "$BRIDGE_CONFIG_DIR"
+    cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"name": "${DM_ROOM_NAME}", "room_id": "${ROOM_ID}"}
+    ENDJSON
+
 # List rooms on the Tuwunel homeserver.
 room-list:
     #!/usr/bin/env bash

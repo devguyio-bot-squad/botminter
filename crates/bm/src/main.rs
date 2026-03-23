@@ -142,6 +142,9 @@ fn main() -> Result<()> {
                 BridgeRoomCommand::Create { name, team } => {
                     commands::bridge::room_create(&name, team.as_deref())?
                 }
+                BridgeRoomCommand::CreateDm { member, team } => {
+                    commands::bridge::room_create_dm(&member, team.as_deref())?
+                }
                 BridgeRoomCommand::List { team } => {
                     commands::bridge::room_list(team.as_deref())?
                 }

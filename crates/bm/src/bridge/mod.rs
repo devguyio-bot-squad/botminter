@@ -204,6 +204,15 @@ impl Bridge {
             .and_then(|r| r.room_id.as_deref())
     }
 
+    /// Returns the room ID for a specific member's DM room.
+    pub fn room_for_member(&self, member_name: &str) -> Option<&str> {
+        self.state
+            .rooms
+            .iter()
+            .find(|r| r.member.as_deref() == Some(member_name))
+            .and_then(|r| r.room_id.as_deref())
+    }
+
     /// Returns the bridge service URL.
     pub fn service_url(&self) -> Option<&str> {
         self.state.service_url.as_deref()

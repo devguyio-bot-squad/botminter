@@ -135,8 +135,9 @@ pub fn start_local_members(
             None
         };
 
-        // Resolve per-member bridge user ID (for brain bridge adapter)
+        // Resolve per-member bridge user ID and room ID (for brain bridge adapter)
         let member_user_id = (bridge_creds.user_id_by_member)(member_dir_name);
+        let member_room_id = (bridge_creds.room_id_by_member)(member_dir_name);
 
         // Diagnostic: credential exists but RObot.enabled is false
         let robot_mismatch = if member_token.is_some() {
@@ -159,7 +160,8 @@ pub fn start_local_members(
                 member_token: member_token.as_deref(),
                 bridge_type: bridge_creds.bridge_type_name.as_deref(),
                 service_url: bridge_creds.service_url.as_deref(),
-                room_id: bridge_creds.room_id.as_deref(),
+                room_id: member_room_id.as_deref()
+                    .or(bridge_creds.room_id.as_deref()),
                 user_id: member_user_id.as_deref(),
                 team_repo: Some(team_repo),
             };
@@ -286,7 +288,7 @@ pub fn auto_start_bridge(
 }
 
 /// Resolve bridge credential store and metadata for per-member token injection.
-type MemberUserIdLookup = Box<dyn Fn(&str) -> Option<String>>;
+type MemberLookup = Box<dyn Fn(&str) -> Option<String>>;
 
 /// Resolved bridge credentials and metadata for member launch.
 struct BridgeCredentials {
@@ -294,7 +296,8 @@ struct BridgeCredentials {
     bridge_type_name: Option<String>,
     service_url: Option<String>,
     room_id: Option<String>,
-    user_id_by_member: MemberUserIdLookup,
+    user_id_by_member: MemberLookup,
+    room_id_by_member: MemberLookup,
 }
 
 fn resolve_bridge_credentials(
@@ -310,6 +313,18 @@ fn resolve_bridge_credentials(
         let bname = Some(b.bridge_name().to_string());
         let surl = b.service_url().map(|s| s.to_string());
         let room = b.default_room_id().map(|s| s.to_string());
+
+        // Pre-compute per-member room lookup (bridge is moved into user_id closure)
+        let member_rooms: std::collections::HashMap<String, String> = b
+            .rooms()
+            .iter()
+            .filter_map(|r| {
+                let member = r.member.as_ref()?;
+                let rid = r.room_id.as_ref()?;
+                Some((member.clone(), rid.clone()))
+            })
+            .collect();
+
         // Capture bridge for per-member user_id lookup
         Ok(BridgeCredentials {
             credential_store: Some(store),
@@ -319,6 +334,9 @@ fn resolve_bridge_credentials(
             user_id_by_member: Box::new(move |member_name: &str| {
                 b.member_user_id(member_name)
             }),
+            room_id_by_member: Box::new(move |member_name: &str| {
+                member_rooms.get(member_name).cloned()
+            }),
         })
     } else {
         Ok(BridgeCredentials {
@@ -327,6 +345,7 @@ fn resolve_bridge_credentials(
             service_url: None,
             room_id: None,
             user_id_by_member: Box::new(|_| None),
+            room_id_by_member: Box::new(|_| None),
         })
     }
 }

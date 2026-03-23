@@ -516,6 +516,7 @@ projects:
                     },
                     BridgeCommand::Room { command } => match command {
                         BridgeRoomCommand::Create { .. } => {}
+                        BridgeRoomCommand::CreateDm { .. } => {}
                         BridgeRoomCommand::List { .. } => {}
                     },
                 },

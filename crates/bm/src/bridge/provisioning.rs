@@ -204,6 +204,7 @@ impl Bridge {
                     name: room_name.clone(),
                     room_id,
                     created_at: chrono::Utc::now().to_rfc3339(),
+                    member: None,
                 });
                 room_created = Some(room_name);
             }
