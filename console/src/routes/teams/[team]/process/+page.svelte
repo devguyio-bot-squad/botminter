@@ -704,7 +704,7 @@
 		padding: 4px 10px;
 		border-radius: 6px;
 		border: 1px solid var(--color-surface-border);
-		background: white;
+		background: var(--color-surface);
 		color: #6b7280;
 		font-size: 12px;
 		cursor: pointer;
@@ -722,7 +722,7 @@
 		position: fixed;
 		inset: 0;
 		z-index: 50;
-		background: white;
+		background: var(--color-surface);
 		display: flex;
 		flex-direction: column;
 	}
@@ -763,7 +763,7 @@
 		justify-content: center;
 		border-radius: 6px;
 		border: 1px solid var(--color-surface-border);
-		background: white;
+		background: var(--color-surface);
 		color: #374151;
 		cursor: pointer;
 		transition: all 0.15s;

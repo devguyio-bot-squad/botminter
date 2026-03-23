@@ -2,6 +2,7 @@
 	import { page } from '$app/stores';
 	import type { TeamSummary } from '$lib/types.js';
 	import TeamSelector from './TeamSelector.svelte';
+	import ThemeToggle from './ThemeToggle.svelte';
 
 	interface Props {
 		teams: TeamSummary[];
@@ -91,7 +92,7 @@
 		{/each}
 	</nav>
 
-	<div class="p-4 border-t border-surface-border">
-		<div class="text-xs text-gray-500">BotMinter Console</div>
+	<div class="border-t border-surface-border">
+		<ThemeToggle />
 	</div>
 </aside>

@@ -7,14 +7,6 @@
 	--color-accent: #1a78d0;
 	--color-accent-muted: #125a9e;
 	--color-brand-orange: #fe6b05;
-	--color-role-po: #fe6b05;
-	--color-role-arch: #1a78d0;
-	--color-role-dev: #22c55e;
-	--color-role-qe: #06b6d4;
-	--color-role-lead: #a855f7;
-	--color-role-sre: #ef4444;
-	--color-role-cw: #ec4899;
-	--color-role-mgr: #8b5cf6;
 	--font-family-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
 
@@ -22,7 +14,46 @@ body {
 	font-family: 'Inter', system-ui, sans-serif;
 }
 
-/* Markdown prose styling for marked output */
+/* ── Dark theme overrides ───────────────────────────────────── */
+/* Matches docs site dark palette: bg #202020, raised #2a2a2a  */
+
+.dark {
+	--color-surface: #202020;
+	--color-surface-raised: #2a2a2a;
+	--color-surface-border: #3a3a3a;
+	--color-accent: #4a9be0;
+	--color-accent-muted: #1a78d0;
+	color-scheme: dark;
+}
+
+/* Text color overrides for dark mode */
+.dark body, .dark { color: #e5e7eb; }
+
+.dark .text-gray-900 { color: #f3f4f6; }
+.dark .text-gray-800 { color: #e5e7eb; }
+.dark .text-gray-700 { color: #d1d5db; }
+.dark .text-gray-600 { color: #9ca3af; }
+.dark .text-gray-500 { color: #9ca3af; }
+.dark .text-gray-400 { color: #6b7280; }
+
+/* Hover overrides */
+.dark .hover\:text-gray-900:hover { color: #f9fafb; }
+.dark .hover\:text-gray-800:hover { color: #f3f4f6; }
+
+/* Background overrides */
+.dark .hover\:bg-black\/5:hover { background-color: rgba(255, 255, 255, 0.05); }
+.dark .hover\:bg-black\/\[0\.02\]:hover { background-color: rgba(255, 255, 255, 0.03); }
+.dark .hover\:bg-black\/\[0\.03\]:hover { background-color: rgba(255, 255, 255, 0.03); }
+.dark .bg-gray-300 { background-color: #4b5563; }
+.dark .bg-gray-200\/60 { background-color: rgba(75, 85, 99, 0.4); }
+.dark .border-gray-300 { border-color: #4b5563; }
+
+/* Emerald/status badge overrides */
+.dark .bg-emerald-500\/10 { background-color: rgba(16, 185, 129, 0.15); }
+.dark .text-emerald-400 { color: #34d399; }
+
+/* ── Markdown prose styling ─────────────────────────────────── */
+
 .prose h1 { font-size: 1.5rem; font-weight: 700; margin: 2rem 0 1rem; color: #111827; }
 .prose h2 { font-size: 1.25rem; font-weight: 600; margin: 1.75rem 0 0.75rem; color: #111827; }
 .prose h3 { font-size: 1.1rem; font-weight: 600; margin: 1.5rem 0 0.5rem; color: #111827; }
@@ -94,3 +125,11 @@ body {
 	border-top: 1px solid var(--color-surface-border);
 	margin: 1.5rem 0;
 }
+
+/* Dark prose overrides */
+.dark .prose h1, .dark .prose h2, .dark .prose h3, .dark .prose h4 { color: #f3f4f6; }
+.dark .prose strong { color: #f3f4f6; }
+.dark .prose pre code { color: #d1d5db; }
+.dark .prose th { color: #d1d5db; }
+.dark .prose td { color: #9ca3af; }
+.dark .prose blockquote { color: #9ca3af; }
