@@ -61,6 +61,7 @@ pub struct BrainLaunchConfig<'a> {
     pub service_url: Option<&'a str>,
     pub room_id: Option<&'a str>,
     pub user_id: Option<&'a str>,
+    pub team_repo: Option<&'a std::path::Path>,
 }
 
 /// Launches the brain multiplexer for a chat-first member.
@@ -109,6 +110,10 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
     }
     if let Some(uid) = config.user_id {
         cmd.env("BM_BRAIN_USER_ID", uid);
+    }
+    // Team repo path for gh commands and board awareness
+    if let Some(repo) = config.team_repo {
+        cmd.env("BM_TEAM_REPO", repo);
     }
 
     // Detach from current process group — redirect stderr to log file for diagnostics

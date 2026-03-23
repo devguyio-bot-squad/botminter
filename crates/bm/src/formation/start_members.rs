@@ -161,6 +161,7 @@ pub fn start_local_members(
                 service_url: bridge_creds.service_url.as_deref(),
                 room_id: bridge_creds.room_id.as_deref(),
                 user_id: member_user_id.as_deref(),
+                team_repo: Some(team_repo),
             };
             formation::launch_brain(&brain_config)
         } else {

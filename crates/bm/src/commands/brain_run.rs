@@ -186,6 +186,8 @@ const ENV_VAR_ALLOWLIST: &[&str] = &[
     // Bridge adapter config (room + identity for Matrix bridge I/O)
     "BM_BRAIN_ROOM_ID",
     "BM_BRAIN_USER_ID",
+    // Team repo path (for gh commands and board awareness)
+    "BM_TEAM_REPO",
 ];
 
 /// Collect relevant environment variables for the ACP process.
