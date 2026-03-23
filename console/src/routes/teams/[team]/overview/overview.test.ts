@@ -42,6 +42,17 @@ vi.mock('$app/stores', () => ({
 vi.mock('$lib/api.js', () => ({
 	api: {
 		fetchOverview: vi.fn().mockResolvedValue(mockOverview),
+		fetchProcess: vi.fn().mockResolvedValue({
+			statuses: [
+				{ name: 'po:triage', description: '' },
+				{ name: 'arch:design', description: '' },
+				{ name: 'dev:ready', description: '' }
+			],
+			workflows: [],
+			labels: [],
+			views: [],
+			markdown: ''
+		}),
 		fetchTeams: vi.fn().mockResolvedValue([])
 	}
 }));
@@ -64,8 +75,9 @@ describe('Overview Page', () => {
 		await waitFor(() => {
 			expect(screen.getByText('2 defined')).toBeInTheDocument();
 		});
-		expect(screen.getByText('All-in-one member')).toBeInTheDocument();
-		expect(screen.getByText('Process improvement')).toBeInTheDocument();
+		// Role descriptions appear in both Roles card and Member rows
+		expect(screen.getAllByText('All-in-one member').length).toBeGreaterThanOrEqual(1);
+		expect(screen.getAllByText('Process improvement').length).toBeGreaterThanOrEqual(1);
 	});
 
 	it('renders members with hat counts', async () => {

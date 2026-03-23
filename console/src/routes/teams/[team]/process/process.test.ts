@@ -9,11 +9,11 @@ const { mockProcess } = vi.hoisted(() => {
 		workflows: [
 			{
 				name: 'epic',
-				dot: 'digraph epic { rankdir=LR; "po:triage" -> "po:backlog" }'
+				dot: 'digraph epic { rankdir=LR; "po:triage" -> "po:backlog" [label="accept"] }'
 			},
 			{
 				name: 'story',
-				dot: 'digraph story { rankdir=LR; "dev:ready" -> "qe:test-design" }'
+				dot: 'digraph story { rankdir=LR; "dev:ready" -> "qe:test-design" [label="start"] }'
 			}
 		],
 		statuses: [
@@ -53,12 +53,16 @@ vi.mock('$lib/api.js', () => ({
 	}
 }));
 
-// Mock @viz-js/viz — WASM doesn't work in vitest
-vi.mock('@viz-js/viz', () => ({
-	instance: vi.fn().mockResolvedValue({
-		renderString: vi.fn().mockReturnValue('<svg data-testid="mock-svg"><text>mock diagram</text></svg>')
-	})
+// Mock mermaid — WASM/canvas doesn't work in vitest
+vi.mock('mermaid', () => ({
+	default: {
+		initialize: vi.fn(),
+		render: vi.fn().mockResolvedValue({
+			svg: '<svg data-testid="mock-mermaid"><text>mock sequence diagram</text></svg>'
+		})
+	}
 }));
+
 
 import ProcessPage from './+page.svelte';
 
@@ -89,12 +93,10 @@ describe('Process Page', () => {
 
 		await waitFor(() => {
 			expect(screen.getByText('Role Responsibilities')).toBeInTheDocument();
-			// PO has 3 statuses (triage, backlog, design-review)
-			expect(screen.getByText('Product Owner (PO)')).toBeInTheDocument();
-			// ARCH has 1 status (design)
-			expect(screen.getByText('Architecture (ARCH)')).toBeInTheDocument();
-			// DEV has 1 status (ready)
-			expect(screen.getByText('Development (DEV)')).toBeInTheDocument();
+			// Roles appear in both the legend and responsibilities card
+			expect(screen.getAllByText('Product Owner (PO)').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Architecture (ARCH)').length).toBeGreaterThanOrEqual(1);
+			expect(screen.getAllByText('Development (DEV)').length).toBeGreaterThanOrEqual(1);
 		});
 	});
 
@@ -104,7 +106,6 @@ describe('Process Page', () => {
 		await waitFor(() => {
 			expect(screen.getByText('Human Gates')).toBeInTheDocument();
 			expect(screen.getByText('Supervised Mode')).toBeInTheDocument();
-			// po:design-review appears in both Role Responsibilities and Human Gates
 			expect(screen.getAllByText('po:design-review').length).toBeGreaterThanOrEqual(1);
 			expect(screen.getByText('Design doc awaiting human review')).toBeInTheDocument();
 		});
@@ -152,10 +153,8 @@ describe('Process Page', () => {
 		await fireEvent.click(screen.getByText('Views'));
 
 		await waitFor(() => {
-			// View names
 			expect(screen.getByText('PO')).toBeInTheDocument();
 			expect(screen.getByText('Developer')).toBeInTheDocument();
-			// Prefix badges
 			expect(screen.getByText('po')).toBeInTheDocument();
 			expect(screen.getByText('dev')).toBeInTheDocument();
 		});
@@ -175,13 +174,13 @@ describe('Process Page', () => {
 		});
 	});
 
-	it('renders SVG from viz.js mock', async () => {
+	it('renders mermaid sequence diagrams', async () => {
 		const { container } = render(ProcessPage);
 
 		await waitFor(() => {
-			const svgContainer = container.querySelector('.workflow-svg');
-			expect(svgContainer).not.toBeNull();
-			expect(svgContainer?.innerHTML).toContain('mock diagram');
+			const viewport = container.querySelector('.diagram-viewport');
+			expect(viewport).not.toBeNull();
+			expect(viewport?.innerHTML).toContain('mock sequence diagram');
 		});
 	});
 });

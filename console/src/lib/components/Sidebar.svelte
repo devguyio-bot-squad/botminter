@@ -63,12 +63,8 @@
 <aside class="w-56 bg-surface-raised border-r border-surface-border flex flex-col min-h-screen sticky top-0">
 	<div class="p-4 border-b border-surface-border">
 		<div class="flex items-center gap-2 mb-1">
-			<div
-				class="w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white text-xs font-bold"
-			>
-				BM
-			</div>
-			<span class="font-semibold text-sm text-white">BotMinter</span>
+			<img src="/logo.png" alt="BotMinter" class="h-7 w-auto" />
+			<span class="font-semibold text-sm text-gray-900">BotMinter</span>
 		</div>
 		<div class="text-xs text-gray-500 ml-9">Console</div>
 	</div>
@@ -84,7 +80,7 @@
 				href="/teams/{team}/{item.href}"
 				class="flex items-center gap-3 px-4 py-2 text-sm {active
 					? 'bg-accent/10 text-accent border-r-2 border-accent'
-					: 'text-gray-400 hover:text-gray-200 hover:bg-white/5'}"
+					: 'text-gray-500 hover:text-gray-900 hover:bg-black/5'}"
 				aria-current={active ? 'page' : undefined}
 			>
 				<svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">

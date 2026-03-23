@@ -8,13 +8,13 @@ generator_root := justfile_directory()
 default:
     @just --list
 
-# Build the bm CLI binary
-build:
-    cargo build -p bm
+# Build the bm CLI binary (with embedded console assets)
+build: console-build
+    cargo build -p bm --features console
 
-# Run unit tests only
+# Run unit tests only (includes console feature for embedded asset tests)
 unit:
-    cargo test -p bm
+    cargo test -p bm --features console
 
 # Run bridge conformance tests only
 conformance:
@@ -81,13 +81,12 @@ dev:
 console-build:
     cd {{ generator_root }}/console && npm run build
 
-# Build the full binary with embedded console assets
-build-full: console-build
-    cargo build -p bm --features console
+# Alias for build (kept for backwards compatibility)
+build-full: build
 
 # Run clippy with warnings as errors
 clippy:
-    cargo clippy -p bm -- -D warnings
+    cargo clippy -p bm --features console -- -D warnings
 
 # Set up docs virtual environment and install dependencies (idempotent)
 docs-setup:

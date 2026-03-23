@@ -26,8 +26,8 @@
 <header class="border-b border-surface-border px-8 py-5">
 	<div class="flex items-center justify-between">
 		<div>
-			<h1 class="text-xl font-semibold text-white">Invariants</h1>
-			<p class="text-sm text-gray-400 mt-0.5">Constitutional constraints that must be satisfied</p>
+			<h1 class="text-xl font-semibold text-gray-900">Invariants</h1>
+			<p class="text-sm text-gray-500 mt-0.5">Constitutional constraints that must be satisfied</p>
 		</div>
 		{#if tree}
 			<span class="text-xs text-gray-500">{tree.entries.length} rules</span>
@@ -58,7 +58,7 @@
 							<button
 								class="w-full text-left px-5 py-3 hover:bg-white/[0.02] transition-colors flex items-center gap-3 {selectedFile === entry.path
 									? 'bg-accent/10 text-accent border-r-2 border-accent'
-									: 'text-gray-400'}"
+									: 'text-gray-500'}"
 								onclick={() => (selectedFile = entry.path)}
 							>
 								<svg

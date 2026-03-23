@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { page } from '$app/stores';
-	import { onMount } from 'svelte';
 	import type { TreeResponse, TreeEntry } from '$lib/types.js';
 	import { api } from '$lib/api.js';
 	import FileEditor from '$lib/components/FileEditor.svelte';
@@ -13,11 +12,14 @@
 	let loading = $state(true);
 	let error = $state<string | null>(null);
 
-	onMount(async () => {
-		await loadPath();
+	// Re-run whenever team or currentPath changes (including initial mount)
+	$effect(() => {
+		const t = team;
+		const p = currentPath;
+		loadPath(t, p);
 	});
 
-	async function loadPath() {
+	async function loadPath(t: string, path: string) {
 		loading = true;
 		error = null;
 		isFile = false;
@@ -25,12 +27,12 @@
 
 		try {
 			// Try loading as directory first
-			const result = await api.fetchTree(team, currentPath || undefined);
+			const result = await api.fetchTree(t, path || undefined);
 			tree = result;
 			isFile = false;
 		} catch {
 			// If tree listing fails, it might be a file
-			if (currentPath) {
+			if (path) {
 				isFile = true;
 			} else {
 				error = 'Failed to load directory';
@@ -52,13 +54,13 @@
 
 <header class="border-b border-surface-border px-8 py-5">
 	<div class="flex items-center gap-2 text-sm">
-		<a href="/teams/{team}/files" class="text-gray-500 hover:text-gray-300">Files</a>
+		<a href="/teams/{team}/files" class="text-gray-500 hover:text-gray-800">Files</a>
 		{#each breadcrumbs() as crumb, i}
 			<span class="text-gray-600">/</span>
 			{#if i === breadcrumbs().length - 1}
-				<span class="text-white">{crumb.name}</span>
+				<span class="text-gray-900">{crumb.name}</span>
 			{:else}
-				<a href="/teams/{team}/files/{crumb.path}" class="text-gray-500 hover:text-gray-300">
+				<a href="/teams/{team}/files/{crumb.path}" class="text-gray-500 hover:text-gray-800">
 					{crumb.name}
 				</a>
 			{/if}
@@ -90,7 +92,7 @@
 					{#each tree.entries as entry}
 						<a
 							href="/teams/{team}/files/{entry.path}"
-							class="flex items-center gap-3 px-5 py-3 hover:bg-white/[0.02] transition-colors"
+							class="flex items-center gap-3 px-5 py-3 hover:bg-black/[0.03] transition-colors"
 						>
 							{#if entry.type === 'directory'}
 								<svg class="w-4 h-4 text-accent" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -101,7 +103,7 @@
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
 								</svg>
 							{/if}
-							<span class="text-sm {entry.type === 'directory' ? 'text-accent' : 'text-gray-300'} font-mono">
+							<span class="text-sm {entry.type === 'directory' ? 'text-accent' : 'text-gray-600'} font-mono">
 								{entry.name}
 							</span>
 						</a>

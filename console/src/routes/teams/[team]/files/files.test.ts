@@ -147,12 +147,12 @@ describe('File Browser Page - Directory', () => {
 		render(FilesPage);
 
 		await waitFor(() => {
-			// directories have accent color, files have gray
+			// directories use accent color class, files do not
 			const membersEl = screen.getByText('members');
 			expect(membersEl.className).toContain('text-accent');
 
 			const fileEl = screen.getByText('botminter.yml');
-			expect(fileEl.className).toContain('text-gray-300');
+			expect(fileEl.className).not.toContain('text-accent');
 		});
 	});
 

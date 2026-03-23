@@ -3880,4 +3880,38 @@ fn daemon_console_api_e2e_with_fixtures() {
             "content_type should indicate yaml"
         );
     }
+
+    // ── GET / (Console HTML) ──────────────────────────────────────
+    // Verifies the embedded SPA frontend is served at the root.
+    // This catches the case where the binary is built without --features console.
+    #[cfg(feature = "console")]
+    {
+        let resp = client
+            .get(format!("{base}/"))
+            .send()
+            .expect("GET /");
+        assert_eq!(resp.status().as_u16(), 200, "root should return 200");
+        let body = resp.text().unwrap();
+        assert!(
+            body.contains("<!doctype html>") || body.contains("<!DOCTYPE html>"),
+            "root should serve HTML, got: {}",
+            &body[..body.len().min(200)]
+        );
+    }
+
+    // ── GET /teams/anything (SPA client-side route) ───────────────
+    #[cfg(feature = "console")]
+    {
+        let resp = client
+            .get(format!("{base}/teams/nonexistent"))
+            .send()
+            .expect("GET SPA route");
+        assert_eq!(resp.status().as_u16(), 200, "SPA route should return 200");
+        let body = resp.text().unwrap();
+        assert!(
+            body.contains("<!doctype html>") || body.contains("<!DOCTYPE html>"),
+            "SPA fallback should serve index.html, got: {}",
+            &body[..body.len().min(200)]
+        );
+    }
 }

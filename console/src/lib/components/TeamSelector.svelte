@@ -29,7 +29,7 @@
 	>
 		<div class="flex items-center gap-2">
 			<div class="w-2 h-2 rounded-full bg-emerald-400"></div>
-			<span class="text-white font-medium">{selected}</span>
+			<span class="text-gray-900 font-medium">{selected}</span>
 		</div>
 		<svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 			<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
@@ -52,8 +52,8 @@
 					<a
 						href="/teams/{team.name}/overview"
 						class="flex items-center gap-2 px-3 py-2 text-sm {team.name === selected
-							? 'text-white bg-accent/10'
-							: 'text-gray-400 hover:text-white hover:bg-white/5'}"
+							? 'text-gray-900 bg-accent/10'
+							: 'text-gray-500 hover:text-gray-900 hover:bg-black/5'}"
 						role="option"
 						aria-selected={team.name === selected}
 						onclick={close}
@@ -61,7 +61,7 @@
 						<div
 							class="w-2 h-2 rounded-full {team.name === selected
 								? 'bg-emerald-400'
-								: 'bg-gray-600'}"
+								: 'bg-gray-300'}"
 						></div>
 						{team.name}
 						<span class="ml-auto text-[10px] text-gray-500">{team.profile}</span>

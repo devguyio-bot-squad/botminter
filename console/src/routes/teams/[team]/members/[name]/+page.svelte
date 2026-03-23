@@ -3,6 +3,8 @@
 	import { onMount } from 'svelte';
 	import type { MemberDetail } from '$lib/types.js';
 	import { api } from '$lib/api.js';
+	import { marked } from 'marked';
+	import { roleColor } from '$lib/role-colors.js';
 
 	const team = $derived($page.params.team ?? '');
 	const name = $derived($page.params.name ?? '');
@@ -24,29 +26,7 @@
 	});
 
 	function renderMarkdown(md: string): string {
-		return md
-			.replace(/&/g, '&amp;')
-			.replace(/</g, '&lt;')
-			.replace(/>/g, '&gt;')
-			.replace(
-				/^### (.+)$/gm,
-				'<h3 class="text-lg font-semibold text-white mt-6 mb-2">$1</h3>'
-			)
-			.replace(
-				/^## (.+)$/gm,
-				'<h2 class="text-xl font-semibold text-white mt-8 mb-3">$1</h2>'
-			)
-			.replace(
-				/^# (.+)$/gm,
-				'<h1 class="text-2xl font-bold text-white mt-8 mb-4">$1</h1>'
-			)
-			.replace(/\*\*(.+?)\*\*/g, '<strong class="text-white">$1</strong>')
-			.replace(
-				/`([^`]+)`/g,
-				'<code class="bg-surface px-1 py-0.5 rounded text-accent text-sm">$1</code>'
-			)
-			.replace(/^- (.+)$/gm, '<li class="ml-4 text-gray-300">$1</li>')
-			.replace(/\n\n/g, '<br/><br/>');
+		return marked.parse(md, { async: false }) as string;
 	}
 
 	function yamlEditor(node: HTMLElement, content: string) {
@@ -84,19 +64,19 @@
 						EditorView.theme({
 							'&': {
 								backgroundColor: 'transparent',
-								color: '#e5e7eb',
+								color: '#1f2937',
 								fontSize: '13px'
 							},
 							'.cm-gutters': {
 								backgroundColor: 'transparent',
-								color: '#4b5563',
+								color: '#9ca3af',
 								border: 'none'
 							},
 							'.cm-activeLineGutter': {
-								backgroundColor: 'rgba(255,255,255,0.03)'
+								backgroundColor: 'rgba(0,0,0,0.03)'
 							},
 							'.cm-activeLine': {
-								backgroundColor: 'rgba(255,255,255,0.03)'
+								backgroundColor: 'rgba(0,0,0,0.03)'
 							},
 							'.cm-cursor': {
 								borderLeftColor: '#60a5fa'
@@ -132,14 +112,6 @@
 		{ key: 'invariants' as const, label: 'Invariants' }
 	];
 
-	const ROLE_COLORS: Record<string, string> = {
-		superman: '#22c55e',
-		'team-manager': '#a855f7',
-		dev: '#22c55e',
-		qe: '#06b6d4',
-		arch: '#6366f1',
-		po: '#f59e0b'
-	};
 </script>
 
 {#if loading}
@@ -159,7 +131,7 @@
 			<div class="flex items-center gap-4">
 				<a
 					href="/teams/{team}/members"
-					class="text-gray-500 hover:text-gray-300 text-sm"
+					class="text-gray-500 hover:text-gray-800 text-sm"
 				>
 					&larr; Members
 				</a>
@@ -168,10 +140,10 @@
 						<span class="text-2xl">{member.comment_emoji}</span>
 					{/if}
 					<div>
-						<h1 class="text-xl font-semibold text-white">{member.name}</h1>
+						<h1 class="text-xl font-semibold text-gray-900">{member.name}</h1>
 						<span
 							class="text-[10px] px-1.5 py-0.5 rounded font-medium"
-							style="background-color: {ROLE_COLORS[member.role] ?? '#6b7280'}15; color: {ROLE_COLORS[member.role] ?? '#6b7280'}; border: 1px solid {ROLE_COLORS[member.role] ?? '#6b7280'}30"
+							style="background-color: {roleColor(member.role)}15; color: {roleColor(member.role)}; border: 1px solid {roleColor(member.role)}30"
 						>
 							{member.role}
 						</span>
@@ -193,7 +165,7 @@
 				<button
 					class="px-4 py-2 text-sm {activeTab === tab.key
 						? 'text-accent border-b-2 border-accent -mb-px'
-						: 'text-gray-400 hover:text-gray-200'}"
+						: 'text-gray-500 hover:text-gray-900'}"
 					onclick={() => (activeTab = tab.key)}
 				>
 					{tab.label}
@@ -208,7 +180,7 @@
 					<div class="yaml-editor" use:yamlEditor={member.ralph_yml}></div>
 				{:else}
 					<div class="p-8 text-center">
-						<p class="text-gray-400">No ralph.yml file found.</p>
+						<p class="text-gray-500">No ralph.yml file found.</p>
 					</div>
 				{/if}
 			</div>
@@ -217,7 +189,7 @@
 		{:else if activeTab === 'claude'}
 			<div class="bg-surface-raised border border-surface-border rounded-lg p-6">
 				{#if member.claude_md}
-					<div class="prose prose-invert max-w-none text-sm text-gray-300 leading-relaxed">
+					<div class="prose max-w-none text-sm text-gray-600 leading-relaxed">
 						{@html renderMarkdown(member.claude_md)}
 					</div>
 				{:else}
@@ -229,7 +201,7 @@
 		{:else if activeTab === 'prompt'}
 			<div class="bg-surface-raised border border-surface-border rounded-lg p-6">
 				{#if member.prompt_md}
-					<div class="prose prose-invert max-w-none text-sm text-gray-300 leading-relaxed">
+					<div class="prose max-w-none text-sm text-gray-600 leading-relaxed">
 						{@html renderMarkdown(member.prompt_md)}
 					</div>
 				{:else}
@@ -241,7 +213,7 @@
 		{:else if activeTab === 'hats'}
 			{#if member.hats.length === 0}
 				<div class="bg-surface-raised border border-surface-border rounded-lg p-8 text-center">
-					<p class="text-gray-400">No hats configured.</p>
+					<p class="text-gray-500">No hats configured.</p>
 				</div>
 			{:else}
 				<div class="space-y-3">
@@ -249,9 +221,9 @@
 						<div class="bg-surface-raised border border-surface-border rounded-lg p-5">
 							<div class="flex items-start justify-between mb-2">
 								<div>
-									<h3 class="text-sm font-medium text-white font-mono">{hat.name}</h3>
+									<h3 class="text-sm font-medium text-gray-900 font-mono">{hat.name}</h3>
 									{#if hat.description}
-										<p class="text-xs text-gray-400 mt-1 max-w-2xl">{hat.description}</p>
+										<p class="text-xs text-gray-500 mt-1 max-w-2xl">{hat.description}</p>
 									{/if}
 								</div>
 							</div>
@@ -290,7 +262,7 @@
 		{:else if activeTab === 'knowledge'}
 			<div class="bg-surface-raised border border-surface-border rounded-lg">
 				<div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
-					<h2 class="text-sm font-medium text-gray-300">Knowledge Files</h2>
+					<h2 class="text-sm font-medium text-gray-600">Knowledge Files</h2>
 					<span class="text-xs text-gray-500">{member.knowledge_files.length} files</span>
 				</div>
 				{#if member.knowledge_files.length > 0}
@@ -300,7 +272,7 @@
 								<svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
 								</svg>
-								<span class="text-gray-400 font-mono">{file}</span>
+								<span class="text-gray-500 font-mono">{file}</span>
 							</div>
 						{/each}
 					</div>
@@ -313,7 +285,7 @@
 		{:else if activeTab === 'invariants'}
 			<div class="bg-surface-raised border border-surface-border rounded-lg">
 				<div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
-					<h2 class="text-sm font-medium text-gray-300">Invariant Files</h2>
+					<h2 class="text-sm font-medium text-gray-600">Invariant Files</h2>
 					<span class="text-xs text-gray-500">{member.invariant_files.length} files</span>
 				</div>
 				{#if member.invariant_files.length > 0}
@@ -323,7 +295,7 @@
 								<svg class="w-4 h-4 text-amber-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
 									<path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
 								</svg>
-								<span class="text-gray-400 font-mono">{file}</span>
+								<span class="text-gray-500 font-mono">{file}</span>
 							</div>
 						{/each}
 					</div>

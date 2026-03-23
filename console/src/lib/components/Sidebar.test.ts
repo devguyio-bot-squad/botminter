@@ -29,7 +29,7 @@ describe('Sidebar', () => {
 
 	it('renders BotMinter branding', () => {
 		render(Sidebar, { props: { teams: mockTeams, team: 'my-team' } });
-		expect(screen.getByText('BM')).toBeInTheDocument();
+		expect(screen.getByAltText('BotMinter')).toBeInTheDocument();
 		expect(screen.getByText('BotMinter')).toBeInTheDocument();
 	});
 

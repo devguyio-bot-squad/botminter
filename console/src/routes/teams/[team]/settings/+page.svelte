@@ -41,12 +41,12 @@
 <header class="border-b border-surface-border px-8 py-5">
 	<div class="flex items-center justify-between">
 		<div>
-			<h1 class="text-xl font-semibold text-white">Settings</h1>
-			<p class="text-sm text-gray-400 mt-0.5">Team configuration and sync</p>
+			<h1 class="text-xl font-semibold text-gray-900">Settings</h1>
+			<p class="text-sm text-gray-500 mt-0.5">Team configuration and sync</p>
 		</div>
 		<button
 			class="px-4 py-2 text-sm rounded-md flex items-center gap-2 {syncing
-				? 'bg-gray-600 text-gray-400 cursor-not-allowed'
+				? 'bg-gray-300 text-gray-500 cursor-not-allowed'
 				: 'bg-accent/10 text-accent border border-accent/20 hover:bg-accent/20'}"
 			onclick={handleSync}
 			disabled={syncing}
@@ -73,7 +73,7 @@
 	<!-- botminter.yml editor -->
 	<div class="bg-surface-raised border border-surface-border rounded-lg overflow-hidden">
 		<div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
-			<h2 class="text-sm font-medium text-gray-300">botminter.yml</h2>
+			<h2 class="text-sm font-medium text-gray-600">botminter.yml</h2>
 			<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface text-gray-500 border border-surface-border">
 				Team manifest
 			</span>

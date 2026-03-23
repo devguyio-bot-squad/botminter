@@ -3,6 +3,7 @@
 	import { onMount } from 'svelte';
 	import type { MemberListEntry } from '$lib/types.js';
 	import { api } from '$lib/api.js';
+	import { roleColor } from '$lib/role-colors.js';
 
 	const team = $derived($page.params.team ?? '');
 	let members = $state<MemberListEntry[]>([]);
@@ -18,22 +19,13 @@
 			loading = false;
 		}
 	});
-
-	const ROLE_COLORS: Record<string, string> = {
-		superman: '#22c55e',
-		'team-manager': '#a855f7',
-		dev: '#22c55e',
-		qe: '#06b6d4',
-		arch: '#6366f1',
-		po: '#f59e0b'
-	};
 </script>
 
 <header class="border-b border-surface-border px-8 py-5">
 	<div class="flex items-center justify-between">
 		<div>
-			<h1 class="text-xl font-semibold text-white">Members</h1>
-			<p class="text-sm text-gray-400 mt-0.5">Team members and their hat configurations</p>
+			<h1 class="text-xl font-semibold text-gray-900">Members</h1>
+			<p class="text-sm text-gray-500 mt-0.5">Team members and their hat configurations</p>
 		</div>
 		{#if !loading && !error}
 			<span class="text-xs text-gray-500">{members.length} members</span>
@@ -55,7 +47,7 @@
 	<div class="p-8">
 		{#if members.length === 0}
 			<div class="bg-surface-raised border border-surface-border rounded-lg p-8 text-center">
-				<p class="text-gray-400">No members found.</p>
+				<p class="text-gray-500">No members found.</p>
 				<p class="text-gray-500 text-sm mt-1">
 					Hire members with: <code class="text-accent">bm hire &lt;role&gt;</code>
 				</p>
@@ -72,17 +64,17 @@
 								<span class="text-2xl">{member.comment_emoji}</span>
 							{:else}
 								<span
-									class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-white"
-									style="background-color: {ROLE_COLORS[member.role] ?? '#6b7280'}30"
+									class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-medium text-gray-900"
+									style="background-color: {roleColor(member.role)}30"
 								>
 									{member.name.charAt(0).toUpperCase()}
 								</span>
 							{/if}
 							<div>
-								<div class="text-sm font-medium text-white">{member.name}</div>
+								<div class="text-sm font-medium text-gray-900">{member.name}</div>
 								<span
 									class="text-[10px] px-1.5 py-0.5 rounded font-medium"
-									style="background-color: {ROLE_COLORS[member.role] ?? '#6b7280'}15; color: {ROLE_COLORS[member.role] ?? '#6b7280'}; border: 1px solid {ROLE_COLORS[member.role] ?? '#6b7280'}30"
+									style="background-color: {roleColor(member.role)}15; color: {roleColor(member.role)}; border: 1px solid {roleColor(member.role)}30"
 								>
 									{member.role}
 								</span>

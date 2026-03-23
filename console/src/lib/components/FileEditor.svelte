@@ -93,19 +93,19 @@
 			EditorView.theme({
 				'&': {
 					backgroundColor: 'transparent',
-					color: '#e5e7eb',
+					color: '#1f2937',
 					fontSize: '13px'
 				},
 				'.cm-gutters': {
 					backgroundColor: 'transparent',
-					color: '#4b5563',
+					color: '#9ca3af',
 					border: 'none'
 				},
 				'.cm-activeLineGutter': {
-					backgroundColor: 'rgba(255,255,255,0.03)'
+					backgroundColor: 'rgba(0,0,0,0.03)'
 				},
 				'.cm-activeLine': {
-					backgroundColor: 'rgba(255,255,255,0.03)'
+					backgroundColor: 'rgba(0,0,0,0.03)'
 				},
 				'.cm-cursor': {
 					borderLeftColor: '#60a5fa'
@@ -114,7 +114,7 @@
 					backgroundColor: 'rgba(96,165,250,0.15) !important'
 				},
 				'.cm-foldGutter .cm-gutterElement': {
-					color: '#6b7280'
+					color: '#9ca3af'
 				}
 			}),
 			EditorView.updateListener.of((update) => {
@@ -200,7 +200,7 @@
 	{#if !readonly}
 		<div class="flex items-center justify-between px-4 py-2 border-b border-surface-border bg-surface">
 			<div class="flex items-center gap-2 text-sm">
-				<span class="text-gray-400 font-mono">{filePath}</span>
+				<span class="text-gray-500 font-mono">{filePath}</span>
 				<span class="text-[10px] px-1.5 py-0.5 rounded bg-surface-raised text-gray-500 border border-surface-border">
 					{contentType}
 				</span>
