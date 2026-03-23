@@ -108,7 +108,7 @@ mod tests {
             team_name: "alpha-team".into(),
             role: "superman".into(),
             gh_org: "myorg".into(),
-            gh_repo: "myorg/team-repo".into(),
+            gh_repo: "team-repo".into(),
         }
     }
 
@@ -118,7 +118,7 @@ mod tests {
         let result = render_brain_prompt(template, &sample_vars());
         assert_eq!(
             result,
-            "You are alice on alpha-team, role=superman, org=myorg, repo=myorg/team-repo."
+            "You are alice on alpha-team, role=superman, org=myorg, repo=team-repo."
         );
     }
 
