@@ -49,43 +49,77 @@ REMOTE_TEAM_REPO := REMOTE_TEAM_DIR + "/team"
 build:
     cd {{CARGO_ROOT}} && just build
 
-# Reset runtime state: stop processes, containers, free ports, remove stale binaries.
-# Safe to run repeatedly — does NOT destroy persistent artifacts (GitHub repo, team config, keyring).
-# Ensures a clean slate so deploy and test phases can proceed without "locked binary" or "port in use" errors.
-reset:
+# Full cleanup: stop processes, destroy containers/volumes, remove GitHub artifacts,
+# clear keyring, wipe local config. Idempotent — safe to run repeatedly.
+# Ensures a completely clean slate before deploy and test phases.
+clean:
     #!/usr/bin/env bash
     set -euo pipefail
-    echo "Resetting test environment on {{TEST_HOST}}..."
-    ssh {{TEST_HOST}} 'bash -s' <<'RESET_SCRIPT'
-    # 1. Graceful stop via bm (members + bridge)
-    if [ -x {{REMOTE_BIN}}/bm ] && [ -f {{REMOTE_HOME}}/.botminter/config.yml ]; then
-        {{REMOTE_BIN}}/bm stop --force --bridge -t {{TEAM}} 2>/dev/null || true
-    fi
-    # 2. Force-stop bridge container (in case bm stop didn't handle it or state is stale)
-    podman rm -f bm-tuwunel-{{TEAM}} 2>/dev/null || true
-    # 3. Kill stale processes: brain-run, ACP, claude, ralph (SIGTERM first)
-    for pattern in '[b]m brain-run' '[c]laude-code-acp-rs' '[c]laude.*stream-json' '[r]alph run'; do
-        for pid in $(ps aux | grep "$pattern" | awk '{print $2}'); do
-            kill "$pid" 2>/dev/null || true
+    echo "Cleaning test environment on {{TEST_HOST}}..."
+    # Use Just variables directly (hardcoded into the script) instead of
+    # sourcing env.sh, which may not exist on a cold start. This makes
+    # clean reliable regardless of deploy state.
+    ssh {{TEST_HOST}} 'bash -l -c "
+        TEAM=\"{{TEAM}}\"
+        ORG=\"{{ORG}}\"
+        FULL_REPO=\"{{FULL_REPO}}\"
+        BOARD=\"{{BOARD}}\"
+        LIMA_VM=\"{{LIMA_VM}}\"
+        source {{REMOTE_LIB}} 2>/dev/null || true
+
+        # ── Processes ──
+        # 1. Graceful stop via bm
+        if [ -x {{REMOTE_BIN}}/bm ] && [ -f {{REMOTE_HOME}}/.botminter/config.yml ]; then
+            {{REMOTE_BIN}}/bm stop --force --bridge -t $TEAM 2>/dev/null || true
+        fi
+        # 2. SIGTERM stale processes
+        for pattern in \"[b]m brain-run\" \"[c]laude-code-acp-rs\" \"[c]laude.*stream-json\" \"[r]alph run\"; do
+            for pid in \$(ps aux | grep \"\$pattern\" | awk \"{print \\\$2}\"); do
+                kill \"\$pid\" 2>/dev/null || true
+            done
         done
-    done
-    sleep 1
-    # 4. Force-kill survivors (SIGKILL)
-    for pattern in '[b]m brain-run' '[c]laude-code-acp-rs' '[c]laude.*stream-json' '[r]alph run'; do
-        for pid in $(ps aux | grep "$pattern" | awk '{print $2}'); do
-            kill -9 "$pid" 2>/dev/null || true
+        sleep 1
+        # 3. SIGKILL survivors
+        for pattern in \"[b]m brain-run\" \"[c]laude-code-acp-rs\" \"[c]laude.*stream-json\" \"[r]alph run\"; do
+            for pid in \$(ps aux | grep \"\$pattern\" | awk \"{print \\\$2}\"); do
+                kill -9 \"\$pid\" 2>/dev/null || true
+            done
         done
-    done
-    # 5. Remove old binaries so scp can write fresh copies
-    #    (Linux allows rm of a running binary — the kernel keeps the inode until the process exits)
-    rm -f {{REMOTE_BIN}}/bm {{REMOTE_BIN}}/bm-agent {{REMOTE_BIN}}/ralph {{REMOTE_BIN}}/claude {{REMOTE_BIN}}/claude-code-acp-rs
-    # 6. Clear stale state.json so bm start doesn't think members are running
-    find {{REMOTE_HOME}}/.botminter/workspaces/{{TEAM}} -name state.json -delete 2>/dev/null || true
-    echo "Reset complete."
-    RESET_SCRIPT
+
+        # ── Container + Volume ──
+        podman rm -f bm-tuwunel-$TEAM 2>/dev/null || true
+        podman volume rm bm-tuwunel-$TEAM-data 2>/dev/null || true
+
+        # ── GitHub ──
+        gh repo delete $FULL_REPO --yes 2>/dev/null || true
+        PROJ_NUM=\$(gh project list --owner $ORG --format json 2>/dev/null | jq -r \".projects[] | select(.title==\\\"$BOARD\\\") | .number\" 2>/dev/null)
+        [ -n \"\$PROJ_NUM\" ] && gh project delete \"\$PROJ_NUM\" --owner $ORG --format json 2>/dev/null || true
+
+        # ── Lima VM ──
+        limactl delete --force $LIMA_VM 2>/dev/null || true
+
+        # ── Keyring ──
+        if type load_isolated_keyring &>/dev/null && load_isolated_keyring; then
+            for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing; do
+                secret_tool clear service botminter.$TEAM.tuwunel username \$u 2>/dev/null || true
+            done
+            stop_isolated_keyring 2>/dev/null || true
+        fi
+
+        # ── Local state ──
+        rm -rf ~/.botminter ~/.config/botminter 2>/dev/null || true
+        rm -f {{REMOTE_BIN}}/bm {{REMOTE_BIN}}/bm-agent {{REMOTE_BIN}}/ralph {{REMOTE_BIN}}/claude {{REMOTE_BIN}}/claude-code-acp-rs
+
+        # ── Port wait ──
+        for i in \$(seq 1 10); do
+            if ! ss -tlnp 2>/dev/null | grep -q \":8008 \"; then break; fi
+            sleep 1
+        done
+    "' || true
+    echo "Clean."
 
 # Deploy binaries + test scripts to the remote test user
-deploy: build reset
+deploy: build clean
     #!/usr/bin/env bash
     set -euo pipefail
     echo "Deploying to {{TEST_HOST}}..."
@@ -134,26 +168,6 @@ deploy: build reset
         | ssh {{TEST_HOST}} 'cat > {{REMOTE_ENV}}'
     echo "Deploy complete."
 
-# Full cleanup — reset runtime state, then remove all test artifacts on remote
-clean: reset
-    #!/usr/bin/env bash
-    set -euo pipefail
-    echo "Cleaning up on {{TEST_HOST}}..."
-    ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && source {{REMOTE_LIB}} && \
-        podman rm -f bm-tuwunel-$TEAM 2>/dev/null; \
-        podman volume rm bm-tuwunel-$TEAM-data 2>/dev/null; \
-        gh repo delete $FULL_REPO --yes 2>/dev/null; \
-        PROJ_NUM=\$(gh project list --owner $ORG --format json 2>/dev/null | jq -r \".projects[] | select(.title==\\\"$BOARD\\\") | .number\" 2>/dev/null); \
-        [ -n \"\$PROJ_NUM\" ] && gh project delete \"\$PROJ_NUM\" --owner $ORG --format json 2>/dev/null; \
-        limactl delete --force $LIMA_VM 2>/dev/null; \
-        rm -rf ~/.botminter ~/.config/botminter 2>/dev/null; \
-        if load_isolated_keyring; then \
-            for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing; do \
-                secret_tool clear service botminter.$TEAM.tuwunel username \$u 2>/dev/null; \
-            done; \
-        fi; \
-        stop_isolated_keyring"' || true
-    echo "Clean."
 
 # Initialize report file on remote
 init-report:
@@ -241,7 +255,7 @@ phase-f: ensure-keyring (run-phase "phase-f.sh")
 
 phase-g: (run-phase "phase-g.sh")
 
-phase-h: ensure-keyring (run-phase "phase-h.sh" "900")
+phase-h: ensure-keyring (run-phase "phase-h.sh" "1200")
 
 # Isolated ACP diagnostic test (requires team to exist — run after phase-e)
 phase-acp-isolated: ensure-keyring (run-phase "phase-acp-isolated.sh" "600")

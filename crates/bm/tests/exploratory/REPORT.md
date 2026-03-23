@@ -1,6 +1,6 @@
 # Exploratory Test Report: Sync, Bridge & Lima Idempotency
 
-**Date:** 2026-03-22
+**Date:** 2026-03-23
 **Build:** bm 0.2.0-pre-alpha (local debug)
 **Environment:** Linux x86_64, podman rootless, limactl limactl version 2.1.0, gh (devguyio)
 **Test User:** bm-test-user@localhost (isolated)
@@ -11,15 +11,15 @@
 
 | # | Test | Result |
 |---|------|--------|
-| B1 | bm init | **FAIL** — exit 1: Error: Directory '/home/bm-test-user/.botminter/workspaces/exploratory-test' already exists. Choose a different team name. |
+| B1 | bm init (non-interactive, scrum-compact, tuwunel) | **PASS** |
 | B2 | GitHub repo exists | **PASS** |
 | B3 | GitHub project board exists | **PASS** |
 | B4 | Labels created (13 labels) | **PASS** |
 | B5 | Team registered in config.yml | **PASS** |
 | B6 | Team repo cloned | **PASS** |
 | B7 | Init again | **NOTE** — Correctly rejects: already exists |
-| B8 | Hire alice | **FAIL** — exit 1: Error: Member directory 'superman-alice' already exists. Choose a different name. |
-| B9 | Hire bob | **FAIL** — exit 1: Error: Member directory 'superman-bob' already exists. Choose a different name. |
+| B8 | Hired alice | **PASS** |
+| B9 | Hired bob | **PASS** |
 | B10 | Member dirs exist (superman-alice, superman-bob) | **PASS** |
 | B11 | Hire duplicate alice | **NOTE** — Correctly rejects: 'already exists' |
 
@@ -30,14 +30,14 @@
 | C1 | First sync --bridge | **PASS** |
 | C2 | Container running | **PASS** |
 | C3 | Matrix server healthy | **PASS** |
-| C4 | Bridge state | **FAIL** — status=running ids=6 rooms=1 |
-| C5 | Passwords | **FAIL** — count=6 |
+| C4 | Bridge state: running, 3 identities, 1 room | **PASS** |
+| C5 | Passwords file has 3 entries | **PASS** |
 | C6 | Keyring has credentials for alice + bob | **PASS** |
 | C7 | Admin can login to Matrix | **PASS** |
-| C8 | Room exploratory-test-general exists (!IUzWXhP9FtnYoEfmFY:localhost) | **PASS** |
+| C8 | Room exploratory-test-general exists (!IBkRPisSnhfg4c3Jcu:localhost) | **PASS** |
 | C9 | Sync --bridge again (idempotent) | **PASS** |
 | C10 | Container still running | **PASS** |
-| C11 | State | **FAIL** — status=running ids=6 |
+| C11 | Bridge state unchanged | **PASS** |
 | C12 | Alice credential unchanged after re-sync | **PASS** |
 | C13 | Stopped container | **PASS** |
 | C14 | Sync --bridge recovers stopped container | **PASS** |
@@ -53,10 +53,10 @@
 | C24 | Matrix healthy after volume re-create | **PASS** |
 | C25 | Admin password regenerated | **PASS** |
 | C26 | Alice: new password + keyring valid after volume re-create | **PASS** |
-| C27 | Pre-existing user already exists | **PASS** |
+| C27 | Pre-existing user registered via UIAA (@superman-pre-existing:localhost) | **PASS** |
 | C28 | Sync handles pre-existing user | **PASS** |
 | C29 | Container stable after pre-existing user sync | **PASS** |
-| C30 | Bridge state has 6 identities | **PASS** |
+| C30 | Bridge state has 4 identities | **PASS** |
 | C31 | Sync idempotent after pre-existing user | **PASS** |
 | C32 | Final bridge state: running | **PASS** |
 | C33 | Pre-existing user: keyring token valid (@superman-pre-existing:localhost) | **PASS** |
@@ -69,8 +69,8 @@
 | D2 | Bob workspace has all context files | **PASS** |
 | D3 | Team submodule present | **PASS** |
 | D4 | Agent dir assembled | **PASS** |
-| D5 | Git status | **NOTE** — not clean:  M brain-stderr.log |
-| D6 | Git log | **NOTE** — 246c2cd Sync workspace with team repo |
+| D5 | Git repo clean | **PASS** |
+| D6 | Git log | **NOTE** — 785c064 Sync workspace with team repo |
 | D7 | Sync again (no changes) | **PASS** |
 | D8 | Context files still present after re-sync | **PASS** |
 | D9 | Third sync still clean | **PASS** |
@@ -84,7 +84,7 @@
 | D17 | Sync restores ralph.yml | **PASS** |
 | D18 | Created junk dir at future carol workspace path | **PASS** |
 | D19 | Hired carol | **PASS** |
-| D20 | Junk cleanup | **FAIL** — junk.txt still present |
+| D20 | Junk cleaned, proper workspace created for carol | **PASS** |
 | D21 | Settings.json surfaced with PostToolUse hook | **PASS** |
 | D22 | Inbox write/peek/read lifecycle complete | **PASS** |
 | D23 | Hook exits 0 in workspace (no pending messages) | **PASS** |
@@ -136,13 +136,13 @@
 | H20 | ACP binary available (claude-code-acp-rs 0.1.22) | **PASS** |
 | H21 | Admin Matrix login successful | **PASS** |
 | H22 | Alice Matrix login successful | **PASS** |
-| H23 | Room resolved (!yYUPBflXBmpnMVF48O:localhost) | **PASS** |
+| H23 | Room resolved (!cUquZV9VdOiJioN6pu:localhost) | **PASS** |
 | H24 | Cleaned previous state for lifecycle test | **PASS** |
 | H25 | bm start executed (brain mode detected) | **PASS** |
-| H26 | Brain process verified (PID 1662949, command contains brain-run/acp) | **PASS** |
+| H26 | Brain process verified (PID 1384156, command contains brain-run/acp) | **PASS** |
 | H27 | bm status shows brain label during lifecycle | **PASS** |
-| H28 | Greeting sent to room while brain running ($P9GGErv7oKmYrluxZ9I4E77y-OaiD-eDA6-KnT0FlAA) | **PASS** |
-| H29 | Work request sent to room while brain running ($GXaP4xuwgeBuxGTupxtXLpdA0S-sUHo5lFqcp95mO-o) | **PASS** |
+| H28 | Greeting sent to room while brain running ($ZkN3il5L5BgzMGc5tLtWmzvtBG0CfMz-bzFWycTMW9w) | **PASS** |
+| H29 | Work request sent to room while brain running ($pq_7gletJJqNwlaWwuTT2ldmGuzvSa0MpdgBSFu92Pg) | **PASS** |
 | H30 | Follow-up question sent (multi-turn simulation) | **PASS** |
 | H31 | Brain survived malformed/empty message (edge case) | **PASS** |
 | H32 | Brain responded with meaningful content (response: 🤖 Ralph loop `main` connected via Matrix...) | **PASS** |
@@ -150,20 +150,22 @@
 | H33 | User messages visible in room history (9 total messages) | **PASS** |
 | H34 | Cross-member messaging while brain running (alice to bob, brain alive) | **PASS** |
 | H35 | Brain survived all interaction (normal + malformed + cross-member messages) | **PASS** |
-| H36 | bm stop graceful | **NOTE** — exit 1, retrying with --force |
+| H36 | bm stop executed cleanly (exit 0) | **PASS** |
 | H37 | All brain processes terminated after stop | **PASS** |
 | H38 | Brain restarted successfully (recovery scenario) | **PASS** |
-| H39 | Message delivered after brain restart (recovery proof, $G0iJj3Zv-Oo0eudYIi7a874K7bTDLib-eStNv7ig0P8) | **PASS** |
-| H40 | Recovery response | **FAIL** — brain alive after restart but did not respond within 90s (stderr: 2026-03-22T17:03:41.618797Z  INFO bm::brain::heartbeat: Heartbeat timer started interval_secs=60 2026-03-22T17:03:41.633076Z  INFO bm::brain::multiplexer: Brain multiplexer session started session_id=bce00470-50d2-4eae-88b7-5fda5a55c5d6 2026-03-22T17:05:43.641679Z  INFO bm::brain::bridge_adapter: Injected bridge message into multiplexer sender=@bmadmin:localhost body_len=75 ) |
+| H39 | Message delivered after brain restart (recovery proof, $UwuyFqSVvOCcsIID9coDiNb9pIsOZ3rya-Zvso1yQeQ) | **PASS** |
+| H40 | Brain responded after recovery! NEW response detected (pre: 9, post: 10, body: Yes, I'm operational! All systems are up after the restart.
+
+I can see the works...) | **PASS** |
 | H41 | Recovery start-stop cycle clean (brain lifecycle idempotent) | **PASS** |
 | H42 | Status inquiry sent after brain lifecycle | **PASS** |
-| H43 | All messages persist in room history incl. recovery + cross-member (12 total) | **PASS** |
-| H44 | Bob sees all messages in room (12 messages) | **PASS** |
-| H46 | Created GitHub issue #2 for brain to discover | **PASS** |
-| H47 | Brain started for task execution journey (PID 1737817) | **PASS** |
-| H48 | Board check request sent to brain ($MSClY4pz8UuCfX-mYDD2cH7JBchJtUlOyz_362suNTk) | **PASS** |
-| H49 | Task response | **FAIL** — brain alive but did not respond about board within 120s (stderr: 2026-03-22T17:07:25.717837Z  INFO bm::brain::heartbeat: Heartbeat timer started interval_secs=60 2026-03-22T17:07:25.731753Z  INFO bm::brain::multiplexer: Brain multiplexer session started session_id=fe66e013-1fe1-42ae-ae88-941fed5f8e5e 2026-03-22T17:09:27.769901Z  INFO bm::brain::bridge_adapter: Injected bridge message into multiplexer sender=@bmadmin:localhost body_len=140 ) |
-| H50 | Brain survived task execution request (PID 1737817 still alive) | **PASS** |
+| H43 | All messages persist in room history incl. recovery + cross-member (16 total) | **PASS** |
+| H44 | Bob sees all messages in room (16 messages) | **PASS** |
+| H46 | Created GitHub issue #1 for brain to discover | **PASS** |
+| H47 | Brain started for task execution journey (PID 1394573) | **PASS** |
+| H48 | Board check request sent to brain ($1mcI--SCOrUK9ukFHejc8r01IXqoLjO_0bN5u8jpAgc) | **PASS** |
+| H49 | Task response | **FAIL** — brain alive but did not respond about board within 120s (stderr: 2026-03-23T07:38:46.844509Z  INFO bm::brain::bridge_adapter: Injected bridge message into multiplexer sender=@bmadmin:localhost body_len=140 2026-03-23T07:38:46.844541Z  INFO bm::brain::multiplexer: Sending prompt to ACP priority=human prompt_len=479 2026-03-23T07:38:46.844775Z  INFO connection{name="botminter"}: bm::acp::client: ACP prompt task: sending request ) |
+| H50 | Brain survived task execution request (PID 1394573 still alive) | **PASS** |
 | H51 | Task execution journey cleaned up | **PASS** |
 | H52 | Cleaned up all brain lifecycle test artifacts | **PASS** |
 
@@ -184,6 +186,6 @@
 
 ## Summary
 
-- **PASS:** 124
-- **FAIL:** 9
-- **NOTE:** 5
+- **PASS:** 134
+- **FAIL:** 1
+- **NOTE:** 3
