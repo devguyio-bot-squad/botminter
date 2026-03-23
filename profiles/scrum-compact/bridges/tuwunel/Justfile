@@ -124,7 +124,8 @@ start:
         -Oallow_registration=true \
         -Oregistration_token=\"${REG_TOKEN}\" \
         -Oallow_federation=false \
-        -Olog_filter=\"warn\"
+        -Olog_filter=\"warn\" \
+        -Onew_user_displayname_suffix=\"\"
 
     # Health check loop
     echo >&2 "[tuwunel-bridge] Waiting for Tuwunel to become healthy (up to 120s)..."
@@ -253,7 +254,7 @@ health:
     fi
 
 # Register a bot user on the Tuwunel homeserver via Matrix CS API.
-onboard username:
+onboard username displayname="":
     #!/usr/bin/env bash
     set -euo pipefail
     {{_MATRIX_FN}}
@@ -264,8 +265,20 @@ onboard username:
     ADMIN_PASS="{{ADMIN_PASS}}"
     REG_TOKEN="{{REG_TOKEN}}"
     USERNAME="{{username}}"
+    DISPLAY_NAME="{{displayname}}"
     PASSWORDS_FILE="{{PASSWORDS_FILE}}"
     CONTAINER="{{CONTAINER_NAME}}"
+
+    # Default display name: derive "name (role)" from username "role-name"
+    if [ -z "$DISPLAY_NAME" ]; then
+        ROLE="${USERNAME%-*}"
+        NAME="${USERNAME##*-}"
+        if [ "$ROLE" != "$USERNAME" ] && [ -n "$NAME" ]; then
+            DISPLAY_NAME="$NAME ($ROLE)"
+        else
+            DISPLAY_NAME="$USERNAME"
+        fi
+    fi
 
     # Restore from container backup if local copy missing
     if [ ! -f "$PASSWORDS_FILE" ] && podman container exists "$CONTAINER" 2>/dev/null; then
@@ -417,6 +430,14 @@ onboard username:
         exit 1
     fi
     echo >&2 "[tuwunel-bridge] Access token generated for ${USERNAME}."
+
+    # Set display name via Matrix profile API
+    ENCODED_USER_ID=$(echo "$BOT_USER_ID" | sed 's/@/%40/g; s/:/%3A/g')
+    matrix_request PUT "${MATRIX_URL}/_matrix/client/v3/profile/${ENCODED_USER_ID}/displayname" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${BOT_TOKEN}" \
+        -d "{\"displayname\":\"${DISPLAY_NAME}\"}" >/dev/null 2>&1 || true
+    echo >&2 "[tuwunel-bridge] Display name set: ${DISPLAY_NAME}"
 
     mkdir -p "$BRIDGE_CONFIG_DIR"
     cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
@@ -749,3 +770,82 @@ room-list:
     echo "$ROOMS" > "$BRIDGE_CONFIG_DIR/config.json"
 
     echo >&2 "[tuwunel-bridge] Listed $(echo "$ROOMS" | jq length) room(s)."
+
+# Fix display names for all identities in bridge-state.json.
+# Removes emoji suffixes (e.g. "alice 💕" → "alice") by setting each
+# user's display name to their username via the Matrix profile API.
+# Each user logs in with their own credentials to update their own profile.
+fix-displaynames:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{_MATRIX_FN}}
+
+    MATRIX_URL="{{MATRIX_URL}}"
+    # Find bridge-state.json: BM_BRIDGE_STATE_DIR (set by bm), or search upward.
+    STATE_DIR="${BM_BRIDGE_STATE_DIR:-}"
+    if [ -z "$STATE_DIR" ]; then
+        for candidate in "." ".." "../.." "../../.."; do
+            if [ -f "$candidate/bridge-state.json" ]; then
+                STATE_DIR="$(cd "$candidate" && pwd)"
+                break
+            fi
+        done
+    fi
+
+    if [ -z "$STATE_DIR" ] || [ ! -f "$STATE_DIR/bridge-state.json" ]; then
+        echo >&2 "[tuwunel-bridge] No bridge-state.json found. Run 'bm teams sync --bridge' first."
+        exit 1
+    fi
+
+    BRIDGE_STATE_PATH="$STATE_DIR/bridge-state.json"
+    PASSWORDS_FILE="$STATE_DIR/tuwunel-passwords.json"
+    if [ ! -f "$PASSWORDS_FILE" ]; then
+        echo >&2 "[tuwunel-bridge] No tuwunel-passwords.json found."
+        exit 1
+    fi
+
+    # Iterate over all identities
+    USERNAMES=$(jq -r '.identities | keys[]' "$BRIDGE_STATE_PATH" 2>/dev/null)
+    FIXED=0
+
+    for username in $USERNAMES; do
+        USER_ID=$(jq -r --arg u "$username" '.identities[$u].user_id // empty' "$BRIDGE_STATE_PATH")
+        PASSWORD=$(jq -r --arg u "$username" '.[$u] // empty' "$PASSWORDS_FILE")
+
+        if [ -z "$USER_ID" ] || [ -z "$PASSWORD" ]; then
+            echo >&2 "[tuwunel-bridge] Skipping $username (missing user_id or password)"
+            continue
+        fi
+
+        # Login as this user
+        LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${username}\"},\"password\":\"${PASSWORD}\"}" \
+            ) || { echo >&2 "[tuwunel-bridge] Failed to login as $username"; continue; }
+
+        TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // empty')
+        if [ -z "$TOKEN" ]; then
+            echo >&2 "[tuwunel-bridge] No token for $username, skipping"
+            continue
+        fi
+
+        # Derive display name: "name (role)" from username "role-name"
+        ROLE="${username%-*}"
+        NAME="${username##*-}"
+        if [ "$ROLE" != "$username" ] && [ -n "$NAME" ]; then
+            NEW_DISPLAYNAME="$NAME ($ROLE)"
+        else
+            NEW_DISPLAYNAME="$username"
+        fi
+
+        ENCODED_USER_ID=$(echo "$USER_ID" | sed 's/@/%40/g; s/:/%3A/g')
+        matrix_request PUT "${MATRIX_URL}/_matrix/client/v3/profile/${ENCODED_USER_ID}/displayname" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -d "{\"displayname\":\"${NEW_DISPLAYNAME}\"}" >/dev/null
+
+        echo >&2 "[tuwunel-bridge] Fixed display name: $username -> $NEW_DISPLAYNAME"
+        FIXED=$((FIXED + 1))
+    done
+
+    echo >&2 "[tuwunel-bridge] Fixed $FIXED display name(s)."
