@@ -38,6 +38,7 @@ FULL_REPO := ORG + "/" + REPO
 PROFILE := "scrum-compact"
 BOARD := "Exploratory Test Board"
 LIMA_VM := "lima-idem-test"
+TUWUNEL_PORT := env("TUWUNEL_PORT", "8008")
 
 # Remote paths derived from test user's HOME
 REMOTE_TEAM_DIR := REMOTE_HOME + "/.botminter/workspaces/" + TEAM
@@ -112,7 +113,7 @@ clean:
 
         # ── Port wait ──
         for i in \$(seq 1 10); do
-            if ! ss -tlnp 2>/dev/null | grep -q \":8008 \"; then break; fi
+            if ! ss -tlnp 2>/dev/null | grep -q \":{{TUWUNEL_PORT}} \"; then break; fi
             sleep 1
         done
     "' || true
@@ -164,6 +165,7 @@ deploy: build clean
         'export LIMA_VM="{{LIMA_VM}}"' \
         'export LIB="{{REMOTE_LIB}}"' \
         'export CARGO_ROOT="{{REMOTE_STAGING}}"' \
+        'export TUWUNEL_PORT="{{TUWUNEL_PORT}}"' \
         'export PATH="{{REMOTE_BIN}}:$PATH"' \
         | ssh {{TEST_HOST}} 'cat > {{REMOTE_ENV}}'
     echo "Deploy complete."
@@ -206,10 +208,10 @@ preflight: ensure-keyring
     echo "Pre-flight checks on {{TEST_HOST}}..."
     ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && source {{REMOTE_LIB}} && \
         set -euo pipefail && \
-        if ss -tlnp sport = :8008 2>/dev/null | grep -q LISTEN; then \
-            echo \"FATAL: Port 8008 is in use\"; exit 1; \
+        if ss -tlnp sport = :\$TUWUNEL_PORT 2>/dev/null | grep -q LISTEN; then \
+            echo \"FATAL: Port \$TUWUNEL_PORT is in use\"; exit 1; \
         fi && \
-        echo \"  ✓ Port 8008 is free\" && \
+        echo \"  ✓ Port \$TUWUNEL_PORT is free\" && \
         if load_isolated_keyring; then \
             echo \"  ✓ Isolated keyring running (pid=\$ISOLATED_DBUS_PID)\"; \
         else \

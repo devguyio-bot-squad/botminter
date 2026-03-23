@@ -66,7 +66,7 @@ fi
 # H7: Contains expected sections from the template
 SECTIONS_OK=true
 MISSING_SECTIONS=""
-for section in "Identity" "Board Awareness" "Work Loop" "Human Interaction" "Dual-Channel"; do
+for section in "Identity" "Board Awareness" "Work Loop" "Direct Chat with Operator" "Dual-Channel"; do
     if ! grep -q "$section" "$ALICE_WS/brain-prompt.md" 2>/dev/null; then
         SECTIONS_OK=false
         MISSING_SECTIONS="$MISSING_SECTIONS $section"
@@ -218,7 +218,7 @@ fi
 
 echo "  H.5: End-to-End Brain Autonomy Validation..."
 
-MATRIX_URL="http://127.0.0.1:8008"
+MATRIX_URL="http://127.0.0.1:${TUWUNEL_PORT:-8008}"
 BSTATE="$TEAM_DIR/bridge-state.json"
 PWFILE="$TEAM_DIR/tuwunel-passwords.json"
 CONTAINER="bm-tuwunel-$TEAM_NAME"

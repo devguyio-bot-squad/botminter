@@ -24,7 +24,7 @@ echo ""
 TEAM_NAME="$TEAM"
 ALICE_WS="$TEAM_DIR/superman-alice"
 STATE_FILE="$HOME/.botminter/state.json"
-MATRIX_URL="http://127.0.0.1:8008"
+MATRIX_URL="http://127.0.0.1:${TUWUNEL_PORT:-8008}"
 PWFILE="$TEAM_DIR/tuwunel-passwords.json"
 
 # ── Prerequisites ──

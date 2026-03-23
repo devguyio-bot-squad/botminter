@@ -12,7 +12,7 @@ header "Phase C: Bridge Lifecycle (Tuwunel)"
 BSTATE="$TEAM_DIR/bridge-state.json"
 PWFILE="$TEAM_DIR/tuwunel-passwords.json"
 CONTAINER="bm-tuwunel-$TEAM"
-MATRIX_URL="http://127.0.0.1:8008"
+MATRIX_URL="http://127.0.0.1:${TUWUNEL_PORT:-8008}"
 
 # ── C.1: First provisioning ──
 
