@@ -1,4 +1,4 @@
-use axum::http::{header, StatusCode, Uri};
+use axum::http::{header, Method, StatusCode, Uri};
 use axum::response::{Html, IntoResponse, Response};
 use rust_embed::Embed;
 
@@ -12,18 +12,23 @@ struct ConsoleAssets;
 /// - Exact file matches are served with correct Content-Type and cache headers.
 /// - Hashed assets (under `_app/immutable/`) get `Cache-Control: public, max-age=31536000, immutable`.
 /// - `index.html` and SPA fallback get `Cache-Control: no-cache`.
-/// - Non-matching paths return `index.html` for SvelteKit client-side routing.
-pub async fn serve_embedded_assets(uri: Uri) -> Response {
+/// - Non-matching GET requests return `index.html` for SvelteKit client-side routing.
+/// - Non-GET requests to unknown paths return 404 (preserves webhook 404 behavior).
+pub async fn serve_embedded_assets(method: Method, uri: Uri) -> Response {
     let path = uri.path().trim_start_matches('/');
 
-    // Try to serve the exact file first
+    // Try to serve the exact file first (any method — static files are always servable)
     if !path.is_empty() {
         if let Some(file) = ConsoleAssets::get(path) {
             return file_response(path, &file.data);
         }
     }
 
-    // SPA fallback: serve index.html for client-side routing
+    // SPA fallback: only for GET requests (POST/PUT/DELETE to unknown paths should 404)
+    if method != Method::GET {
+        return (StatusCode::NOT_FOUND, "Not found").into_response();
+    }
+
     match ConsoleAssets::get("index.html") {
         Some(file) => {
             let mut response = Html(file.data.to_vec()).into_response();
@@ -102,30 +107,44 @@ mod tests {
 
     #[tokio::test]
     async fn serve_embedded_assets_returns_index_for_spa_routes() {
-        // This test verifies the SPA fallback behavior.
-        // If console/build/ is empty (allow_empty = true), it returns 404.
-        // If console/build/ has index.html, it returns it for any non-file path.
         let uri: Uri = "/teams/my-team/overview".parse().unwrap();
-        let response = serve_embedded_assets(uri).await;
-        // With a built console, this returns 200 with index.html.
-        // With allow_empty and no build, this returns 404.
-        let status = response.status();
+        let response = serve_embedded_assets(Method::GET, uri).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8_lossy(&body);
         assert!(
-            status == StatusCode::OK || status == StatusCode::NOT_FOUND,
-            "Expected 200 or 404, got {}",
-            status
+            html.contains("<html") || html.contains("<!DOCTYPE") || html.contains("<!doctype"),
+            "SPA fallback should return HTML, got: {}",
+            &html[..html.len().min(200)]
         );
     }
 
     #[tokio::test]
     async fn serve_embedded_assets_returns_index_for_root() {
         let uri: Uri = "/".parse().unwrap();
-        let response = serve_embedded_assets(uri).await;
-        let status = response.status();
+        let response = serve_embedded_assets(Method::GET, uri).await;
+        assert_eq!(response.status(), StatusCode::OK);
+        let body = axum::body::to_bytes(response.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let html = String::from_utf8_lossy(&body);
         assert!(
-            status == StatusCode::OK || status == StatusCode::NOT_FOUND,
-            "Expected 200 or 404, got {}",
-            status
+            html.contains("<html") || html.contains("<!DOCTYPE") || html.contains("<!doctype"),
+            "Root should return HTML, got: {}",
+            &html[..html.len().min(200)]
+        );
+    }
+
+    #[tokio::test]
+    async fn serve_embedded_assets_returns_404_for_non_get() {
+        let uri: Uri = "/wrong-path".parse().unwrap();
+        let response = serve_embedded_assets(Method::POST, uri).await;
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "POST to unknown path should return 404, not SPA fallback"
         );
     }
 }
