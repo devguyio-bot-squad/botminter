@@ -44,6 +44,12 @@ impl MatrixBridgeReader {
         let mut backoff_secs: u64 = 1;
         const MAX_BACKOFF_SECS: u64 = 30;
 
+        // Ensure room membership before polling (follows Ralph's ensure_room pattern).
+        // Idempotent: no-op if already joined, accepts pending invite if one exists.
+        if let Err(e) = self.join_room().await {
+            tracing::warn!(error = %e, "Failed to join room (may already be joined)");
+        }
+
         // Do an initial sync with timeout=0 to get the `since` token
         // without processing old messages.
         match self.initial_sync().await {
@@ -115,6 +121,34 @@ impl MatrixBridgeReader {
             }
         })
         .to_string()
+    }
+
+    /// Join the configured Matrix room. Idempotent — succeeds if already
+    /// joined, and accepts a pending invite if one exists.
+    async fn join_room(&self) -> Result<(), BridgeAdapterError> {
+        let url = format!(
+            "{}/_matrix/client/v3/join/{}",
+            self.config.homeserver_url,
+            urlencoded(&self.config.room_id)
+        );
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.config.access_token)
+            .json(&serde_json::json!({}))
+            .timeout(std::time::Duration::from_secs(10))
+            .send()
+            .await
+            .map_err(|e| BridgeAdapterError::Http(e.to_string()))?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(BridgeAdapterError::Http(format!(
+                "join room failed: {status} — {body}"
+            )));
+        }
+        tracing::info!(room_id = %self.config.room_id, "Joined Matrix room");
+        Ok(())
     }
 
     /// Perform an initial sync with `timeout=0` to get the `since` token
