@@ -259,7 +259,7 @@ fn resolve_team_path(
                 format!("Team '{}' not found", team_name),
             )
         })?;
-    Ok(team.path.clone())
+    Ok(team.path.join("team"))
 }
 
 fn do_read_file(
@@ -511,11 +511,12 @@ mod tests {
     use std::sync::Arc;
 
     fn setup_fixture_team(tmp: &Path) -> PathBuf {
-        let team_path = tmp.join("my-team");
+        let team_dir = tmp.join("my-team");
+        let team_repo = team_dir.join("team");
         let fixture_base = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo");
-        copy_dir_recursive(&fixture_base, &team_path);
-        team_path
+        copy_dir_recursive(&fixture_base, &team_repo);
+        team_dir
     }
 
     fn copy_dir_recursive(src: &Path, dst: &Path) {
@@ -784,7 +785,7 @@ mod tests {
     async fn write_path_traversal_dot_dot_returns_403() {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
-        git_init(&team_path);
+        git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
         write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
 
@@ -810,7 +811,7 @@ mod tests {
     async fn write_path_traversal_encoded_returns_403() {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
-        git_init(&team_path);
+        git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
         write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
 
@@ -836,7 +837,7 @@ mod tests {
     async fn write_path_traversal_absolute_returns_403() {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
-        git_init(&team_path);
+        git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
         write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
 
@@ -897,7 +898,7 @@ mod tests {
     async fn write_file_and_git_commit_roundtrip() {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
-        git_init(&team_path);
+        git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
         write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
 
@@ -929,13 +930,14 @@ mod tests {
             "commit_sha should be a full SHA"
         );
 
-        // Verify file content on disk
-        let on_disk = fs::read_to_string(team_path.join("PROCESS.md")).unwrap();
+        // Verify file content on disk (team repo is at team_dir/team/)
+        let team_repo_path = team_path.join("team");
+        let on_disk = fs::read_to_string(team_repo_path.join("PROCESS.md")).unwrap();
         assert_eq!(on_disk, new_content);
 
         // Verify git log contains the commit message
         let log_output = std::process::Command::new("git")
-            .args(["-C", &team_path.to_string_lossy(), "log", "--oneline", "-1"])
+            .args(["-C", &team_repo_path.to_string_lossy(), "log", "--oneline", "-1"])
             .output()
             .unwrap();
         let log_line = String::from_utf8_lossy(&log_output.stdout);
@@ -1052,8 +1054,8 @@ mod tests {
         assert_eq!(tree["path"], "members");
         let entries = tree["entries"].as_array().unwrap();
 
-        // Should list member directories dynamically
-        let expected_count = fs::read_dir(team_path.join("members"))
+        // Should list member directories dynamically (team repo at team_dir/team/)
+        let expected_count = fs::read_dir(team_path.join("team").join("members"))
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().is_dir())

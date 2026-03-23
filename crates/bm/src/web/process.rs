@@ -37,7 +37,7 @@ fn build_process(state: &WebState, team_name: &str) -> anyhow::Result<ProcessRes
         .find(|t| t.name == team_name)
         .ok_or_else(|| anyhow::anyhow!("Team '{}' not found", team_name))?;
 
-    let team_path = &team.path;
+    let team_path = team.path.join("team");
     let manifest_path = team_path.join("botminter.yml");
     let manifest: ProfileManifest = {
         let content = fs::read_to_string(&manifest_path).map_err(|e| {
@@ -123,11 +123,12 @@ mod tests {
     use std::sync::Arc;
 
     fn setup_fixture_team(tmp: &std::path::Path) -> std::path::PathBuf {
-        let team_path = tmp.join("my-team");
+        let team_dir = tmp.join("my-team");
+        let team_repo = team_dir.join("team");
         let fixture_base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo");
-        copy_dir_recursive(&fixture_base, &team_path);
-        team_path
+        copy_dir_recursive(&fixture_base, &team_repo);
+        team_dir
     }
 
     fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
@@ -178,8 +179,8 @@ mod tests {
         config::save_to(config_path, &cfg).unwrap();
     }
 
-    fn read_fixture_manifest(team_path: &std::path::Path) -> ProfileManifest {
-        let content = fs::read_to_string(team_path.join("botminter.yml")).unwrap();
+    fn read_fixture_manifest(team_dir: &std::path::Path) -> ProfileManifest {
+        let content = fs::read_to_string(team_dir.join("team").join("botminter.yml")).unwrap();
         serde_yml::from_str(&content).unwrap()
     }
 
@@ -222,7 +223,7 @@ mod tests {
 
         // Workflows — should match DOT files in fixture
         let workflows = data["workflows"].as_array().unwrap();
-        let expected_dot_files: Vec<String> = fs::read_dir(team_path.join("workflows"))
+        let expected_dot_files: Vec<String> = fs::read_dir(team_path.join("team").join("workflows"))
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| {
@@ -295,8 +296,9 @@ mod tests {
     #[tokio::test]
     async fn process_graceful_degradation_without_workflows() {
         let tmp = tempfile::tempdir().unwrap();
-        let team_path = tmp.path().join("no-wf-team");
-        fs::create_dir_all(&team_path).unwrap();
+        let team_dir = tmp.path().join("no-wf-team");
+        let team_repo = team_dir.join("team");
+        fs::create_dir_all(&team_repo).unwrap();
 
         // Minimal botminter.yml with no workflows/ dir
         let manifest_yml = r#"
@@ -313,10 +315,10 @@ labels:
     color: "0E8A16"
     description: "Epic"
 "#;
-        fs::write(team_path.join("botminter.yml"), manifest_yml).unwrap();
+        fs::write(team_repo.join("botminter.yml"), manifest_yml).unwrap();
 
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "no-wf", &team_path, "test", "org/test");
+        write_config(&config_path, "no-wf", &team_dir, "test", "org/test");
 
         let app = test_app(config_path);
         let resp = app

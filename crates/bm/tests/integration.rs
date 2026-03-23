@@ -3605,3 +3605,279 @@ fn daemon_start_shows_console_url() {
         stdout
     );
 }
+
+/// Copies the fixture team-repo into a tempdir, git-inits it, and writes a config
+/// pointing to it. Follows the production layout: team.path = team_dir,
+/// team repo content at team_dir/team/ (where botminter.yml, members/ etc. live).
+fn setup_fixture_team(tmp: &Path, team_name: &str) -> PathBuf {
+    let fixture_base = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo");
+
+    let workzone = tmp.join("workspaces");
+    let team_dir = workzone.join(team_name);
+    let team_repo = team_dir.join("team");
+    fs::create_dir_all(&team_repo).unwrap();
+
+    // Copy fixture into team_dir/team/ (production layout: botminter.yml lives here)
+    copy_fixture_dir(&fixture_base, &team_repo);
+
+    // Git init the team repo (required for file write API)
+    git(&team_repo, &["init", "-b", "main"]);
+    git(&team_repo, &["config", "user.email", "test@botminter.test"]);
+    git(&team_repo, &["config", "user.name", "BM Test"]);
+    git(&team_repo, &["add", "-A"]);
+    git(&team_repo, &["commit", "-m", "feat: init fixture team repo"]);
+
+    // Write config (team.path = team_dir, matching production)
+    let config = BotminterConfig {
+        workzone: workzone.clone(),
+        default_team: Some(team_name.to_string()),
+        teams: vec![TeamEntry {
+            name: team_name.to_string(),
+            path: team_dir.clone(),
+            profile: "scrum-compact".to_string(),
+            github_repo: String::new(),
+            credentials: Credentials::default(),
+            coding_agent: None,
+            project_number: None,
+            bridge_lifecycle: Default::default(),
+            vm: None,
+        }],
+        vms: Vec::new(),
+        keyring_collection: None,
+    };
+    let config_path = tmp.join(".botminter").join("config.yml");
+    bm::config::save_to(&config_path, &config).unwrap();
+
+    team_dir
+}
+
+fn copy_fixture_dir(src: &Path, dst: &Path) {
+    fs::create_dir_all(dst).unwrap();
+    for entry in fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let src_path = entry.path();
+        let dst_path = dst.join(entry.file_name());
+        if src_path.is_dir() {
+            copy_fixture_dir(&src_path, &dst_path);
+        } else {
+            fs::copy(&src_path, &dst_path).unwrap();
+        }
+    }
+}
+
+/// E2E test: starts a daemon with fixture data and verifies all console API endpoints.
+///
+/// Uses real fixture team-repo with 3 members, knowledge, invariants, and workflows.
+/// Single daemon instance, multiple endpoint checks — fast and realistic.
+#[test]
+fn daemon_console_api_e2e_with_fixtures() {
+    let tmp = tempfile::tempdir().unwrap();
+    let team_name = "fixture-team";
+    let _team_dir = setup_fixture_team(tmp.path(), team_name);
+    let _guard = DaemonGuard::new(tmp.path(), team_name);
+
+    let port = get_free_port();
+
+    bm_run(
+        tmp.path(),
+        &[
+            "daemon", "start",
+            "--mode", "webhook",
+            "--port", &port.to_string(),
+            "-t", team_name,
+        ],
+    );
+
+    assert!(
+        wait_for_port(port, Duration::from_secs(5)),
+        "Server should be ready on port {}",
+        port
+    );
+
+    let client = reqwest::blocking::Client::new();
+    let base = format!("http://127.0.0.1:{}", port);
+
+    // ── GET /api/teams ──────────────────────────────────────────
+    {
+        let resp = client
+            .get(format!("{base}/api/teams"))
+            .send()
+            .expect("GET /api/teams");
+        assert_eq!(resp.status().as_u16(), 200);
+        let body: serde_json::Value = resp.json().unwrap();
+        let teams = body.as_array().expect("should be array");
+        assert_eq!(teams.len(), 1);
+        assert_eq!(teams[0]["name"], team_name);
+        assert_eq!(teams[0]["profile"], "scrum-compact");
+    }
+
+    // ── GET /api/teams/:team/overview ───────────────────────────
+    {
+        let resp = client
+            .get(format!("{base}/api/teams/{team_name}/overview"))
+            .send()
+            .expect("GET overview");
+        assert_eq!(resp.status().as_u16(), 200, "overview should return 200");
+        let body: serde_json::Value = resp.json().unwrap();
+
+        // Profile
+        assert_eq!(body["profile"], "scrum-compact");
+        assert_eq!(body["name"], team_name);
+
+        // Members — fixture has 3
+        let members = body["members"].as_array().expect("members array");
+        assert_eq!(members.len(), 3, "fixture has 3 members");
+        let member_names: Vec<&str> = members.iter()
+            .map(|m| m["name"].as_str().unwrap())
+            .collect();
+        assert!(member_names.contains(&"superman-alice"));
+        assert!(member_names.contains(&"superman-bob"));
+        assert!(member_names.contains(&"team-manager-mgr"));
+
+        // Roles — fixture has 2 (superman, team-manager)
+        let roles = body["roles"].as_array().expect("roles array");
+        assert_eq!(roles.len(), 2, "fixture has 2 roles");
+        let role_names: Vec<&str> = roles.iter()
+            .map(|r| r["name"].as_str().unwrap())
+            .collect();
+        assert!(role_names.contains(&"superman"));
+        assert!(role_names.contains(&"team-manager"));
+
+        // Knowledge files — fixture has 3
+        let knowledge = body["knowledge_files"].as_array().expect("knowledge_files");
+        assert_eq!(knowledge.len(), 3, "fixture has 3 knowledge files");
+
+        // Invariant files — fixture has 2
+        let invariants = body["invariant_files"].as_array().expect("invariant_files");
+        assert_eq!(invariants.len(), 2, "fixture has 2 invariant files");
+    }
+
+    // ── GET /api/teams/:team/members ────────────────────────────
+    {
+        let resp = client
+            .get(format!("{base}/api/teams/{team_name}/members"))
+            .send()
+            .expect("GET members");
+        assert_eq!(resp.status().as_u16(), 200, "members should return 200");
+        let body: serde_json::Value = resp.json().unwrap();
+        let members = body.as_array().expect("members array");
+        assert_eq!(members.len(), 3, "fixture has 3 members");
+
+        // Find alice and verify her fields
+        let alice = members.iter()
+            .find(|m| m["name"] == "superman-alice")
+            .expect("alice should exist");
+        assert_eq!(alice["role"], "superman");
+        assert_eq!(alice["hat_count"], 14, "alice has 14 hats");
+
+        // Find mgr and verify
+        let mgr = members.iter()
+            .find(|m| m["name"] == "team-manager-mgr")
+            .expect("mgr should exist");
+        assert_eq!(mgr["role"], "team-manager");
+        assert_eq!(mgr["hat_count"], 1, "mgr has 1 hat");
+    }
+
+    // ── GET /api/teams/:team/members/:name ──────────────────────
+    {
+        let resp = client
+            .get(format!("{base}/api/teams/{team_name}/members/superman-alice"))
+            .send()
+            .expect("GET member detail");
+        assert_eq!(resp.status().as_u16(), 200, "member detail should return 200");
+        let body: serde_json::Value = resp.json().unwrap();
+
+        assert_eq!(body["name"], "superman-alice");
+        assert_eq!(body["role"], "superman");
+
+        // Has ralph_yml content
+        assert!(body["ralph_yml"].is_string(), "should have ralph_yml");
+        assert!(!body["ralph_yml"].as_str().unwrap().is_empty(), "ralph_yml not empty");
+
+        // Has hats array with 14 entries
+        let hats = body["hats"].as_array().expect("hats array");
+        assert_eq!(hats.len(), 14, "alice has 14 hats");
+
+        // Has invariant files (design-quality.md)
+        let inv_files = body["invariant_files"].as_array().expect("invariant_files");
+        assert!(
+            inv_files.iter().any(|f| f.as_str().map_or(false, |s| s.contains("design-quality"))),
+            "alice should have design-quality.md invariant"
+        );
+    }
+
+    // ── GET /api/teams/:team/process ────────────────────────────
+    {
+        let resp = client
+            .get(format!("{base}/api/teams/{team_name}/process"))
+            .send()
+            .expect("GET process");
+        assert_eq!(resp.status().as_u16(), 200, "process should return 200");
+        let body: serde_json::Value = resp.json().unwrap();
+
+        // Workflows — fixture has 4 DOT files
+        let workflows = body["workflows"].as_array().expect("workflows array");
+        assert!(
+            !workflows.is_empty(),
+            "process should have workflows from DOT files"
+        );
+
+        // Statuses — fixture botminter.yml has 28 statuses
+        let statuses = body["statuses"].as_array().expect("statuses array");
+        assert!(
+            statuses.len() >= 20,
+            "fixture has 28 statuses, got {}",
+            statuses.len()
+        );
+
+        // markdown — fixture has PROCESS.md
+        assert!(
+            body["markdown"].is_string() && !body["markdown"].as_str().unwrap().is_empty(),
+            "process should include PROCESS.md content"
+        );
+    }
+
+    // ── GET /api/teams/:team/tree ───────────────────────────────
+    {
+        let resp = client
+            .get(format!("{base}/api/teams/{team_name}/tree"))
+            .send()
+            .expect("GET tree");
+        assert_eq!(resp.status().as_u16(), 200, "tree should return 200");
+        let body: serde_json::Value = resp.json().unwrap();
+        let entries = body["entries"].as_array().expect("entries array");
+
+        let entry_names: Vec<&str> = entries.iter()
+            .filter_map(|e| e["name"].as_str())
+            .collect();
+        assert!(entry_names.contains(&"members"), "tree should contain members/");
+        assert!(entry_names.contains(&"knowledge"), "tree should contain knowledge/");
+        assert!(entry_names.contains(&"invariants"), "tree should contain invariants/");
+        assert!(entry_names.contains(&"workflows"), "tree should contain workflows/");
+    }
+
+    // ── GET /api/teams/:team/files/botminter.yml ────────────────
+    {
+        let resp = client
+            .get(format!("{base}/api/teams/{team_name}/files/botminter.yml"))
+            .send()
+            .expect("GET file");
+        assert_eq!(resp.status().as_u16(), 200, "file read should return 200");
+        let body: serde_json::Value = resp.json().unwrap();
+
+        assert!(
+            body["content"].is_string(),
+            "file response should have content"
+        );
+        let content = body["content"].as_str().unwrap();
+        assert!(
+            content.contains("scrum-compact"),
+            "botminter.yml should contain profile name"
+        );
+        assert!(
+            body["content_type"].as_str().map_or(false, |ct| ct.contains("yaml")),
+            "content_type should indicate yaml"
+        );
+    }
+}

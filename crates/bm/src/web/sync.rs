@@ -59,7 +59,7 @@ fn do_sync(
         .find(|t| t.name == team_name)
         .ok_or_else(|| anyhow::anyhow!("Team '{}' not found", team_name))?;
 
-    let team_repo = &team.path;
+    let team_repo = team.path.join("team");
     let manifest: profile::ProfileManifest = {
         let content = std::fs::read_to_string(team_repo.join("botminter.yml"))?;
         serde_yml::from_str(&content)?
@@ -78,7 +78,7 @@ fn do_sync(
         .ok_or_else(|| anyhow::anyhow!("Team repo has no parent directory"))?;
 
     let params = workspace::TeamSyncParams {
-        team_repo,
+        team_repo: &team_repo,
         team_path,
         team_name,
         manifest: &manifest,
@@ -197,8 +197,9 @@ mod tests {
     #[tokio::test]
     async fn sync_team_no_members_returns_ok() {
         let tmp = tempfile::tempdir().unwrap();
-        let team_path = tmp.path().join("my-team");
-        std::fs::create_dir_all(&team_path).unwrap();
+        let team_dir = tmp.path().join("my-team");
+        let team_repo = team_dir.join("team");
+        std::fs::create_dir_all(&team_repo).unwrap();
 
         // Create a minimal botminter.yml with required fields
         let manifest = r#"
@@ -221,10 +222,10 @@ views: []
 roles: []
 projects: []
 "#;
-        std::fs::write(team_path.join("botminter.yml"), manifest).unwrap();
+        std::fs::write(team_repo.join("botminter.yml"), manifest).unwrap();
 
         let config_path = tmp.path().join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "test-profile", "org/repo");
+        write_config(&config_path, "my-team", &team_dir, "test-profile", "org/repo");
 
         let app = test_app(config_path);
         let resp = app

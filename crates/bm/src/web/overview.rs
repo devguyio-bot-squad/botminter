@@ -38,7 +38,7 @@ fn build_overview(state: &WebState, team_name: &str) -> anyhow::Result<TeamOverv
         .find(|t| t.name == team_name)
         .ok_or_else(|| anyhow::anyhow!("Team '{}' not found", team_name))?;
 
-    let team_path = &team.path;
+    let team_path = team.path.join("team");
     let manifest_path = team_path.join("botminter.yml");
     let manifest: ProfileManifest = {
         let content = fs::read_to_string(&manifest_path).map_err(|e| {
@@ -53,7 +53,7 @@ fn build_overview(state: &WebState, team_name: &str) -> anyhow::Result<TeamOverv
         })?
     };
 
-    let members = scan_members(team_path)?;
+    let members = scan_members(&team_path)?;
     let knowledge_files = list_dir_files(&team_path.join("knowledge"));
     let invariant_files = list_dir_files(&team_path.join("invariants"));
 
@@ -253,15 +253,18 @@ mod tests {
     use std::sync::Arc;
 
     /// Set up a realistic team repo from the fixture data in a tempdir.
+    /// Returns the team directory (parent of team/). The actual team repo
+    /// files are at team_dir/team/ — matching production layout.
     fn setup_fixture_team(tmp: &std::path::Path) -> std::path::PathBuf {
-        let team_path = tmp.join("my-team");
+        let team_dir = tmp.join("my-team");
+        let team_repo = team_dir.join("team");
         let fixture_base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo");
 
-        // Copy the entire fixture team-repo into the tempdir
-        copy_dir_recursive(&fixture_base, &team_path);
+        // Copy the entire fixture team-repo into team_dir/team/ (production layout)
+        copy_dir_recursive(&fixture_base, &team_repo);
 
-        team_path
+        team_dir
     }
 
     fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
@@ -313,8 +316,8 @@ mod tests {
     }
 
     /// Reads expected values directly from the fixture's botminter.yml.
-    fn read_fixture_manifest(team_path: &std::path::Path) -> ProfileManifest {
-        let content = fs::read_to_string(team_path.join("botminter.yml")).unwrap();
+    fn read_fixture_manifest(team_dir: &std::path::Path) -> ProfileManifest {
+        let content = fs::read_to_string(team_dir.join("team").join("botminter.yml")).unwrap();
         serde_yml::from_str(&content).unwrap()
     }
 
@@ -373,7 +376,7 @@ mod tests {
         }
 
         // Members — scan fixture members/ dir to get expected count
-        let expected_member_count = fs::read_dir(team_path.join("members"))
+        let expected_member_count = fs::read_dir(team_path.join("team").join("members"))
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().is_dir())
@@ -416,12 +419,12 @@ mod tests {
         );
 
         // Knowledge — count should match actual files on disk
-        let expected_knowledge = list_dir_files(&team_path.join("knowledge"));
+        let expected_knowledge = list_dir_files(&team_path.join("team").join("knowledge"));
         let knowledge = overview["knowledge_files"].as_array().unwrap();
         assert_eq!(knowledge.len(), expected_knowledge.len());
 
         // Invariants — count should match actual files on disk
-        let expected_invariants = list_dir_files(&team_path.join("invariants"));
+        let expected_invariants = list_dir_files(&team_path.join("team").join("invariants"));
         let invariants = overview["invariant_files"].as_array().unwrap();
         assert_eq!(invariants.len(), expected_invariants.len());
 
@@ -472,12 +475,13 @@ mod tests {
     #[tokio::test]
     async fn overview_returns_500_on_missing_manifest() {
         let tmp = tempfile::tempdir().unwrap();
-        let team_path = tmp.path().join("empty-team");
-        fs::create_dir_all(&team_path).unwrap();
-        // No botminter.yml in team dir
+        let team_dir = tmp.path().join("empty-team");
+        let team_repo = team_dir.join("team");
+        fs::create_dir_all(&team_repo).unwrap();
+        // No botminter.yml in team/
 
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "empty-team", &team_path, "test-profile", "org/test");
+        write_config(&config_path, "empty-team", &team_dir, "test-profile", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -501,10 +505,11 @@ mod tests {
     #[tokio::test]
     async fn overview_handles_empty_members_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        let team_path = tmp.path().join("minimal-team");
+        let team_dir = tmp.path().join("minimal-team");
+        let team_repo = team_dir.join("team");
 
         // Create a minimal team repo with just botminter.yml
-        fs::create_dir_all(&team_path).unwrap();
+        fs::create_dir_all(&team_repo).unwrap();
         let manifest = r#"
 name: test
 display_name: "Test Team"
@@ -515,10 +520,10 @@ roles:
   - name: dev
     description: "Developer"
 "#;
-        fs::write(team_path.join("botminter.yml"), manifest).unwrap();
+        fs::write(team_repo.join("botminter.yml"), manifest).unwrap();
 
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "minimal-team", &team_path, "test", "org/test");
+        write_config(&config_path, "minimal-team", &team_dir, "test", "org/test");
 
         let app = test_app(config_path);
         let resp = app

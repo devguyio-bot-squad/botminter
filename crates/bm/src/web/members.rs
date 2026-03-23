@@ -53,7 +53,7 @@ fn resolve_team_path(state: &WebState, team_name: &str) -> anyhow::Result<std::p
         .iter()
         .find(|t| t.name == team_name)
         .ok_or_else(|| anyhow::anyhow!("Team '{}' not found", team_name))?;
-    Ok(team.path.clone())
+    Ok(team.path.join("team"))
 }
 
 fn build_members_list(
@@ -333,11 +333,12 @@ mod tests {
     use std::sync::Arc;
 
     fn setup_fixture_team(tmp: &std::path::Path) -> std::path::PathBuf {
-        let team_path = tmp.join("my-team");
+        let team_dir = tmp.join("my-team");
+        let team_repo = team_dir.join("team");
         let fixture_base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo");
-        copy_dir_recursive(&fixture_base, &team_path);
-        team_path
+        copy_dir_recursive(&fixture_base, &team_repo);
+        team_dir
     }
 
     fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) {
@@ -413,8 +414,8 @@ mod tests {
             .unwrap();
         let members: Vec<serde_json::Value> = serde_json::from_slice(&body).unwrap();
 
-        // Dynamically count expected members from fixture
-        let expected_count = fs::read_dir(team_path.join("members"))
+        // Dynamically count expected members from fixture (team repo is at team_dir/team/)
+        let expected_count = fs::read_dir(team_path.join("team").join("members"))
             .unwrap()
             .filter_map(|e| e.ok())
             .filter(|e| e.path().is_dir())
@@ -482,7 +483,7 @@ mod tests {
 
         // Count hats dynamically from ralph.yml on disk
         let ralph_content =
-            fs::read_to_string(team_path.join("members/superman-alice/ralph.yml")).unwrap();
+            fs::read_to_string(team_path.join("team/members/superman-alice/ralph.yml")).unwrap();
         let ralph_val: serde_yml::Value = serde_yml::from_str(&ralph_content).unwrap();
         let expected_hat_count = ralph_val
             .get("hats")
