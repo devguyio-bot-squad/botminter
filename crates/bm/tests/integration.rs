@@ -3529,3 +3529,79 @@ fn init_bridge_invalid_name_fails() {
         stderr
     );
 }
+
+// ── Console API smoke tests ──────────────────────────────────────────
+
+#[test]
+fn daemon_api_teams_endpoint() {
+    let tmp = tempfile::tempdir().unwrap();
+    setup_team(tmp.path(), "console-teams", "scrum");
+    let _guard = DaemonGuard::new(tmp.path(), "console-teams");
+
+    let port = get_free_port();
+
+    bm_run(
+        tmp.path(),
+        &[
+            "daemon", "start",
+            "--mode", "webhook",
+            "--port", &port.to_string(),
+            "-t", "console-teams",
+        ],
+    );
+
+    assert!(
+        wait_for_port(port, Duration::from_secs(5)),
+        "Server should be ready on port {}",
+        port
+    );
+
+    // GET /api/teams should return the team list
+    let client = reqwest::blocking::Client::new();
+    let resp = client
+        .get(format!("http://127.0.0.1:{}/api/teams", port))
+        .send()
+        .expect("Failed to GET /api/teams");
+
+    assert_eq!(resp.status().as_u16(), 200, "/api/teams should return 200");
+
+    let body: serde_json::Value = resp.json().expect("/api/teams should return valid JSON");
+    let teams = body.as_array().expect("/api/teams should return a JSON array");
+    assert!(!teams.is_empty(), "Teams array should not be empty");
+    assert_eq!(
+        teams[0]["name"], "console-teams",
+        "First team should be 'console-teams'"
+    );
+    assert!(
+        teams[0]["profile"].is_string(),
+        "Team should have a profile field"
+    );
+}
+
+#[test]
+fn daemon_start_shows_console_url() {
+    let tmp = tempfile::tempdir().unwrap();
+    setup_team(tmp.path(), "console-url", "scrum");
+    let _guard = DaemonGuard::new(tmp.path(), "console-url");
+
+    let port = get_free_port();
+
+    let output = bm_run(
+        tmp.path(),
+        &[
+            "daemon", "start",
+            "--mode", "webhook",
+            "--port", &port.to_string(),
+            "-t", "console-url",
+        ],
+    );
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let expected_url = format!("Console: http://localhost:{}", port);
+    assert!(
+        stdout.contains(&expected_url),
+        "Daemon start output should include console URL '{}', got: {}",
+        expected_url,
+        stdout
+    );
+}

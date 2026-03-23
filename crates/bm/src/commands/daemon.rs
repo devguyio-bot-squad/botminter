@@ -23,6 +23,7 @@ pub fn start(
     let result = daemon::start_daemon(&team.name, &team_repo, mode, port, interval, bind)?;
 
     println!("Daemon started (PID {})", result.pid);
+    println!("Console: http://localhost:{}", port);
     Ok(())
 }
 
@@ -55,6 +56,7 @@ pub fn status(team_flag: Option<&str>) -> Result<()> {
                     }
                     other => println!("Mode: {}", other),
                 }
+                println!("Console: http://localhost:{}", daemon_cfg.port);
                 println!("Team: {}", daemon_cfg.team);
                 println!("Started: {}", format_timestamp(&daemon_cfg.started_at));
             } else {

@@ -121,6 +121,11 @@ async fn run_daemon_async(
             addr
         ),
     );
+    daemon_log(
+        &paths,
+        "INFO",
+        &format!("Console available at http://{}:{}", bind, port),
+    );
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
