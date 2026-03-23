@@ -1,3 +1,5 @@
+#[cfg(feature = "console")]
+pub mod assets;
 pub mod files;
 pub mod members;
 pub mod overview;
@@ -19,7 +21,7 @@ use self::teams::list_teams;
 
 /// Builds the console web API router with all `/api/*` routes.
 pub fn web_router(state: WebState) -> Router {
-    Router::new()
+    let router = Router::new()
         .route("/api/teams", get(list_teams))
         .route("/api/teams/{team}/overview", get(team_overview))
         .route("/api/teams/{team}/process", get(team_process))
@@ -31,5 +33,12 @@ pub fn web_router(state: WebState) -> Router {
             get(read_file).put(write_file),
         )
         .route("/api/teams/{team}/sync", post(team_sync))
-        .with_state(state)
+        .with_state(state);
+
+    // When built with the `console` feature, serve embedded frontend assets
+    // as a fallback for non-API routes (SPA client-side routing).
+    #[cfg(feature = "console")]
+    let router = router.fallback(assets::serve_embedded_assets);
+
+    router
 }

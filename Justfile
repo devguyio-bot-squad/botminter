@@ -81,6 +81,10 @@ dev:
 console-build:
     cd {{ generator_root }}/console && npm run build
 
+# Build the full binary with embedded console assets
+build-full: console-build
+    cargo build -p bm --features console
+
 # Run clippy with warnings as errors
 clippy:
     cargo clippy -p bm -- -D warnings
