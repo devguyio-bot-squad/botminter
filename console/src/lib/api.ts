@@ -1,4 +1,4 @@
-import type { TeamSummary, TeamOverview, ApiError } from './types.js';
+import type { TeamSummary, TeamOverview, ProcessData, ApiError } from './types.js';
 
 class ApiClient {
 	private baseUrl: string;
@@ -24,6 +24,10 @@ class ApiClient {
 
 	async fetchOverview(team: string): Promise<TeamOverview> {
 		return this.request<TeamOverview>(`/api/teams/${encodeURIComponent(team)}/overview`);
+	}
+
+	async fetchProcess(team: string): Promise<ProcessData> {
+		return this.request<ProcessData>(`/api/teams/${encodeURIComponent(team)}/process`);
 	}
 }
 

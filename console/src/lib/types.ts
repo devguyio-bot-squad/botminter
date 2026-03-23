@@ -68,19 +68,33 @@ export interface FileSaveResult {
 }
 
 export interface ProcessData {
-	dot_files: DotFile[];
+	markdown: string | null;
+	workflows: WorkflowEntry[];
 	statuses: StatusEntry[];
-	process_md: string | null;
+	labels: LabelEntry[];
+	views: ViewEntry[];
 }
 
-export interface DotFile {
+export interface WorkflowEntry {
 	name: string;
-	content: string;
+	dot: string;
 }
 
 export interface StatusEntry {
 	name: string;
-	label: string;
+	description: string;
+}
+
+export interface LabelEntry {
+	name: string;
+	color: string;
+	description: string;
+}
+
+export interface ViewEntry {
+	name: string;
+	prefixes: string[];
+	also_include: string[];
 }
 
 export interface ApiError {
