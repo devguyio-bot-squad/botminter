@@ -8,16 +8,41 @@ export interface TeamSummary {
 export interface TeamOverview {
 	name: string;
 	profile: string;
+	display_name: string;
+	description: string;
+	version: string;
 	github_repo: string;
+	default_coding_agent: string | null;
+	roles: RoleSummary[];
 	members: MemberSummary[];
+	status_count: number;
+	label_count: number;
+	projects: ProjectSummary[];
+	bridge: BridgeOverview;
 	knowledge_files: string[];
 	invariant_files: string[];
+}
+
+export interface RoleSummary {
+	name: string;
+	description: string;
 }
 
 export interface MemberSummary {
 	name: string;
 	role: string;
+	comment_emoji: string;
 	hat_count: number;
+}
+
+export interface ProjectSummary {
+	name: string;
+	fork_url: string;
+}
+
+export interface BridgeOverview {
+	selected: string | null;
+	available: string[];
 }
 
 export interface MemberDetail {
