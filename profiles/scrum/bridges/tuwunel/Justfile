@@ -674,17 +674,32 @@ room-create-dm member_name:
         exit 1
     fi
 
-    echo >&2 "[tuwunel-bridge] Creating DM room for ${MEMBER_NAME} (${MEMBER_MXID})..."
-
-    # Check if a DM room already exists by looking for a room with this member
-    # Use a naming convention: dm-<member_name> as a discoverable room name
+    # Use a room alias for discoverability — source of truth is the Matrix server,
+    # not bridge-state.json. This makes DM room creation idempotent even after
+    # bridge-state.json is lost (volume reset, recovery scenarios).
     DM_ROOM_NAME="dm-${MEMBER_NAME}"
 
-    # Create private DM room — invite only the specific member
+    # Check if DM room alias already exists on the Matrix server
+    ALIAS_RESP=$(matrix_request GET "${MATRIX_URL}/_matrix/client/v3/directory/room/%23${DM_ROOM_NAME}:{{SERVER_NAME}}" \
+        ) || ALIAS_RESP='{}'
+
+    EXISTING_ROOM_ID=$(echo "$ALIAS_RESP" | jq -r '.room_id // empty')
+    if [ -n "$EXISTING_ROOM_ID" ]; then
+        echo >&2 "[tuwunel-bridge] DM room #${DM_ROOM_NAME} already exists (${EXISTING_ROOM_ID})."
+        mkdir -p "$BRIDGE_CONFIG_DIR"
+        cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"name": "${DM_ROOM_NAME}", "room_id": "${EXISTING_ROOM_ID}"}
+    ENDJSON
+        exit 0
+    fi
+
+    echo >&2 "[tuwunel-bridge] Creating DM room for ${MEMBER_NAME} (${MEMBER_MXID})..."
+
+    # Create private DM room with alias — invite only the specific member
     CREATE_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/createRoom" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-        -d "{\"name\":\"${DM_ROOM_NAME}\",\"preset\":\"trusted_private_chat\",\"is_direct\":true,\"invite\":[\"${MEMBER_MXID}\"]}" \
+        -d "{\"name\":\"${DM_ROOM_NAME}\",\"room_alias_name\":\"${DM_ROOM_NAME}\",\"preset\":\"trusted_private_chat\",\"is_direct\":true,\"invite\":[\"${MEMBER_MXID}\"]}" \
         )
 
     ROOM_ID=$(echo "$CREATE_RESP" | jq -r '.room_id')
