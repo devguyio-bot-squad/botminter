@@ -2,6 +2,7 @@ use std::io::Write;
 
 use anyhow::{bail, Context, Result};
 
+use crate::bridge;
 use crate::chat;
 use crate::config;
 use crate::profile;
@@ -27,10 +28,22 @@ pub fn run(
                 "Member '{}' is running in brain mode (PID {}).",
                 member, rt.pid
             );
-            println!(
-                "The brain is available through the bridge chat. \
-                 Direct ACP chat will be available in a future release."
-            );
+
+            // Try to show the DM room info
+            if let Ok(Some(bridge_dir)) = bridge::discover(&team_repo, &team.name) {
+                let state_path = bridge::state_path(&cfg.workzone, &team.name);
+                if let Ok(b) = bridge::Bridge::new(bridge_dir, state_path, team.name.clone()) {
+                    if let Some(room_id) = b.room_for_member(member) {
+                        println!("Chat via Matrix DM room: {}", room_id);
+                    } else if let Some(room_id) = b.default_room_id() {
+                        println!("Chat via Matrix room: {}", room_id);
+                    } else {
+                        println!("Chat via the bridge (no room ID available).");
+                    }
+                }
+            } else {
+                println!("Chat via the bridge.");
+            }
             return Ok(());
         }
     }
