@@ -10,5 +10,9 @@
         ]
       }
     ]
-  }
+  },
+  "denied_tools": [
+    "mcp__acp__BashOutput",
+    "mcp__acp__KillShell"
+  ]
 }

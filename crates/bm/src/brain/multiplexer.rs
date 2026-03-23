@@ -27,10 +27,12 @@ pub struct MultiplexerConfig {
 /// This is more reliable than the system prompt alone, which can lose
 /// salience after many turns.
 const CHAT_FIRST_REMINDER: &str = "\n\n<system-reminder>\
-You are a chat-first member. Human messages are your TOP priority. \
-NEVER run long commands synchronously — always use background execution \
-(run_in_background for Bash) so you can respond to chat immediately. \
-Keep this response SHORT if it's a heartbeat or status check.\
+BACKGROUND EXECUTION PROTOCOL (mandatory):\
+\n1. Every Bash call MUST use run_in_background=true. No exceptions.\
+\n2. After starting a background command, respond with text immediately.\
+\n3. End your turn. Do NOT call BashOutput — it is disabled.\
+\n4. Redirect output to a file (e.g. > /tmp/result.out 2>&1) to check later.\
+\n5. Keep responses SHORT for heartbeats and status checks.\
 </system-reminder>";
 
 /// The brain multiplexer merges input streams and routes them through
