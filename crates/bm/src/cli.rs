@@ -249,6 +249,12 @@ pub enum Command {
         team: Option<String>,
     },
 
+    /// Debugging and diagnostic commands
+    Debug {
+        #[command(subcommand)]
+        command: DebugCommand,
+    },
+
     /// Generate dynamic shell completions
     ///
     /// Completions are dynamic: tab suggestions include real team names, roles,
@@ -512,6 +518,27 @@ pub enum DaemonCommand {
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DebugCommand {
+    /// Show brain member logs (stderr + LLM conversation)
+    BrainLogs {
+        /// Member name (e.g., superman-alice)
+        member: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+
+        /// Number of stderr lines to show
+        #[arg(short = 'n', long, default_value = "20")]
+        lines: usize,
+
+        /// Number of recent LLM entries to show
+        #[arg(long, default_value = "30")]
+        entries: usize,
     },
 }
 
