@@ -302,4 +302,88 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn workflow_dot_files_cover_all_statuses() {
+        let embedded = embedded_profiles();
+        for profile_name in list_embedded_profiles() {
+            // Read the manifest to get all statuses dynamically
+            let manifest_path = format!("{}/botminter.yml", profile_name);
+            let manifest_file = embedded.get_file(&manifest_path)
+                .unwrap_or_else(|| panic!("Profile '{}' should have botminter.yml", profile_name));
+            let manifest: crate::profile::ProfileManifest =
+                serde_yml::from_str(manifest_file.contents_utf8().unwrap()).unwrap();
+
+            // Collect all DOT file contents from workflows/
+            let workflows_path = format!("{}/workflows", profile_name);
+            let workflows_dir = embedded.get_dir(&workflows_path);
+            assert!(
+                workflows_dir.is_some(),
+                "Profile '{}' should have a workflows/ directory", profile_name
+            );
+            let workflows_dir = workflows_dir.unwrap();
+
+            let dot_files: Vec<_> = workflows_dir.files()
+                .filter(|f| f.path().extension().map_or(false, |e| e == "dot"))
+                .collect();
+            assert!(
+                !dot_files.is_empty(),
+                "Profile '{}' should have at least one .dot file in workflows/", profile_name
+            );
+
+            // Concatenate all DOT file contents
+            let all_dot_content: String = dot_files.iter()
+                .map(|f| f.contents_utf8().unwrap())
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            // Verify every status from the manifest appears in at least one DOT file
+            for status in &manifest.statuses {
+                assert!(
+                    all_dot_content.contains(&format!("\"{}\"", status.name)),
+                    "Profile '{}': status '{}' not found in any workflow DOT file",
+                    profile_name, status.name
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn workflow_dot_files_are_valid_syntax() {
+        let embedded = embedded_profiles();
+        for profile_name in list_embedded_profiles() {
+            let workflows_path = format!("{}/workflows", profile_name);
+            let workflows_dir = embedded.get_dir(&workflows_path)
+                .unwrap_or_else(|| panic!("Profile '{}' should have workflows/", profile_name));
+
+            for file in workflows_dir.files() {
+                if file.path().extension().map_or(true, |e| e != "dot") {
+                    continue;
+                }
+                let content = file.contents_utf8().unwrap();
+                let filename = file.path().file_name().unwrap().to_string_lossy();
+
+                // Basic DOT syntax validation
+                assert!(
+                    content.contains("digraph "),
+                    "Profile '{}' file '{}' should contain a digraph declaration",
+                    profile_name, filename
+                );
+                assert!(
+                    content.contains("rankdir=LR"),
+                    "Profile '{}' file '{}' should use left-to-right layout",
+                    profile_name, filename
+                );
+
+                // Balanced braces
+                let opens = content.chars().filter(|c| *c == '{').count();
+                let closes = content.chars().filter(|c| *c == '}').count();
+                assert_eq!(
+                    opens, closes,
+                    "Profile '{}' file '{}' should have balanced braces (found {} open, {} close)",
+                    profile_name, filename, opens, closes
+                );
+            }
+        }
+    }
 }
