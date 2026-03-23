@@ -1,3 +1,6 @@
+use std::path::PathBuf;
+use std::sync::{Arc, RwLock};
+
 use tokio::sync::mpsc;
 
 use super::multiplexer::MultiplexerOutput;
@@ -10,29 +13,57 @@ pub struct MatrixBridgeConfig {
     pub homeserver_url: String,
     /// Access token for authentication.
     pub access_token: String,
-    /// Room ID to listen on and send messages to (e.g., `!abc:localhost`).
-    pub room_id: String,
+    /// Room ID to listen on and send messages to.
+    /// When `None`, the brain enters DM discovery mode — it accepts
+    /// one invite from the operator and locks to that room.
+    pub room_id: Option<String>,
     /// The member's own Matrix user ID, used to filter out echo messages.
     pub own_user_id: String,
+    /// The operator's Matrix user ID. In discovery mode, only invites
+    /// from this user with `is_direct: true` are accepted.
+    pub operator_user_id: Option<String>,
+    /// Workspace path for persisting the discovered DM room ID.
+    pub workspace: Option<PathBuf>,
+}
+
+/// Shared active room state between reader and writer.
+///
+/// The reader sets this when it discovers a DM room via invite.
+/// The writer reads it to know where to send responses.
+pub type ActiveRoom = Arc<RwLock<Option<String>>>;
+
+/// Create a new `ActiveRoom`, optionally pre-populated with a known room ID.
+pub fn active_room(room_id: Option<String>) -> ActiveRoom {
+    Arc::new(RwLock::new(room_id))
 }
 
 // ── Reader ──────────────────────────────────────────────────────────────
 
-/// Polls a Matrix room for new `m.room.message` events and injects them
-/// into the multiplexer as `BrainMessage::human_from()`.
+/// Polls Matrix for new messages and injects them into the multiplexer.
+///
+/// Operates in two modes:
+/// - **Locked mode** (`room_id` is set): listens to one specific room
+/// - **Discovery mode** (`room_id` is None): watches for invites from the
+///   operator, auto-joins the first DM invite, then locks to that room
 pub struct MatrixBridgeReader {
     config: MatrixBridgeConfig,
     client: reqwest::Client,
     input_tx: mpsc::Sender<BrainMessage>,
+    active_room: ActiveRoom,
 }
 
 impl MatrixBridgeReader {
-    pub fn new(config: MatrixBridgeConfig, input_tx: mpsc::Sender<BrainMessage>) -> Self {
+    pub fn new(
+        config: MatrixBridgeConfig,
+        input_tx: mpsc::Sender<BrainMessage>,
+        active_room: ActiveRoom,
+    ) -> Self {
         let client = reqwest::Client::new();
         Self {
             config,
             client,
             input_tx,
+            active_room,
         }
     }
 
@@ -44,10 +75,13 @@ impl MatrixBridgeReader {
         let mut backoff_secs: u64 = 1;
         const MAX_BACKOFF_SECS: u64 = 30;
 
-        // Ensure room membership before polling (follows Ralph's ensure_room pattern).
-        // Idempotent: no-op if already joined, accepts pending invite if one exists.
-        if let Err(e) = self.join_room().await {
-            tracing::warn!(error = %e, "Failed to join room (may already be joined)");
+        // In locked mode, join the configured room before polling.
+        if let Some(ref room_id) = self.config.room_id {
+            if let Err(e) = self.join_room(room_id).await {
+                tracing::warn!(error = %e, "Failed to join room (may already be joined)");
+            }
+        } else {
+            tracing::info!("Bridge reader starting in DM discovery mode — waiting for operator invite");
         }
 
         // Do an initial sync with timeout=0 to get the `since` token
@@ -70,21 +104,42 @@ impl MatrixBridgeReader {
                 }
                 result = self.poll_sync(since.as_deref()) => {
                     match result {
-                        Ok((next_batch, messages)) => {
-                            backoff_secs = 1; // Reset backoff on success
+                        Ok((next_batch, sync)) => {
+                            backoff_secs = 1;
                             since = Some(next_batch);
 
-                            for (body, sender) in messages {
-                                let msg = BrainMessage::human_from(&body, &sender);
-                                if self.input_tx.send(msg).await.is_err() {
-                                    tracing::info!("Multiplexer channel closed, bridge reader stopping");
-                                    return;
+                            // In discovery mode, check for invites before processing messages
+                            let current_room = self.get_active_room();
+                            if current_room.is_none() {
+                                if let Some(room_id) = self.check_invites(&sync).await {
+                                    self.set_active_room(&room_id);
+                                    self.persist_dm_room(&room_id);
+                                    tracing::info!(
+                                        room_id = %room_id,
+                                        "DM room discovered and joined — locked to this room"
+                                    );
+                                    // Messages from this room will appear in the next sync
+                                    continue;
                                 }
-                                tracing::info!(
-                                    sender = %sender,
-                                    body_len = body.len(),
-                                    "Injected bridge message into multiplexer"
+                            }
+
+                            // Extract messages from the active room
+                            if let Some(ref room_id) = self.get_active_room() {
+                                let messages = extract_room_messages(
+                                    &sync, room_id, &self.config.own_user_id,
                                 );
+                                for (body, sender) in messages {
+                                    let msg = BrainMessage::human_from(&body, &sender);
+                                    if self.input_tx.send(msg).await.is_err() {
+                                        tracing::info!("Multiplexer channel closed, bridge reader stopping");
+                                        return;
+                                    }
+                                    tracing::info!(
+                                        sender = %sender,
+                                        body_len = body.len(),
+                                        "Injected bridge message into multiplexer"
+                                    );
+                                }
                             }
                         }
                         Err(e) => {
@@ -93,7 +148,6 @@ impl MatrixBridgeReader {
                                 backoff_secs = backoff_secs,
                                 "Bridge reader sync error, retrying after backoff"
                             );
-                            // Backoff before retrying — but still listen for shutdown
                             tokio::select! {
                                 _ = shutdown_rx.recv() => {
                                     tracing::info!("Bridge reader shutting down during backoff");
@@ -109,27 +163,42 @@ impl MatrixBridgeReader {
         }
     }
 
-    /// Build the server-side filter JSON to limit `/sync` to only
-    /// `m.room.message` events in the target room.
+    /// Build the server-side filter JSON for `/sync`.
+    ///
+    /// In locked mode, restricts to the configured room.
+    /// In discovery mode, no room filter — receives all rooms + invites.
     fn sync_filter(&self) -> String {
-        serde_json::json!({
-            "room": {
-                "rooms": [self.config.room_id],
-                "timeline": {
-                    "types": ["m.room.message"]
+        if let Some(ref room_id) = self.get_active_room() {
+            // Locked mode: filter to specific room
+            serde_json::json!({
+                "room": {
+                    "rooms": [room_id],
+                    "timeline": {
+                        "types": ["m.room.message"]
+                    }
                 }
-            }
-        })
-        .to_string()
+            })
+            .to_string()
+        } else {
+            // Discovery mode: no room filter, receive invites
+            serde_json::json!({
+                "room": {
+                    "timeline": {
+                        "types": ["m.room.message"]
+                    }
+                }
+            })
+            .to_string()
+        }
     }
 
-    /// Join the configured Matrix room. Idempotent — succeeds if already
-    /// joined, and accepts a pending invite if one exists.
-    async fn join_room(&self) -> Result<(), BridgeAdapterError> {
+    /// Join a Matrix room by ID. Idempotent — succeeds if already joined,
+    /// and accepts a pending invite if one exists.
+    async fn join_room(&self, room_id: &str) -> Result<(), BridgeAdapterError> {
         let url = format!(
             "{}/_matrix/client/v3/join/{}",
             self.config.homeserver_url,
-            urlencoded(&self.config.room_id)
+            urlencoded(room_id)
         );
         let resp = self
             .client
@@ -147,7 +216,7 @@ impl MatrixBridgeReader {
                 "join room failed: {status} — {body}"
             )));
         }
-        tracing::info!(room_id = %self.config.room_id, "Joined Matrix room");
+        tracing::info!(room_id = %room_id, "Joined Matrix room");
         Ok(())
     }
 
@@ -186,11 +255,11 @@ impl MatrixBridgeReader {
     }
 
     /// Long-poll `/sync` for new events since the given token.
-    /// Returns `(next_batch, Vec<(body, sender_display_name)>)`.
+    /// Returns the parsed sync response for further processing.
     async fn poll_sync(
         &self,
         since: Option<&str>,
-    ) -> Result<(String, Vec<(String, String)>), BridgeAdapterError> {
+    ) -> Result<(String, SyncResponse), BridgeAdapterError> {
         let url = format!(
             "{}/_matrix/client/v3/sync",
             self.config.homeserver_url
@@ -226,8 +295,97 @@ impl MatrixBridgeReader {
             .await
             .map_err(|e| BridgeAdapterError::Parse(e.to_string()))?;
 
-        let messages = extract_room_messages(&sync, &self.config.room_id, &self.config.own_user_id);
-        Ok((sync.next_batch, messages))
+        let next_batch = sync.next_batch.clone();
+        Ok((next_batch, sync))
+    }
+
+    /// Check sync response for DM invites from the operator.
+    /// If found, auto-joins the room and returns the room ID.
+    async fn check_invites(&self, sync: &SyncResponse) -> Option<String> {
+        let rooms = sync.rooms.as_ref()?;
+        let invites = rooms.invite.as_ref()?;
+
+        let operator = self.config.operator_user_id.as_deref()?;
+
+        for (room_id, invited_room) in invites {
+            let invite_state = invited_room.invite_state.as_ref()?;
+
+            // Check if this is a direct invite from the operator
+            let is_dm_from_operator = invite_state.events.iter().any(|event| {
+                event.event_type == "m.room.member"
+                    && event.state_key == self.config.own_user_id
+                    && event.sender == operator
+                    && event
+                        .content
+                        .as_ref()
+                        .and_then(|c| c.get("is_direct"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false)
+            });
+
+            if !is_dm_from_operator {
+                tracing::debug!(
+                    room_id = %room_id,
+                    "Ignoring invite — not a DM from operator"
+                );
+                continue;
+            }
+
+            tracing::info!(
+                room_id = %room_id,
+                operator = %operator,
+                "Received DM invite from operator — joining"
+            );
+
+            // Auto-join the DM room
+            match self.join_room(room_id).await {
+                Ok(()) => return Some(room_id.clone()),
+                Err(e) => {
+                    tracing::error!(
+                        room_id = %room_id,
+                        error = %e,
+                        "Failed to join operator DM room"
+                    );
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Get the current active room ID (from config or discovery).
+    fn get_active_room(&self) -> Option<String> {
+        // Check shared state first (set by discovery)
+        if let Ok(guard) = self.active_room.read() {
+            if guard.is_some() {
+                return guard.clone();
+            }
+        }
+        // Fall back to config
+        self.config.room_id.clone()
+    }
+
+    /// Set the active room ID (called when a DM room is discovered).
+    fn set_active_room(&self, room_id: &str) {
+        if let Ok(mut guard) = self.active_room.write() {
+            *guard = Some(room_id.to_string());
+        }
+    }
+
+    /// Persist the discovered DM room ID to a workspace file.
+    fn persist_dm_room(&self, room_id: &str) {
+        if let Some(ref workspace) = self.config.workspace {
+            let dm_file = workspace.join("dm-room.json");
+            let json = serde_json::json!({
+                "room_id": room_id,
+                "discovered_at": chrono::Utc::now().to_rfc3339(),
+            });
+            if let Err(e) = std::fs::write(&dm_file, serde_json::to_string_pretty(&json).unwrap_or_default()) {
+                tracing::warn!(error = %e, "Failed to persist DM room ID to {}", dm_file.display());
+            } else {
+                tracing::info!(path = %dm_file.display(), "Persisted DM room ID");
+            }
+        }
     }
 }
 
@@ -238,12 +396,17 @@ impl MatrixBridgeReader {
 pub struct MatrixBridgeWriter {
     config: MatrixBridgeConfig,
     client: reqwest::Client,
+    active_room: ActiveRoom,
 }
 
 impl MatrixBridgeWriter {
-    pub fn new(config: MatrixBridgeConfig) -> Self {
+    pub fn new(config: MatrixBridgeConfig, active_room: ActiveRoom) -> Self {
         let client = reqwest::Client::new();
-        Self { config, client }
+        Self {
+            config,
+            client,
+            active_room,
+        }
     }
 
     /// Run the writer loop. Reads from `MultiplexerOutput`, accumulates
@@ -286,13 +449,31 @@ impl MatrixBridgeWriter {
         }
     }
 
-    /// Send a message to the Matrix room with retry on transient errors.
+    /// Get the room ID to send to (from shared state or config).
+    fn get_room_id(&self) -> Option<String> {
+        if let Ok(guard) = self.active_room.read() {
+            if guard.is_some() {
+                return guard.clone();
+            }
+        }
+        self.config.room_id.clone()
+    }
+
+    /// Send a message to the active Matrix room with retry on transient errors.
     async fn send_message(&self, body: &str) -> Result<(), BridgeAdapterError> {
+        let room_id = match self.get_room_id() {
+            Some(rid) => rid,
+            None => {
+                tracing::warn!("No active room — skipping message send (waiting for DM discovery)");
+                return Ok(());
+            }
+        };
+
         let txn_id = uuid::Uuid::new_v4().to_string();
         let url = format!(
             "{}/_matrix/client/v3/rooms/{}/send/m.room.message/{}",
             self.config.homeserver_url,
-            urlencoded(&self.config.room_id),
+            urlencoded(&room_id),
             txn_id
         );
 
@@ -398,6 +579,8 @@ pub(crate) struct SyncResponse {
 pub(crate) struct SyncRooms {
     #[serde(default)]
     pub join: Option<std::collections::HashMap<String, JoinedRoom>>,
+    #[serde(default)]
+    pub invite: Option<std::collections::HashMap<String, InvitedRoom>>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -428,6 +611,32 @@ pub(crate) struct MessageContent {
     pub msgtype: Option<String>,
     #[serde(default)]
     pub body: Option<String>,
+}
+
+/// A room the user has been invited to.
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct InvitedRoom {
+    #[serde(default)]
+    pub invite_state: Option<InviteState>,
+}
+
+/// Stripped state events included with an invite.
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct InviteState {
+    #[serde(default)]
+    pub events: Vec<StrippedStateEvent>,
+}
+
+/// A stripped state event (included in invite previews).
+#[derive(Debug, serde::Deserialize)]
+pub(crate) struct StrippedStateEvent {
+    #[serde(rename = "type")]
+    pub event_type: String,
+    pub sender: String,
+    #[serde(default)]
+    pub state_key: String,
+    #[serde(default)]
+    pub content: Option<serde_json::Value>,
 }
 
 /// Extract `(body, sender)` pairs from a sync response for the target room,
@@ -524,6 +733,53 @@ mod tests {
     }
 
     #[test]
+    fn deserialize_sync_with_invite() {
+        let json = r#"{
+            "next_batch": "s50",
+            "rooms": {
+                "invite": {
+                    "!dm_room:localhost": {
+                        "invite_state": {
+                            "events": [
+                                {
+                                    "type": "m.room.member",
+                                    "sender": "@operator:localhost",
+                                    "state_key": "@brain:localhost",
+                                    "content": {
+                                        "membership": "invite",
+                                        "is_direct": true
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                }
+            }
+        }"#;
+
+        let sync: SyncResponse = serde_json::from_str(json).unwrap();
+        let rooms = sync.rooms.unwrap();
+        let invites = rooms.invite.unwrap();
+        assert!(invites.contains_key("!dm_room:localhost"));
+
+        let invited = &invites["!dm_room:localhost"];
+        let state = invited.invite_state.as_ref().unwrap();
+        assert_eq!(state.events.len(), 1);
+        assert_eq!(state.events[0].sender, "@operator:localhost");
+        assert_eq!(state.events[0].state_key, "@brain:localhost");
+
+        let is_direct = state.events[0]
+            .content
+            .as_ref()
+            .unwrap()
+            .get("is_direct")
+            .unwrap()
+            .as_bool()
+            .unwrap();
+        assert!(is_direct);
+    }
+
+    #[test]
     fn deserialize_sync_with_multiple_event_types() {
         let json = r#"{
             "next_batch": "s100",
@@ -563,7 +819,6 @@ mod tests {
         let sync: SyncResponse = serde_json::from_str(json).unwrap();
         let messages = extract_room_messages(&sync, "!room:localhost", "@bot:localhost");
 
-        // Only alice's message should pass (not the member event, not the bot's own message)
         assert_eq!(messages.len(), 1);
         assert_eq!(messages[0].0, "Check the board");
         assert_eq!(messages[0].1, "@alice:localhost");
@@ -622,6 +877,7 @@ mod tests {
                     );
                     m
                 }),
+                invite: None,
             }),
         };
 
@@ -643,7 +899,10 @@ mod tests {
     fn extract_handles_no_join() {
         let sync = SyncResponse {
             next_batch: "s1".into(),
-            rooms: Some(SyncRooms { join: None }),
+            rooms: Some(SyncRooms {
+                join: None,
+                invite: None,
+            }),
         };
         let messages = extract_room_messages(&sync, "!r:localhost", "@me:localhost");
         assert!(messages.is_empty());
@@ -662,6 +921,7 @@ mod tests {
                     );
                     m
                 }),
+                invite: None,
             }),
         };
         let messages = extract_room_messages(&sync, "!r:localhost", "@me:localhost");
@@ -718,6 +978,7 @@ mod tests {
                     );
                     m
                 }),
+                invite: None,
             }),
         }
     }

@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use tracing_subscriber::EnvFilter;
 
 use crate::brain::{
-    bridge_adapter::{MatrixBridgeConfig, MatrixBridgeReader, MatrixBridgeWriter},
+    bridge_adapter::{self, MatrixBridgeConfig, MatrixBridgeReader, MatrixBridgeWriter},
     EventWatcher, EventWatcherConfig, Heartbeat, HeartbeatConfig, Multiplexer, MultiplexerConfig,
 };
 
@@ -60,25 +60,30 @@ async fn run_brain(
     let heartbeat_sender = input.sender();
 
     // Spawn bridge adapter (reader + writer) if all env vars are present
-    let bridge_config = resolve_bridge_config();
+    let bridge_config = resolve_bridge_config(&workspace);
     let bridge_reader_shutdown_tx = if let Some(cfg) = bridge_config {
+        let mode = if cfg.room_id.is_some() { "locked" } else { "discovery" };
         tracing::info!(
-            room_id = %cfg.room_id,
+            room_id = ?cfg.room_id,
             own_user_id = %cfg.own_user_id,
+            mode = mode,
             "Bridge adapter enabled — spawning reader and writer"
         );
 
         let bridge_sender = input.sender();
 
+        // Shared active room state between reader and writer
+        let shared_room = bridge_adapter::active_room(cfg.room_id.clone());
+
         // Spawn reader
-        let reader = MatrixBridgeReader::new(cfg.clone(), bridge_sender);
+        let reader = MatrixBridgeReader::new(cfg.clone(), bridge_sender, shared_room.clone());
         let (reader_shutdown_tx, reader_shutdown_rx) = tokio::sync::mpsc::channel(1);
         tokio::spawn(async move {
             reader.run(reader_shutdown_rx).await;
         });
 
         // Spawn writer
-        let writer = MatrixBridgeWriter::new(cfg);
+        let writer = MatrixBridgeWriter::new(cfg, shared_room);
         tokio::spawn(async move {
             writer.run(output).await;
         });
@@ -148,18 +153,34 @@ async fn run_brain(
 }
 
 /// Attempt to build a `MatrixBridgeConfig` from environment variables.
-/// Returns `None` if any required variable is missing.
-fn resolve_bridge_config() -> Option<MatrixBridgeConfig> {
+///
+/// Required: `RALPH_MATRIX_HOMESERVER_URL`, `RALPH_MATRIX_ACCESS_TOKEN`, `BM_BRAIN_USER_ID`.
+/// Optional: `BM_BRAIN_ROOM_ID` (when absent, enters DM discovery mode),
+///           `BM_BRAIN_OPERATOR_USER_ID` (required for DM discovery security).
+fn resolve_bridge_config(workspace: &std::path::Path) -> Option<MatrixBridgeConfig> {
     let homeserver_url = std::env::var("RALPH_MATRIX_HOMESERVER_URL").ok()?;
     let access_token = std::env::var("RALPH_MATRIX_ACCESS_TOKEN").ok()?;
-    let room_id = std::env::var("BM_BRAIN_ROOM_ID").ok()?;
     let own_user_id = std::env::var("BM_BRAIN_USER_ID").ok()?;
+
+    // Room ID is optional — when absent, brain enters DM discovery mode.
+    // Check workspace dm-room.json first (persisted from previous discovery).
+    let room_id = std::env::var("BM_BRAIN_ROOM_ID").ok().or_else(|| {
+        let dm_file = workspace.join("dm-room.json");
+        std::fs::read_to_string(&dm_file)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("room_id")?.as_str().map(String::from))
+    });
+
+    let operator_user_id = std::env::var("BM_BRAIN_OPERATOR_USER_ID").ok();
 
     Some(MatrixBridgeConfig {
         homeserver_url,
         access_token,
         room_id,
         own_user_id,
+        operator_user_id,
+        workspace: Some(workspace.to_path_buf()),
     })
 }
 
@@ -186,6 +207,7 @@ const ENV_VAR_ALLOWLIST: &[&str] = &[
     // Bridge adapter config (room + identity for Matrix bridge I/O)
     "BM_BRAIN_ROOM_ID",
     "BM_BRAIN_USER_ID",
+    "BM_BRAIN_OPERATOR_USER_ID",
     // Team repo path (for gh commands and board awareness)
     "BM_TEAM_REPO",
 ];

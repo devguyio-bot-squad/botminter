@@ -61,6 +61,7 @@ pub struct BrainLaunchConfig<'a> {
     pub service_url: Option<&'a str>,
     pub room_id: Option<&'a str>,
     pub user_id: Option<&'a str>,
+    pub operator_user_id: Option<&'a str>,
     pub team_repo: Option<&'a std::path::Path>,
 }
 
@@ -110,6 +111,9 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
     }
     if let Some(uid) = config.user_id {
         cmd.env("BM_BRAIN_USER_ID", uid);
+    }
+    if let Some(op_uid) = config.operator_user_id {
+        cmd.env("BM_BRAIN_OPERATOR_USER_ID", op_uid);
     }
     // Team repo path for gh commands and board awareness
     if let Some(repo) = config.team_repo {
