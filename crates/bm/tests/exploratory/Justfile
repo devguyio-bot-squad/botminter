@@ -73,15 +73,15 @@ clean:
         if [ -x {{REMOTE_BIN}}/bm ] && [ -f {{REMOTE_HOME}}/.botminter/config.yml ]; then
             {{REMOTE_BIN}}/bm stop --force --bridge -t $TEAM 2>/dev/null || true
         fi
-        # 2. SIGTERM stale processes
-        for pattern in \"[b]m brain-run\" \"[c]laude-code-acp-rs\" \"[c]laude.*stream-json\" \"[r]alph run\"; do
+        # 2. SIGTERM stale processes (including bm commands from killed test runs)
+        for pattern in \"[b]m brain-run\" \"[b]m start\" \"[b]m teams\" \"[b]m stop\" \"[c]laude-code-acp-rs\" \"[c]laude.*stream-json\" \"[r]alph run\"; do
             for pid in \$(ps aux | grep \"\$pattern\" | awk \"{print \\\$2}\"); do
                 kill \"\$pid\" 2>/dev/null || true
             done
         done
         sleep 1
         # 3. SIGKILL survivors
-        for pattern in \"[b]m brain-run\" \"[c]laude-code-acp-rs\" \"[c]laude.*stream-json\" \"[r]alph run\"; do
+        for pattern in \"[b]m brain-run\" \"[b]m start\" \"[b]m teams\" \"[b]m stop\" \"[c]laude-code-acp-rs\" \"[c]laude.*stream-json\" \"[r]alph run\"; do
             for pid in \$(ps aux | grep \"\$pattern\" | awk \"{print \\\$2}\"); do
                 kill -9 \"\$pid\" 2>/dev/null || true
             done
@@ -112,9 +112,12 @@ clean:
         rm -f {{REMOTE_BIN}}/bm {{REMOTE_BIN}}/bm-agent {{REMOTE_BIN}}/ralph {{REMOTE_BIN}}/claude {{REMOTE_BIN}}/claude-code-acp-rs
 
         # ── Port wait ──
-        for i in \$(seq 1 10); do
+        # Kill any conmon process holding the port (podman rm may not release immediately)
+        PORT_PID=\$(ss -tlnp sport = :{{TUWUNEL_PORT}} 2>/dev/null | grep -oP 'pid=\K[0-9]+' || true)
+        [ -n \"\$PORT_PID\" ] && kill \"\$PORT_PID\" 2>/dev/null || true
+        for i in \$(seq 1 15); do
             if ! ss -tlnp 2>/dev/null | grep -q \":{{TUWUNEL_PORT}} \"; then break; fi
-            sleep 1
+            sleep 2
         done
     "' || true
     echo "Clean."

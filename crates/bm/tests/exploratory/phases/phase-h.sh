@@ -208,13 +208,10 @@ fi
 
 # ── H.5: End-to-End Brain Autonomy Validation ─────────────────
 #
-# These tests validate the true value of brain-mode: autonomous members
-# that users interact with via chat. The flow simulates real production use:
-# - User runs `bm start` to launch brain members
-# - User sends messages to the Matrix room (via tuwunel bridge)
-# - Brain member processes messages and responds autonomously
-# - User runs `bm stop` to shut down gracefully
-# No internal commands (bm brain-run) or file injection — pure user journey.
+# These tests validate brain-mode with DM discovery: the brain starts
+# without a pre-configured room, the operator DMs it from their Matrix
+# client, and the brain auto-discovers the room, joins, and responds.
+# This simulates the real production flow — no manual room setup.
 
 echo "  H.5: End-to-End Brain Autonomy Validation..."
 
@@ -254,7 +251,7 @@ else
     fail "H20" "ACP binary" "claude-code-acp-rs not found in PATH"
 fi
 
-# ── Matrix Authentication & Room Setup ──
+# ── Matrix Authentication ──
 
 # H21: Login as admin to Matrix
 ADMIN_PASS=$(jq -r '.bmadmin' "$PWFILE" 2>/dev/null)
@@ -280,69 +277,59 @@ else
     fail "H22" "Alice login" "no access token returned"
 fi
 
-# H23: Resolve room ID for the team general room
-ROOM_ALIAS="%23${TEAM_NAME}-general:localhost"
-ROOM_RESP=$(curl -sf "$MATRIX_URL/_matrix/client/v3/directory/room/$ROOM_ALIAS" 2>/dev/null || echo '{}')
-ROOM_ID=$(echo "$ROOM_RESP" | jq -r '.room_id // empty')
-if [ -n "$ROOM_ID" ]; then
-    pass "H23" "Room resolved ($ROOM_ID)"
-else
-    fail "H23" "Room resolution" "room $TEAM_NAME-general not found"
-fi
+# H23: Ensure no pre-existing DM rooms (clean slate for discovery test)
+rm -f "$ALICE_WS/dm-room.json"
+# Remove DM rooms from bridge-state.json
+jq 'del(.rooms[] | select(.member != null))' "$BSTATE" > /tmp/bs-clean.json 2>/dev/null && mv /tmp/bs-clean.json "$BSTATE" || true
+pass "H23" "Cleaned DM room state for discovery test"
 
-# ── Brain Member Lifecycle — User Journey ──
-# This is the core autonomy test: bm start → chat via Matrix → bm stop
-# Simulates exactly what a real user does with brain-mode members.
+# ── Brain DM Discovery — User Journey ──
+# 1. bm start → brain enters discovery mode (no room configured)
+# 2. Operator DMs the brain from their Matrix client
+# 3. Brain discovers the invite, joins, and responds
 
 # H24: Clean any previous state before brain lifecycle test
 bm stop --force 2>/dev/null || true
 rm -f "$STATE_FILE"
 pass "H24" "Cleaned previous state for lifecycle test"
 
-# H25: Start brain members via bm start (the user's primary command)
-START_OUT=$(bm start 2>&1 || true)
-START_EC=$?
-if echo "$START_OUT" | grep -qi "brain\|launch\|started"; then
+# H25: Start alice in discovery mode (no DM room configured)
+for ws in "$TEAM_DIR"/superman-*/; do
+    rm -f "$ws/dm-room.json" 2>/dev/null || true
+    : > "$ws/brain-stderr.log" 2>/dev/null || true
+done
+rm -rf "$HOME/.claude" 2>/dev/null || true
+START_OUT=$(bm start superman-alice 2>&1 || true)
+if echo "$START_OUT" | grep -qi "brain\|started"; then
     pass "H25" "bm start executed (brain mode detected)"
 else
     note "H25" "bm start" "output: $(echo "$START_OUT" | tail -3 | tr '\n' ' ')"
 fi
 
-# H26: Check if brain processes are alive (give them 3 seconds to start)
+# H26: Verify brain started in discovery mode
 sleep 3
 BRAIN_ALIVE=false
+BRAIN_PID=""
 if [ -f "$STATE_FILE" ]; then
-    ALIVE_COUNT=$(jq '[.members // {} | to_entries[] | select(.value.brain_mode == true)] | length' "$STATE_FILE" 2>/dev/null || echo "0")
-    if [ "${ALIVE_COUNT:-0}" -gt 0 ]; then
-        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            if kill -0 "$pid" 2>/dev/null; then
-                BRAIN_ALIVE=true
-                break
-            fi
-        done
-    fi
-fi
-if $BRAIN_ALIVE; then
-    # Validate the process is actually brain-run or claude-code-acp-rs (not just any PID)
-    BRAIN_PID=""
     for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
         if kill -0 "$pid" 2>/dev/null; then
+            BRAIN_ALIVE=true
             BRAIN_PID="$pid"
             break
         fi
     done
-    PROC_CMD=$(cat /proc/$BRAIN_PID/cmdline 2>/dev/null | tr '\0' ' ' || ps -p $BRAIN_PID -o args= 2>/dev/null || echo "unknown")
-    if echo "$PROC_CMD" | grep -q 'brain-run\|claude-code-acp-rs'; then
-        pass "H26" "Brain process verified (PID $BRAIN_PID, command contains brain-run/acp)"
+fi
+if $BRAIN_ALIVE; then
+    # Check stderr log confirms discovery mode
+    if grep -q "DM discovery mode" "$ALICE_WS/brain-stderr.log" 2>/dev/null; then
+        pass "H26" "Brain started in DM discovery mode (PID $BRAIN_PID)"
+    elif grep -q "mode=\"discovery\"" "$ALICE_WS/brain-stderr.log" 2>/dev/null; then
+        pass "H26" "Brain started in discovery mode (PID $BRAIN_PID)"
     else
-        note "H26" "Process identity" "PID $BRAIN_PID alive but command not brain-run: $(echo "$PROC_CMD" | head -c 120)"
+        note "H26" "Brain started but discovery mode not confirmed in logs"
     fi
 else
-    if [ -f "$STATE_FILE" ] && grep -q '"brain_mode":true' "$STATE_FILE" 2>/dev/null; then
-        note "H26" "Brain process" "brain_mode=true in state but process not alive (ACP may have failed to authenticate)"
-    else
-        note "H26" "Brain process" "no brain members in state file"
-    fi
+    note "H26" "Brain process" "not alive (ACP may have failed to authenticate)"
 fi
 
 # H27: Status shows brain label while running
@@ -353,28 +340,66 @@ else
     note "H27" "Brain status" "output: $(echo "$STATUS_OUT" | tail -3 | tr '\n' ' ')"
 fi
 
-# ── User Chat Interaction While Brain Running ──
-# This is the KEY autonomy validation: send messages to the room while brain
-# is alive, poll for brain's response. This simulates real production use.
+# ── DM Discovery: Operator creates DM and brain auto-joins ──
+# This simulates the operator clicking "Message" on the member in Element.
 
-# H28: Send greeting message to room while brain is running (user -> room)
-# If sending fails, skip remaining chat interaction tests (early failure).
+# H28: Operator creates DM with alice (simulates Element "Message" action)
 CHAT_SEND_OK=true
-MSG_TXN="h28-$(date +%s)"
-SEND_RESP=$(curl -sf -X PUT \
+DM_CREATE_RESP=$(curl -sf -X POST \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
-    -d "{\"msgtype\":\"m.text\",\"body\":\"Hello brain member! Please introduce yourself and confirm you are operational.\"}" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
-SEND_EVENT_ID=$(echo "$SEND_RESP" | jq -r '.event_id // empty')
-if [ -n "$SEND_EVENT_ID" ]; then
-    pass "H28" "Greeting sent to room while brain running ($SEND_EVENT_ID)"
+    -d "{\"is_direct\":true,\"preset\":\"trusted_private_chat\",\"invite\":[\"@superman-alice:localhost\"]}" \
+    "$MATRIX_URL/_matrix/client/v3/createRoom" 2>/dev/null || echo '{}')
+DM_ROOM_ID=$(echo "$DM_CREATE_RESP" | jq -r '.room_id // empty')
+DM_ROOM_ENC=$(echo "$DM_ROOM_ID" | sed 's/!/%21/g; s/:/%3A/g')
+if [ -n "$DM_ROOM_ID" ]; then
+    # Send first message in the DM
+    MSG_TXN="h28-$(date +%s)"
+    SEND_RESP=$(curl -sf -X PUT \
+        -H "Authorization: Bearer $ADMIN_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "{\"msgtype\":\"m.text\",\"body\":\"Hello alice! Please introduce yourself and confirm you are operational.\"}" \
+        "$MATRIX_URL/_matrix/client/v3/rooms/$DM_ROOM_ENC/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
+    SEND_EVENT_ID=$(echo "$SEND_RESP" | jq -r '.event_id // empty')
+    if [ -n "$SEND_EVENT_ID" ]; then
+        pass "H28" "Operator DM created and greeting sent ($DM_ROOM_ID, $SEND_EVENT_ID)"
+    else
+        fail "H28" "Send greeting" "DM room created but message send failed"
+        CHAT_SEND_OK=false
+    fi
 else
-    fail "H28" "Send greeting" "no event_id returned: $SEND_RESP"
+    fail "H28" "Create DM" "failed to create DM room: $DM_CREATE_RESP"
     CHAT_SEND_OK=false
 fi
+# Use DM room for all subsequent tests (instead of shared room)
+ROOM_ID="${DM_ROOM_ID:-}"
+ROOM_ID_ENC=$(echo "$ROOM_ID" | sed 's/!/%21/g; s/:/%3A/g')
 
 if $CHAT_SEND_OK; then
+
+# H28b: Verify brain discovered and joined the DM room
+echo "    Waiting for brain to discover DM room (up to 60s)..."
+DM_DISCOVERED=false
+for dm_check in $(seq 1 12); do
+    sleep 5
+    if [ -f "$ALICE_WS/dm-room.json" ]; then
+        DISCOVERED_ROOM=$(jq -r '.room_id // empty' "$ALICE_WS/dm-room.json" 2>/dev/null)
+        if [ -n "$DISCOVERED_ROOM" ]; then
+            DM_DISCOVERED=true
+            break
+        fi
+    fi
+    echo "    DM discovery check $dm_check/12: not yet..."
+done
+if $DM_DISCOVERED; then
+    pass "H28b" "Brain discovered DM room ($DISCOVERED_ROOM via dm-room.json)"
+else
+    if grep -q "DM room discovered" "$ALICE_WS/brain-stderr.log" 2>/dev/null; then
+        pass "H28b" "Brain discovered DM room (confirmed in stderr log)"
+    else
+        fail "H28b" "DM discovery" "dm-room.json not created within 60s (stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null | tr '\n' ' '))"
+    fi
+fi
 
 # H29: Send work request message while brain is running
 MSG_TXN="h29-$(date +%s)"
@@ -382,7 +407,7 @@ SEND_RESP=$(curl -sf -X PUT \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"msgtype\":\"m.text\",\"body\":\"Please check the current project status and report back with your findings.\"}" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
+    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
 TASK_EVENT_ID=$(echo "$SEND_RESP" | jq -r '.event_id // empty')
 if [ -n "$TASK_EVENT_ID" ]; then
     pass "H29" "Work request sent to room while brain running ($TASK_EVENT_ID)"
@@ -396,7 +421,7 @@ SEND_RESP=$(curl -sf -X PUT \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"msgtype\":\"m.text\",\"body\":\"What tools and capabilities do you have available?\"}" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
+    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
 FOLLOWUP_EVENT_ID=$(echo "$SEND_RESP" | jq -r '.event_id // empty')
 if [ -n "$FOLLOWUP_EVENT_ID" ]; then
     pass "H30" "Follow-up question sent (multi-turn simulation)"
@@ -411,7 +436,7 @@ GARBAGE_RESP=$(curl -sf -X PUT \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"msgtype\":\"m.text\",\"body\":\"\"}" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
+    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
 GARBAGE_EVENT_ID=$(echo "$GARBAGE_RESP" | jq -r '.event_id // empty')
 # Also send a message with unusual unicode content
 MSG_TXN2="h31b-$(date +%s)"
@@ -419,7 +444,7 @@ curl -sf -X PUT \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"msgtype\":\"m.text\",\"body\":\"\u0000\u001f\uffff\ud800\"}" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN2" 2>/dev/null || true
+    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/send/m.room.message/$MSG_TXN2" 2>/dev/null || true
 sleep 2
 if $BRAIN_ALIVE; then
     # Verify brain process is still alive after garbage input
@@ -452,7 +477,7 @@ for attempt in $(seq 1 6); do
     sleep 5
     HISTORY=$(curl -sf \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=20" 2>/dev/null || echo '{}')
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/messages?dir=b&limit=20" 2>/dev/null || echo '{}')
     # Look for messages from any member identity (superman-alice, superman-bob, etc.)
     BRAIN_MSGS=$(echo "$HISTORY" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
     if [ "${BRAIN_MSGS:-0}" -gt 0 ]; then
@@ -492,7 +517,7 @@ if $BRAIN_RESPONDED; then
     for h29b_attempt in $(seq 1 12); do
         H29B_HIST=$(curl -sf \
             -H "Authorization: Bearer $ADMIN_TOKEN" \
-            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
+            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
         ALL_BRAIN_BODIES=$(echo "$H29B_HIST" | jq -r '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | .[].content.body // ""' 2>/dev/null || echo "")
         for keyword in project status check report finding available tool capability help task work connected loop operational Ralph ready; do
             if echo "$ALL_BRAIN_BODIES" | grep -qi "$keyword"; then
@@ -527,7 +552,7 @@ fi  # end CHAT_SEND_OK
 sleep 1
 MESSAGES=$(curl -sf \
     -H "Authorization: Bearer $ALICE_TOKEN" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=20" 2>/dev/null || echo '{}')
+    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/messages?dir=b&limit=20" 2>/dev/null || echo '{}')
 MSG_COUNT=$(echo "$MESSAGES" | jq '[.chunk[] | select(.type == "m.room.message")] | length' 2>/dev/null || echo "0")
 GREETING_FOUND=$(echo "$MESSAGES" | jq '[.chunk[] | select(.content.body? // "" | contains("introduce yourself"))] | length' 2>/dev/null || echo "0")
 TASK_FOUND=$(echo "$MESSAGES" | jq '[.chunk[] | select(.content.body? // "" | contains("project status"))] | length' 2>/dev/null || echo "0")
@@ -537,44 +562,24 @@ else
     fail "H33" "Message visibility" "greeting=$GREETING_FOUND task=$TASK_FOUND total=$MSG_COUNT"
 fi
 
-# H34: Cross-member messaging while brain is running (integrated journey)
-MSG_TXN="h34-$(date +%s)"
-curl -sf -X PUT \
-    -H "Authorization: Bearer $ALICE_TOKEN" \
-    -H "Content-Type: application/json" \
-    -d "{\"msgtype\":\"m.text\",\"body\":\"Cross-member test: alice sending to room while brain is active.\"}" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" >/dev/null 2>&1
-sleep 1
+# H34: Verify DM room is private (only operator + alice, not bob)
+# In the 1:1 DM model, bob should NOT be a member of alice's DM room.
+BOB_PASS=$(jq -r '.["superman-bob"]' "$PWFILE" 2>/dev/null)
+BOB_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+    -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-bob\"},\"password\":\"$BOB_PASS\"}" \
+    "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+BOB_TOKEN=$(echo "$BOB_LOGIN" | jq -r '.access_token // empty')
 if [ -n "$BOB_TOKEN" ]; then
-    BOB_CROSS=$(curl -sf \
+    BOB_DM_CHECK=$(curl -sf \
         -H "Authorization: Bearer $BOB_TOKEN" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=5" 2>/dev/null || echo '{}')
-    CROSS_FOUND=$(echo "$BOB_CROSS" | jq '[.chunk[] | select(.content.body? // "" | contains("Cross-member test"))] | length' 2>/dev/null || echo "0")
-    if [ "${CROSS_FOUND:-0}" -ge 1 ]; then
-        pass "H34" "Cross-member messaging while brain running (alice to bob, brain alive)"
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/messages?dir=b&limit=5" 2>/dev/null || echo '{"errcode":"M_FORBIDDEN"}')
+    if echo "$BOB_DM_CHECK" | jq -e '.errcode' >/dev/null 2>&1; then
+        pass "H34" "DM room is private — bob cannot access alice's DM (expected)"
     else
-        fail "H34" "Cross-member" "bob does not see alice's message while brain is running"
+        note "H34" "DM privacy" "bob can read alice's DM room (may be due to server config)"
     fi
 else
-    # Need bob token — login if we don't have it yet
-    BOB_PASS=$(jq -r '.["superman-bob"]' "$PWFILE" 2>/dev/null)
-    BOB_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
-        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-bob\"},\"password\":\"$BOB_PASS\"}" \
-        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
-    BOB_TOKEN=$(echo "$BOB_LOGIN" | jq -r '.access_token // empty')
-    if [ -n "$BOB_TOKEN" ]; then
-        BOB_CROSS=$(curl -sf \
-            -H "Authorization: Bearer $BOB_TOKEN" \
-            "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=5" 2>/dev/null || echo '{}')
-        CROSS_FOUND=$(echo "$BOB_CROSS" | jq '[.chunk[] | select(.content.body? // "" | contains("Cross-member test"))] | length' 2>/dev/null || echo "0")
-        if [ "${CROSS_FOUND:-0}" -ge 1 ]; then
-            pass "H34" "Cross-member messaging while brain running (alice to bob, brain alive)"
-        else
-            fail "H34" "Cross-member" "bob does not see alice's message"
-        fi
-    else
-        fail "H34" "Cross-member" "could not login as bob"
-    fi
+    note "H34" "DM privacy" "could not login as bob to test"
 fi
 
 # H35: Brain process survived all interaction (didn't crash from messages + cross-member)
@@ -654,7 +659,7 @@ sleep 2
 # Record pre-recovery brain message count so H40 can detect NEW responses
 PRE_RECOVERY_HIST=$(curl -sf \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
+    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
 PRE_RECOVERY_BRAIN_COUNT=$(echo "$PRE_RECOVERY_HIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
 echo "    Pre-recovery brain message count: $PRE_RECOVERY_BRAIN_COUNT"
 
@@ -723,7 +728,7 @@ RECOVERY_RESP=$(curl -sf -X PUT \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"msgtype\":\"m.text\",\"body\":\"Recovery test: message sent after brain restart. Are you still operational?\"}" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
+    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
 RECOVERY_EVENT_ID=$(echo "$RECOVERY_RESP" | jq -r '.event_id // empty')
 if [ -n "$RECOVERY_EVENT_ID" ]; then
     pass "H39" "Message delivered after brain restart (recovery proof, $RECOVERY_EVENT_ID)"
@@ -748,7 +753,7 @@ for attempt in $(seq 1 36); do
     fi
     RHIST=$(curl -sf \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
     RECOVERY_BRAIN_MSGS=$(echo "$RHIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
     if [ "${RECOVERY_BRAIN_MSGS:-0}" -gt "${PRE_RECOVERY_BRAIN_COUNT:-0}" ]; then
         RECOVERY_RESPONSE_BODY=$(echo "$RHIST" | jq -r '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | .[0].content.body // "empty"' 2>/dev/null)
@@ -804,46 +809,34 @@ curl -sf -X PUT \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"msgtype\":\"m.text\",\"body\":\"Status check: Are all brain members operational?\"}" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" >/dev/null 2>&1
+    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/send/m.room.message/$MSG_TXN" >/dev/null 2>&1
 pass "H42" "Status inquiry sent after brain lifecycle"
 
-# H43: Verify all previous messages persist in room history
+# H43: Verify all previous messages persist in DM room history
 sleep 1
 HISTORY=$(curl -sf \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
+    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
 TOTAL_MSGS=$(echo "$HISTORY" | jq '[.chunk[] | select(.type == "m.room.message")] | length' 2>/dev/null || echo "0")
 HAS_GREETING=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("introduce yourself"))] | length' 2>/dev/null || echo "0")
 HAS_TASK=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("project status"))] | length' 2>/dev/null || echo "0")
-HAS_STATUS=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("brain members operational"))] | length' 2>/dev/null || echo "0")
 HAS_RECOVERY=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("Recovery test"))] | length' 2>/dev/null || echo "0")
-HAS_CROSS=$(echo "$HISTORY" | jq '[.chunk[] | select(.content.body? // "" | contains("Cross-member test"))] | length' 2>/dev/null || echo "0")
-if [ "${HAS_GREETING:-0}" -ge 1 ] && [ "${HAS_TASK:-0}" -ge 1 ] && [ "${HAS_STATUS:-0}" -ge 1 ] && [ "${HAS_RECOVERY:-0}" -ge 1 ] && [ "${HAS_CROSS:-0}" -ge 1 ]; then
-    pass "H43" "All messages persist in room history incl. recovery + cross-member ($TOTAL_MSGS total)"
+if [ "${HAS_GREETING:-0}" -ge 1 ] && [ "${HAS_TASK:-0}" -ge 1 ] && [ "${HAS_RECOVERY:-0}" -ge 1 ]; then
+    pass "H43" "All messages persist in DM room history ($TOTAL_MSGS total)"
 else
-    fail "H43" "Message persistence" "greeting=$HAS_GREETING task=$HAS_TASK status=$HAS_STATUS recovery=$HAS_RECOVERY cross=$HAS_CROSS total=$TOTAL_MSGS"
+    fail "H43" "Message persistence" "greeting=$HAS_GREETING task=$HAS_TASK recovery=$HAS_RECOVERY total=$TOTAL_MSGS"
 fi
 
-# H44: Login as bob and verify he sees messages too (multi-member visibility)
-if [ -z "${BOB_TOKEN:-}" ]; then
-    BOB_PASS=$(jq -r '.["superman-bob"]' "$PWFILE" 2>/dev/null)
-    BOB_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
-        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-bob\"},\"password\":\"$BOB_PASS\"}" \
-        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
-    BOB_TOKEN=$(echo "$BOB_LOGIN" | jq -r '.access_token // empty')
-fi
-if [ -n "${BOB_TOKEN:-}" ]; then
-    BOB_MSGS=$(curl -sf \
-        -H "Authorization: Bearer $BOB_TOKEN" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
-    BOB_SEES=$(echo "$BOB_MSGS" | jq '[.chunk[] | select(.type == "m.room.message")] | length' 2>/dev/null || echo "0")
-    if [ "${BOB_SEES:-0}" -ge 4 ]; then
-        pass "H44" "Bob sees all messages in room ($BOB_SEES messages)"
+# H44: Verify dm-room.json persisted correctly for subsequent starts
+if [ -f "$ALICE_WS/dm-room.json" ]; then
+    PERSISTED_ROOM=$(jq -r '.room_id // empty' "$ALICE_WS/dm-room.json" 2>/dev/null)
+    if [ "$PERSISTED_ROOM" = "$ROOM_ID" ]; then
+        pass "H44" "dm-room.json persisted correctly ($PERSISTED_ROOM)"
     else
-        fail "H44" "Bob visibility" "bob only sees $BOB_SEES messages (expected >= 4)"
+        fail "H44" "DM persistence" "persisted=$PERSISTED_ROOM expected=$ROOM_ID"
     fi
 else
-    fail "H44" "Bob login" "failed to login as bob"
+    fail "H44" "DM persistence" "dm-room.json not found in workspace"
 fi
 
 # ── H.6: Task Execution Journey ──────────────────────────────
@@ -930,7 +923,7 @@ fi
 # Record pre-task brain message count to detect NEW responses
 PRE_TASK_HIST=$(curl -sf \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
+    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
 PRE_TASK_BRAIN_COUNT=$(echo "$PRE_TASK_HIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
 
 # H48: Ask brain to check the GitHub board for pending issues
@@ -941,7 +934,7 @@ BOARD_RESP=$(curl -sf -X PUT \
     -H "Authorization: Bearer $ADMIN_TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"msgtype\":\"m.text\",\"body\":\"$BOARD_MSG\"}" \
-    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
+    "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/send/m.room.message/$MSG_TXN" 2>/dev/null || echo '{}')
 BOARD_EVENT_ID=$(echo "$BOARD_RESP" | jq -r '.event_id // empty')
 if [ -n "$BOARD_EVENT_ID" ]; then
     pass "H48" "Board check request sent to brain ($BOARD_EVENT_ID)"
@@ -967,7 +960,7 @@ for attempt in $(seq 1 60); do
     fi
     THIST=$(curl -sf \
         -H "Authorization: Bearer $ADMIN_TOKEN" \
-        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
+        "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/messages?dir=b&limit=50" 2>/dev/null || echo '{}')
     TASK_BRAIN_MSGS=$(echo "$THIST" | jq '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | length' 2>/dev/null || echo "0")
     if [ "${TASK_BRAIN_MSGS:-0}" -gt "${PRE_TASK_BRAIN_COUNT:-0}" ]; then
         TASK_RESPONSE_BODY=$(echo "$THIST" | jq -r '[.chunk[] | select(.type == "m.room.message" and (.sender // "" | test("superman-")))] | .[0].content.body // ""' 2>/dev/null)

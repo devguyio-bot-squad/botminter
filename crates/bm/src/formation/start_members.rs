@@ -295,7 +295,6 @@ struct BridgeCredentials {
     credential_store: Option<bridge::LocalCredentialStore>,
     bridge_type_name: Option<String>,
     service_url: Option<String>,
-    room_id: Option<String>,
     user_id_by_member: MemberLookup,
     room_id_by_member: MemberLookup,
     operator_user_id: Option<String>,
@@ -313,7 +312,6 @@ fn resolve_bridge_credentials(
             .with_collection(cfg.keyring_collection.clone());
         let bname = Some(b.bridge_name().to_string());
         let surl = b.service_url().map(|s| s.to_string());
-        let room = b.default_room_id().map(|s| s.to_string());
 
         // Pre-compute per-member room lookup (bridge is moved into user_id closure)
         let member_rooms: std::collections::HashMap<String, String> = b
@@ -334,7 +332,6 @@ fn resolve_bridge_credentials(
             credential_store: Some(store),
             bridge_type_name: bname,
             service_url: surl,
-            room_id: room,
             user_id_by_member: Box::new(move |member_name: &str| {
                 b.member_user_id(member_name)
             }),
@@ -348,7 +345,6 @@ fn resolve_bridge_credentials(
             credential_store: None,
             bridge_type_name: None,
             service_url: None,
-            room_id: None,
             user_id_by_member: Box::new(|_| None),
             room_id_by_member: Box::new(|_| None),
             operator_user_id: None,

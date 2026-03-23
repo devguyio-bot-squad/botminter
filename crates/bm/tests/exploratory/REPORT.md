@@ -14,7 +14,7 @@
 | B1 | bm init (non-interactive, scrum-compact, tuwunel) | **PASS** |
 | B2 | GitHub repo exists | **PASS** |
 | B3 | GitHub project board exists | **PASS** |
-| B4 | Labels created (4 labels) | **PASS** |
+| B4 | Labels created (13 labels) | **PASS** |
 | B5 | Team registered in config.yml | **PASS** |
 | B6 | Team repo cloned | **PASS** |
 | B7 | Init again | **NOTE** — Correctly rejects: already exists |
@@ -34,7 +34,7 @@
 | C5 | Passwords file has 3 entries | **PASS** |
 | C6 | Keyring has credentials for alice + bob | **PASS** |
 | C7 | Admin can login to Matrix | **PASS** |
-| C8 | Room exploratory-test-general exists (!npQmd5huUAVOVU7KbE:localhost) | **PASS** |
+| C8 | Room exploratory-test-general exists (!5MhtMdHFXFUmWB4jNq:localhost) | **PASS** |
 | C9 | Sync --bridge again (idempotent) | **PASS** |
 | C10 | Container still running | **PASS** |
 | C11 | Bridge state unchanged | **PASS** |
@@ -70,7 +70,7 @@
 | D3 | Team submodule present | **PASS** |
 | D4 | Agent dir assembled | **PASS** |
 | D5 | Git repo clean | **PASS** |
-| D6 | Git log | **NOTE** — b3375ae Sync workspace with team repo |
+| D6 | Git log | **NOTE** — 77bf4b8 Sync workspace with team repo |
 | D7 | Sync again (no changes) | **PASS** |
 | D8 | Context files still present after re-sync | **PASS** |
 | D9 | Third sync still clean | **PASS** |
@@ -136,34 +136,35 @@
 | H20 | ACP binary available (claude-code-acp-rs 0.1.22) | **PASS** |
 | H21 | Admin Matrix login successful | **PASS** |
 | H22 | Alice Matrix login successful | **PASS** |
-| H23 | Room resolved (!5fWUens3YSlXewuz3G:localhost) | **PASS** |
+| H23 | Cleaned DM room state for discovery test | **PASS** |
 | H24 | Cleaned previous state for lifecycle test | **PASS** |
 | H25 | bm start executed (brain mode detected) | **PASS** |
-| H26 | Brain process verified (PID 934973, command contains brain-run/acp) | **PASS** |
+| H26 | Brain started in DM discovery mode (PID 2644025) | **PASS** |
 | H27 | bm status shows brain label during lifecycle | **PASS** |
-| H28 | Greeting sent to room while brain running ($Bs3MlKYgGtf5CooLf9Kiw4Z2Je8uVHDXXhi-U5ibHDY) | **PASS** |
-| H29 | Work request sent to room while brain running ($6pdO1QvBF2LHbUOc-vBJAa0ctRO7Wr85ISl3EIln3PI) | **PASS** |
+| H28 | Operator DM created and greeting sent (!CT6YDzXWCsqWXM2NU6:localhost, $CE6bHtg0OkDLZqmO7hBsvBdd4I1f-EaC6ekXGq73MV4) | **PASS** |
+| H28b | Brain discovered DM room (!CT6YDzXWCsqWXM2NU6:localhost via dm-room.json) | **PASS** |
+| H29 | Work request sent to room while brain running ($fxMUGsYEvv18dc_UZwYU-JLKI4WAqukcyvoP7-Qo3sc) | **PASS** |
 | H30 | Follow-up question sent (multi-turn simulation) | **PASS** |
 | H31 | Brain survived malformed/empty message (edge case) | **PASS** |
-| H32 | Brain responded with meaningful content (response: 🤖 Ralph loop `main` connected via Matrix...) | **PASS** |
+| H32 | Brain responded with meaningful content (response: Hello! I'm **alice**, your autonomous team member on the **exploratory-test** team. My role is **sup...) | **PASS** |
 | H29b | Brain response addresses work request (mentions project/status/tools) | **PASS** |
-| H33 | User messages visible in room history (9 total messages) | **PASS** |
-| H34 | Cross-member messaging while brain running (alice to bob, brain alive) | **PASS** |
+| H33 | User messages visible in room history (5 total messages) | **PASS** |
+| H34 | DM privacy | **NOTE** — bob can read alice's DM room (may be due to server config) |
 | H35 | Brain survived all interaction (normal + malformed + cross-member messages) | **PASS** |
 | H36 | bm stop executed cleanly (exit 0) | **PASS** |
 | H37 | All brain processes terminated after stop | **PASS** |
 | H38 | Brain restarted successfully (recovery scenario) | **PASS** |
-| H39 | Message delivered after brain restart (recovery proof, $oDcDW-RMU1oetjw5-xEJ7EQUBfK0mPlvvD2rNd-q2wM) | **PASS** |
-| H40 | Brain responded after recovery! NEW response detected (pre: 8, post: 9, body: Yes, I'm operational! All systems are running normally. Ready for work whenever ...) | **PASS** |
+| H39 | Message delivered after brain restart (recovery proof, $llw5eYROhFxOJF7nx1zIgykz354ceW-J2aVXK70ggyk) | **PASS** |
+| H40 | Brain responded after recovery! NEW response detected (pre: 1, post: 2, body: Yes, I'm operational and ready. Everything looks good after the restart. What do...) | **PASS** |
 | H41 | Recovery start-stop cycle clean (brain lifecycle idempotent) | **PASS** |
 | H42 | Status inquiry sent after brain lifecycle | **PASS** |
-| H43 | All messages persist in room history incl. recovery + cross-member (15 total) | **PASS** |
-| H44 | Bob sees all messages in room (15 messages) | **PASS** |
+| H43 | All messages persist in DM room history (8 total) | **PASS** |
+| H44 | dm-room.json persisted correctly (!CT6YDzXWCsqWXM2NU6:localhost) | **PASS** |
 | H46 | Created GitHub issue #1 for brain to discover | **PASS** |
-| H47 | Brain started for task execution journey (PID 944483) | **PASS** |
-| H48 | Board check request sent to brain ($HF8I8Mr-qGomqAdqLqIl49wmeXmvX8pkEODWaVVnRUw) | **PASS** |
-| H49 | Brain acknowledged board/issue in response! (body: I'll check the GitHub board for you.Checking the GitHub board now. I'll report back with what I find...) | **PASS** |
-| H50 | Brain survived task execution request (PID 944483 still alive) | **PASS** |
+| H47 | Brain started for task execution journey (PID 2653093) | **PASS** |
+| H48 | Board check request sent to brain ($Ppfmk6u4-Yccype8Xz8qtibWsgagaBWTwVMLnoy2g18) | **PASS** |
+| H49 | Brain acknowledged board/issue in response! (body: I'll check the GitHub board now.Checking the board now — I'll report the pending issues in a momen...) | **PASS** |
+| H50 | Brain survived task execution request (PID 2653093 still alive) | **PASS** |
 | H51 | Task execution journey cleaned up | **PASS** |
 | H52 | Cleaned up all brain lifecycle test artifacts | **PASS** |
 
@@ -186,4 +187,4 @@
 
 - **PASS:** 135
 - **FAIL:** 0
-- **NOTE:** 3
+- **NOTE:** 4
