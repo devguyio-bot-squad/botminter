@@ -1,4 +1,4 @@
-import type { TeamSummary, TeamOverview, ProcessData, MemberListEntry, MemberDetail, ApiError } from './types.js';
+import type { TeamSummary, TeamOverview, ProcessData, MemberListEntry, MemberDetail, FileReadResponse, FileWriteResponse, TreeResponse, ApiError } from './types.js';
 
 class ApiClient {
 	private baseUrl: string;
@@ -37,6 +37,30 @@ class ApiClient {
 	async fetchMember(team: string, name: string): Promise<MemberDetail> {
 		return this.request<MemberDetail>(
 			`/api/teams/${encodeURIComponent(team)}/members/${encodeURIComponent(name)}`
+		);
+	}
+
+	async fetchFile(team: string, path: string): Promise<FileReadResponse> {
+		return this.request<FileReadResponse>(
+			`/api/teams/${encodeURIComponent(team)}/files/${path}`
+		);
+	}
+
+	async saveFile(team: string, path: string, content: string): Promise<FileWriteResponse> {
+		return this.request<FileWriteResponse>(
+			`/api/teams/${encodeURIComponent(team)}/files/${path}`,
+			{
+				method: 'PUT',
+				headers: { 'Content-Type': 'application/json' },
+				body: JSON.stringify({ content })
+			}
+		);
+	}
+
+	async fetchTree(team: string, path?: string): Promise<TreeResponse> {
+		const params = path ? `?path=${encodeURIComponent(path)}` : '';
+		return this.request<TreeResponse>(
+			`/api/teams/${encodeURIComponent(team)}/tree${params}`
 		);
 	}
 }

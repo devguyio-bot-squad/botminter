@@ -73,20 +73,28 @@ export interface HatSummary {
 	publishes: string[];
 }
 
-export interface FileEntry {
-	name: string;
-	path: string;
-	is_dir: boolean;
-}
-
-export interface FileContent {
+export interface FileReadResponse {
 	path: string;
 	content: string;
+	content_type: 'yaml' | 'markdown' | 'json' | 'text';
+	last_modified: string;
 }
 
-export interface FileSaveResult {
+export interface FileWriteResponse {
+	ok: boolean;
 	path: string;
 	commit_sha: string;
+}
+
+export interface TreeEntry {
+	name: string;
+	type: 'file' | 'directory';
+	path: string;
+}
+
+export interface TreeResponse {
+	path: string;
+	entries: TreeEntry[];
 }
 
 export interface ProcessData {
