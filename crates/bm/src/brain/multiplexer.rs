@@ -20,6 +20,19 @@ pub struct MultiplexerConfig {
     pub env_vars: Vec<(String, String)>,
 }
 
+/// System reminder appended to every prompt sent to the ACP session.
+///
+/// Reinforces the chat-first responsiveness principle on every turn so the
+/// LLM never blocks the session with long-running synchronous operations.
+/// This is more reliable than the system prompt alone, which can lose
+/// salience after many turns.
+const CHAT_FIRST_REMINDER: &str = "\n\n<system-reminder>\
+You are a chat-first member. Human messages are your TOP priority. \
+NEVER run long commands synchronously — always use background execution \
+(run_in_background for Bash) so you can respond to chat immediately. \
+Keep this response SHORT if it's a heartbeat or status check.\
+</system-reminder>";
+
 /// The brain multiplexer merges input streams and routes them through
 /// an ACP session, streaming responses back to the bridge.
 ///
@@ -228,8 +241,12 @@ impl Multiplexer {
                                 queue.push(message);
                             } else {
                                 // Send immediately
-                                let prompt = message.to_prompt();
-                                tracing::debug!(prompt = %prompt, "Sending prompt to ACP");
+                                let prompt = format!("{}{CHAT_FIRST_REMINDER}", message.to_prompt());
+                                tracing::info!(
+                                    priority = %message.priority,
+                                    prompt_len = prompt.len(),
+                                    "Sending prompt to ACP"
+                                );
                                 client.prompt(&session_id, &prompt).await?;
                                 prompt_in_flight = true;
                             }
@@ -252,13 +269,18 @@ impl Multiplexer {
                         Some(AcpEvent::Text(text)) => {
                             let _ = self.output_tx.send(BridgeOutput::Text(text)).await;
                         }
-                        Some(AcpEvent::TurnComplete { .. }) => {
+                        Some(AcpEvent::TurnComplete { stop_reason }) => {
+                            tracing::info!(
+                                stop_reason = %stop_reason,
+                                queue_len = queue.len(),
+                                "Turn complete, draining queue"
+                            );
                             let _ = self.output_tx.send(BridgeOutput::TurnComplete).await;
                             prompt_in_flight = false;
 
                             // Drain the queue by priority
                             if let Some(next_msg) = queue.pop() {
-                                let prompt = next_msg.to_prompt();
+                                let prompt = format!("{}{CHAT_FIRST_REMINDER}", next_msg.to_prompt());
                                 tracing::debug!(
                                     priority = %next_msg.priority,
                                     "Draining queue, sending next prompt"
