@@ -1,4 +1,4 @@
-import type { TeamSummary, TeamOverview, ProcessData, MemberListEntry, MemberDetail, FileReadResponse, FileWriteResponse, TreeResponse, ApiError } from './types.js';
+import type { TeamSummary, TeamOverview, ProcessData, MemberListEntry, MemberDetail, FileReadResponse, FileWriteResponse, TreeResponse, SyncResponse, ApiError } from './types.js';
 
 class ApiClient {
 	private baseUrl: string;
@@ -61,6 +61,13 @@ class ApiClient {
 		const params = path ? `?path=${encodeURIComponent(path)}` : '';
 		return this.request<TreeResponse>(
 			`/api/teams/${encodeURIComponent(team)}/tree${params}`
+		);
+	}
+
+	async syncTeam(team: string): Promise<SyncResponse> {
+		return this.request<SyncResponse>(
+			`/api/teams/${encodeURIComponent(team)}/sync`,
+			{ method: 'POST' }
 		);
 	}
 }

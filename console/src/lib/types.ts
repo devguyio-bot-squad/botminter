@@ -127,6 +127,12 @@ export interface ViewEntry {
 	also_include: string[];
 }
 
+export interface SyncResponse {
+	ok: boolean;
+	message: string;
+	changed_files: string[];
+}
+
 export interface ApiError {
 	error: string;
 }
