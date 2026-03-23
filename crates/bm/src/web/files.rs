@@ -479,7 +479,7 @@ pub struct FileReadResponse {
     pub last_modified: String,
 }
 
-#[derive(Serialize)]
+#[derive(Debug, Serialize)]
 pub struct FileWriteResponse {
     pub ok: bool,
     pub path: String,
@@ -776,6 +776,121 @@ mod tests {
 
         // Clean up symlink
         fs::remove_file(&link_path).ok();
+    }
+
+    // ── Path traversal tests for PUT (write) endpoint ──
+
+    #[tokio::test]
+    async fn write_path_traversal_dot_dot_returns_403() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_path = setup_fixture_team(tmp.path());
+        git_init(&team_path);
+        let config_path = tmp.path().join(".botminter").join("config.yml");
+        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+
+        let app = test_app(config_path);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/teams/my-team/files/../../../etc/shadow")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "content": "pwned" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn write_path_traversal_encoded_returns_403() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_path = setup_fixture_team(tmp.path());
+        git_init(&team_path);
+        let config_path = tmp.path().join(".botminter").join("config.yml");
+        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+
+        let app = test_app(config_path);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .method("PUT")
+                    .uri("/api/teams/my-team/files/%2e%2e/etc/shadow")
+                    .header("content-type", "application/json")
+                    .body(Body::from(
+                        serde_json::json!({ "content": "pwned" }).to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn write_path_traversal_absolute_returns_403() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_path = setup_fixture_team(tmp.path());
+        git_init(&team_path);
+        let config_path = tmp.path().join(".botminter").join("config.yml");
+        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+
+        let state = super::super::state::WebState {
+            config_path: Arc::new(config_path),
+        };
+        let result = do_write_file(&state, "my-team", "/etc/shadow", "pwned").await;
+        assert!(result.is_err());
+        let (status, _) = result.unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+    }
+
+    // ── Path traversal tests for tree listing endpoint ──
+
+    #[tokio::test]
+    async fn tree_path_traversal_dot_dot_returns_403() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_path = setup_fixture_team(tmp.path());
+        let config_path = tmp.path().join(".botminter").join("config.yml");
+        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+
+        let app = test_app(config_path);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/teams/my-team/tree?path=../../etc")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn tree_path_traversal_encoded_returns_403() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_path = setup_fixture_team(tmp.path());
+        let config_path = tmp.path().join(".botminter").join("config.yml");
+        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+
+        let app = test_app(config_path);
+        let resp = app
+            .oneshot(
+                Request::builder()
+                    .uri("/api/teams/my-team/tree?path=%2e%2e/%2e%2e/etc")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(resp.status(), StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
