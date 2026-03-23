@@ -45,10 +45,32 @@ export interface BridgeOverview {
 	available: string[];
 }
 
+export interface MemberListEntry {
+	name: string;
+	role: string;
+	comment_emoji: string;
+	has_ralph_yml: boolean;
+	hat_count: number;
+}
+
 export interface MemberDetail {
 	name: string;
 	role: string;
-	ralph_yml: string;
+	comment_emoji: string;
+	ralph_yml: string | null;
+	claude_md: string | null;
+	prompt_md: string | null;
+	hats: HatSummary[];
+	knowledge_files: string[];
+	invariant_files: string[];
+	skill_dirs: string[];
+}
+
+export interface HatSummary {
+	name: string;
+	description: string;
+	triggers: string[];
+	publishes: string[];
 }
 
 export interface FileEntry {

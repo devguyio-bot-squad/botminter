@@ -1,3 +1,4 @@
+pub mod members;
 pub mod overview;
 pub mod process;
 pub mod state;
@@ -6,6 +7,7 @@ pub mod teams;
 use axum::routing::get;
 use axum::Router;
 
+use self::members::{get_member, list_members};
 use self::overview::team_overview;
 use self::process::team_process;
 use self::state::WebState;
@@ -17,5 +19,7 @@ pub fn web_router(state: WebState) -> Router {
         .route("/api/teams", get(list_teams))
         .route("/api/teams/{team}/overview", get(team_overview))
         .route("/api/teams/{team}/process", get(team_process))
+        .route("/api/teams/{team}/members", get(list_members))
+        .route("/api/teams/{team}/members/{name}", get(get_member))
         .with_state(state)
 }

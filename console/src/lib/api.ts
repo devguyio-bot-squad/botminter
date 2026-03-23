@@ -1,4 +1,4 @@
-import type { TeamSummary, TeamOverview, ProcessData, ApiError } from './types.js';
+import type { TeamSummary, TeamOverview, ProcessData, MemberListEntry, MemberDetail, ApiError } from './types.js';
 
 class ApiClient {
 	private baseUrl: string;
@@ -28,6 +28,16 @@ class ApiClient {
 
 	async fetchProcess(team: string): Promise<ProcessData> {
 		return this.request<ProcessData>(`/api/teams/${encodeURIComponent(team)}/process`);
+	}
+
+	async fetchMembers(team: string): Promise<MemberListEntry[]> {
+		return this.request<MemberListEntry[]>(`/api/teams/${encodeURIComponent(team)}/members`);
+	}
+
+	async fetchMember(team: string, name: string): Promise<MemberDetail> {
+		return this.request<MemberDetail>(
+			`/api/teams/${encodeURIComponent(team)}/members/${encodeURIComponent(name)}`
+		);
 	}
 }
 
