@@ -76,6 +76,15 @@ fn run_claude_hook(command: ClaudeHookCommand) -> anyhow::Result<()> {
     }
 }
 
+/// Nudge injected after every tool use via the PostToolUse hook.
+///
+/// Reminds the LLM to check whether the user is waiting for a response.
+/// Without this, the brain tends to run background tools and then keep
+/// making more tool calls without ever sending a text response to the
+/// chat, leaving the user waiting indefinitely.
+const POST_TOOL_NUDGE: &str =
+    "If the user is waiting for a response, respond to them now.";
+
 fn try_post_tool_use() -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
     let root = match inbox::discover_workspace_root(&cwd) {
@@ -84,8 +93,16 @@ fn try_post_tool_use() -> anyhow::Result<()> {
     };
     let path = inbox::inbox_path(&root);
     let result = inbox::read_messages(&path, true)?;
+
     if let Some(response) = inbox::format_hook_response(&result.messages) {
+        // Inbox has messages — they take priority
         println!("{response}");
+    } else {
+        // No inbox messages — inject the response nudge
+        let json = serde_json::json!({
+            "additionalContext": POST_TOOL_NUDGE
+        });
+        println!("{json}");
     }
     Ok(())
 }

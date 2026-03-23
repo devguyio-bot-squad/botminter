@@ -142,7 +142,7 @@ deploy: build clean
     # Deploy GCP application default credentials for Vertex AI auth
     GCP_CREDS="$HOME/.config/gcloud/application_default_credentials.json"
     if [ -f "$GCP_CREDS" ]; then
-        ssh {{TEST_HOST}} 'mkdir -p ~/.config/gcloud'
+        ssh {{TEST_HOST}} 'mkdir -p ~/.config/gcloud && rm -f ~/.config/gcloud/application_default_credentials.json'
         scp -q "$GCP_CREDS" {{TEST_HOST}}:~/.config/gcloud/application_default_credentials.json
     fi
     # Ensure git identity is configured (required for bm init)

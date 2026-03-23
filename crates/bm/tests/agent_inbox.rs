@@ -177,7 +177,7 @@ fn hook_graceful_outside_workspace() {
 // --- Test 8: hook empty inbox ---
 
 #[test]
-fn hook_empty_inbox_silent() {
+fn hook_empty_inbox_nudge() {
     let ws = setup_workspace();
 
     let out = agent_cmd(&ws)
@@ -185,7 +185,13 @@ fn hook_empty_inbox_silent() {
         .output()
         .expect("hook empty inbox");
     assert!(out.status.success(), "hook should exit 0");
-    assert!(out.stdout.is_empty(), "hook should produce no output when inbox is empty");
+    // Even with no inbox messages, the hook outputs a response nudge
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let json: serde_json::Value = serde_json::from_str(stdout.trim()).expect("should be valid JSON");
+    assert!(
+        json["additionalContext"].as_str().unwrap().contains("respond"),
+        "nudge should mention responding to user"
+    );
 }
 
 // --- Test 9: hook delivery + consumption ---
