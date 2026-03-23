@@ -137,7 +137,7 @@ pub fn start_local_members(
 
         // Resolve per-member bridge user ID and room ID (for brain bridge adapter)
         let member_user_id = (bridge_creds.user_id_by_member)(member_dir_name);
-        let member_room_id = (bridge_creds.room_id_by_member)(member_dir_name);
+        let mut member_room_id = (bridge_creds.room_id_by_member)(member_dir_name);
 
         // Diagnostic: credential exists but RObot.enabled is false
         let robot_mismatch = if member_token.is_some() {
@@ -149,6 +149,36 @@ pub fn start_local_members(
 
         // Detect brain mode (chat-first member)
         let brain_mode = formation::is_brain_member(&ws);
+
+        // Auto-create DM room for brain members that don't have one yet
+        if brain_mode && member_room_id.is_none() {
+            if let Some((ref bridge_dir, ref state_path, ref tname)) = bridge_creds.bridge_paths {
+                match bridge::Bridge::new(bridge_dir.clone(), state_path.clone(), tname.clone()) {
+                    Ok(mut b) => {
+                        if b.manifest().spec.room.is_some() {
+                            match b.create_dm_room(member_dir_name) {
+                                Ok(r) => {
+                                    member_room_id = r.room_id;
+                                    let _ = b.save();
+                                }
+                                Err(e) => {
+                                    tracing::warn!(
+                                        member = member_dir_name,
+                                        "Failed to create DM room: {e}"
+                                    );
+                                }
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            member = member_dir_name,
+                            "Failed to load bridge for DM room creation: {e}"
+                        );
+                    }
+                }
+            }
+        }
 
         // Launch ralph or brain
         let launch_result = if brain_mode {
@@ -298,6 +328,8 @@ struct BridgeCredentials {
     room_id: Option<String>,
     user_id_by_member: MemberLookup,
     room_id_by_member: MemberLookup,
+    /// Bridge dir + state path for creating DM rooms on demand.
+    bridge_paths: Option<(std::path::PathBuf, std::path::PathBuf, String)>,
 }
 
 fn resolve_bridge_credentials(
@@ -308,7 +340,7 @@ fn resolve_bridge_credentials(
     if let Some(ref dir) = bridge::discover(team_repo, &team.name)? {
         let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
         let b = bridge::Bridge::new(dir.clone(), bstate_path.clone(), team.name.clone())?;
-        let store = bridge::LocalCredentialStore::new(&team.name, b.bridge_name(), bstate_path)
+        let store = bridge::LocalCredentialStore::new(&team.name, b.bridge_name(), bstate_path.clone())
             .with_collection(cfg.keyring_collection.clone());
         let bname = Some(b.bridge_name().to_string());
         let surl = b.service_url().map(|s| s.to_string());
@@ -325,6 +357,8 @@ fn resolve_bridge_credentials(
             })
             .collect();
 
+        let paths = Some((dir.clone(), bstate_path, team.name.clone()));
+
         // Capture bridge for per-member user_id lookup
         Ok(BridgeCredentials {
             credential_store: Some(store),
@@ -337,6 +371,7 @@ fn resolve_bridge_credentials(
             room_id_by_member: Box::new(move |member_name: &str| {
                 member_rooms.get(member_name).cloned()
             }),
+            bridge_paths: paths,
         })
     } else {
         Ok(BridgeCredentials {
@@ -346,6 +381,7 @@ fn resolve_bridge_credentials(
             room_id: None,
             user_id_by_member: Box::new(|_| None),
             room_id_by_member: Box::new(|_| None),
+            bridge_paths: None,
         })
     }
 }
