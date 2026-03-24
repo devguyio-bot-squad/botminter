@@ -12,9 +12,9 @@
 
 set -euo pipefail
 
-# Source setup to get TEAM_REPO, PROJECT_NUM, etc.
+# Source setup in minimal mode (only need TEAM_REPO, not project IDs)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-source "$SCRIPT_DIR/setup.sh"
+SETUP_MODE=minimal source "$SCRIPT_DIR/setup.sh"
 
 # Parse arguments
 ACTION=""
@@ -210,7 +210,7 @@ case "$ACTION" in
     TOTAL=$(echo "$SUBTASKS" | jq 'length')
     CLOSED=$(echo "$SUBTASKS" | jq '[.[] | select(.state == "CLOSED")] | length')
 
-    echo "{\"total\": $TOTAL, \"closed\": $CLOSED, \"all_complete\": $([ "$TOTAL" -eq "$CLOSED" ] && echo true || echo false)}"
+    echo "{\"total\": $TOTAL, \"closed\": $CLOSED, \"all_complete\": $([ "$TOTAL" -gt 0 ] && [ "$TOTAL" -eq "$CLOSED" ] && echo true || echo false)}"
     ;;
 
   *)

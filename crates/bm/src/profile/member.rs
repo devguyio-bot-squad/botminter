@@ -194,7 +194,11 @@ fn render_placeholders_recursive(
 fn is_text_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
-        Some("md" | "yml" | "yaml" | "json" | "txt" | "sh" | "toml")
+        Some(
+            "md" | "yml" | "yaml" | "json" | "txt" | "sh" | "toml" | "graphql" | "env" | "cfg"
+                | "conf" | "ini" | "xml" | "html" | "css" | "js" | "ts" | "py" | "rs" | "go"
+                | "rb" | "dot"
+        )
     )
 }
 

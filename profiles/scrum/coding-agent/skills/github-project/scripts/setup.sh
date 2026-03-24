@@ -27,6 +27,12 @@ fi
 # Resolve project IDs (cache for session)
 OWNER=$(echo "$TEAM_REPO" | cut -d/ -f1)
 
+# Minimal mode: only detect team repo and owner (for scripts that don't need project IDs)
+if [ "${SETUP_MODE:-}" = "minimal" ]; then
+  export TEAM_REPO OWNER
+  return 0 2>/dev/null || exit 0
+fi
+
 # Get project number with error checking
 PROJECT_NUM=$(gh project list --owner "$OWNER" --format json 2>&1 | jq -r '.projects[0].number')
 if [ -z "$PROJECT_NUM" ] || [ "$PROJECT_NUM" = "null" ]; then

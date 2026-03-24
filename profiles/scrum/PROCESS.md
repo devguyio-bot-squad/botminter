@@ -14,13 +14,13 @@ Issues are GitHub issues on the **team repo** (not the project repo). The `githu
 |-------|---------------|-------------|
 | `title` | Issue title | Concise, descriptive issue title |
 | `state` | Issue state | `open` or `closed` |
-| `labels` | Issue labels | Kind labels (see below) |
+| `type` | Native issue type | Epic, Task (story), Bug |
 | `assignee` | Issue assignee | GitHub username or unassigned |
 | `milestone` | Issue milestone | Milestone name or none |
-| `parent` | `parent/<number>` label + `Parent: #<number>` in body | Links stories to their parent epic |
+| `parent` | Native sub-issue relationship | Links stories to their parent epic |
 | `body` | Issue body | Description, acceptance criteria, and context (markdown) |
 
-Issues are created via `gh issue create` and managed via `gh issue edit`. See the `github-project` skill for exact commands.
+Issues are created via the `github-project` skill (create-issue operation). See the skill for exact commands.
 
 ---
 
@@ -94,6 +94,28 @@ The feedback comment uses the standard comment format and includes the human's s
 | Status | Description |
 |--------|-------------|
 | `dev:ready` | Deliberate M3 placeholder. Stories sit idle until M3 brings dev/qe agents. |
+
+### Bug Statuses
+
+Bugs use GitHub's native Bug issue type and follow a two-track workflow:
+
+**Simple Track** (QE fixes directly, arch reviews):
+`bug:investigate` → `arch:review` → `qe:verify` → `done`
+
+**Complex Track** (QE plans, arch refines, PO approves, subtask breakdown):
+`bug:investigate` → `arch:refine` → `po:plan-review` → `bug:breakdown` → `bug:in-progress` → `qe:verify` → `done`
+
+| Status | Owner | Description | Next (happy path) |
+|--------|-------|-------------|-------------------|
+| `bug:investigate` | QE | Reproduce, root cause, determine simple vs complex | `arch:review` (simple) or `arch:refine` (complex) |
+| `arch:review` | Arch | Review simple bug fix, can approve or escalate to complex | `qe:verify` (approve) or `arch:refine` (escalate) |
+| `arch:refine` | Arch | Review/amend complex bug plan | `po:plan-review` |
+| `po:plan-review` | PO (human) | Approve or reject complex bug plan | `bug:breakdown` (approve) or `arch:refine` (reject) |
+| `bug:breakdown` | Arch | Create GitHub native subtask issues | `bug:in-progress` |
+| `bug:in-progress` | Monitor | Track subtask completion | `qe:verify` (all done) |
+| `qe:verify` | QE | Verify fix (shared with story workflow) | `done` |
+
+Subtasks created during `bug:breakdown` are Task-type sub-issues that flow through the story workflow. When all subtasks reach `done`, the bug monitor advances the parent bug to `qe:verify` for final verification.
 
 ### Error Status
 

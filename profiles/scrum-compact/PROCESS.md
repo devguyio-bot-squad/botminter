@@ -410,6 +410,8 @@ All significant process changes, role changes, and team decisions MUST be record
 - **Retrospective outcomes** go in `agreements/retros/` — summaries from retrospective sessions
 - **Working norms** go in `agreements/norms/` — living team agreements (e.g., "we prefer small PRs")
 
+See `knowledge/team-agreements.md` for the full convention including file format and lifecycle.
+
 ---
 
 ## Process Evolution

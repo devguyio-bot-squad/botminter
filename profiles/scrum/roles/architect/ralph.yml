@@ -12,7 +12,7 @@ cli:
 core:
   guardrails:
     - "Comply with all invariants in team/invariants/, team/projects/<project>/invariants/, and team/members/{{member_dir}}/invariants/"
-    - "All issue operations use the gh skill — no write-locks needed"
+    - "All issue operations use the `github-project` skill — no write-locks needed"
 
 hats:
   designer:
