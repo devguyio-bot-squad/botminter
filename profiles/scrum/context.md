@@ -37,7 +37,7 @@ Pulling `team/` updates all team configuration. Copies (ralph.yml, settings.loca
 
 The team uses **pull-based coordination**:
 - Each member scans the board (GitHub issues on the team repo) for issues with status labels matching their role
-- Board scanning and all issue operations use the `gh` skill (wraps `gh` CLI)
+- Board scanning and all issue operations use the `github-project` skill (wraps `gh` CLI)
 - No central dispatcher — coordination is emergent from shared process conventions
 - The human-assistant is the human's interface to the team and the only role that can assign work
 
@@ -47,9 +47,9 @@ Work items, milestones, and PRs live on the team repo's GitHub:
 
 | Resource | Access Method | Tool |
 |----------|--------------|------|
-| Issues (epics + stories) | `gh issue list/view/create/edit` | `gh` skill |
-| Milestones | `gh api` (milestones endpoint) | `gh` skill |
-| Pull requests | `gh pr create/view/merge` | `gh` skill |
+| Issues (epics + stories) | `gh issue list/view/create/edit` | `github-project` skill |
+| Milestones | `gh api` (milestones endpoint) | `github-project` skill |
+| Pull requests | `gh pr create/view/merge` | `github-project` skill |
 
 See `PROCESS.md` for label conventions, status transitions, and comment format.
 
@@ -104,13 +104,13 @@ Skills, sub-agents, and settings are scoped across multiple levels using a `codi
 
 ## Team Repo Access Paths
 
-From a workspace, access team repo content through `team/` and the `gh` skill:
+From a workspace, access team repo content through `team/` and the `github-project` skill:
 
 | Content | Access Method |
 |---------|--------------|
-| Board (issues) | `gh issue list --repo "$TEAM_REPO"` (via `gh` skill) |
-| Milestones | `gh api` milestones endpoint (via `gh` skill) |
-| Pull requests | `gh pr list --repo "$TEAM_REPO"` (via `gh` skill) |
+| Board (issues) | `gh issue list --repo "$TEAM_REPO"` (via `github-project` skill) |
+| Milestones | `gh api` milestones endpoint (via `github-project` skill) |
+| Pull requests | `gh pr list --repo "$TEAM_REPO"` (via `github-project` skill) |
 | Team knowledge | `team/knowledge/` |
 | Team invariants | `team/invariants/` |
 | Project knowledge | `team/projects/<project>/knowledge/` |

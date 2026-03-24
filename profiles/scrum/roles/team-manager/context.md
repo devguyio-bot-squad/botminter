@@ -61,7 +61,7 @@ See `team/PROCESS.md` for issue format, status transitions, comment attribution,
 
 ### GitHub Access
 
-All GitHub operations use the `gh` skill. The team repo is auto-detected from `team/`'s git remote.
+All GitHub operations use the `github-project` skill. The team repo is auto-detected from `team/`'s git remote.
 
 ### Reference Files
 

@@ -28,34 +28,29 @@ query {
 
 ### The Solution (v3.0.0)
 
-Use `-F` (uppercase) for GraphQL ID types:
+Use `-F` (uppercase) for GraphQL ID types, and query items directly by node ID:
 
 ```bash
-# CORRECT - Variables passed with proper types
+# CORRECT - Direct node lookup with proper variable types
 gh api graphql -f query='
-query($projectId: ID!, $itemId: ID!) {
-  node(id: $projectId) {
-    ... on ProjectV2 {
-      items(first: 100) {
-        nodes {
-          id
-          fieldValueByName(name: "Status") {
-            ... on ProjectV2ItemFieldSingleSelectValue {
-              name
-            }
-          }
+query($itemId: ID!) {
+  node(id: $itemId) {
+    ... on ProjectV2Item {
+      fieldValueByName(name: "Status") {
+        ... on ProjectV2ItemFieldSingleSelectValue {
+          name
         }
       }
     }
   }
-}' -F projectId="$PROJECT_ID" -F itemId="$ITEM_ID"
+}' -F itemId="$ITEM_ID"
 ```
 
 **Key differences:**
 
-1. Query uses **variables** (`$projectId`, `$itemId`) with type declarations
+1. Query uses **variables** (`$itemId`) with type declarations
 2. Variables passed with **`-F` flag** (uppercase) for proper type handling
-3. GraphQL receives properly typed ID values instead of strings
+3. Direct node lookup — no pagination, works regardless of project size
 
 ### Flag Differences
 
@@ -70,31 +65,25 @@ Used in `status-transition.sh` to verify status changes:
 
 ```bash
 CURRENT_STATUS=$(gh api graphql -f query='
-query($projectId: ID!, $itemId: ID!) {
-  node(id: $projectId) {
-    ... on ProjectV2 {
-      items(first: 100) {
-        nodes {
-          id
-          fieldValueByName(name: "Status") {
-            ... on ProjectV2ItemFieldSingleSelectValue {
-              name
-            }
-          }
+query($itemId: ID!) {
+  node(id: $itemId) {
+    ... on ProjectV2Item {
+      fieldValueByName(name: "Status") {
+        ... on ProjectV2ItemFieldSingleSelectValue {
+          name
         }
       }
     }
   }
-}' -F projectId="$PROJECT_ID" -F itemId="$ITEM_ID" \
-  | jq -r ".data.node.items.nodes[] | select(.id == \"$ITEM_ID\") | .fieldValueByName.name")
+}' -F itemId="$ITEM_ID" \
+  | jq -r '.data.node.fieldValueByName.name')
 ```
 
 **What it does:**
 
-1. Queries the project for all items
-2. Filters to the specific item by ID
-3. Extracts the current Status field value
-4. Returns the status name as a string
+1. Queries the specific project item by node ID
+2. Extracts the current Status field value
+3. Returns the status name as a string
 
 **Why it's needed:**
 
@@ -159,6 +148,7 @@ query($owner: String!, $number: Int!) {
 ```
 
 This query is not used in the current scripts but is useful for debugging.
+Note: `items(first: 100)` is acceptable here for debugging/exploration. For production verification, use the direct node lookup pattern shown above.
 
 ## Why GraphQL Instead of gh CLI?
 

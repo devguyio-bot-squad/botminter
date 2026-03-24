@@ -102,8 +102,13 @@ updated board state.
 ### 8. Dispatch
 
 Dispatch based on the highest-priority project status found. Process one
-item at a time. Epics before stories. Within each category, follow
-priority order.
+item at a time. Match each item's status against the tables below in order:
+Epic → Story → Bug → Content. The first match wins.
+
+The tables are organized by workflow phase, not by issue type. The scanner
+does NOT need to query the issue type — it dispatches purely by status.
+Hats that handle shared statuses (e.g., `po:plan-review`, `qe:verify`)
+are responsible for querying the issue type themselves.
 
 **Epic priority (highest first):**
 
@@ -132,6 +137,19 @@ priority order.
 | 3 | `qe:verify` | `qe.verify` |
 | 4 | `dev:code-review` | `dev.code_review` |
 | 5 | `sre:infra-setup` | `sre.setup` |
+
+**Bug priority:**
+
+| # | Status | Event |
+|---|--------|-------|
+| 1 | `bug:investigate` | `qe.investigate` |
+| 2 | `arch:review` | `arch.review` |
+| 3 | `arch:refine` | `arch.refine` |
+| 4 | `bug:breakdown` | `arch.breakdown` |
+| 5 | `bug:in-progress` | `bug.in_progress` |
+| 6 | `qe:verify` | `qe.verify` |
+
+Note: `po:plan-review` and `qe:verify` are shared with Epic/Story tables. Bugs at these statuses are dispatched to the same hats, which query the issue type to determine the correct path.
 
 **Content priority:**
 

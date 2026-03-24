@@ -101,23 +101,18 @@ fi
 echo "→ Verifying status update..."
 sleep 1
 CURRENT_STATUS=$(gh api graphql -f query='
-query($projectId: ID!, $itemId: ID!) {
-  node(id: $projectId) {
-    ... on ProjectV2 {
-      items(first: 100) {
-        nodes {
-          id
-          fieldValueByName(name: "Status") {
-            ... on ProjectV2ItemFieldSingleSelectValue {
-              name
-            }
-          }
+query($itemId: ID!) {
+  node(id: $itemId) {
+    ... on ProjectV2Item {
+      fieldValueByName(name: "Status") {
+        ... on ProjectV2ItemFieldSingleSelectValue {
+          name
         }
       }
     }
   }
-}' -F projectId="$PROJECT_ID" -F itemId="$ITEM_ID" \
-  | jq -r ".data.node.items.nodes[] | select(.id == \"$ITEM_ID\") | .fieldValueByName.name")
+}' -F itemId="$ITEM_ID" \
+  | jq -r '.data.node.fieldValueByName.name')
 
 if [ "$CURRENT_STATUS" != "$TO_STATUS" ]; then
   echo "❌ ERROR: Status verification failed!"

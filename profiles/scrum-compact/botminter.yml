@@ -35,16 +35,11 @@ roles:
     description: "Process improvement and team coordination"
 
 labels:
-  # Kind labels (tracked as GitHub labels)
-  - name: "kind/epic"
-    color: "0E8A16"
-    description: "Epic-level work item"
-  - name: "kind/story"
-    color: "1D76DB"
-    description: "Story-level work item"
+  # Issue classification uses GitHub native issue types (Epic, Task, Bug).
+  # Stories and subtasks are linked via native sub-issues.
   - name: "kind/docs"
     color: "0075CA"
-    description: "Documentation story, routed to content writer hats"
+    description: "Label modifier — routes any issue type to content writer hats"
   # Role labels
   - name: "role/team-manager"
     color: "5319E7"
@@ -63,7 +58,7 @@ statuses:
   - name: "arch:plan"
     description: "Architect proposing story breakdown"
   - name: "po:plan-review"
-    description: "Story breakdown awaiting human review"
+    description: "Story breakdown awaiting human review (also used for complex bugs)"
   - name: "arch:breakdown"
     description: "Architect creating story issues"
   - name: "lead:design-review"
@@ -91,11 +86,23 @@ statuses:
   - name: "dev:code-review"
     description: "Code review"
   - name: "qe:verify"
-    description: "QE verifying implementation"
+    description: "QE verifying implementation (also used for bug verification)"
   - name: "arch:sign-off"
     description: "Architect sign-off (auto-advance)"
   - name: "po:merge"
     description: "Merge gate (auto-advance)"
+
+  # Bug statuses
+  - name: "bug:investigate"
+    description: "QE investigating bug, determines simple vs complex, fixes or plans"
+  - name: "arch:review"
+    description: "Architect reviewing simple bug fix, can approve or escalate"
+  - name: "arch:refine"
+    description: "Architect reviewing/refining complex bug plan"
+  - name: "bug:breakdown"
+    description: "Architect creating GitHub native subtasks for complex bug"
+  - name: "bug:in-progress"
+    description: "Monitoring subtask completion"
 
   # Specialist statuses
   - name: "sre:infra-setup"
@@ -129,6 +136,9 @@ views:
     also_include: ["done", "error"]
   - name: "QE"
     prefixes: ["qe"]
+    also_include: ["done", "error"]
+  - name: "Bug"
+    prefixes: ["bug"]
     also_include: ["done", "error"]
   - name: "Lead"
     prefixes: ["lead"]

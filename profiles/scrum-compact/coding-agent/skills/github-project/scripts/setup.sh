@@ -1,5 +1,5 @@
 #!/bin/bash
-# Common setup for all gh skill operations
+# Common setup for all github-project skill operations
 # Source this file at the start of each script
 
 set -euo pipefail
@@ -42,10 +42,14 @@ if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "null" ]; then
 fi
 
 # Get field data with error checking
-FIELD_DATA=$(gh project field-list "$PROJECT_NUM" --owner "$OWNER" --format json 2>&1)
-if [ $? -ne 0 ] || [ -z "$FIELD_DATA" ]; then
+if ! FIELD_DATA=$(gh project field-list "$PROJECT_NUM" --owner "$OWNER" --format json 2>&1); then
   echo "❌ ERROR: Could not fetch project field list"
   echo "$FIELD_DATA"
+  exit 1
+fi
+
+if [ -z "$FIELD_DATA" ]; then
+  echo "❌ ERROR: Empty response from project field list"
   exit 1
 fi
 

@@ -99,13 +99,67 @@ case "$QUERY_TYPE" in
       exit 1
     fi
 
-    gh issue view "$ISSUE_NUM" --repo "$TEAM_REPO" \
-      --json number,title,state,labels,assignees,milestone,body,comments
+    OWNER_NAME=$(echo "$TEAM_REPO" | cut -d/ -f1)
+    REPO_NAME_ONLY=$(echo "$TEAM_REPO" | cut -d/ -f2)
+
+    gh api graphql \
+      -f owner="$OWNER_NAME" -f repo="$REPO_NAME_ONLY" -F number="$ISSUE_NUM" \
+      -H "GraphQL-Features: issue_types,sub_issues" \
+      -f query='query($owner: String!, $repo: String!, $number: Int!) {
+        repository(owner: $owner, name: $repo) {
+          issue(number: $number) {
+            number
+            title
+            state
+            body
+            issueType { name }
+            labels(first: 20) { nodes { name } }
+            assignees(first: 10) { nodes { login } }
+            milestone { title }
+            subIssues(first: 50) {
+              nodes { number title state issueType { name } }
+            }
+            comments(last: 20) {
+              nodes { author { login } body createdAt }
+            }
+          }
+        }
+      }' -q .data.repository.issue
+    ;;
+
+  issue-type)
+    # Query by native issue type (Epic, Task, Bug)
+    if [ -z "$LABEL" ]; then
+      echo "❌ ERROR: --label is required for issue-type query (use issue type name: Epic, Task, Bug)"
+      exit 1
+    fi
+
+    OWNER_NAME=$(echo "$TEAM_REPO" | cut -d/ -f1)
+    REPO_NAME_ONLY=$(echo "$TEAM_REPO" | cut -d/ -f2)
+
+    gh api graphql \
+      -f owner="$OWNER_NAME" -f repo="$REPO_NAME_ONLY" -f typeName="$LABEL" \
+      -H "GraphQL-Features: issue_types,sub_issues" \
+      -f query='query($owner: String!, $repo: String!) {
+        repository(owner: $owner, name: $repo) {
+          issues(first: 50, states: OPEN) {
+            nodes {
+              number
+              title
+              state
+              issueType { name }
+              subIssues(first: 20) {
+                nodes { number title state }
+              }
+            }
+          }
+        }
+      }' -q ".data.repository.issues.nodes[] | select(.issueType.name == \"$LABEL\")"
     ;;
 
   *)
     echo "❌ ERROR: Invalid query type '$QUERY_TYPE'"
-    echo "Valid types: label, status, milestone, assignee, single"
+    echo "Valid types: label, status, milestone, assignee, single, issue-type"
     exit 1
     ;;
 esac

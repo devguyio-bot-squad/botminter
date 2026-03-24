@@ -2,13 +2,13 @@
 
 ## Rule
 
-Team members coordinate exclusively through GitHub issues and the `gh` skill. There is no direct member-to-member communication channel.
+Team members coordinate exclusively through GitHub issues and the `github-project` skill. There is no direct member-to-member communication channel.
 
 ## Project Status Transitions
 
 The primary coordination mechanism. A member signals work state by updating an issue's project status:
 
-1. Use the `gh` skill to read the current issue's project status
+1. Use the `github-project` skill to read the current issue's project status
 2. Update status via `gh project item-edit` with the cached project and field IDs
 
 Other members detect the change on their next board scan cycle.
