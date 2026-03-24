@@ -2,14 +2,14 @@
 
 ## Rule
 
-The compact profile uses a single-member self-transition model. The agent coordinates through GitHub issues via the `gh` skill, self-transitioning between roles by switching hats.
+The compact profile uses a single-member self-transition model. The agent coordinates through GitHub issues via the `github-project` skill, self-transitioning between roles by switching hats.
 
 ## Project Status Transitions
 
 The primary coordination mechanism. The agent signals work state by updating an issue's project status:
 
-1. Use the `gh` skill to read the current issue's project status
-2. Update status via `gh project item-edit` with the cached project and field IDs
+1. Use the `github-project` skill to read the current issue's project status
+2. Update status using the skill's status-transition operation
 
 The board scanner detects the change on the next scan cycle and dispatches the appropriate hat.
 
@@ -17,7 +17,7 @@ The board scanner detects the change on the next scan cycle and dispatches the a
 
 The agent records work output, decisions, and questions as comments on issues:
 
-1. Add a comment via `gh issue comment` using the format in `PROCESS.md`
+1. Add a comment using the skill's add-comment operation, following the format in `PROCESS.md`
 
 Comments use the emoji + role header of the active hat (e.g., `🏗️ architect`, `💻 dev`, `🧪 qe`) to preserve audit trail clarity, even though it is a single agent.
 

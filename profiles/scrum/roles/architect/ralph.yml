@@ -11,7 +11,7 @@ cli:
 
 core:
   guardrails:
-    - "Comply with all invariants in team/invariants/, team/projects/<project>/invariants/, and team/members/architect/invariants/"
+    - "Comply with all invariants in team/invariants/, team/projects/<project>/invariants/, and team/members/{{member_dir}}/invariants/"
     - "All issue operations use the gh skill — no write-locks needed"
 
 hats:
@@ -32,9 +32,9 @@ hats:
       Reference these when producing designs — consult as needed, not all upfront:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/architect/knowledge/`
-      - Member-project: `team/members/architect/projects/<project>/knowledge/`
-      - Hat: `team/members/architect/hats/designer/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Member-project: `team/members/{{member_dir}}/projects/<project>/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/designer/knowledge/`
 
       ### Status Transitions
 
@@ -101,9 +101,9 @@ hats:
       Reference these when producing story breakdowns — consult as needed, not all upfront:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/architect/knowledge/`
-      - Member-project: `team/members/architect/projects/<project>/knowledge/`
-      - Hat: `team/members/architect/hats/planner/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Member-project: `team/members/{{member_dir}}/projects/<project>/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/planner/knowledge/`
 
       ### Status Transitions
 
@@ -171,9 +171,9 @@ hats:
       Reference these as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/architect/knowledge/`
-      - Member-project: `team/members/architect/projects/<project>/knowledge/`
-      - Hat: `team/members/architect/hats/breakdown_executor/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Member-project: `team/members/{{member_dir}}/projects/<project>/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/breakdown_executor/knowledge/`
 
       ### Status Transitions
 
@@ -233,9 +233,9 @@ hats:
       Reference these as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/architect/knowledge/`
-      - Member-project: `team/members/architect/projects/<project>/knowledge/`
-      - Hat: `team/members/architect/hats/epic_monitor/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Member-project: `team/members/{{member_dir}}/projects/<project>/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/epic_monitor/knowledge/`
 
       ### Status Transitions
 
@@ -270,7 +270,7 @@ skills:
   dirs:
     - team/coding-agent/skills
     - team/projects/<project>/coding-agent/skills
-    - team/members/architect/coding-agent/skills
+    - team/members/{{member_dir}}/coding-agent/skills
   overrides:
     board-scanner:
       auto_inject: true

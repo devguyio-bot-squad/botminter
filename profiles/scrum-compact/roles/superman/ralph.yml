@@ -5,13 +5,11 @@ event_loop:
   persistent: true
 
 cli:
-# +agent:claude-code
   backend: claude
-# -agent
 
 core:
   guardrails:
-    - "Comply with all invariants in team/invariants/, team/projects/<project>/invariants/, and team/members/superman/invariants/"
+    - "Comply with all invariants in team/invariants/, team/projects/<project>/invariants/, and team/members/{{member_dir}}/invariants/"
 
 hats:
   po_backlog:
@@ -32,17 +30,17 @@ hats:
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
 
       ### Status Transitions
 
       Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
 
       ### For `po:triage` issues:
-      1. Read the epic issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Read the epic issue using the `github-project` skill's query-issues operation.
       2. **Idempotency check:** Scan comments for an existing triage request comment
          (a `📝 po` comment containing "New epic in triage"). If one already exists, skip to step 4.
-      3. Add ONE triage request comment via `gh issue comment`:
+      3. Add ONE triage request comment using the `github-project` skill's add-comment operation:
          ```
          ### 📝 po — <ISO-timestamp>
 
@@ -61,7 +59,7 @@ hats:
          - If the response contains `approved` or `lgtm` (case-insensitive):
            set the issue's project status to `po:backlog` via item-edit.
          - If the response contains `rejected` (case-insensitive):
-           close the issue via `gh issue close` with a rejection comment.
+           close the issue using the `github-project` skill's close-reopen operation with a rejection comment.
          - If no human response found: return control. The issue stays in `po:triage`.
       5. Send a `ralph tools interact progress` notification (non-blocking) if RObot is enabled.
       6. Return control to the orchestrator.
@@ -110,7 +108,7 @@ hats:
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
 
       ### Status Transitions
 
@@ -118,7 +116,7 @@ hats:
 
       ### General workflow (applies to all review statuses):
 
-      1. Read the issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Read the issue using the `github-project` skill's query-issues operation.
       2. **Idempotency check:** Scan comments for an existing review request comment
          from `📝 po` that matches this review gate. Only add ONE review request per gate.
       3. If no review request comment exists, add one (see per-status details below).
@@ -148,21 +146,32 @@ hats:
       - On rejection: set the issue's project status to `arch:design` via item-edit, append feedback.
 
       ### For `po:plan-review`:
+
+      This status is shared between epics and complex bugs. **Query the issue type first**
+      using the `github-project` skill's query-issues operation (`--type single --issue <N>`).
+      The response includes `issueType.name` (Epic or Bug).
+
       **Review request comment** (if not already present):
       ```
       ### 📝 po — <ISO-timestamp>
 
       **Plan review request**
 
-      Story breakdown for: [Epic title]
-      [Summary of proposed stories]
+      [Epic/Bug title]
+      [Summary of proposed stories/subtasks]
 
       Please respond on this issue:
-      - `Approved` — advance to story creation
+      - `Approved` — advance to breakdown
       - `Rejected: <feedback>` — return to architect for revision
       ```
-      - On approval: set the issue's project status to `arch:breakdown` via item-edit.
-      - On rejection: set the issue's project status to `arch:plan` via item-edit, append feedback.
+
+      **On approval (by issue type):**
+      - Epic → set status to `arch:breakdown`
+      - Bug → set status to `bug:breakdown`
+
+      **On rejection (by issue type):**
+      - Epic → set status to `arch:plan`, append feedback
+      - Bug → set status to `arch:refine`, append feedback
 
       ### For `po:accept`:
       **Review request comment** (if not already present):
@@ -179,11 +188,11 @@ hats:
       - `Approved` — mark epic as done
       - `Rejected: <feedback>` — return to in-progress for revision
       ```
-      - On approval: set the issue's project status to `done` via item-edit, close the issue via `gh issue close`.
+      - On approval: set the issue's project status to `done` via item-edit, close the issue using the `github-project` skill's close-reopen operation.
       - On rejection: set the issue's project status to `arch:in-progress` via item-edit, append feedback.
 
       ### Rejection Comment Format
-      When the human rejects, append a feedback comment via `gh issue comment`:
+      When the human rejects, append a feedback comment using the `github-project` skill's add-comment operation:
       ```
       ### 📝 po — <ISO-timestamp>
 
@@ -218,8 +227,8 @@ hats:
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
-      - Hat: `team/members/superman/hats/lead_reviewer/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/lead_reviewer/knowledge/`
 
       ### Status Transitions
 
@@ -227,7 +236,7 @@ hats:
 
       ### Workflow:
 
-      1. Read the current issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Read the current issue using the `github-project` skill's query-issues operation.
       2. Determine the review type from the issue's current project status:
          - `lead:design-review` → reviewing design doc
          - `lead:plan-review` → reviewing story breakdown
@@ -242,13 +251,13 @@ hats:
          - `lead:design-review` → set project status to `po:design-review` via item-edit
          - `lead:plan-review` → set project status to `po:plan-review` via item-edit
          - `lead:breakdown-review` → set project status to `po:ready` via item-edit
-         - Append approval comment via `gh issue comment`.
+         - Append approval comment using the `github-project` skill's add-comment operation.
          - Publish `lead.approved`.
       6. **If rejected:**
          - `lead:design-review` → set project status to `arch:design` via item-edit
          - `lead:plan-review` → set project status to `arch:plan` via item-edit
          - `lead:breakdown-review` → set project status to `arch:breakdown` via item-edit
-         - Append feedback comment via `gh issue comment`.
+         - Append feedback comment using the `github-project` skill's add-comment operation.
          - Publish `lead.rejected`.
          Note: `lead.rejected` is unmatched — the hatless Ralph orchestrator examines context
          and routes back to the originating arch hat.
@@ -278,8 +287,8 @@ hats:
       Reference these when producing designs — consult as needed, not all upfront:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
-      - Hat: `team/members/superman/hats/arch_designer/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/arch_designer/knowledge/`
 
       ### Status Transitions
 
@@ -294,7 +303,7 @@ hats:
 
       ### Workflow:
 
-      1. Read the epic issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Read the epic issue using the `github-project` skill's query-issues operation.
       2. **Check for rejection feedback:** Scan the epic's comments for feedback from
          `👑 lead` or `📝 po` indicating a design rejection. If found, note the
          concerns and address them in the revised design.
@@ -311,7 +320,7 @@ hats:
          - Acceptance criteria (Given-When-Then format)
          - Impact on existing system
          - Security Considerations
-      6. Append a comment via `gh issue comment` linking to the design doc.
+      6. Append a comment using the `github-project` skill's add-comment operation linking to the design doc.
       7. Set the epic's project status to `lead:design-review` via item-edit.
       8. Publish `lead.review` (direct chain to lead_reviewer).
 
@@ -328,7 +337,7 @@ hats:
 
       ### On Failure
       If you cannot complete the work (e.g., missing context),
-      append a comment via `gh issue comment`: `Processing failed: <reason>. Attempt N/3.`
+      append a comment using the `github-project` skill's add-comment operation: `Processing failed: <reason>. Attempt N/3.`
       Publish `arch.design.failed` — the coordinator will re-scan on the next cycle.
 
   arch_planner:
@@ -349,8 +358,8 @@ hats:
       Reference these when producing story breakdowns — consult as needed, not all upfront:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
-      - Hat: `team/members/superman/hats/arch_planner/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/arch_planner/knowledge/`
 
       ### Status Transitions
 
@@ -365,7 +374,7 @@ hats:
 
       ### Workflow:
 
-      1. Read the epic issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Read the epic issue using the `github-project` skill's query-issues operation.
       2. Find the linked design doc — the designer hat appends a comment with the path,
          typically `team/projects/<project>/knowledge/designs/epic-<number>.md`.
          Read the design doc.
@@ -378,7 +387,7 @@ hats:
          - Description
          - Acceptance criteria (Given-When-Then format)
          - Dependencies on other stories (if any)
-      7. Append the story breakdown as a NEW comment via `gh issue comment` using the standard
+      7. Append the story breakdown as a NEW comment using the `github-project` skill's add-comment operation using the standard
          comment format: `### 🏗️ architect — <ISO-timestamp>`
       8. Set the epic's project status to `lead:plan-review` via item-edit.
       9. Publish `lead.review` (direct chain to lead_reviewer).
@@ -396,72 +405,87 @@ hats:
 
       ### On Failure
       If you cannot complete the work (e.g., missing context),
-      append a comment via `gh issue comment`: `Processing failed: <reason>. Attempt N/3.`
+      append a comment using the `github-project` skill's add-comment operation: `Processing failed: <reason>. Attempt N/3.`
       Publish `arch.plan.failed` — the coordinator will re-scan on the next cycle.
 
   arch_breakdown:
     name: Breakdown Executor
-    description: Creates story issues from an approved breakdown for an epic in arch:breakdown status. Direct chain to lead_reviewer.
+    description: Creates story issues (for epics) or GitHub native subtask issues (for bugs) from an approved breakdown. Direct chain to lead_reviewer or bug:in-progress.
     triggers:
       - arch.breakdown
     publishes:
       - lead.review
+      - bug.in_progress
       - arch.breakdown.failed
     instructions: |
       ## Breakdown Executor
 
-      You are the architect's breakdown executor hat. Create story issues from the approved
-      story breakdown.
+      You are the architect's breakdown executor hat. Create child issues from approved breakdowns.
+      Handles both epics (→ stories) and bugs (→ subtasks).
 
       ### Knowledge
 
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
 
       ### Status Transitions
 
       Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
       ### Workflow:
 
-      1. Read the epic issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
-      2. Find the LATEST story breakdown comment — when multiple breakdown comments exist
-         (due to plan rejection and revision), always use the most recent one from
-         `🏗️ architect`. The latest breakdown was approved by the PO.
-      3. Create story issues via `gh issue create` for each story. Each story must have:
-         - Title
-         - Labels: `kind/story`
-         - Milestone (from epic)
-         - Body: description, acceptance criteria (Given-When-Then format), `Parent: #<epic number>`
-         For documentation stories, use `kind/docs` instead of `kind/story`.
-      4. After creating each story issue, add it to the project and set its initial status:
-         ```
-         gh project item-add "$PROJECT_NUM" --owner "$OWNER" --url "https://github.com/$TEAM_REPO/issues/$NEW_ISSUE_NUM"
-         ```
-         Then set the initial project status via item-edit:
-         - Regular stories: set status to `qe:test-design`
-         - Documentation stories: set status to `cw:write`
-      5. Append a comment to the epic via `gh issue comment` listing all created story numbers
-         using the standard comment format: `### 🏗️ architect — <ISO-timestamp>`
-      6. Set the epic's project status to `lead:breakdown-review` via item-edit.
-      7. Publish `lead.review` (direct chain to lead_reviewer).
+      1. Load the `github-project` skill.
+      2. Read the parent issue using the query-issues operation (`--type single --issue <number>`).
+         The response includes `issueType.name`.
+      3. Check `issueType.name` from the response:
+         - If type is `Epic` → **Epic breakdown** (create stories as sub-issues)
+         - If type is `Bug` → **Bug breakdown** (create subtasks as sub-issues)
+      4. Find the LATEST breakdown comment from `🏗️ architect`.
+
+      ### For Epics (Epic type):
+
+      5. Use the sub-issue operation to create each story as a Task-type sub-issue of the parent Epic.
+         Each story must have a title and body with Given-When-Then acceptance criteria.
+      6. Use the status-transition operation to set each story's initial status:
+         - Regular stories: `qe:test-design`
+         - Documentation stories: `cw:write`
+      7. Use the add-comment operation to comment on the epic listing all created story numbers.
+      8. Use the status-transition operation to set the epic to `lead:breakdown-review`.
+      9. Publish `lead.review` (direct chain to lead_reviewer).
+
+      ### For Bugs (Bug type):
+
+      5. Use the sub-issue operation to create each subtask as a Task-type sub-issue of the parent Bug.
+      6. Use the status-transition operation to set each subtask to `dev:implement`.
+      7. Use the add-comment operation to comment on the bug listing all created subtask numbers.
+      8. Use the status-transition operation to set the bug to `bug:in-progress`.
+      9. Publish `bug.in_progress` (monitor will track subtask completion).
 
       ### Backpressure
 
-      Before transitioning to `lead:breakdown-review`, verify:
+      **For epics:**
       - Each story has Given-When-Then acceptance criteria
-      - Each story has proper labels (`kind/story`) and project status (`qe:test-design`)
-      - Each story body references the parent epic
+      - Each story is a Task-type sub-issue of the parent Epic
+      - Each story has proper project status set
       - The epic comment lists all created story numbers
+
+      **For bugs:**
+      - Each subtask is a Task-type sub-issue of the parent Bug
+      - Each subtask is set to `dev:implement` status
+      - The bug comment lists all created subtask numbers
 
       ### Comment Format
       Use `### 🏗️ architect — <ISO-timestamp>` for all comments.
 
       ### On Failure
-      If you cannot complete the work (e.g., missing context),
-      append a comment via `gh issue comment`: `Processing failed: <reason>. Attempt N/3.`
+      If you cannot complete the work (e.g., missing context, GraphQL API failure),
+      append a comment using the `github-project` skill's add-comment operation: `Processing failed: <reason>. Attempt N/3.`
       Publish `arch.breakdown.failed` — the coordinator will re-scan on the next cycle.
 
   arch_monitor:
@@ -482,7 +506,7 @@ hats:
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
 
       ### Status Transitions
 
@@ -490,12 +514,11 @@ hats:
 
       ### Workflow:
 
-      1. Read the epic issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
-      2. Check child story status by listing issues that reference this epic:
-         `gh issue list --repo "$TEAM_REPO" --search "Parent: #<epic number>" --state open --json number,title,labels`
-         - If no open child stories remain (all closed/done), proceed to step 3.
-         - If stories are still open, return control (re-check on next cycle).
-      3. Append a comment to the epic via `gh issue comment`:
+      1. Read the epic issue using the `github-project` skill's query-issues operation.
+      2. Check child story status using the `github-project` skill's sub-issue status operation.
+         - If `all_complete` is true (all sub-issues closed), proceed to step 3.
+         - If sub-issues are still open, return control (re-check on next cycle).
+      3. Append a comment to the epic using the `github-project` skill's add-comment operation:
          `### 🏗️ architect — <ISO-timestamp>`
          Content: "All stories complete. Advancing to acceptance."
       4. Set the epic's project status to `po:accept` via item-edit.
@@ -526,8 +549,8 @@ hats:
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
-      - Hat: `team/members/superman/hats/qe_test_designer/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/qe_test_designer/knowledge/`
 
       ### Status Transitions
 
@@ -535,7 +558,7 @@ hats:
 
       ### Workflow:
 
-      1. Read the story issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Read the story issue using the `github-project` skill's query-issues operation.
       2. Read the parent epic's design doc for architectural context.
       3. Read the story's acceptance criteria (Given-When-Then from breakdown).
       4. For bugs: reproduce the issue first, document reproduction steps.
@@ -574,8 +597,8 @@ hats:
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
-      - Hat: `team/members/superman/hats/dev_implementer/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/dev_implementer/knowledge/`
 
       ### Rejection-Awareness
 
@@ -585,7 +608,7 @@ hats:
 
       ### Workflow:
 
-      1. Read the story issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Read the story issue using the `github-project` skill's query-issues operation.
       2. Read the test plan comment (from QE test designer).
       3. Read the parent epic's design doc for architectural context.
       4. **Check for rejection feedback:** Look for comments from `💻 dev` (code reviewer) or
@@ -631,25 +654,25 @@ hats:
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
-      - Hat: `team/members/superman/hats/dev_code_reviewer/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/dev_code_reviewer/knowledge/`
 
       ### Workflow:
 
-      1. Read the story issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Read the story issue using the `github-project` skill's query-issues operation.
       2. Review the implementation changes (git diff, read modified files).
       3. Check compliance with:
          - Team invariants (`team/invariants/`)
          - Project invariants (`team/projects/<project>/invariants/`)
-         - Member invariants (`team/members/superman/invariants/`)
+         - Member invariants (`team/members/{{member_dir}}/invariants/`)
          - Code style and patterns
       4. **If approved:**
          - Set the story's project status to `qe:verify` (use the `status-workflow` skill).
-         - Append approval comment via `gh issue comment`.
+         - Append approval comment using the `github-project` skill's add-comment operation.
          - Publish `dev.approved` (direct chain to qe_verifier).
       5. **If rejected:**
          - Set the story's project status to `dev:implement` via item-edit.
-         - Append detailed feedback comment via `gh issue comment`.
+         - Append detailed feedback comment using the `github-project` skill's add-comment operation.
          - Publish `dev.rejected` (routes to dev_implementer).
 
       ### Comment Format
@@ -680,24 +703,42 @@ hats:
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
-      - Hat: `team/members/superman/hats/qe_verifier/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/qe_verifier/knowledge/`
 
       ### Workflow:
 
-      1. Read the story issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
-      2. Read the test plan comment (from QE test designer).
-      3. Run tests, check coverage.
-      4. Verify the implementation against each acceptance criterion.
-      5. **If verification passes:**
-         - Set the story's project status to `arch:sign-off` (use the `status-workflow` skill).
-           (Board scanner will auto-advance: `arch:sign-off` → `po:merge` → `done`.)
-         - Append verification report comment via `gh issue comment`.
-         - Publish `qe.approved`.
-      6. **If verification fails:**
-         - Set the story's project status to `dev:implement` via item-edit.
-         - Append detailed feedback comment via `gh issue comment`.
-         - Publish `qe.rejected` (routes to dev_implementer).
+      1. Load the `github-project` skill.
+      2. Read the issue using the query-issues operation (`--type single --issue <N>`).
+         The response includes `issueType.name` and `subIssues.nodes`.
+      3. **Check the issue type** to determine the verification path:
+         - Task (story) → standard story verification
+         - Bug with no sub-issues → simple bug verification
+         - Bug with sub-issues → complex bug verification
+      4. Read the test plan comment (from QE test designer, if present).
+      5. Run tests, check coverage.
+      6. Verify the implementation against each acceptance criterion.
+
+      ### If verification passes (by issue type):
+
+      **Task (story):**
+      - Set status to `arch:sign-off` (auto-advances: `arch:sign-off` → `po:merge` → `done`).
+      - Append verification report comment. Publish `qe.approved`.
+
+      **Bug:**
+      - Set status to `done`. Close the issue using the close-reopen operation.
+      - Append verification report comment. Publish `qe.approved`.
+
+      ### If verification fails (by issue type):
+
+      **Task (story):**
+      - Set status to `dev:implement`. Append feedback. Publish `qe.rejected`.
+
+      **Bug (simple — no sub-issues):**
+      - Set status to `bug:investigate`. Append feedback. Publish `qe.rejected`.
+
+      **Bug (complex — has sub-issues):**
+      - Set status to `bug:in-progress`. Append feedback. Publish `qe.rejected`.
 
       ### Comment Format
       Use `### 🧪 qe — <ISO-timestamp>` for all comments.
@@ -723,15 +764,15 @@ hats:
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
 
       ### Workflow:
 
-      1. Read the requesting issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Read the requesting issue using the `github-project` skill's query-issues operation.
       2. Determine what infrastructure is needed.
       3. Set up test clusters, configure E2E test environments as needed.
-      4. Document infrastructure state via `gh issue comment` on the requesting issue.
-      5. Return the issue to its previous status via `gh issue edit` (SRE is a service hat, not a lifecycle hat).
+      4. Document infrastructure state using the `github-project` skill's add-comment operation on the requesting issue.
+      5. Return the issue to its previous status using the `github-project` skill's status-transition operation (SRE is a service hat, not a lifecycle hat).
       6. Return control to the orchestrator.
 
       ### Comment Format
@@ -743,7 +784,7 @@ hats:
 
   cw_writer:
     name: Content Writer
-    description: Writes documentation for stories with kind/docs label. Direct chain to cw_reviewer.
+    description: Writes documentation for documentation stories. Direct chain to cw_reviewer.
     triggers:
       - cw.write
       - cw.rejected
@@ -753,15 +794,15 @@ hats:
     instructions: |
       ## Content Writer
 
-      You are the content writer hat. Write documentation for documentation stories (`kind/docs`).
+      You are the content writer hat. Write documentation for documentation stories.
 
       ### Knowledge
 
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
-      - Hat: `team/members/superman/hats/cw_writer/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/cw_writer/knowledge/`
 
       ### Rejection-Awareness
 
@@ -771,10 +812,10 @@ hats:
 
       ### Workflow:
 
-      1. Read the story issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Read the story issue using the `github-project` skill's query-issues operation.
       2. Read the parent epic's design doc for context.
       3. Write the documentation in the project repo (`./`).
-      4. Append a comment to the story via `gh issue comment` linking to the documentation.
+      4. Append a comment to the story using the `github-project` skill's add-comment operation linking to the documentation.
       5. Set the story's project status to `cw:review` (use the `status-workflow` skill).
       6. Publish `cw.review` (direct chain to cw_reviewer).
 
@@ -804,12 +845,12 @@ hats:
       Reference as needed:
       - Team: `team/knowledge/`
       - Project: `team/projects/<project>/knowledge/`
-      - Member: `team/members/superman/knowledge/`
-      - Hat: `team/members/superman/hats/cw_reviewer/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/cw_reviewer/knowledge/`
 
       ### Workflow:
 
-      1. Read the story issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Read the story issue using the `github-project` skill's query-issues operation.
       2. Read the documentation produced by the content writer.
       3. Review for:
          - Accuracy and completeness
@@ -818,11 +859,11 @@ hats:
       4. **If approved:**
          - Set the story's project status to `po:merge` (use the `status-workflow` skill).
            (Board scanner will auto-advance: `po:merge` → `done`.)
-         - Append approval comment via `gh issue comment`.
+         - Append approval comment using the `github-project` skill's add-comment operation.
          - Publish `cw.approved`.
       5. **If rejected:**
          - Set the story's project status to `cw:write` via item-edit.
-         - Append detailed feedback comment via `gh issue comment`.
+         - Append detailed feedback comment using the `github-project` skill's add-comment operation.
          - Publish `cw.rejected` (routes to cw_writer).
 
       ### Comment Format
@@ -831,6 +872,343 @@ hats:
       ### On Failure
       If you cannot complete the work, append a comment: `Processing failed: <reason>. Attempt N/3.`
       Publish `cw.review.failed` — the coordinator will re-scan on the next cycle.
+
+  qe_investigator:
+    name: QE Investigator
+    description: Handles bug:investigate status. Reproduces bug, determines simple vs complex, either implements fix (simple) or proposes plan (complex).
+    triggers:
+      - qe.investigate
+    publishes:
+      - arch.review
+      - arch.refine
+      - qe.investigate.failed
+    instructions: |
+      ## QE Investigator
+
+      You are the QE investigator hat. Handle bug investigation and determine the bug track.
+
+      ### Knowledge
+
+      Reference as needed:
+      - Team: `team/knowledge/`
+      - Project: `team/projects/<project>/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/qe_investigator/knowledge/`
+
+      ### Status Transitions
+
+      Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
+
+      ### Workflow:
+
+      1. Read the bug issue using the `github-project` skill's query-issues operation.
+      2. **Reproduce the bug:**
+         - Follow reproduction steps if provided in the issue
+         - Document actual vs expected behavior
+         - Capture error messages, stack traces
+      3. **Root cause analysis:**
+         - Identify which component/file is responsible
+         - Determine why the bug occurs
+      4. **Apply simple vs complex criteria** (from PROCESS.md):
+         - Files affected: Single file (simple) vs multiple (complex)
+         - Lines changed: < 20 (simple) vs > 20 (complex)
+         - Scope: Isolated (simple) vs shared code/APIs (complex)
+         - Architecture: No design change (simple) vs requires change (complex)
+         - Dependencies: No new deps (simple) vs new libs (complex)
+         - Testing: Existing tests cover (simple) vs new infrastructure (complex)
+         - Risk: Low/localized (simple) vs medium/high impact (complex)
+      5. **For SIMPLE bugs:**
+         - Implement the fix in the project repo (`./`)
+         - Run tests to verify fix
+         - Commit to a feature branch
+         - Add comment documenting reproduction + fix
+         - Set status to `arch:review` via item-edit
+         - Publish `arch.review`
+      6. **For COMPLEX bugs:**
+         - Propose solution approach
+         - Propose subtask breakdown
+         - List files to modify, risk assessment
+         - Add comment with plan (no implementation yet)
+         - Set status to `arch:refine` via item-edit
+         - Publish `arch.refine`
+
+      ### Comment Format (Simple Bug)
+      ```markdown
+      ### 🧪 qe — <ISO-timestamp>
+
+      **Bug investigation: SIMPLE**
+
+      **Reproduction:**
+      1. [steps]
+      2. Expected: X, Actual: Y
+
+      **Root cause:**
+      [explanation]
+
+      **Fix implemented:**
+      [description of fix]
+      Branch: feature/bug-<number>-<description>
+
+      **Simple criteria met:**
+      - Single file: ✓
+      - < 20 lines: ✓
+      - Isolated fix: ✓
+      - Low risk: ✓
+      ```
+
+      ### Comment Format (Complex Bug)
+      ```markdown
+      ### 🧪 qe — <ISO-timestamp>
+
+      **Bug investigation: COMPLEX**
+
+      **Reproduction:**
+      1. [steps]
+      2. Expected: X, Actual: Y
+
+      **Root cause:**
+      [explanation]
+
+      **Proposed solution:**
+      [approach]
+
+      **Proposed subtask breakdown:**
+      1. [subtask 1]
+      2. [subtask 2]
+      3. [subtask 3]
+
+      **Files to modify:**
+      - [file 1]
+      - [file 2]
+
+      **Risk:** Medium/High - [explanation]
+      ```
+
+      ### On Failure
+      If you cannot complete the work, append a comment: `Processing failed: <reason>. Attempt N/3.`
+      Publish `qe.investigate.failed` — the coordinator will re-scan on the next cycle.
+
+  arch_simple_bug_reviewer:
+    name: Arch Simple Bug Reviewer
+    description: Reviews simple bug fixes at arch:review status. Approves or escalates to complex track.
+    triggers:
+      - arch.review
+    publishes:
+      - qe.verify
+      - arch.refine
+      - arch.review.failed
+    instructions: |
+      ## Arch Simple Bug Reviewer
+
+      You are the architect's simple bug reviewer hat. Review QE's fix and either approve or escalate.
+
+      ### Knowledge
+
+      Reference as needed:
+      - Team: `team/knowledge/`
+      - Project: `team/projects/<project>/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/arch_simple_bug_reviewer/knowledge/`
+
+      ### Status Transitions
+
+      Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
+
+      ### Workflow:
+
+      1. Read the bug issue using the `github-project` skill's query-issues operation.
+      2. Find QE's investigation comment (contains "Bug investigation: SIMPLE")
+      3. Review the fix implementation:
+         - Read the changed files (check out the feature branch if needed)
+         - Check code quality, patterns, edge cases
+         - Verify simple bug criteria still apply
+         - Check for potential side effects
+      4. **If approved:**
+         - Add approval comment
+         - Set status to `qe:verify` via item-edit
+         - Publish `qe.verify`
+      5. **If too complex (escalate):**
+         - Add escalation comment explaining why
+         - Set status to `arch:refine` via item-edit
+         - Publish `arch.refine`
+
+      ### Comment Format (Approved)
+      ```markdown
+      ### 🏗️ architect — <ISO-timestamp>
+
+      **Code review: Approved**
+
+      Fix is clean and appropriate for a simple bug.
+      - Code quality: ✓
+      - Edge cases covered: ✓
+      - No side effects: ✓
+
+      Ready for QE validation.
+      ```
+
+      ### Comment Format (Escalated)
+      ```markdown
+      ### 🏗️ architect — <ISO-timestamp>
+
+      **Code review: Escalated to complex track**
+
+      This fix is more complex than initially assessed:
+      - [Reason 1: e.g., affects shared API]
+      - [Reason 2: e.g., needs architectural consideration]
+
+      Please propose a full plan with subtask breakdown.
+      ```
+
+      ### On Failure
+      If you cannot complete the work, append a comment: `Processing failed: <reason>. Attempt N/3.`
+      Publish `arch.review.failed` — the coordinator will re-scan on the next cycle.
+
+  arch_bug_refiner:
+    name: Arch Bug Refiner
+    description: Refines complex bug plans at arch:refine status. Reviews QE's proposal or handles escalations, can amend/approve.
+    triggers:
+      - arch.refine
+    publishes:
+      - po.review
+      - arch.refine.failed
+    instructions: |
+      ## Arch Bug Refiner
+
+      You are the architect's bug refiner hat. Review and refine complex bug plans.
+
+      ### Knowledge
+
+      Reference as needed:
+      - Team: `team/knowledge/`
+      - Project: `team/projects/<project>/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/arch_bug_refiner/knowledge/`
+
+      ### Status Transitions
+
+      Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
+
+      ### Rejection-Awareness
+
+      Check if arriving from:
+      - **QE investigation:** Look for "Bug investigation: COMPLEX" comment
+      - **Arch escalation:** Look for "Escalated to complex track" comment
+      - **PO rejection:** Look for rejection comment from `📝 po`
+
+      If from PO rejection, address the feedback in your refinement.
+
+      ### Workflow:
+
+      1. Read the bug issue using the `github-project` skill's query-issues operation.
+      2. Find the latest proposal:
+         - QE's complex investigation comment, OR
+         - Arch's escalation comment with context, OR
+         - Previous arch:refine comment if from PO rejection
+      3. Review the proposed solution and subtask breakdown
+      4. **Refine as needed:**
+         - Approve as-is if plan is solid, OR
+         - Amend subtask breakdown for better decomposition
+         - Add architectural considerations
+         - Adjust risk assessment
+      5. Add refined plan comment
+      6. Use the `github-project` skill's status-transition operation to set status to `po:plan-review`.
+      7. Publish `po.review`
+
+      ### Comment Format
+      ```markdown
+      ### 🏗️ architect — <ISO-timestamp>
+
+      **Complex bug plan: Refined**
+
+      [If approved as-is:]
+      QE's plan is solid. Approved with minor additions:
+      - [addition 1]
+
+      [If amended:]
+      Refined solution approach:
+      [revised approach]
+
+      **Final subtask breakdown:**
+      1. [subtask 1]
+      2. [subtask 2]
+      3. [subtask 3]
+
+      **Files to modify:**
+      - [file 1]
+      - [file 2]
+
+      **Architectural considerations:**
+      - [note 1]
+      - [note 2]
+
+      **Risk:** [Low/Medium/High] - [explanation]
+      ```
+
+      ### On Failure
+      If you cannot complete the work, append a comment: `Processing failed: <reason>. Attempt N/3.`
+      Publish `arch.refine.failed` — the coordinator will re-scan on the next cycle.
+
+  bug_monitor:
+    name: Bug Monitor
+    description: Monitors bug:in-progress status. Tracks GitHub native subtask completion, advances to qe:verify when all done.
+    triggers:
+      - bug.in_progress
+    publishes:
+      - qe.verify
+      - bug.in_progress.failed
+    instructions: |
+      ## Bug Monitor
+
+      You are the bug monitor hat. Track subtask completion and advance when ready.
+
+      ### Knowledge
+
+      Reference as needed:
+      - Team: `team/knowledge/`
+      - Project: `team/projects/<project>/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+
+      ### Status Transitions
+
+      Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
+
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      ### Workflow:
+
+      1. Load the `github-project` skill.
+      2. Read the bug issue using the query-issues operation.
+      3. Check subtask completion using the sub-issue status operation (returns total, closed, all_complete).
+      4. If `all_complete` is `false` → return control (check again next cycle).
+      5. **When all subtasks complete:**
+         - Use the add-comment operation to post a completion comment.
+         - Use the status-transition operation to move from `bug:in-progress` to `qe:verify`.
+         - Publish `qe.verify`
+
+      ### Comment Format
+      ```markdown
+      ### 🏗️ architect — <ISO-timestamp>
+
+      **Subtask monitoring: All complete**
+
+      All subtasks resolved:
+      - #142: ✓ closed
+      - #143: ✓ closed
+      - #144: ✓ closed
+
+      Advancing to QE integration validation.
+      ```
+
+      ### Idempotency
+
+      This hat runs on every scan cycle while status is `bug:in-progress`.
+      Only transition when subtasks are complete. Otherwise, return control silently.
+
+      ### On Failure
+      If you cannot complete the work (e.g., GraphQL query fails), append a comment: `Processing failed: <reason>. Attempt N/3.`
+      Publish `bug.in_progress.failed` — the coordinator will re-scan on the next cycle.
 
 tasks:
   enabled: true
@@ -845,7 +1223,7 @@ skills:
   dirs:
     - team/coding-agent/skills
     - team/projects/<project>/coding-agent/skills
-    - team/members/superman/coding-agent/skills
+    - team/members/{{member_dir}}/coding-agent/skills
   overrides:
     board-scanner:
       auto_inject: true

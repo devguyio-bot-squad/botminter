@@ -1,4 +1,4 @@
-# GitHub Skill Quick Start
+# GitHub Project Skill Quick Start
 
 ## For Users (Claude)
 
@@ -17,7 +17,7 @@ Claude will handle the rest.
 ### File Structure
 
 ```
-gh/
+github-project/
 ├── SKILL.md              # Read this first - high-level guide
 ├── scripts/              # Operations (Claude runs these)
 │   ├── setup.sh          # Common setup, sourced by all
@@ -29,7 +29,8 @@ gh/
 │   ├── milestone-ops.sh
 │   ├── close-reopen.sh
 │   ├── pr-ops.sh
-│   └── query-issues.sh
+│   ├── query-issues.sh
+│   └── subtask-ops.sh
 └── references/           # Deep docs (Claude loads on demand)
     ├── status-lifecycle.md
     ├── error-handling.md
@@ -40,7 +41,7 @@ gh/
 ### Quick Test
 
 ```bash
-# From skill directory (team/coding-agent/skills/gh/)
+# From skill directory (team/coding-agent/skills/github-project/)
 
 # Test setup
 bash scripts/setup.sh
@@ -107,4 +108,4 @@ source "$SCRIPT_DIR/setup.sh"
 - **SKILL.md** - Full operation guide
 - **references/error-handling.md** - Error patterns
 - **references/graphql-queries.md** - Verification details
-- **GH-SKILL-RESTRUCTURE-SUMMARY.md** - What changed and why
+- **references/status-lifecycle.md** - Epic, Story, and Bug lifecycle reference

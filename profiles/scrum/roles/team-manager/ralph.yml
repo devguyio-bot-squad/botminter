@@ -85,7 +85,7 @@ skills:
   dirs:
     - team/coding-agent/skills
     - team/projects/<project>/coding-agent/skills
-    - team/members/team-manager/coding-agent/skills
+    - team/members/{{member_dir}}/coding-agent/skills
   overrides:
     board-scanner:
       auto_inject: true

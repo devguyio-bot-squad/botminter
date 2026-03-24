@@ -1,6 +1,6 @@
 # Error Handling Patterns
 
-All gh skill scripts follow comprehensive error handling patterns introduced in v3.0.0.
+All github-project skill scripts follow comprehensive error handling patterns introduced in v3.0.0.
 
 ## Standard Error Handling Pattern
 
@@ -46,8 +46,8 @@ if [ -z "$ISSUE_NUM" ]; then
   exit 1
 fi
 
-if [ "$KIND" != "epic" ] && [ "$KIND" != "story" ]; then
-  echo "❌ ERROR: --kind must be 'epic' or 'story'"
+if [ "$KIND" != "epic" ] && [ "$KIND" != "story" ] && [ "$KIND" != "bug" ]; then
+  echo "❌ ERROR: --kind must be 'epic', 'story', or 'bug'"
   exit 1
 fi
 ```

@@ -12,7 +12,7 @@ Your working directory is the project codebase — a clone of the project reposi
 
 ### Available Hats
 
-Fourteen specialized hats are available for different phases of work. Board scanning is handled by an auto-inject skill, not a hat.
+Eighteen specialized hats are available for different phases of work. Board scanning is handled by an auto-inject skill, not a hat.
 
 | Hat | Purpose |
 |-----|---------|
@@ -21,12 +21,16 @@ Fourteen specialized hats are available for different phases of work. Board scan
 | **lead_reviewer** | Reviews arch work before human gate |
 | **arch_designer** | Produces design docs |
 | **arch_planner** | Decomposes designs into story breakdowns |
-| **arch_breakdown** | Creates story issues from approved breakdowns |
+| **arch_breakdown** | Creates story/subtask issues from approved breakdowns |
 | **arch_monitor** | Monitors epic progress |
+| **arch_simple_bug_reviewer** | Reviews simple bug fixes, can approve or escalate |
+| **arch_bug_refiner** | Reviews/refines complex bug plans |
 | **qe_test_designer** | Writes test plans and test stubs |
+| **qe_investigator** | Investigates bugs, determines simple vs complex |
 | **dev_implementer** | Implements stories, handles rejections |
 | **dev_code_reviewer** | Reviews code quality |
 | **qe_verifier** | Verifies against acceptance criteria |
+| **bug_monitor** | Monitors subtask completion for complex bugs |
 | **sre_setup** | Sets up test infrastructure |
 | **cw_writer** | Writes documentation |
 | **cw_reviewer** | Reviews documentation |
@@ -37,10 +41,10 @@ Fourteen specialized hats are available for different phases of work. Board scan
 project-repo-superman/               # Project repo clone (CWD)
   team/                           # Team repo clone
     knowledge/, invariants/             # Team-level
-    members/superman/                    # Member config
+    members/{{member_dir}}/                    # Member config
     projects/<project>/                 # Project-specific
-  PROMPT.md → team/members/superman/PROMPT.md
-  context.md → team/members/superman/context.md
+  PROMPT.md → team/members/{{member_dir}}/PROMPT.md
+  context.md → team/members/{{member_dir}}/context.md
   ralph.yml                             # Copy
   poll-log.txt                          # Board scan audit log
 ```
@@ -53,9 +57,9 @@ Knowledge is resolved by specificity (most general to most specific):
 |-------|------|
 | Team knowledge | `team/knowledge/` |
 | Project knowledge | `team/projects/<project>/knowledge/` |
-| Member knowledge | `team/members/superman/knowledge/` |
-| Member-project knowledge | `team/members/superman/projects/<project>/knowledge/` |
-| Hat knowledge (various) | `team/members/superman/hats/<hat>/knowledge/` |
+| Member knowledge | `team/members/{{member_dir}}/knowledge/` |
+| Member-project knowledge | `team/members/{{member_dir}}/projects/<project>/knowledge/` |
+| Hat knowledge (various) | `team/members/{{member_dir}}/hats/<hat>/knowledge/` |
 
 More specific knowledge takes precedence.
 
@@ -67,21 +71,21 @@ All applicable invariants MUST be satisfied:
 |-------|------|
 | Team invariants | `team/invariants/` |
 | Project invariants | `team/projects/<project>/invariants/` |
-| Member invariants | `team/members/superman/invariants/` |
+| Member invariants | `team/members/{{member_dir}}/invariants/` |
 
-Critical member invariant: `team/members/superman/invariants/design-quality.md`
+Critical member invariant: `team/members/{{member_dir}}/invariants/design-quality.md`
 
 ### Coordination Conventions
 
 See `team/PROCESS.md` for:
-- Issue format and label conventions
+- Issue types and workflow conventions
 - Status transition patterns
 - Comment attribution format (emoji headers with ISO timestamps)
 - Milestone and PR conventions
 
 ### GitHub Access
 
-All GitHub operations use the `gh` skill:
+All GitHub operations use the `github-project` skill:
 - Issue queries and mutations
 - Project board operations
 - Pull request operations

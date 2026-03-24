@@ -95,30 +95,25 @@ Use the GraphQL verification query to confirm the status actually changed. The `
 ```bash
 sleep 1
 CURRENT_STATUS=$(gh api graphql -f query='
-query($projectId: ID!, $itemId: ID!) {
-  node(id: $projectId) {
-    ... on ProjectV2 {
-      items(first: 100) {
-        nodes {
-          id
-          fieldValueByName(name: "Status") {
-            ... on ProjectV2ItemFieldSingleSelectValue {
-              name
-            }
-          }
+query($itemId: ID!) {
+  node(id: $itemId) {
+    ... on ProjectV2Item {
+      fieldValueByName(name: "Status") {
+        ... on ProjectV2ItemFieldSingleSelectValue {
+          name
         }
       }
     }
   }
-}' -F projectId="$PROJECT_ID" -F itemId="$ITEM_ID" \
-  | jq -r ".data.node.items.nodes[] | select(.id == \"$ITEM_ID\") | .fieldValueByName.name")
+}' -F itemId="$ITEM_ID" \
+  | jq -r '.data.node.fieldValueByName.name')
 
 if [ "$CURRENT_STATUS" != "$TARGET_STATUS" ]; then
   echo "Verification failed: expected '$TARGET_STATUS', got '$CURRENT_STATUS'"
 fi
 ```
 
-**Critical:** Use `-F` (uppercase) for GraphQL ID type variables, not `-f` (lowercase). See [GraphQL Mutations Reference](references/graphql-mutations.md).
+**Critical:** Use `-F` (uppercase) for GraphQL ID type variables, not `-f` (lowercase). This query looks up the specific project item by node ID — no pagination needed.
 
 ### Step 5: Post Attribution Comment
 
@@ -165,8 +160,8 @@ gh issue edit "$ISSUE_NUM" --repo "$TEAM_REPO" --remove-label "label-name"
 
 | Operation | Labels |
 |-----------|--------|
-| Classify issue | `kind/epic`, `kind/story` |
-| Link story to parent | `parent/<number>` |
+| Classify issue | Use native issue types (Epic, Task, Bug) |
+| Link story to parent | Use native sub-issues |
 | Assign to role | `role/<role-name>` |
 
 ## References

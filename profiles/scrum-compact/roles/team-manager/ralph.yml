@@ -5,14 +5,12 @@ event_loop:
   persistent: true
 
 cli:
-# +agent:claude-code
   backend: claude
-# -agent
 
 core:
   guardrails:
-    - "Comply with all invariants in team/invariants/ and team/members/team-manager-*/invariants/"
-    - "All issue operations use the gh skill — no write-locks needed"
+    - "Comply with all invariants in team/invariants/ and team/members/{{member_dir}}/invariants/"
+    - "All issue operations use the `github-project` skill — no write-locks needed"
 
 hats:
   executor:
@@ -32,8 +30,8 @@ hats:
 
       Reference these when working — consult as needed, not all upfront:
       - Team: `team/knowledge/`
-      - Member: `team/members/team-manager-*/knowledge/`
-      - Hat: `team/members/team-manager-*/hats/executor/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/executor/knowledge/`
 
       ### Status Transitions
 
@@ -41,7 +39,7 @@ hats:
 
       ### Workflow
 
-      1. Read the issue via `gh issue view <number> --repo "$TEAM_REPO" --json number,title,body,labels,state,comments`.
+      1. Load the `github-project` skill. Read the issue using the query-issues operation.
       2. If the issue is in `mgr:todo`, transition it to `mgr:in-progress`.
       3. Execute the task described in the issue. Work within the `team/` submodule —
          this is the team repo where process improvements, knowledge updates,
@@ -68,7 +66,7 @@ hats:
       ### On Failure
 
       If you cannot complete the work (e.g., missing context, permission issue):
-      1. Append a comment to the issue via `gh issue comment`:
+      1. Append a comment to the issue using the `github-project` skill's add-comment operation:
          `Processing failed: <reason>. Attempt N/3.`
       2. Publish `mgr.execute.failed` — the coordinator will re-scan on the next cycle.
 
@@ -85,7 +83,7 @@ skills:
   dirs:
     - team/coding-agent/skills
     - team/projects/<project>/coding-agent/skills
-    - team/members/team-manager/coding-agent/skills
+    - team/members/{{member_dir}}/coding-agent/skills
   overrides:
     board-scanner:
       auto_inject: true

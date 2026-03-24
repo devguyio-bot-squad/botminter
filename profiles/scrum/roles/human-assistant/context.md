@@ -25,10 +25,10 @@ Two specialized hats are available for product ownership work. Board scanning is
 project-repo-ha/                     # Project repo clone (CWD)
   team/                           # Team repo clone
     knowledge/, invariants/             # Team-level
-    members/human-assistant/             # Member config
+    members/{{member_dir}}/             # Member config
     projects/<project>/                 # Project-specific
-  PROMPT.md → team/members/human-assistant/PROMPT.md
-  context.md → team/members/human-assistant/context.md
+  PROMPT.md → team/members/{{member_dir}}/PROMPT.md
+  context.md → team/members/{{member_dir}}/context.md
   ralph.yml                             # Copy
   poll-log.txt                          # Board scan audit log
 ```
@@ -41,8 +41,8 @@ Knowledge is resolved by specificity (most general to most specific):
 |-------|------|
 | Team knowledge | `team/knowledge/` |
 | Project knowledge | `team/projects/<project>/knowledge/` |
-| Member knowledge | `team/members/human-assistant/knowledge/` |
-| Member-project knowledge | `team/members/human-assistant/projects/<project>/knowledge/` |
+| Member knowledge | `team/members/{{member_dir}}/knowledge/` |
+| Member-project knowledge | `team/members/{{member_dir}}/projects/<project>/knowledge/` |
 
 More specific knowledge takes precedence.
 
@@ -54,7 +54,7 @@ All applicable invariants MUST be satisfied:
 |-------|------|
 | Team invariants | `team/invariants/` |
 | Project invariants | `team/projects/<project>/invariants/` |
-| Member invariants | `team/members/human-assistant/invariants/` |
+| Member invariants | `team/members/{{member_dir}}/invariants/` |
 
 ### Coordination Conventions
 
@@ -66,7 +66,7 @@ See `team/PROCESS.md` for:
 
 ### GitHub Access
 
-All GitHub operations use the `gh` skill:
+All GitHub operations use the `github-project` skill:
 - Issue queries and mutations
 - Project board operations
 - Pull request operations

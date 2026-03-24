@@ -1,6 +1,6 @@
 ---
-name: gh
-description: Manages GitHub Projects v2 workflows for issue tracking and project management. Use when user asks to "show the board", "view issues", "what's in [status]", "create an epic", "add a story", "move issue #N to [status]", "transition #N from [status] to [status]", "comment on #N", "create a milestone", "assign #N to [user]", "create a PR", or "review PR #N". Wraps gh CLI with validation and verification.
+name: github-project
+description: Manages GitHub Projects v2 workflows for issue tracking and project management. Use when user asks to "show the board", "view issues", "what's in [status]", "create an epic", "add a story", "create a bug", "move issue #N to [status]", "transition #N from [status] to [status]", "comment on #N", "create a milestone", "assign #N to [user]", "create a PR", "create a sub-issue", or "review PR #N". Wraps gh CLI with validation and verification.
 compatibility: "Requires gh CLI (GitHub CLI) with 'project' token scope, GitHub Projects v2, GH_TOKEN environment variable, and read/write access to the team repository. Intended for Claude Code and API usage."
 license: MIT
 metadata:
@@ -48,8 +48,8 @@ Claude will automatically invoke the appropriate script based on your request.
 
 **What it does:**
 - Fetches all project items from GitHub Projects v2
-- Groups issues by status field value (po:triage, arch:design, dev:ready, etc.)
-- Shows epic-to-story relationships via parent labels
+- Groups issues by status field value (po:triage, arch:design, qe:test-design, etc.)
+- Shows epic-to-story relationships via native sub-issues
 - Displays in workflow order with issue counts
 - Marks closed issues
 
@@ -71,33 +71,41 @@ Then format the JSON output into a markdown table grouped by status.
 |---|-------|------|----------|
 | 3 | New feature epic | epic | — |
 
-### dev:ready
-| # | Title | Kind | Parent | Assignee |
+### qe:test-design
+| # | Title | Type | Parent | Assignee |
 |---|-------|------|--------|----------|
-| 5 | Implement OAuth | story | #3 | dev-user |
+| 5 | Implement OAuth | Task | #3 | dev-user |
 
 ---
-Summary: 5 issues (4 open, 1 closed) | 2 epics, 3 stories
+Summary: 5 issues (4 open, 1 closed) | 2 Epics, 3 Tasks
 ```
 
 ---
 
-### 2. Create Issue (Epic or Story)
+### 2. Create Issue (Epic, Story, or Bug)
 
-**When to use:** User asks to create an epic, add a story, file a new issue, or add work to backlog.
+**When to use:** User asks to create an epic, add a story, file a bug, or add work to backlog.
 
 **What it does:**
-1. Creates issue with appropriate `kind/*` label
-2. For stories: adds `parent/<number>` label and "Parent: #N" to body
+1. Creates issue with GitHub native issue type (Epic, Task, or Bug)
+2. For stories with `--parent`: links as native sub-issue of the parent
 3. Adds issue to project
-4. Sets initial status to `po:triage`
+4. Sets initial status (`po:triage` for epics/stories, `bug:investigate` for bugs)
 5. Posts attribution comment
+
+**Issue type mapping:**
+
+| Kind | GitHub Issue Type |
+|------|-------------------|
+| `epic` | Epic |
+| `story` | Task |
+| `bug` | Bug |
 
 **Parameters:**
 - `--title` (required) - Issue title
 - `--body` (required) - Issue description (markdown)
-- `--kind` (required) - `epic` or `story`
-- `--parent` (optional) - Parent epic number (for stories)
+- `--kind` (required) - `epic`, `story`, or `bug`
+- `--parent` (optional) - Parent issue number (creates native sub-issue)
 - `--milestone` (optional) - Milestone name
 - `--assignee` (optional) - GitHub username
 
@@ -105,21 +113,27 @@ Summary: 5 issues (4 open, 1 closed) | 2 epics, 3 stories
 
 Claude will run:
 ```bash
-# Epic
+# Epic (creates Epic type)
 bash scripts/create-issue.sh \
   --title "New authentication system" \
   --body "Implement OAuth 2.0 authentication..." \
   --kind epic
 
-# Story under epic
+# Story under epic (creates Task type, linked as sub-issue)
 bash scripts/create-issue.sh \
   --title "Add Google OAuth provider" \
   --body "Implement Google OAuth..." \
   --kind story \
   --parent 15
+
+# Bug (creates Bug type)
+bash scripts/create-issue.sh \
+  --title "API returns 500 on empty token" \
+  --body "Empty auth token causes server error..." \
+  --kind bug
 ```
 
-**Result:** Issue created, added to project with status `po:triage`, board scanner will process it next.
+**Result:** Issue created with native type, added to project, board scanner will process it next.
 
 ---
 
@@ -336,10 +350,11 @@ bash scripts/pr-ops.sh --action list
 **What it does:**
 - Queries issues with various filters
 - Returns JSON output
+- Single-issue query includes native issue type (`issueType.name`) and sub-issues
 
 **Parameters:**
-- `--type` (required) - `label`, `status`, `milestone`, `assignee`, or `single`
-- `--label` (for label query) - Label name (e.g., `kind/epic`)
+- `--type` (required) - `label`, `status`, `milestone`, `assignee`, `single`, or `issue-type`
+- `--label` (for label/issue-type query) - Label name or issue type name (e.g., `role/team-manager`, `Epic`)
 - `--status` (for status query) - Status value (e.g., `arch:design`)
 - `--milestone` (for milestone query) - Milestone title
 - `--assignee` (for assignee query) - GitHub username
@@ -350,7 +365,7 @@ bash scripts/pr-ops.sh --action list
 Claude will run:
 ```bash
 # By label
-bash scripts/query-issues.sh --type label --label "kind/epic"
+bash scripts/query-issues.sh --type label --label "role/team-manager"
 
 # By status
 bash scripts/query-issues.sh --type status --status "arch:design"
@@ -361,9 +376,126 @@ bash scripts/query-issues.sh --type milestone --milestone "Q1 2026"
 # By assignee
 bash scripts/query-issues.sh --type assignee --assignee "architect-bot"
 
-# Single issue
+# Single issue (includes issueType and subIssues)
 bash scripts/query-issues.sh --type single --issue 15
+
+# By native issue type (Epic, Task, Bug)
+bash scripts/query-issues.sh --type issue-type --label "Bug"
 ```
+
+---
+
+### 10. Sub-Issue Operations (GitHub Native Sub-Issues)
+
+**When to use:** Creating or managing GitHub native sub-issues (e.g., subtasks for complex bugs, stories under epics).
+
+**What it does:**
+- Creates sub-issues with native parent relationship and issue type in a single mutation
+- Lists all sub-issues for a parent issue (with issue type)
+- Checks completion status of all sub-issues
+
+**Parameters:**
+- `--action` (required) - `create`, `list`, or `status`
+- `--parent` (required) - Parent issue number
+- `--title` (for create) - Sub-issue title
+- `--body` (for create, optional) - Sub-issue description
+- `--type` (for create, optional) - Issue type name (default: `Task`). Available: `Task`, `Bug`, `Epic`
+
+**Usage:**
+
+Claude will run:
+```bash
+# Create a sub-issue (defaults to Task type)
+bash scripts/subtask-ops.sh \
+  --action create \
+  --parent 42 \
+  --title "Add validation check" \
+  --body "Implement empty token validation"
+
+# Create a sub-issue with specific type
+bash scripts/subtask-ops.sh \
+  --action create \
+  --parent 42 \
+  --title "Fix edge case" \
+  --type Bug
+
+# List sub-issues
+bash scripts/subtask-ops.sh \
+  --action list \
+  --parent 42
+
+# Check completion status
+bash scripts/subtask-ops.sh \
+  --action status \
+  --parent 42
+```
+
+**How it works:**
+- Uses GraphQL `createIssue` mutation with `issueTypeId` + `parentIssueId` in one call
+- Uses GitHub's native issue types and sub-issue relationships
+- Requires header: `GraphQL-Features: sub_issues,issue_types`
+
+**Result:** Sub-issue created with native type and parent relationship, visible in GitHub UI.
+
+---
+
+### 11. Status Field Management
+
+**When to use:** Adding, listing, or modifying project status options (e.g., adding new workflow statuses).
+
+**What it does:**
+- Lists all status options with full metadata (name, color, description)
+- Adds new status options while preserving existing ones
+- Uses GraphQL API directly (not available via `gh project` CLI)
+
+**Read current statuses:**
+
+```bash
+gh api graphql -f query='
+{
+  node(id: "<STATUS_FIELD_ID>") {
+    ... on ProjectV2SingleSelectField {
+      name
+      options {
+        id
+        name
+        color
+        description
+      }
+    }
+  }
+}'
+```
+
+**Update statuses (replaces ALL options — include existing ones):**
+
+```bash
+gh api graphql -f query='
+mutation {
+  updateProjectV2Field(input: {
+    fieldId: "<STATUS_FIELD_ID>"
+    singleSelectOptions: [
+      {name: "status-name", color: GREEN, description: "Description"}
+    ]
+  }) {
+    projectV2Field {
+      ... on ProjectV2SingleSelectField {
+        name
+        options { name color }
+      }
+    }
+  }
+}'
+```
+
+**Available colors:** `GRAY`, `BLUE`, `GREEN`, `YELLOW`, `ORANGE`, `RED`, `PINK`, `PURPLE`
+
+**Critical:** The mutation REPLACES all options. To add new statuses safely:
+1. Read existing options via `node()` query
+2. Append new options to the list
+3. Submit the complete list via `updateProjectV2Field`
+
+**Note:** `ProjectV2SingleSelectFieldOptionInput` requires all three fields: `name`, `color` (enum), and `description` (string). The `id` field is NOT accepted in the input.
 
 ---
 
@@ -375,11 +507,11 @@ bash scripts/query-issues.sh --type single --issue 15
 
 **Actions:**
 1. Claude runs `create-issue.sh` with `--kind epic`
-2. Issue added to project with initial status `po:triage`
-3. Attribution comment posted
-4. Reports issue number and URL
+2. Issue created with native "Epic" issue type
+3. Added to project with initial status `po:triage`
+4. Attribution comment posted
 
-**Result:** Epic created at #15, visible in `po:triage` column on board, ready for PO review.
+**Result:** Epic created at #15 with Epic type, visible in `po:triage` column on board.
 
 ---
 
@@ -418,11 +550,11 @@ bash scripts/query-issues.sh --type single --issue 15
 
 **Actions:**
 1. Claude runs `create-issue.sh` with `--kind story --parent 15`
-2. Adds `parent/15` label and "Parent: #15" to body
-3. Sets initial status to `po:triage` (same as epics - board scanner will process workflow)
+2. Creates Task issue type linked as native sub-issue of #15
+3. Sets initial status to `po:triage`
 4. Posts attribution comment
 
-**Result:** Story #16 created, linked to epic #15, visible in `po:triage` column, ready for board scanner to pick up.
+**Result:** Story #16 created as sub-issue of epic #15 (visible in GitHub UI), in `po:triage` column.
 
 ---
 
