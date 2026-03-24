@@ -5,12 +5,12 @@ use anyhow::{bail, Context, Result};
 use crate::config;
 use crate::profile;
 
-/// Handles `bm minty [-t team]`.
+/// Handles `bm minty [-t team] [-a]`.
 ///
 /// Launches the resolved coding agent in the current working directory with
 /// Minty's persona prompt as the system prompt. Minty works without any teams
 /// configured — in that case it operates in "profiles-only" mode.
-pub fn run(team_flag: Option<&str>) -> Result<()> {
+pub fn run(team_flag: Option<&str>, autonomous: bool) -> Result<()> {
     let minty_dir = profile::ensure_minty_initialized()?;
 
     let prompt_path = minty_dir.join("prompt.md");
@@ -34,11 +34,14 @@ pub fn run(team_flag: Option<&str>) -> Result<()> {
 
     // Launch coding agent via exec (replaces this process)
     use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new(&binary)
-        .current_dir(&minty_dir)
+    let mut cmd = std::process::Command::new(&binary);
+    cmd.current_dir(&minty_dir)
         .arg("--append-system-prompt-file")
-        .arg(&prompt_path)
-        .exec();
+        .arg(&prompt_path);
+    if autonomous {
+        cmd.arg("--dangerously-skip-permissions");
+    }
+    let err = cmd.exec();
 
     bail!("Failed to launch {}: {}", binary, err);
 }
