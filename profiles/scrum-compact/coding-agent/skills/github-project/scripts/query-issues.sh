@@ -138,7 +138,7 @@ case "$QUERY_TYPE" in
     REPO_NAME_ONLY=$(echo "$TEAM_REPO" | cut -d/ -f2)
 
     gh api graphql \
-      -f owner="$OWNER_NAME" -f repo="$REPO_NAME_ONLY" -f typeName="$LABEL" \
+      -f owner="$OWNER_NAME" -f repo="$REPO_NAME_ONLY" \
       -H "GraphQL-Features: issue_types,sub_issues" \
       -f query='query($owner: String!, $repo: String!) {
         repository(owner: $owner, name: $repo) {
@@ -154,7 +154,7 @@ case "$QUERY_TYPE" in
             }
           }
         }
-      }' -q ".data.repository.issues.nodes[] | select(.issueType.name == \"$LABEL\")"
+      }' | jq --arg t "$LABEL" '[.data.repository.issues.nodes[] | select(.issueType.name == $t)]'
     ;;
 
   *)
