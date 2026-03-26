@@ -75,12 +75,12 @@ Run E2E separately with `just e2e` only after Step 9 is complete.
 
 ### Pre-provisioned GitHub App (DONE)
 
-One GitHub App (`bm-test-app`) has been created in `devguyio-bot-squad` and installed on "All repositories". Credentials are in `.envrc` (gitignored):
+One GitHub App (`bm-test-app`) has been created in `devguyio-bot-squad` and installed on "All repositories". Credentials are in `.envrc` (gitignored). See `.envrc` for the actual values of:
 
-- `TESTS_APP_ID=<REDACTED>`
-- `TESTS_APP_CLIENT_ID=<REDACTED>`
-- `TESTS_APP_INSTALLATION_ID=<REDACTED>`
-- `TESTS_APP_PRIVATE_KEY_FILE=$HOME/.config/github-apps/bm-test-app.pem`
+- `TESTS_APP_ID`
+- `TESTS_APP_CLIENT_ID`
+- `TESTS_APP_INSTALLATION_ID`
+- `TESTS_APP_PRIVATE_KEY_FILE`
 
 All E2E scenarios share this single App via `--reuse-app`. The operator PAT (`TESTS_GH_TOKEN`) is still used for test infrastructure (repo create/delete, init). The App provides member identity.
 

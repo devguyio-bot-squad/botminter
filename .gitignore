@@ -16,3 +16,6 @@ console/.svelte-kit/
 *.pat
 .claude/
 .envrc
+
+# Ralph orchestrator runtime artifacts
+.ralph-stub-env
