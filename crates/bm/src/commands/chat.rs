@@ -8,12 +8,13 @@ use crate::config;
 use crate::profile;
 use crate::state;
 
-/// Handles `bm chat <member> [-t team] [--hat <hat>] [--render-system-prompt]`.
+/// Handles `bm chat <member> [-t team] [--hat <hat>] [--render-system-prompt] [-a]`.
 pub fn run(
     member: &str,
     team_flag: Option<&str>,
     hat: Option<&str>,
     render_system_prompt: bool,
+    autonomous: bool,
 ) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
@@ -79,11 +80,14 @@ pub fn run(
 
     // Launch coding agent via exec (replaces this process)
     use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new(&coding_agent.binary)
-        .current_dir(&session.ws_path)
+    let mut cmd = std::process::Command::new(&coding_agent.binary);
+    cmd.current_dir(&session.ws_path)
         .arg("--append-system-prompt-file")
-        .arg(&tmp_path)
-        .exec();
+        .arg(&tmp_path);
+    if autonomous {
+        cmd.arg("--dangerously-skip-permissions");
+    }
+    let err = cmd.exec();
 
     bail!("Failed to launch {}: {}", coding_agent.binary, err);
 }

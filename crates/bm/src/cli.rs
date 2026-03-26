@@ -153,6 +153,10 @@ pub enum Command {
         /// Print the generated system prompt and exit (no chat session)
         #[arg(long)]
         render_system_prompt: bool,
+
+        /// Run the coding agent in autonomous mode (skip permission prompts)
+        #[arg(short, long)]
+        autonomous: bool,
     },
 
     /// Launch Minty, the BotMinter interactive assistant
@@ -160,6 +164,10 @@ pub enum Command {
         /// Team to operate on (gives Minty team-specific context)
         #[arg(short, long)]
         team: Option<String>,
+
+        /// Run the coding agent in autonomous mode (skip permission prompts)
+        #[arg(short, long)]
+        autonomous: bool,
     },
 
     /// Profile management commands

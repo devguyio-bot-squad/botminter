@@ -184,17 +184,19 @@ fn main() -> Result<()> {
             team,
             hat,
             render_system_prompt,
+            autonomous,
         } => {
             commands::chat::run(
                 &member,
                 team.as_deref(),
                 hat.as_deref(),
                 render_system_prompt,
+                autonomous,
             )?;
         }
 
-        Command::Minty { team } => {
-            commands::minty::run(team.as_deref())?;
+        Command::Minty { team, autonomous } => {
+            commands::minty::run(team.as_deref(), autonomous)?;
         }
 
         Command::Start {
