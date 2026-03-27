@@ -150,7 +150,7 @@ When a shutdown signal is received:
 : Another daemon instance is running for this team. Run `bm daemon stop -t <team>` first, or check for a stale PID file.
 
 **"Failed to bind to 0.0.0.0:8484"**
-: The port is already in use (another daemon or another service). Use `--port <other-port>` to pick a different port.
+: The port is already in use (another daemon or another service). Use `--port <other-port>` to pick a different port, or `--bind 127.0.0.1` to restrict to localhost.
 
 **"requires schema 1.0"**
 : The team repo was created with an older version of `bm`. Run `bm upgrade` to migrate.

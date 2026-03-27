@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BotMinter Console - Team</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            surface: { DEFAULT: '#0f1117', raised: '#161922', border: '#252a37' },
+            accent: { DEFAULT: '#6366f1', muted: '#4f46e5' },
+            role: {
+              po: '#f59e0b',
+              arch: '#6366f1',
+              dev: '#22c55e',
+              qe: '#06b6d4',
+              lead: '#a855f7',
+              sre: '#ef4444',
+              cw: '#ec4899',
+              mgr: '#8b5cf6',
+            }
+          },
+          fontFamily: {
+            mono: ['JetBrains Mono', 'Fira Code', 'monospace'],
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { font-family: 'Inter', system-ui, sans-serif; }
+    .mono { font-family: 'JetBrains Mono', 'Fira Code', monospace; }
+  </style>
+</head>
+<body class="bg-surface text-gray-200 min-h-screen flex">
+
+  <!-- Sidebar -->
+  <aside class="w-56 bg-surface-raised border-r border-surface-border flex flex-col min-h-screen sticky top-0">
+    <div class="p-4 border-b border-surface-border">
+      <div class="flex items-center gap-2 mb-1">
+        <div class="w-7 h-7 rounded-lg bg-accent flex items-center justify-center text-white text-xs font-bold">BM</div>
+        <span class="font-semibold text-sm text-white">BotMinter</span>
+      </div>
+      <div class="text-xs text-gray-500 ml-9">Console</div>
+    </div>
+
+    <!-- Team Selector -->
+    <div class="px-3 py-3 border-b border-surface-border">
+      <div class="relative">
+        <button class="w-full flex items-center justify-between gap-2 px-3 py-2 text-sm bg-surface border border-surface-border rounded-md hover:border-gray-600 transition-colors">
+          <div class="flex items-center gap-2">
+            <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+            <span class="text-white font-medium">my-team</span>
+          </div>
+          <svg class="w-3.5 h-3.5 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+        <!-- Dropdown (toggle visibility by removing 'hidden' class) -->
+        <div class="absolute left-0 right-0 top-full mt-1 bg-surface-raised border border-surface-border rounded-md shadow-xl z-10" id="team-dropdown">
+          <div class="py-1">
+            <a href="#" class="flex items-center gap-2 px-3 py-2 text-sm text-white bg-accent/10">
+              <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+              my-team
+              <span class="ml-auto text-[10px] text-gray-500">scrum-compact</span>
+            </a>
+            <a href="#" class="flex items-center gap-2 px-3 py-2 text-sm text-gray-400 hover:text-white hover:bg-white/5">
+              <div class="w-2 h-2 rounded-full bg-gray-600"></div>
+              prod-team
+              <span class="ml-auto text-[10px] text-gray-500">scrum</span>
+            </a>
+            <div class="border-t border-surface-border mt-1 pt-1">
+              <a href="#" class="flex items-center gap-2 px-3 py-2 text-sm text-accent hover:bg-accent/5">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"/></svg>
+                Create new team
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <nav class="flex-1 py-3">
+      <a href="team-page.html" class="flex items-center gap-3 px-4 py-2 text-sm bg-accent/10 text-accent border-r-2 border-accent">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 21V5a2 2 0 00-2-2H7a2 2 0 00-2 2v16m14 0h2m-2 0h-5m-9 0H3m2 0h5M9 7h1m-1 4h1m4-4h1m-1 4h1m-5 10v-5a1 1 0 011-1h2a1 1 0 011 1v5m-4 0h4"/></svg>
+        Overview
+      </a>
+      <a href="process-page.html" class="flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-white/5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2"/></svg>
+        Process
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-white/5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        Members
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-white/5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg>
+        Knowledge
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-white/5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+        Invariants
+      </a>
+      <a href="#" class="flex items-center gap-3 px-4 py-2 text-sm text-gray-400 hover:text-gray-200 hover:bg-white/5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+        Settings
+      </a>
+    </nav>
+
+    <div class="p-4 border-t border-surface-border">
+      <div class="text-xs text-gray-500">BotMinter v0.7.0</div>
+    </div>
+  </aside>
+
+  <!-- Main Content -->
+  <main class="flex-1 overflow-y-auto">
+    <!-- Header -->
+    <header class="border-b border-surface-border px-8 py-5">
+      <div class="flex items-center justify-between">
+        <div>
+          <h1 class="text-xl font-semibold text-white">my-team</h1>
+          <p class="text-sm text-gray-400 mt-0.5">scrum-compact &middot; v1.0.0</p>
+        </div>
+        <div class="flex items-center gap-3">
+          <a href="#" class="text-xs text-gray-400 hover:text-gray-200 flex items-center gap-1.5 bg-surface-raised border border-surface-border rounded-md px-3 py-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+            GitHub
+          </a>
+          <button class="text-xs text-accent-muted hover:text-accent flex items-center gap-1.5 bg-accent/10 border border-accent/20 rounded-md px-3 py-1.5">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+            Sync
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <div class="p-8 space-y-6">
+
+      <!-- Profile Card -->
+      <div class="bg-surface-raised border border-surface-border rounded-lg p-5">
+        <div class="flex items-start justify-between">
+          <div>
+            <div class="flex items-center gap-2 mb-2">
+              <span class="text-xs font-medium px-2 py-0.5 rounded-full bg-accent/10 text-accent border border-accent/20">scrum-compact</span>
+              <span class="text-xs text-gray-500">schema v1.0</span>
+            </div>
+            <p class="text-sm text-gray-400 max-w-xl">A compact single-member profile where one agent handles all phases of the scrum process -- from triage through verification.</p>
+          </div>
+          <div class="text-right text-xs text-gray-500">
+            <div>myorg/my-team</div>
+            <div class="mt-1">Coding Agent: Claude Code</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Grid: Roles + Members -->
+      <div class="grid grid-cols-2 gap-6">
+
+        <!-- Roles -->
+        <div class="bg-surface-raised border border-surface-border rounded-lg">
+          <div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
+            <h2 class="text-sm font-medium text-gray-300">Roles</h2>
+            <span class="text-xs text-gray-500">2 defined</span>
+          </div>
+          <div class="divide-y divide-surface-border">
+            <div class="px-5 py-3.5 hover:bg-white/[0.02] cursor-pointer">
+              <div class="flex items-center gap-2 mb-1">
+                <div class="w-2 h-2 rounded-full bg-emerald-400"></div>
+                <span class="text-sm font-medium text-white">superman</span>
+              </div>
+              <p class="text-xs text-gray-500 ml-4">Full-stack agent that handles all phases: PO, architecture, development, QE, SRE, and content writing.</p>
+            </div>
+            <div class="px-5 py-3.5 hover:bg-white/[0.02] cursor-pointer">
+              <div class="flex items-center gap-2 mb-1">
+                <div class="w-2 h-2 rounded-full bg-purple-400"></div>
+                <span class="text-sm font-medium text-white">team-manager</span>
+              </div>
+              <p class="text-xs text-gray-500 ml-4">Manages team evolution, retrospectives, role tuning, and process improvements.</p>
+            </div>
+          </div>
+        </div>
+
+        <!-- Members -->
+        <div class="bg-surface-raised border border-surface-border rounded-lg">
+          <div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
+            <h2 class="text-sm font-medium text-gray-300">Members</h2>
+            <span class="text-xs text-gray-500">2 hired</span>
+          </div>
+          <div class="divide-y divide-surface-border">
+            <a href="#" class="block px-5 py-3.5 hover:bg-white/[0.02]">
+              <div class="flex items-center justify-between mb-1">
+                <div class="flex items-center gap-2">
+                  <span class="text-base">🦸</span>
+                  <span class="text-sm font-medium text-white">superman-01</span>
+                  <span class="text-xs px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">superman</span>
+                </div>
+                <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              </div>
+              <div class="flex items-center gap-3 ml-8 text-xs text-gray-500">
+                <span>14 hats</span>
+                <span class="text-gray-700">|</span>
+                <span>6 skills</span>
+                <span class="text-gray-700">|</span>
+                <span>0 knowledge files</span>
+              </div>
+            </a>
+            <a href="#" class="block px-5 py-3.5 hover:bg-white/[0.02]">
+              <div class="flex items-center justify-between mb-1">
+                <div class="flex items-center gap-2">
+                  <span class="text-base">👔</span>
+                  <span class="text-sm font-medium text-white">team-mgr-01</span>
+                  <span class="text-xs px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400 border border-purple-500/20">team-manager</span>
+                </div>
+                <svg class="w-4 h-4 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+              </div>
+              <div class="flex items-center gap-3 ml-8 text-xs text-gray-500">
+                <span>1 hat</span>
+                <span class="text-gray-700">|</span>
+                <span>6 skills</span>
+                <span class="text-gray-700">|</span>
+                <span>0 knowledge files</span>
+              </div>
+            </a>
+          </div>
+        </div>
+      </div>
+
+      <!-- Grid: Process Summary + Projects + Bridge -->
+      <div class="grid grid-cols-3 gap-6">
+
+        <!-- Process Summary -->
+        <div class="bg-surface-raised border border-surface-border rounded-lg">
+          <div class="px-5 py-3 border-b border-surface-border">
+            <h2 class="text-sm font-medium text-gray-300">Process</h2>
+          </div>
+          <div class="p-5 space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-gray-400">Epic workflow</span>
+              <span class="text-xs mono text-gray-500">14 statuses</span>
+            </div>
+            <div class="flex flex-wrap gap-1">
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-role-po/10 text-role-po border border-role-po/20">po:triage</span>
+              <span class="text-gray-600 text-[10px]">&rarr;</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-role-arch/10 text-role-arch border border-role-arch/20">arch:design</span>
+              <span class="text-gray-600 text-[10px]">&rarr;</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-role-dev/10 text-role-dev border border-role-dev/20">dev:impl</span>
+              <span class="text-gray-600 text-[10px]">&rarr;</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-role-qe/10 text-role-qe border border-role-qe/20">qe:verify</span>
+              <span class="text-gray-600 text-[10px]">&rarr;</span>
+              <span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-500/10 text-gray-400 border border-gray-500/20">done</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-gray-400">Story workflow</span>
+              <span class="text-xs mono text-gray-500">8 statuses</span>
+            </div>
+            <div class="flex items-center justify-between">
+              <span class="text-xs text-gray-400">Labels</span>
+              <span class="text-xs mono text-gray-500">12 labels</span>
+            </div>
+            <a href="process-page.html" class="block text-center text-xs text-accent hover:text-accent-muted mt-2 pt-3 border-t border-surface-border">
+              View full process &rarr;
+            </a>
+          </div>
+        </div>
+
+        <!-- Projects -->
+        <div class="bg-surface-raised border border-surface-border rounded-lg">
+          <div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
+            <h2 class="text-sm font-medium text-gray-300">Projects</h2>
+            <span class="text-xs text-gray-500">1 configured</span>
+          </div>
+          <div class="divide-y divide-surface-border">
+            <div class="px-5 py-3.5">
+              <div class="flex items-center gap-2 mb-1">
+                <svg class="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/></svg>
+                <span class="text-sm text-white">my-app</span>
+              </div>
+              <div class="ml-6 text-xs text-gray-500 mono">myorg/my-app</div>
+            </div>
+          </div>
+          <div class="px-5 py-3 border-t border-surface-border">
+            <div class="text-xs text-gray-600 text-center">Add projects with: bm projects add &lt;url&gt;</div>
+          </div>
+        </div>
+
+        <!-- Bridge -->
+        <div class="bg-surface-raised border border-surface-border rounded-lg">
+          <div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
+            <h2 class="text-sm font-medium text-gray-300">Bridge</h2>
+          </div>
+          <div class="p-5">
+            <div class="flex items-center gap-2 mb-2">
+              <div class="w-2 h-2 rounded-full bg-gray-600"></div>
+              <span class="text-sm text-gray-400">Not configured</span>
+            </div>
+            <p class="text-xs text-gray-600">Available: telegram, tuwunel, rocketchat</p>
+            <div class="text-xs text-gray-600 mt-3 pt-3 border-t border-surface-border text-center">Configure with: bm init --bridge</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Knowledge & Invariants summary -->
+      <div class="grid grid-cols-2 gap-6">
+        <div class="bg-surface-raised border border-surface-border rounded-lg">
+          <div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
+            <h2 class="text-sm font-medium text-gray-300">Knowledge</h2>
+            <span class="text-xs text-gray-500">4 files</span>
+          </div>
+          <div class="p-5">
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-2 text-xs">
+                <svg class="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                <span class="text-gray-400 mono">commit-convention.md</span>
+              </div>
+              <div class="flex items-center gap-2 text-xs">
+                <svg class="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                <span class="text-gray-400 mono">communication-protocols.md</span>
+              </div>
+              <div class="flex items-center gap-2 text-xs">
+                <svg class="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                <span class="text-gray-400 mono">pr-standards.md</span>
+              </div>
+              <div class="flex items-center gap-2 text-xs">
+                <svg class="w-3 h-3 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+                <span class="text-gray-400 mono">team-agreements.md</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="bg-surface-raised border border-surface-border rounded-lg">
+          <div class="px-5 py-3 border-b border-surface-border flex items-center justify-between">
+            <h2 class="text-sm font-medium text-gray-300">Invariants</h2>
+            <span class="text-xs text-gray-500">2 files</span>
+          </div>
+          <div class="p-5">
+            <div class="space-y-1.5">
+              <div class="flex items-center gap-2 text-xs">
+                <svg class="w-3 h-3 text-role-po" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                <span class="text-gray-400 mono">code-review-required.md</span>
+              </div>
+              <div class="flex items-center gap-2 text-xs">
+                <svg class="w-3 h-3 text-role-po" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg>
+                <span class="text-gray-400 mono">test-coverage.md</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+</body>
+</html>

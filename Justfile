@@ -8,13 +8,13 @@ generator_root := justfile_directory()
 default:
     @just --list
 
-# Build the bm CLI binary
-build:
-    cargo build -p bm
+# Build the bm CLI binary (with embedded console assets)
+build: console-build
+    cargo build -p bm --features console
 
-# Run unit tests only
+# Run unit tests only (includes console feature for embedded asset tests)
 unit:
-    cargo test -p bm
+    cargo test -p bm --features console
 
 # Run bridge conformance tests only
 conformance:
@@ -57,9 +57,36 @@ exploratory-test-full:
 exploratory-test-clean:
     just -f crates/bm/tests/exploratory/Justfile clean
 
+# Run console (frontend) tests and type checking
+console-test:
+    cd {{ generator_root }}/console && npm test && npm run check
+
+# Run console dev server (Vite + HMR at localhost:5173)
+console-dev:
+    cd {{ generator_root }}/console && npm run dev
+
+# Run daemon + console dev server concurrently
+dev:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Starting daemon on :8484 and console dev server on :5173..."
+    echo "Press Ctrl+C to stop both."
+    cd "{{ generator_root }}"
+    cargo run -p bm -- daemon start --mode poll --port 8484 &
+    DAEMON_PID=$!
+    trap "kill $DAEMON_PID 2>/dev/null; wait $DAEMON_PID 2>/dev/null" EXIT
+    cd console && npm run dev
+
+# Build console for production (static SPA output to console/build/)
+console-build:
+    cd {{ generator_root }}/console && npm run build
+
+# Alias for build (kept for backwards compatibility)
+build-full: build
+
 # Run clippy with warnings as errors
 clippy:
-    cargo clippy -p bm -- -D warnings
+    cargo clippy -p bm --features console -- -D warnings
 
 # Set up docs virtual environment and install dependencies (idempotent)
 docs-setup:

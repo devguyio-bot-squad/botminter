@@ -157,8 +157,9 @@ fn main() -> Result<()> {
                 mode,
                 port,
                 interval,
+                bind,
             } => {
-                commands::daemon::start(team.as_deref(), &mode, port, interval)?;
+                commands::daemon::start(team.as_deref(), &mode, port, interval, &bind)?;
             }
             DaemonCommand::Stop { team } => {
                 commands::daemon::stop(team.as_deref())?;
@@ -173,8 +174,9 @@ fn main() -> Result<()> {
             mode,
             port,
             interval,
+            bind,
         } => {
-            commands::daemon::run_daemon(&team, &mode, port, interval)?;
+            commands::daemon::run_daemon(&team, &mode, port, interval, &bind)?;
         }
 
         Command::Chat {

@@ -14,4 +14,5 @@ pub mod profile;
 pub mod session;
 pub mod state;
 pub mod topology;
+pub mod web;
 pub mod workspace;

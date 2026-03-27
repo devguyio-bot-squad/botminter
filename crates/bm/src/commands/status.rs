@@ -37,6 +37,9 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
             ),
             _ => println!("Daemon: running (PID {})", d.pid),
         }
+        if d.port > 0 {
+            println!("Console: http://localhost:{}", d.port);
+        }
     }
     println!();
 

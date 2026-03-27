@@ -6,6 +6,11 @@ target/
 .obsidian/
 
 
+# Console (frontend)
+console/node_modules/
+console/build/
+console/.svelte-kit/
+
 # Secrets
 *.token
 *.pat

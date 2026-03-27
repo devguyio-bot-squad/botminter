@@ -22,7 +22,8 @@ dirs = "5"
 which = "7"
 libc = "0.2"
 chrono = { version = "0.4", features = ["serde"] }
-tiny_http = "0.12"
+axum = "0.8"
+tower-http = { version = "0.6", features = ["cors"] }
 hmac = "0.12"
 sha2 = "0.10"
 hex = "0.4"
@@ -38,11 +39,14 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 fs2 = "0.4"
 reqwest = { version = "0.12", features = ["json"] }
 uuid = { version = "1", features = ["v4"] }
+rust-embed = { version = "8", optional = true }
 
 [features]
 e2e = []
+console = ["rust-embed"]
 
 [dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
 filetime = "0.2"
 reqwest = { version = "0.12", features = ["blocking"] }

@@ -28,6 +28,7 @@ pub struct PollState {
 ///
 /// All daemon files live under `~/.botminter/` and are keyed by team name.
 /// This struct avoids passing `team_name` to every path helper.
+#[derive(Clone)]
 pub struct DaemonPaths {
     team_name: String,
     config_dir: PathBuf,
