@@ -111,6 +111,11 @@ fn start_and_verify_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
+        // Remove brain-prompt.md so bm start uses ralph (the stub) instead of
+        // bm brain-run. Brain mode is tested separately in exploratory tests.
+        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
+        let _ = fs::remove_file(ws.join("brain-prompt.md"));
+
         let mut guard = ProcessGuard::new(env, TEAM_NAME);
         let mut cmd = env.command("bm");
         cmd.args(["start", "-t", TEAM_NAME]);

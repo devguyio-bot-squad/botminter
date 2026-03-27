@@ -83,8 +83,7 @@ pub fn start_local_members(
     let gh_token = config::require_gh_token(team)?;
 
     // Per-member credential resolution via CredentialStore (system keyring)
-    let (credential_store, bridge_type_name, bridge_service_url) =
-        resolve_bridge_credentials(team_repo, team, cfg)?;
+    let bridge_creds = resolve_bridge_credentials(team_repo, team, cfg)?;
 
     // Discover members
     let member_dirs = discover_members(team_repo, member_filter)?;
@@ -130,11 +129,15 @@ pub fn start_local_members(
         };
 
         // Resolve per-member bridge credential
-        let member_token = if let Some(ref store) = credential_store {
+        let member_token = if let Some(ref store) = bridge_creds.credential_store {
             bridge::resolve_credential_from_store(member_dir_name, store)?
         } else {
             None
         };
+
+        // Resolve per-member bridge user ID and room ID (for brain bridge adapter)
+        let member_user_id = (bridge_creds.user_id_by_member)(member_dir_name);
+        let member_room_id = (bridge_creds.room_id_by_member)(member_dir_name);
 
         // Diagnostic: credential exists but RObot.enabled is false
         let robot_mismatch = if member_token.is_some() {
@@ -150,21 +153,26 @@ pub fn start_local_members(
         // Launch ralph or brain
         let launch_result = if brain_mode {
             let system_prompt_path = ws.join("brain-prompt.md");
-            formation::launch_brain(
-                &ws,
-                &gh_token,
-                &system_prompt_path,
-                member_token.as_deref(),
-                bridge_type_name.as_deref(),
-                bridge_service_url.as_deref(),
-            )
+            let brain_config = formation::BrainLaunchConfig {
+                workspace: &ws,
+                gh_token: &gh_token,
+                system_prompt_path: &system_prompt_path,
+                member_token: member_token.as_deref(),
+                bridge_type: bridge_creds.bridge_type_name.as_deref(),
+                service_url: bridge_creds.service_url.as_deref(),
+                room_id: member_room_id.as_deref(),
+                user_id: member_user_id.as_deref(),
+                operator_user_id: bridge_creds.operator_user_id.as_deref(),
+                team_repo: Some(team_repo),
+            };
+            formation::launch_brain(&brain_config)
         } else {
             formation::launch_ralph(
                 &ws,
                 &gh_token,
                 member_token.as_deref(),
-                bridge_type_name.as_deref(),
-                bridge_service_url.as_deref(),
+                bridge_creds.bridge_type_name.as_deref(),
+                bridge_creds.service_url.as_deref(),
             )
         };
 
@@ -280,25 +288,67 @@ pub fn auto_start_bridge(
 }
 
 /// Resolve bridge credential store and metadata for per-member token injection.
+type MemberLookup = Box<dyn Fn(&str) -> Option<String>>;
+
+/// Resolved bridge credentials and metadata for member launch.
+struct BridgeCredentials {
+    credential_store: Option<bridge::LocalCredentialStore>,
+    bridge_type_name: Option<String>,
+    service_url: Option<String>,
+    user_id_by_member: MemberLookup,
+    room_id_by_member: MemberLookup,
+    operator_user_id: Option<String>,
+}
+
 fn resolve_bridge_credentials(
     team_repo: &Path,
     team: &TeamEntry,
     cfg: &BotminterConfig,
-) -> Result<(
-    Option<bridge::LocalCredentialStore>,
-    Option<String>,
-    Option<String>,
-)> {
+) -> Result<BridgeCredentials> {
     if let Some(ref dir) = bridge::discover(team_repo, &team.name)? {
         let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
         let b = bridge::Bridge::new(dir.clone(), bstate_path.clone(), team.name.clone())?;
-        let store = bridge::LocalCredentialStore::new(&team.name, b.bridge_name(), bstate_path)
+        let store = bridge::LocalCredentialStore::new(&team.name, b.bridge_name(), bstate_path.clone())
             .with_collection(cfg.keyring_collection.clone());
         let bname = Some(b.bridge_name().to_string());
         let surl = b.service_url().map(|s| s.to_string());
-        Ok((Some(store), bname, surl))
+
+        // Pre-compute per-member room lookup (bridge is moved into user_id closure)
+        let member_rooms: std::collections::HashMap<String, String> = b
+            .rooms()
+            .iter()
+            .filter_map(|r| {
+                let member = r.member.as_ref()?;
+                let rid = r.room_id.as_ref()?;
+                Some((member.clone(), rid.clone()))
+            })
+            .collect();
+
+        // Resolve operator user ID for DM discovery security
+        let op_user_id = b.admin_user_id().map(|s| s.to_string());
+
+        // Capture bridge for per-member user_id lookup
+        Ok(BridgeCredentials {
+            credential_store: Some(store),
+            bridge_type_name: bname,
+            service_url: surl,
+            user_id_by_member: Box::new(move |member_name: &str| {
+                b.member_user_id(member_name)
+            }),
+            room_id_by_member: Box::new(move |member_name: &str| {
+                member_rooms.get(member_name).cloned()
+            }),
+            operator_user_id: op_user_id,
+        })
     } else {
-        Ok((None, None, None))
+        Ok(BridgeCredentials {
+            credential_store: None,
+            bridge_type_name: None,
+            service_url: None,
+            user_id_by_member: Box::new(|_| None),
+            room_id_by_member: Box::new(|_| None),
+            operator_user_id: None,
+        })
     }
 }
 

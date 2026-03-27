@@ -15,10 +15,32 @@ ADMIN_PASS := env("TUWUNEL_ADMIN_PASS", "bmadmin-pass-default")
 PASSWORDS_FILE := env("BM_BRIDGE_STATE_DIR", env("BM_BRIDGE_DIR", env("BRIDGE_CONFIG_DIR", "/tmp"))) + "/tuwunel-passwords.json"
 PASSWORDS_BACKUP := "/database/tuwunel-passwords.json"
 
+# Shared bash function for Matrix API calls. Replaces `curl -sf` which
+# silently swallows HTTP error bodies (exit 22 with zero diagnostics).
+# Captures HTTP status + response body, prints verbose errors on failure.
+# Usage: RESP=$(matrix_request POST "$url" -H "..." -d '...')
+#        RESP=$(matrix_request GET "$url" -H "...") || RESP='{}'
+_MATRIX_FN := '''
+matrix_request() {
+    local method="$1" url="$2"; shift 2
+    local _tmpf; _tmpf=$(mktemp)
+    local _code
+    _code=$(curl -s -o "$_tmpf" -w "%{http_code}" -X "$method" "$@" "$url" 2>/dev/null) || true
+    local _body; _body=$(cat "$_tmpf" 2>/dev/null); rm -f "$_tmpf"
+    if ! [[ "$_code" =~ ^2[0-9][0-9]$ ]]; then
+        echo >&2 "[tuwunel-bridge] HTTP $_code $method $url"
+        echo >&2 "[tuwunel-bridge] Response: $_body"
+        return 1
+    fi
+    echo "$_body"
+}
+'''
+
 # Boot Tuwunel homeserver in a Podman container, wait for health, register admin.
 start:
     #!/usr/bin/env bash
     set -euo pipefail
+    {{_MATRIX_FN}}
 
     CONTAINER_NAME="{{CONTAINER_NAME}}"
     VOLUME_NAME="{{VOLUME_NAME}}"
@@ -37,10 +59,10 @@ start:
             echo >&2 "[tuwunel-bridge] Container ${CONTAINER_NAME} already running on port ${MATRIX_PORT}"
 
             # Login admin to get fresh token
-            LOGIN_RESP=$(curl -sf -X POST \
+            LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
                 -H "Content-Type: application/json" \
                 -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
-                "${MATRIX_URL}/_matrix/client/v3/login" || echo '{}')
+                ) || LOGIN_RESP='{}'
             ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // empty')
             ADMIN_USER_ID=$(echo "$LOGIN_RESP" | jq -r '.user_id // empty')
 
@@ -70,10 +92,10 @@ start:
         done
 
         # Re-login admin
-        LOGIN_RESP=$(curl -sf -X POST \
+        LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
             -H "Content-Type: application/json" \
             -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
-            "${MATRIX_URL}/_matrix/client/v3/login" || echo '{}')
+            ) || LOGIN_RESP='{}'
         ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // empty')
         ADMIN_USER_ID=$(echo "$LOGIN_RESP" | jq -r '.user_id // empty')
 
@@ -102,7 +124,8 @@ start:
         -Oallow_registration=true \
         -Oregistration_token=\"${REG_TOKEN}\" \
         -Oallow_federation=false \
-        -Olog_filter=\"warn\"
+        -Olog_filter=\"warn\" \
+        -Onew_user_displayname_suffix=\"\"
 
     # Health check loop
     echo >&2 "[tuwunel-bridge] Waiting for Tuwunel to become healthy (up to 120s)..."
@@ -141,10 +164,10 @@ start:
         fi
     else
         # Step 2: Complete registration with token
-        REGISTER_RESP=$(curl -sf -X POST \
+        REGISTER_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/register" \
             -H "Content-Type: application/json" \
             -d "{\"username\":\"${ADMIN_USER}\",\"password\":\"${ADMIN_PASS}\",\"auth\":{\"type\":\"m.login.registration_token\",\"token\":\"${REG_TOKEN}\",\"session\":\"${SESSION}\"}}" \
-            "${MATRIX_URL}/_matrix/client/v3/register")
+            )
 
         ADMIN_USER_ID=$(echo "$REGISTER_RESP" | jq -r '.user_id // empty')
         if [ -z "$ADMIN_USER_ID" ]; then
@@ -156,17 +179,17 @@ start:
     fi
 
     # Login to get access token
-    LOGIN_RESP=$(curl -sf -X POST \
+    LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
         -H "Content-Type: application/json" \
         -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
-        "${MATRIX_URL}/_matrix/client/v3/login")
+        )
 
     ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
     ADMIN_USER_ID=$(echo "$LOGIN_RESP" | jq -r '.user_id')
 
     if [ "$ADMIN_TOKEN" = "null" ] || [ -z "$ADMIN_TOKEN" ]; then
-        echo >&2 "[tuwunel-bridge] FATAL: Admin login failed."
-        echo >&2 "$LOGIN_RESP"
+        echo >&2 "[tuwunel-bridge] FATAL: Admin login returned no token."
+        echo >&2 "[tuwunel-bridge] Response: $LOGIN_RESP"
         exit 1
     fi
     echo >&2 "[tuwunel-bridge] Admin login successful. userId=${ADMIN_USER_ID}"
@@ -231,9 +254,10 @@ health:
     fi
 
 # Register a bot user on the Tuwunel homeserver via Matrix CS API.
-onboard username:
+onboard username displayname="":
     #!/usr/bin/env bash
     set -euo pipefail
+    {{_MATRIX_FN}}
 
     MATRIX_URL="{{MATRIX_URL}}"
     SERVER_NAME="{{SERVER_NAME}}"
@@ -241,8 +265,20 @@ onboard username:
     ADMIN_PASS="{{ADMIN_PASS}}"
     REG_TOKEN="{{REG_TOKEN}}"
     USERNAME="{{username}}"
+    DISPLAY_NAME="{{displayname}}"
     PASSWORDS_FILE="{{PASSWORDS_FILE}}"
     CONTAINER="{{CONTAINER_NAME}}"
+
+    # Default display name: derive "name (role)" from username "role-name"
+    if [ -z "$DISPLAY_NAME" ]; then
+        ROLE="${USERNAME%-*}"
+        NAME="${USERNAME##*-}"
+        if [ "$ROLE" != "$USERNAME" ] && [ -n "$NAME" ]; then
+            DISPLAY_NAME="$NAME ($ROLE)"
+        else
+            DISPLAY_NAME="$USERNAME"
+        fi
+    fi
 
     # Restore from container backup if local copy missing
     if [ ! -f "$PASSWORDS_FILE" ] && podman container exists "$CONTAINER" 2>/dev/null; then
@@ -272,10 +308,10 @@ onboard username:
 
     if [ -n "$SESSION" ]; then
         # Step 2: Complete registration with token
-        REG_RESP=$(curl -sf -X POST \
+        REG_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/register" \
             -H "Content-Type: application/json" \
             -d "{\"username\":\"${USERNAME}\",\"password\":\"${BOT_PASS}\",\"auth\":{\"type\":\"m.login.registration_token\",\"token\":\"${REG_TOKEN}\",\"session\":\"${SESSION}\"}}" \
-            "${MATRIX_URL}/_matrix/client/v3/register")
+            )
 
         REG_USER_ID=$(echo "$REG_RESP" | jq -r '.user_id // empty')
         if [ -z "$REG_USER_ID" ]; then
@@ -318,19 +354,19 @@ onboard username:
             echo >&2 "[tuwunel-bridge] No stored password for ${USERNAME}, recovering via admin room..."
 
             # Login as admin
-            ADMIN_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+            ADMIN_LOGIN=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
+                -H "Content-Type: application/json" \
                 -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
-                "${MATRIX_URL}/_matrix/client/v3/login" || echo '{}')
+                ) || ADMIN_LOGIN='{}'
             ADMIN_TOKEN=$(echo "$ADMIN_LOGIN" | jq -r '.access_token // empty')
             if [ -z "$ADMIN_TOKEN" ]; then
                 echo >&2 "[tuwunel-bridge] FATAL: Admin login failed, cannot reset password."
-                echo >&2 "$ADMIN_LOGIN"
                 exit 1
             fi
 
             # Find admin room (#admins:<server>)
-            ADMIN_ROOM_RESP=$(curl -sf \
-                "${MATRIX_URL}/_matrix/client/v3/directory/room/%23admins:${SERVER_NAME}" || echo '{}')
+            ADMIN_ROOM_RESP=$(matrix_request GET "${MATRIX_URL}/_matrix/client/v3/directory/room/%23admins:${SERVER_NAME}" \
+                ) || ADMIN_ROOM_RESP='{}'
             ADMIN_ROOM_ID=$(echo "$ADMIN_ROOM_RESP" | jq -r '.room_id // empty')
             if [ -z "$ADMIN_ROOM_ID" ]; then
                 echo >&2 "[tuwunel-bridge] FATAL: Cannot find admin room #admins:${SERVER_NAME}."
@@ -340,17 +376,18 @@ onboard username:
             # Reset password via admin room command
             BOT_PASS=$(openssl rand -hex 16)
             TXN_ID=$(date +%s%N)
-            curl -sf -X PUT \
+            matrix_request PUT "${MATRIX_URL}/_matrix/client/v3/rooms/${ADMIN_ROOM_ID}/send/m.room.message/${TXN_ID}" \
                 -H "Authorization: Bearer ${ADMIN_TOKEN}" \
                 -H "Content-Type: application/json" \
                 -d "{\"msgtype\":\"m.text\",\"body\":\"!admin users reset-password ${USERNAME} ${BOT_PASS}\"}" \
-                "${MATRIX_URL}/_matrix/client/v3/rooms/${ADMIN_ROOM_ID}/send/m.room.message/${TXN_ID}" >/dev/null
+                >/dev/null
             sleep 2
 
             # Verify by logging in with the new password
-            VERIFY_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+            VERIFY_LOGIN=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
+                -H "Content-Type: application/json" \
                 -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${USERNAME}\"},\"password\":\"${BOT_PASS}\"}" \
-                "${MATRIX_URL}/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+                ) || VERIFY_LOGIN='{}'
             VERIFY_TOKEN=$(echo "$VERIFY_LOGIN" | jq -r '.access_token // empty')
             if [ -z "$VERIFY_TOKEN" ]; then
                 echo >&2 "[tuwunel-bridge] FATAL: Password reset via admin room failed."
@@ -379,20 +416,28 @@ onboard username:
     fi
 
     # Login to get access token
-    LOGIN_RESP=$(curl -sf -X POST \
+    LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
         -H "Content-Type: application/json" \
         -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${USERNAME}\"},\"password\":\"${BOT_PASS}\"}" \
-        "${MATRIX_URL}/_matrix/client/v3/login")
+        )
 
     BOT_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
     BOT_USER_ID=$(echo "$LOGIN_RESP" | jq -r '.user_id')
 
     if [ "$BOT_TOKEN" = "null" ] || [ -z "$BOT_TOKEN" ]; then
-        echo >&2 "[tuwunel-bridge] FATAL: Login failed for ${USERNAME}."
-        echo >&2 "$LOGIN_RESP"
+        echo >&2 "[tuwunel-bridge] FATAL: Login returned no token for ${USERNAME}."
+        echo >&2 "[tuwunel-bridge] Response: $LOGIN_RESP"
         exit 1
     fi
     echo >&2 "[tuwunel-bridge] Access token generated for ${USERNAME}."
+
+    # Set display name via Matrix profile API
+    ENCODED_USER_ID=$(echo "$BOT_USER_ID" | sed 's/@/%40/g; s/:/%3A/g')
+    matrix_request PUT "${MATRIX_URL}/_matrix/client/v3/profile/${ENCODED_USER_ID}/displayname" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${BOT_TOKEN}" \
+        -d "{\"displayname\":\"${DISPLAY_NAME}\"}" >/dev/null 2>&1 || true
+    echo >&2 "[tuwunel-bridge] Display name set: ${DISPLAY_NAME}"
 
     mkdir -p "$BRIDGE_CONFIG_DIR"
     cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
@@ -403,6 +448,7 @@ onboard username:
 rotate username:
     #!/usr/bin/env bash
     set -euo pipefail
+    {{_MATRIX_FN}}
 
     MATRIX_URL="{{MATRIX_URL}}"
     USERNAME="{{username}}"
@@ -427,17 +473,17 @@ rotate username:
         exit 1
     fi
 
-    LOGIN_RESP=$(curl -sf -X POST \
+    LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
         -H "Content-Type: application/json" \
         -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${USERNAME}\"},\"password\":\"${BOT_PASS}\"}" \
-        "${MATRIX_URL}/_matrix/client/v3/login")
+        )
 
     BOT_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
     BOT_USER_ID=$(echo "$LOGIN_RESP" | jq -r '.user_id')
 
     if [ "$BOT_TOKEN" = "null" ] || [ -z "$BOT_TOKEN" ]; then
-        echo >&2 "[tuwunel-bridge] FATAL: Token rotation failed for ${USERNAME}."
-        echo >&2 "$LOGIN_RESP"
+        echo >&2 "[tuwunel-bridge] FATAL: Token rotation returned no token for ${USERNAME}."
+        echo >&2 "[tuwunel-bridge] Response: $LOGIN_RESP"
         exit 1
     fi
     echo >&2 "[tuwunel-bridge] Token rotated for ${USERNAME}."
@@ -446,6 +492,51 @@ rotate username:
     cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
     {"username": "${USERNAME}", "user_id": "${BOT_USER_ID}", "token": "${BOT_TOKEN}"}
     ENDJSON
+
+# Verify a user's credentials are valid against the Matrix homeserver.
+# Exits 0 if the stored password produces a valid login, exits 1 otherwise.
+# Used by provisioning to detect stale credentials (e.g., after volume loss).
+verify username:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{_MATRIX_FN}}
+
+    MATRIX_URL="{{MATRIX_URL}}"
+    USERNAME="{{username}}"
+    PASSWORDS_FILE="{{PASSWORDS_FILE}}"
+    CONTAINER="{{CONTAINER_NAME}}"
+
+    # Restore from container backup if local copy missing
+    if [ ! -f "$PASSWORDS_FILE" ] && podman container exists "$CONTAINER" 2>/dev/null; then
+        mkdir -p "$(dirname "$PASSWORDS_FILE")"
+        podman cp "${CONTAINER}:{{PASSWORDS_BACKUP}}" "$PASSWORDS_FILE" 2>/dev/null || true
+        [ -f "$PASSWORDS_FILE" ] && chmod 0600 "$PASSWORDS_FILE" || true
+    fi
+
+    if [ ! -f "$PASSWORDS_FILE" ]; then
+        echo >&2 "[tuwunel-bridge] verify: no passwords file — cannot verify ${USERNAME}"
+        exit 1
+    fi
+
+    BOT_PASS=$(jq -r --arg user "$USERNAME" '.[$user] // empty' "$PASSWORDS_FILE")
+    if [ -z "$BOT_PASS" ]; then
+        echo >&2 "[tuwunel-bridge] verify: no stored password for ${USERNAME}"
+        exit 1
+    fi
+
+    LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${USERNAME}\"},\"password\":\"${BOT_PASS}\"}" \
+        ) || LOGIN_RESP='{}'
+
+    TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // empty')
+    if [ -n "$TOKEN" ]; then
+        echo >&2 "[tuwunel-bridge] verify: ${USERNAME} credentials valid"
+        exit 0
+    else
+        echo >&2 "[tuwunel-bridge] verify: ${USERNAME} credentials INVALID (login failed)"
+        exit 1
+    fi
 
 # Remove a bot user -- deactivate via Matrix CS API.
 remove username:
@@ -502,6 +593,7 @@ remove username:
 room-create name:
     #!/usr/bin/env bash
     set -euo pipefail
+    {{_MATRIX_FN}}
 
     MATRIX_URL="{{MATRIX_URL}}"
     ADMIN_USER="{{ADMIN_USER}}"
@@ -509,21 +601,22 @@ room-create name:
     ROOM_NAME="{{name}}"
 
     # Login as admin
-    LOGIN_RESP=$(curl -sf -X POST \
+    LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
         -H "Content-Type: application/json" \
         -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
-        "${MATRIX_URL}/_matrix/client/v3/login")
+        )
 
     ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
 
     if [ "$ADMIN_TOKEN" = "null" ] || [ -z "$ADMIN_TOKEN" ]; then
-        echo >&2 "[tuwunel-bridge] FATAL: Admin login failed."
+        echo >&2 "[tuwunel-bridge] FATAL: Admin login returned no token."
+        echo >&2 "[tuwunel-bridge] Response: $LOGIN_RESP"
         exit 1
     fi
 
     # Check if room alias already exists
-    ALIAS_RESP=$(curl -s \
-        "${MATRIX_URL}/_matrix/client/v3/directory/room/%23${ROOM_NAME}:{{SERVER_NAME}}" 2>/dev/null || echo '{}')
+    ALIAS_RESP=$(matrix_request GET "${MATRIX_URL}/_matrix/client/v3/directory/room/%23${ROOM_NAME}:{{SERVER_NAME}}" \
+        ) || ALIAS_RESP='{}'
 
     EXISTING_ROOM_ID=$(echo "$ALIAS_RESP" | jq -r '.room_id // empty')
     if [ -n "$EXISTING_ROOM_ID" ]; then
@@ -535,24 +628,26 @@ room-create name:
         exit 0
     fi
 
-    # Collect bot user IDs from bridge state for invitation
+    # Collect bot user IDs from bridge state for invitation.
+    # Filter out empty strings and entries without the @ sigil — invalid
+    # user IDs cause M_BAD_JSON from the Matrix server.
     INVITE_JSON="[]"
-    BRIDGE_STATE_PATH="${BRIDGE_CONFIG_DIR}/../../bridge-state.json"
+    BRIDGE_STATE_PATH="${BM_BRIDGE_STATE_DIR}/bridge-state.json"
     if [ -f "$BRIDGE_STATE_PATH" ]; then
-        INVITE_JSON=$(jq -r '[.identities | to_entries[].value.user_id]' "$BRIDGE_STATE_PATH" 2>/dev/null || echo "[]")
+        INVITE_JSON=$(jq '[.identities | to_entries[].value.user_id | select(startswith("@"))]' "$BRIDGE_STATE_PATH" 2>/dev/null || echo "[]")
     fi
 
     # Create room
-    CREATE_RESP=$(curl -sf -X POST \
+    CREATE_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/createRoom" \
         -H "Content-Type: application/json" \
         -H "Authorization: Bearer ${ADMIN_TOKEN}" \
         -d "{\"name\":\"${ROOM_NAME}\",\"room_alias_name\":\"${ROOM_NAME}\",\"preset\":\"public_chat\",\"invite\":${INVITE_JSON}}" \
-        "${MATRIX_URL}/_matrix/client/v3/createRoom")
+        )
 
     ROOM_ID=$(echo "$CREATE_RESP" | jq -r '.room_id')
     if [ "$ROOM_ID" = "null" ] || [ -z "$ROOM_ID" ]; then
-        echo >&2 "[tuwunel-bridge] FATAL: Room creation failed."
-        echo >&2 "$CREATE_RESP"
+        echo >&2 "[tuwunel-bridge] FATAL: Room creation returned no room_id."
+        echo >&2 "[tuwunel-bridge] Response: $CREATE_RESP"
         exit 1
     fi
     echo >&2 "[tuwunel-bridge] Room #${ROOM_NAME} created. roomId=${ROOM_ID}"
@@ -562,31 +657,112 @@ room-create name:
     {"name": "${ROOM_NAME}", "room_id": "${ROOM_ID}"}
     ENDJSON
 
+# Create a private DM room between the operator and a specific member.
+# The member name is used to look up the member's MXID from bridge-state.json.
+room-create-dm member_name:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{_MATRIX_FN}}
+
+    MATRIX_URL="{{MATRIX_URL}}"
+    ADMIN_USER="{{ADMIN_USER}}"
+    ADMIN_PASS="{{ADMIN_PASS}}"
+    MEMBER_NAME="{{member_name}}"
+
+    # Login as admin
+    LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
+        -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
+        )
+
+    ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
+
+    if [ "$ADMIN_TOKEN" = "null" ] || [ -z "$ADMIN_TOKEN" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: Admin login returned no token."
+        echo >&2 "[tuwunel-bridge] Response: $LOGIN_RESP"
+        exit 1
+    fi
+
+    # Look up member's MXID from bridge-state.json
+    BRIDGE_STATE_PATH="${BM_BRIDGE_STATE_DIR}/bridge-state.json"
+    MEMBER_MXID=""
+    if [ -f "$BRIDGE_STATE_PATH" ]; then
+        MEMBER_MXID=$(jq -r --arg name "$MEMBER_NAME" '.identities[$name].user_id // empty' "$BRIDGE_STATE_PATH" 2>/dev/null || true)
+    fi
+
+    if [ -z "$MEMBER_MXID" ] || ! [[ "$MEMBER_MXID" == @* ]]; then
+        echo >&2 "[tuwunel-bridge] FATAL: No valid MXID found for member '${MEMBER_NAME}' in bridge-state.json."
+        exit 1
+    fi
+
+    # Use a room alias for discoverability — source of truth is the Matrix server,
+    # not bridge-state.json. This makes DM room creation idempotent even after
+    # bridge-state.json is lost (volume reset, recovery scenarios).
+    DM_ROOM_NAME="dm-${MEMBER_NAME}"
+
+    # Check if DM room alias already exists on the Matrix server
+    ALIAS_RESP=$(matrix_request GET "${MATRIX_URL}/_matrix/client/v3/directory/room/%23${DM_ROOM_NAME}:{{SERVER_NAME}}" \
+        ) || ALIAS_RESP='{}'
+
+    EXISTING_ROOM_ID=$(echo "$ALIAS_RESP" | jq -r '.room_id // empty')
+    if [ -n "$EXISTING_ROOM_ID" ]; then
+        echo >&2 "[tuwunel-bridge] DM room #${DM_ROOM_NAME} already exists (${EXISTING_ROOM_ID})."
+        mkdir -p "$BRIDGE_CONFIG_DIR"
+        cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"name": "${DM_ROOM_NAME}", "room_id": "${EXISTING_ROOM_ID}"}
+    ENDJSON
+        exit 0
+    fi
+
+    echo >&2 "[tuwunel-bridge] Creating DM room for ${MEMBER_NAME} (${MEMBER_MXID})..."
+
+    # Create private DM room with alias — invite only the specific member
+    CREATE_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/createRoom" \
+        -H "Content-Type: application/json" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+        -d "{\"name\":\"${DM_ROOM_NAME}\",\"room_alias_name\":\"${DM_ROOM_NAME}\",\"preset\":\"trusted_private_chat\",\"is_direct\":true,\"invite\":[\"${MEMBER_MXID}\"]}" \
+        )
+
+    ROOM_ID=$(echo "$CREATE_RESP" | jq -r '.room_id')
+    if [ "$ROOM_ID" = "null" ] || [ -z "$ROOM_ID" ]; then
+        echo >&2 "[tuwunel-bridge] FATAL: DM room creation returned no room_id."
+        echo >&2 "[tuwunel-bridge] Response: $CREATE_RESP"
+        exit 1
+    fi
+    echo >&2 "[tuwunel-bridge] DM room for ${MEMBER_NAME} created. roomId=${ROOM_ID}"
+
+    mkdir -p "$BRIDGE_CONFIG_DIR"
+    cat > "$BRIDGE_CONFIG_DIR/config.json" <<ENDJSON
+    {"name": "${DM_ROOM_NAME}", "room_id": "${ROOM_ID}"}
+    ENDJSON
+
 # List rooms on the Tuwunel homeserver.
 room-list:
     #!/usr/bin/env bash
     set -euo pipefail
+    {{_MATRIX_FN}}
 
     MATRIX_URL="{{MATRIX_URL}}"
     ADMIN_USER="{{ADMIN_USER}}"
     ADMIN_PASS="{{ADMIN_PASS}}"
 
     # Login as admin
-    LOGIN_RESP=$(curl -sf -X POST \
+    LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
         -H "Content-Type: application/json" \
         -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${ADMIN_USER}\"},\"password\":\"${ADMIN_PASS}\"}" \
-        "${MATRIX_URL}/_matrix/client/v3/login")
+        )
 
     ADMIN_TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token')
 
     if [ "$ADMIN_TOKEN" = "null" ] || [ -z "$ADMIN_TOKEN" ]; then
-        echo >&2 "[tuwunel-bridge] FATAL: Admin login failed."
+        echo >&2 "[tuwunel-bridge] FATAL: Admin login returned no token."
+        echo >&2 "[tuwunel-bridge] Response: $LOGIN_RESP"
         exit 1
     fi
 
-    ROOMS_RESP=$(curl -sf \
+    ROOMS_RESP=$(matrix_request GET "${MATRIX_URL}/_matrix/client/v3/joined_rooms" \
         -H "Authorization: Bearer ${ADMIN_TOKEN}" \
-        "${MATRIX_URL}/_matrix/client/v3/joined_rooms")
+        )
 
     ROOMS=$(echo "$ROOMS_RESP" | jq '[.joined_rooms[] | {name: ., room_id: .}]')
 
@@ -594,3 +770,82 @@ room-list:
     echo "$ROOMS" > "$BRIDGE_CONFIG_DIR/config.json"
 
     echo >&2 "[tuwunel-bridge] Listed $(echo "$ROOMS" | jq length) room(s)."
+
+# Fix display names for all identities in bridge-state.json.
+# Removes emoji suffixes (e.g. "alice 💕" → "alice") by setting each
+# user's display name to their username via the Matrix profile API.
+# Each user logs in with their own credentials to update their own profile.
+fix-displaynames:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{_MATRIX_FN}}
+
+    MATRIX_URL="{{MATRIX_URL}}"
+    # Find bridge-state.json: BM_BRIDGE_STATE_DIR (set by bm), or search upward.
+    STATE_DIR="${BM_BRIDGE_STATE_DIR:-}"
+    if [ -z "$STATE_DIR" ]; then
+        for candidate in "." ".." "../.." "../../.."; do
+            if [ -f "$candidate/bridge-state.json" ]; then
+                STATE_DIR="$(cd "$candidate" && pwd)"
+                break
+            fi
+        done
+    fi
+
+    if [ -z "$STATE_DIR" ] || [ ! -f "$STATE_DIR/bridge-state.json" ]; then
+        echo >&2 "[tuwunel-bridge] No bridge-state.json found. Run 'bm teams sync --bridge' first."
+        exit 1
+    fi
+
+    BRIDGE_STATE_PATH="$STATE_DIR/bridge-state.json"
+    PASSWORDS_FILE="$STATE_DIR/tuwunel-passwords.json"
+    if [ ! -f "$PASSWORDS_FILE" ]; then
+        echo >&2 "[tuwunel-bridge] No tuwunel-passwords.json found."
+        exit 1
+    fi
+
+    # Iterate over all identities
+    USERNAMES=$(jq -r '.identities | keys[]' "$BRIDGE_STATE_PATH" 2>/dev/null)
+    FIXED=0
+
+    for username in $USERNAMES; do
+        USER_ID=$(jq -r --arg u "$username" '.identities[$u].user_id // empty' "$BRIDGE_STATE_PATH")
+        PASSWORD=$(jq -r --arg u "$username" '.[$u] // empty' "$PASSWORDS_FILE")
+
+        if [ -z "$USER_ID" ] || [ -z "$PASSWORD" ]; then
+            echo >&2 "[tuwunel-bridge] Skipping $username (missing user_id or password)"
+            continue
+        fi
+
+        # Login as this user
+        LOGIN_RESP=$(matrix_request POST "${MATRIX_URL}/_matrix/client/v3/login" \
+            -H "Content-Type: application/json" \
+            -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"${username}\"},\"password\":\"${PASSWORD}\"}" \
+            ) || { echo >&2 "[tuwunel-bridge] Failed to login as $username"; continue; }
+
+        TOKEN=$(echo "$LOGIN_RESP" | jq -r '.access_token // empty')
+        if [ -z "$TOKEN" ]; then
+            echo >&2 "[tuwunel-bridge] No token for $username, skipping"
+            continue
+        fi
+
+        # Derive display name: "name (role)" from username "role-name"
+        ROLE="${username%-*}"
+        NAME="${username##*-}"
+        if [ "$ROLE" != "$username" ] && [ -n "$NAME" ]; then
+            NEW_DISPLAYNAME="$NAME ($ROLE)"
+        else
+            NEW_DISPLAYNAME="$username"
+        fi
+
+        ENCODED_USER_ID=$(echo "$USER_ID" | sed 's/@/%40/g; s/:/%3A/g')
+        matrix_request PUT "${MATRIX_URL}/_matrix/client/v3/profile/${ENCODED_USER_ID}/displayname" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${TOKEN}" \
+            -d "{\"displayname\":\"${NEW_DISPLAYNAME}\"}" >/dev/null
+
+        echo >&2 "[tuwunel-bridge] Fixed display name: $username -> $NEW_DISPLAYNAME"
+        FIXED=$((FIXED + 1))
+    done
+
+    echo >&2 "[tuwunel-bridge] Fixed $FIXED display name(s)."

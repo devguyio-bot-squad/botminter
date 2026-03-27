@@ -140,12 +140,14 @@ pub fn build_cli_with_completions() -> clap::Command {
         })
         // ── start ─────────────────────────────────────────────
         .mut_subcommand("start", |c| {
-            c.mut_arg("team", |a| a.add(make(teams.clone())))
+            c.mut_arg("member", |a| a.add(make(members.clone())))
+                .mut_arg("team", |a| a.add(make(teams.clone())))
                 .mut_arg("formation", |a| a.add(make(formations)))
         })
         // ── stop ──────────────────────────────────────────────
         .mut_subcommand("stop", |c| {
-            c.mut_arg("team", |a| a.add(make(teams.clone())))
+            c.mut_arg("member", |a| a.add(make(members.clone())))
+                .mut_arg("team", |a| a.add(make(teams.clone())))
         })
         // ── status ────────────────────────────────────────────
         .mut_subcommand("status", |c| {
@@ -455,8 +457,8 @@ projects:
     fn all_commands_covered_by_completions() {
         use crate::cli::{
             BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Command, DaemonCommand,
-            KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand, RolesCommand,
-            RuntimeCommand, TeamsCommand,
+            DebugCommand, KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand,
+            RolesCommand, RuntimeCommand, TeamsCommand,
         };
 
         // This exhaustive match ensures that if a new Command variant is
@@ -516,6 +518,7 @@ projects:
                     },
                     BridgeCommand::Room { command } => match command {
                         BridgeRoomCommand::Create { .. } => {}
+                        BridgeRoomCommand::CreateDm { .. } => {}
                         BridgeRoomCommand::List { .. } => {}
                     },
                 },
@@ -527,6 +530,9 @@ projects:
                 Command::DaemonRun { .. } => {}
                 Command::BrainRun { .. } => {}
                 Command::Attach { .. } => {}
+                Command::Debug { command } => match command {
+                    DebugCommand::BrainLogs { .. } => {}
+                },
                 Command::Completions { .. } => {}
             }
         }

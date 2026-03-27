@@ -20,6 +20,21 @@ pub struct MultiplexerConfig {
     pub env_vars: Vec<(String, String)>,
 }
 
+/// System reminder appended to every prompt sent to the ACP session.
+///
+/// Reinforces the chat-first responsiveness principle on every turn so the
+/// LLM never blocks the session with long-running synchronous operations.
+/// This is more reliable than the system prompt alone, which can lose
+/// salience after many turns.
+const CHAT_FIRST_REMINDER: &str = "\n\n<system-reminder>\
+BACKGROUND EXECUTION PROTOCOL (mandatory):\
+\n1. Every Bash call MUST use run_in_background=true. No exceptions.\
+\n2. After starting a background command, respond with text immediately.\
+\n3. End your turn. Do NOT call BashOutput — it is disabled.\
+\n4. Redirect output to a file (e.g. > /tmp/result.out 2>&1) to check later.\
+\n5. Keep responses SHORT for heartbeats and status checks.\
+</system-reminder>";
+
 /// The brain multiplexer merges input streams and routes them through
 /// an ACP session, streaming responses back to the bridge.
 ///
@@ -166,7 +181,9 @@ impl Multiplexer {
     ///
     /// Returns when a shutdown signal is received or the ACP session ends.
     pub async fn run(mut self) -> Result<(), MultiplexerError> {
-        // Spawn ACP client
+        // Spawn ACP client with timeout — if the ACP binary hangs during
+        // initialization (e.g., after a restart with stale server-side state),
+        // we fail fast instead of blocking forever.
         let acp_config = AcpConfig {
             binary: self.config.acp_binary.clone(),
             cwd: self.config.cwd.clone(),
@@ -174,12 +191,26 @@ impl Multiplexer {
             env_vars: self.config.env_vars.clone(),
         };
 
-        let client = AcpClient::spawn(acp_config).await?;
+        let client = tokio::time::timeout(
+            std::time::Duration::from_secs(60),
+            AcpClient::spawn(acp_config),
+        )
+        .await
+        .map_err(|_| {
+            tracing::error!("ACP spawn timed out after 60s");
+            MultiplexerError::Acp(AcpError::SpawnFailed("spawn timed out after 60s".into()))
+        })??;
 
-        // Create a session
-        let session_id = client
-            .create_session(&self.config.cwd, self.config.system_prompt.as_deref())
-            .await?;
+        // Create a session with timeout
+        let session_id = tokio::time::timeout(
+            std::time::Duration::from_secs(120),
+            client.create_session(&self.config.cwd, self.config.system_prompt.as_deref()),
+        )
+        .await
+        .map_err(|_| {
+            tracing::error!("ACP session creation timed out after 120s");
+            MultiplexerError::Acp(AcpError::InitFailed("session creation timed out after 120s".into()))
+        })??;
 
         tracing::info!(session_id = %session_id, "Brain multiplexer session started");
 
@@ -212,8 +243,12 @@ impl Multiplexer {
                                 queue.push(message);
                             } else {
                                 // Send immediately
-                                let prompt = message.to_prompt();
-                                tracing::debug!(prompt = %prompt, "Sending prompt to ACP");
+                                let prompt = format!("{}{CHAT_FIRST_REMINDER}", message.to_prompt());
+                                tracing::info!(
+                                    priority = %message.priority,
+                                    prompt_len = prompt.len(),
+                                    "Sending prompt to ACP"
+                                );
                                 client.prompt(&session_id, &prompt).await?;
                                 prompt_in_flight = true;
                             }
@@ -236,13 +271,18 @@ impl Multiplexer {
                         Some(AcpEvent::Text(text)) => {
                             let _ = self.output_tx.send(BridgeOutput::Text(text)).await;
                         }
-                        Some(AcpEvent::TurnComplete { .. }) => {
+                        Some(AcpEvent::TurnComplete { stop_reason }) => {
+                            tracing::info!(
+                                stop_reason = %stop_reason,
+                                queue_len = queue.len(),
+                                "Turn complete, draining queue"
+                            );
                             let _ = self.output_tx.send(BridgeOutput::TurnComplete).await;
                             prompt_in_flight = false;
 
                             // Drain the queue by priority
                             if let Some(next_msg) = queue.pop() {
-                                let prompt = next_msg.to_prompt();
+                                let prompt = format!("{}{CHAT_FIRST_REMINDER}", next_msg.to_prompt());
                                 tracing::debug!(
                                     priority = %next_msg.priority,
                                     "Draining queue, sending next prompt"

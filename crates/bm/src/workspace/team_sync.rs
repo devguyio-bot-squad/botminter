@@ -313,9 +313,9 @@ fn surface_brain_prompt_for_member(
     verbose: bool,
     events: &mut Vec<TeamSyncEvent>,
 ) {
-    let (gh_org, gh_repo_full) = github_repo
+    let (gh_org, gh_repo_name) = github_repo
         .and_then(brain::parse_github_repo)
-        .map(|(org, repo)| (org.to_string(), format!("{org}/{repo}")))
+        .map(|(org, repo)| (org.to_string(), repo.to_string()))
         .unwrap_or_default();
 
     let role = brain::read_member_role(team_repo, member_dir_name)
@@ -328,7 +328,7 @@ fn surface_brain_prompt_for_member(
         team_name: team_name.to_string(),
         role,
         gh_org,
-        gh_repo: gh_repo_full,
+        gh_repo: gh_repo_name,
     };
 
     match brain::surface_brain_prompt(team_repo, ws, &vars) {

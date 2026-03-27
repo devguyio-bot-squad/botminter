@@ -81,6 +81,7 @@ and BotMinter.
 | `spec.identity.onboard` | string | MUST be a Justfile recipe name |
 | `spec.identity.rotate-credentials` | string | MUST be a Justfile recipe name |
 | `spec.identity.remove` | string | MUST be a Justfile recipe name |
+| `spec.identity.verify` | string | MAY be a Justfile recipe name (local bridges only; see below) |
 | `spec.room` | object | MAY be present for bridges that support room/channel management |
 | `spec.room.create` | string | MUST be a Justfile recipe name (if `spec.room` is present) |
 | `spec.room.list` | string | MUST be a Justfile recipe name (if `spec.room` is present) |
@@ -283,6 +284,26 @@ The semantics of identity commands differ by bridge type:
 }
 ````
 
+### `verify <username>` (OPTIONAL, local bridges only)
+
+- MUST exit with code 0 if the user's stored credentials are valid against
+  the bridge backend (e.g., a successful login attempt).
+- MUST exit with a non-zero code if the credentials are invalid, the user
+  does not exist on the backend, or verification cannot be performed.
+- MUST NOT produce config exchange output (no `config.json`).
+- SHOULD write diagnostic status to stderr.
+
+When present, BotMinter calls `verify` before declaring a member
+"already provisioned." If verification fails, BotMinter removes the
+stale identity and re-runs `onboard` to reconcile with the actual
+bridge state. This implements a reconciler pattern: the bridge backend
+is the source of truth, not local cache.
+
+This recipe is OPTIONAL. If not declared, BotMinter trusts local state
+and keyring credentials without backend verification (legacy behavior).
+External bridges MUST NOT declare a `verify` recipe — they do not own
+the user database.
+
 ### `remove <username>`
 
 - MUST remove the user from the bridge platform.
@@ -365,6 +386,7 @@ Each command category produces a specific JSON shape:
 | `room list` | array of `name`, `room_id` | bridge-specific fields |
 | `stop` | (no file output required) | |
 | `health` | (no file output required) | |
+| `verify` | (no file output required) | |
 | `remove` | (no file output required) | |
 
 ## Environment Variables

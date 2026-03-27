@@ -1,3 +1,4 @@
+pub mod bridge_adapter;
 mod event_watcher;
 mod heartbeat;
 pub mod inbox;

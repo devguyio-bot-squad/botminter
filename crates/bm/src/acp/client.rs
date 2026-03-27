@@ -98,6 +98,25 @@ impl AcpClient {
             .take()
             .ok_or_else(|| AcpError::SpawnFailed("failed to open agent stdout".into()))?;
 
+        // Drain stderr in a background task to prevent pipe buffer deadlock.
+        // The ACP agent writes tracing logs to stderr. If the pipe buffer fills
+        // (~64KB on Linux) and nobody reads, the agent blocks on write and stops
+        // processing prompts entirely.
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(async move {
+                use tokio::io::AsyncReadExt;
+                let mut stderr = stderr;
+                let mut buf = vec![0u8; 8192];
+                loop {
+                    match stderr.read(&mut buf).await {
+                        Ok(0) => break, // EOF — child exited
+                        Ok(_) => {}     // Discard output
+                        Err(_) => break,
+                    }
+                }
+            });
+        }
+
         // Channels for command/event communication
         let (command_tx, command_rx) = mpsc::channel::<AcpCommand>(32);
         let (event_tx, event_rx) = mpsc::channel::<AcpEvent>(256);
@@ -314,25 +333,42 @@ impl AcpClient {
                                 vec![ContentBlock::Text(TextContent::new(&text))],
                             );
 
-                            let event_tx = event_tx.clone();
-                            let result = cx
-                                .send_request(request)
-                                .block_task()
-                                .await;
+                            // Reply immediately so the multiplexer's select loop
+                            // stays responsive (can process events, shutdown, etc.)
+                            let _ = reply.send(Ok(()));
 
-                            match result {
-                                Ok(response) => {
-                                    let stop_reason =
-                                        format!("{:?}", response.stop_reason);
-                                    let _ = event_tx
-                                        .send(AcpEvent::TurnComplete { stop_reason })
-                                        .await;
-                                    let _ = reply.send(Ok(()));
+                            // Spawn prompt processing as a concurrent task.
+                            // block_task() is safe inside cx.spawn() per sacp docs.
+                            // TurnComplete arrives via event_tx when the LLM responds.
+                            let event_tx = event_tx.clone();
+                            let cx_for_prompt = cx.clone();
+                            cx.spawn(async move {
+                                tracing::info!("ACP prompt task: sending request");
+                                let result = cx_for_prompt
+                                    .send_request(request)
+                                    .block_task()
+                                    .await;
+
+                                match result {
+                                    Ok(response) => {
+                                        let stop_reason =
+                                            format!("{:?}", response.stop_reason);
+                                        tracing::info!(stop_reason = %stop_reason, "ACP prompt completed");
+                                        let _ = event_tx
+                                            .send(AcpEvent::TurnComplete { stop_reason })
+                                            .await;
+                                    }
+                                    Err(e) => {
+                                        tracing::error!(error = %e, "ACP prompt failed");
+                                        let _ = event_tx
+                                            .send(AcpEvent::TurnComplete {
+                                                stop_reason: format!("error: {e}"),
+                                            })
+                                            .await;
+                                    }
                                 }
-                                Err(e) => {
-                                    let _ = reply.send(Err(AcpError::Protocol(e.to_string())));
-                                }
-                            }
+                                Ok(())
+                            })?;
                         }
 
                         AcpCommand::Cancel { session_id: _session_id } => {

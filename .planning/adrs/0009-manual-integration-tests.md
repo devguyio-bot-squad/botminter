@@ -80,3 +80,28 @@ Rejected because: unscripted testing is unrepeatable, produces no audit trail, a
 * **Do NOT** treat exploratory tests as optional when changing bridge, workspace, sync, or Lima code — these tests exist precisely because automated tests cannot catch the bugs they find.
 * **Do NOT** add exploratory test scenarios without updating both PLAN.md and the Justfile — a test that exists only in the plan but not in the Justfile will never be run, and vice versa.
 * **Do NOT** leave the REPORT.md from a failing run committed — either fix the failures or document known issues. A green report is the quality gate.
+
+## Amendments
+
+### Keyring Isolation (2026-03-22)
+
+The original decision rejected keyring isolation ("private D-Bus session doesn't test real
+Secret Service behavior"). After operational experience, we amend this:
+
+**Isolated gnome-keyring-daemon is acceptable for exploratory tests** because:
+
+* It exercises the full Secret Service D-Bus API path (gnome-keyring-daemon → D-Bus → keyring crate)
+* The only behavior skipped is PAM-triggered unlock and system daemon discovery
+* The alternative (requiring an unlocked system keyring) makes tests unrunnable in many
+  environments, testing nothing at all
+* `BM_KEYRING_DBUS` routing is production code (used in the `bm` binary itself), not a test-only shim
+
+What we still test with real infrastructure: podman containers, Matrix API, Lima VMs, GitHub,
+filesystem operations. The keyring is the only subsystem now isolated.
+
+### Directory Structure Refactor (2026-03-22)
+
+The test suite was refactored from a monolithic 1888-line Justfile into per-phase standalone
+scripts under `phases/`. The Justfile is now a thin orchestrator (~120 lines) that exports
+variables and delegates to `phases/phase-{a..h}.sh`. Shared helpers (reporting, keyring
+isolation, command wrappers) live in `lib.sh`.

@@ -19,6 +19,9 @@ rotate username:
     @mkdir -p "$BRIDGE_CONFIG_DIR"
     @echo '{"username": "{{username}}", "user_id": "stub-id", "token": "rotated-stub-token"}' > "$BRIDGE_CONFIG_DIR/config.json"
 
+verify username:
+    @echo "stub: verified {{username}}" >&2
+
 remove username:
     @echo "stub: removed {{username}}" >&2
 

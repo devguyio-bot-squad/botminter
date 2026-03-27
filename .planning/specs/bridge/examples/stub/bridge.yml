@@ -25,6 +25,7 @@ spec:
     onboard: onboard
     rotate-credentials: rotate
     remove: remove
+    verify: verify
 
   room:
     create: room-create

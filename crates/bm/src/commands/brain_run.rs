@@ -1,8 +1,10 @@
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
+use tracing_subscriber::EnvFilter;
 
 use crate::brain::{
+    bridge_adapter::{self, MatrixBridgeConfig, MatrixBridgeReader, MatrixBridgeWriter},
     EventWatcher, EventWatcherConfig, Heartbeat, HeartbeatConfig, Multiplexer, MultiplexerConfig,
 };
 
@@ -12,9 +14,25 @@ use crate::brain::{
 /// process by `bm start` for chat-first members. It creates a tokio runtime
 /// and runs the multiplexer with event watcher and heartbeat components.
 pub fn run(workspace: &str, system_prompt: &str, acp_binary: &str) -> Result<()> {
+    // Initialize tracing to stderr so diagnostics appear in brain-stderr.log.
+    // Without this, all tracing::info!/error!/warn! calls are no-ops.
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .with_writer(std::io::stderr)
+        .with_ansi(false)
+        .init();
+
     let workspace_path = PathBuf::from(workspace);
     let prompt_content = std::fs::read_to_string(system_prompt)
         .with_context(|| format!("Failed to read brain system prompt at {system_prompt}"))?;
+
+    tracing::info!(
+        workspace = %workspace,
+        acp_binary = %acp_binary,
+        "Brain multiplexer starting"
+    );
 
     let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
 
@@ -35,11 +53,47 @@ async fn run_brain(
         env_vars: collect_env_vars(),
     };
 
-    let (mux, input, _output, shutdown) = Multiplexer::new(config);
+    let (mux, input, output, shutdown) = Multiplexer::new(config);
 
-    // Get raw senders for event watcher and heartbeat
+    // Get raw senders for event watcher, heartbeat, and bridge reader
     let event_sender = input.sender();
     let heartbeat_sender = input.sender();
+
+    // Spawn bridge adapter (reader + writer) if all env vars are present
+    let bridge_config = resolve_bridge_config(&workspace);
+    let bridge_reader_shutdown_tx = if let Some(cfg) = bridge_config {
+        let mode = if cfg.room_id.is_some() { "locked" } else { "discovery" };
+        tracing::info!(
+            room_id = ?cfg.room_id,
+            own_user_id = %cfg.own_user_id,
+            mode = mode,
+            "Bridge adapter enabled — spawning reader and writer"
+        );
+
+        let bridge_sender = input.sender();
+
+        // Shared active room state between reader and writer
+        let shared_room = bridge_adapter::active_room(cfg.room_id.clone());
+
+        // Spawn reader
+        let reader = MatrixBridgeReader::new(cfg.clone(), bridge_sender, shared_room.clone());
+        let (reader_shutdown_tx, reader_shutdown_rx) = tokio::sync::mpsc::channel(1);
+        tokio::spawn(async move {
+            reader.run(reader_shutdown_rx).await;
+        });
+
+        // Spawn writer
+        let writer = MatrixBridgeWriter::new(cfg, shared_room);
+        tokio::spawn(async move {
+            writer.run(output).await;
+        });
+
+        Some(reader_shutdown_tx)
+    } else {
+        tracing::info!("Bridge adapter disabled (missing env vars), output will be dropped");
+        drop(output);
+        None
+    };
 
     // Spawn event watcher
     let event_config = EventWatcherConfig {
@@ -81,6 +135,9 @@ async fn run_brain(
     let result = mux.run().await;
 
     // Clean up
+    if let Some(tx) = bridge_reader_shutdown_tx {
+        let _ = tx.send(()).await;
+    }
     heartbeat_shutdown.shutdown().await;
     let _ = event_shutdown_tx.send(()).await;
     let _ = event_handle.await;
@@ -95,34 +152,83 @@ async fn run_brain(
     }
 }
 
+/// Attempt to build a `MatrixBridgeConfig` from environment variables.
+///
+/// Required: `RALPH_MATRIX_HOMESERVER_URL`, `RALPH_MATRIX_ACCESS_TOKEN`, `BM_BRAIN_USER_ID`.
+/// Optional: `BM_BRAIN_ROOM_ID` (when absent, enters DM discovery mode),
+///           `BM_BRAIN_OPERATOR_USER_ID` (required for DM discovery security).
+fn resolve_bridge_config(workspace: &std::path::Path) -> Option<MatrixBridgeConfig> {
+    let homeserver_url = std::env::var("RALPH_MATRIX_HOMESERVER_URL").ok()?;
+    let access_token = std::env::var("RALPH_MATRIX_ACCESS_TOKEN").ok()?;
+    let own_user_id = std::env::var("BM_BRAIN_USER_ID").ok()?;
+
+    // Room ID is optional — when absent, brain enters DM discovery mode.
+    // Check workspace dm-room.json first (persisted from previous discovery).
+    let room_id = std::env::var("BM_BRAIN_ROOM_ID").ok().or_else(|| {
+        let dm_file = workspace.join("dm-room.json");
+        std::fs::read_to_string(&dm_file)
+            .ok()
+            .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+            .and_then(|v| v.get("room_id")?.as_str().map(String::from))
+    });
+
+    let operator_user_id = std::env::var("BM_BRAIN_OPERATOR_USER_ID").ok();
+
+    Some(MatrixBridgeConfig {
+        homeserver_url,
+        access_token,
+        room_id,
+        own_user_id,
+        operator_user_id,
+        workspace: Some(workspace.to_path_buf()),
+    })
+}
+
+/// Keys that `collect_env_vars` forwards to the ACP child process.
+const ENV_VAR_ALLOWLIST: &[&str] = &[
+    // Essential system
+    "GH_TOKEN",
+    "PATH",
+    "HOME",
+    // Anthropic direct auth
+    "ANTHROPIC_API_KEY",
+    "ANTHROPIC_AUTH_TOKEN",
+    "ANTHROPIC_MODEL",
+    "ANTHROPIC_BASE_URL",
+    // Vertex AI auth (used by claude CLI and claude-code-acp-rs)
+    "ANTHROPIC_VERTEX_PROJECT_ID",
+    "CLAUDE_CODE_USE_VERTEX",
+    "CLOUD_ML_REGION",
+    // Google Cloud credentials (needed for Vertex AI token exchange)
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_CLOUD_PROJECT",
+    "CLOUDSDK_CONFIG",
+    "CLOUDSDK_CORE_PROJECT",
+    // Bridge adapter config (room + identity for Matrix bridge I/O)
+    "BM_BRAIN_ROOM_ID",
+    "BM_BRAIN_USER_ID",
+    "BM_BRAIN_OPERATOR_USER_ID",
+    // Team repo path (for gh commands and board awareness)
+    "BM_TEAM_REPO",
+];
+
 /// Collect relevant environment variables for the ACP process.
 ///
 /// Includes Anthropic API keys, Vertex AI credentials, Google Cloud auth,
 /// and essential system variables needed by the ACP binary.
 fn collect_env_vars() -> Vec<(String, String)> {
+    collect_env_vars_with(|key| std::env::var(key).ok())
+}
+
+/// Testable core: collects env vars using the provided lookup function.
+fn collect_env_vars_with<F>(lookup: F) -> Vec<(String, String)>
+where
+    F: Fn(&str) -> Option<String>,
+{
     let mut vars = Vec::new();
 
-    for key in &[
-        // Essential system
-        "GH_TOKEN",
-        "PATH",
-        "HOME",
-        // Anthropic direct auth
-        "ANTHROPIC_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
-        "ANTHROPIC_MODEL",
-        "ANTHROPIC_BASE_URL",
-        // Vertex AI auth (used by claude CLI and claude-code-acp-rs)
-        "ANTHROPIC_VERTEX_PROJECT_ID",
-        "CLAUDE_CODE_USE_VERTEX",
-        "CLOUD_ML_REGION",
-        // Google Cloud credentials (needed for Vertex AI token exchange)
-        "GOOGLE_APPLICATION_CREDENTIALS",
-        "GOOGLE_CLOUD_PROJECT",
-        "CLOUDSDK_CONFIG",
-        "CLOUDSDK_CORE_PROJECT",
-    ] {
-        if let Ok(val) = std::env::var(key) {
+    for key in ENV_VAR_ALLOWLIST {
+        if let Some(val) = lookup(key) {
             vars.push((key.to_string(), val));
         }
     }
@@ -133,10 +239,20 @@ fn collect_env_vars() -> Vec<(String, String)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashMap;
+
+    /// Helper: build a mock lookup from a set of key-value pairs.
+    fn mock_env(pairs: &[(&str, &str)]) -> impl Fn(&str) -> Option<String> {
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect();
+        move |key: &str| map.get(key).cloned()
+    }
 
     #[test]
     fn collect_env_vars_includes_path() {
-        let vars = collect_env_vars();
+        let vars = collect_env_vars_with(mock_env(&[("PATH", "/usr/bin")]));
         assert!(
             vars.iter().any(|(k, _)| k == "PATH"),
             "PATH should be collected"
@@ -145,7 +261,7 @@ mod tests {
 
     #[test]
     fn collect_env_vars_skips_missing() {
-        let vars = collect_env_vars();
+        let vars = collect_env_vars_with(mock_env(&[("PATH", "/usr/bin")]));
         assert!(
             !vars.iter().any(|(k, _)| k == "NONEXISTENT_VAR_12345"),
             "Missing vars should not appear"
@@ -154,16 +270,69 @@ mod tests {
 
     #[test]
     fn collect_env_vars_includes_vertex_vars_when_set() {
-        // Verify that Vertex-related vars are in the allowlist.
-        // We can't reliably set env vars in parallel tests, so just
-        // verify the function handles present/absent vars correctly.
-        let vars = collect_env_vars();
-        // PATH is always present
+        let vars = collect_env_vars_with(mock_env(&[
+            ("PATH", "/usr/bin"),
+            ("ANTHROPIC_VERTEX_PROJECT_ID", "my-project"),
+            ("CLAUDE_CODE_USE_VERTEX", "1"),
+            ("CLOUD_ML_REGION", "us-east5"),
+        ]));
         assert!(vars.iter().any(|(k, _)| k == "PATH"));
-        // Vertex vars may or may not be set — just verify no panic
-        let _ = vars
+        assert!(vars
             .iter()
-            .filter(|(k, _)| k.starts_with("ANTHROPIC_") || k.starts_with("CLOUD"))
-            .count();
+            .any(|(k, v)| k == "ANTHROPIC_VERTEX_PROJECT_ID" && v == "my-project"));
+        assert!(vars
+            .iter()
+            .any(|(k, v)| k == "CLAUDE_CODE_USE_VERTEX" && v == "1"));
+        assert!(vars
+            .iter()
+            .any(|(k, v)| k == "CLOUD_ML_REGION" && v == "us-east5"));
+    }
+
+    #[test]
+    fn collect_env_vars_includes_brain_room_id_when_set() {
+        let vars = collect_env_vars_with(mock_env(&[
+            ("PATH", "/usr/bin"),
+            ("BM_BRAIN_ROOM_ID", "!test-room:localhost"),
+        ]));
+        assert!(
+            vars.iter()
+                .any(|(k, v)| k == "BM_BRAIN_ROOM_ID" && v == "!test-room:localhost"),
+            "BM_BRAIN_ROOM_ID should be collected when set"
+        );
+    }
+
+    #[test]
+    fn collect_env_vars_includes_brain_user_id_when_set() {
+        let vars = collect_env_vars_with(mock_env(&[
+            ("PATH", "/usr/bin"),
+            ("BM_BRAIN_USER_ID", "@bot:localhost"),
+        ]));
+        assert!(
+            vars.iter()
+                .any(|(k, v)| k == "BM_BRAIN_USER_ID" && v == "@bot:localhost"),
+            "BM_BRAIN_USER_ID should be collected when set"
+        );
+    }
+
+    #[test]
+    fn collect_env_vars_skips_brain_vars_when_absent() {
+        let vars = collect_env_vars_with(mock_env(&[("PATH", "/usr/bin")]));
+        assert!(
+            !vars.iter().any(|(k, _)| k == "BM_BRAIN_ROOM_ID"),
+            "BM_BRAIN_ROOM_ID should not appear when unset"
+        );
+        assert!(
+            !vars.iter().any(|(k, _)| k == "BM_BRAIN_USER_ID"),
+            "BM_BRAIN_USER_ID should not appear when unset"
+        );
+    }
+
+    #[test]
+    fn env_var_allowlist_contains_expected_keys() {
+        assert!(ENV_VAR_ALLOWLIST.contains(&"PATH"));
+        assert!(ENV_VAR_ALLOWLIST.contains(&"GH_TOKEN"));
+        assert!(ENV_VAR_ALLOWLIST.contains(&"ANTHROPIC_API_KEY"));
+        assert!(ENV_VAR_ALLOWLIST.contains(&"BM_BRAIN_ROOM_ID"));
+        assert!(ENV_VAR_ALLOWLIST.contains(&"BM_BRAIN_USER_ID"));
     }
 }

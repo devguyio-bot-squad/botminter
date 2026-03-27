@@ -9,7 +9,7 @@ use crate::config;
 
 pub use identity::{identity_add, identity_list, identity_remove, identity_rotate, identity_show};
 pub use lifecycle::{start, status, stop};
-pub use room::{room_create, room_list};
+pub use room::{room_create, room_create_dm, room_list};
 
 /// Common setup: load config, resolve team, check `just` is installed, discover bridge.
 pub(super) struct BridgeContext {

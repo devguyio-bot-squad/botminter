@@ -55,6 +55,52 @@ impl Bridge {
             name: room_name.clone(),
             room_id: room_id.clone(),
             created_at: now,
+            member: None,
+        });
+
+        Ok(RoomCreateResult {
+            name: room_name,
+            room_id,
+        })
+    }
+
+    /// Creates a DM room for a specific member via the bridge's room-create-dm recipe.
+    ///
+    /// The DM room is a private room between the operator and the member.
+    /// Caller must call `save()` to persist state changes.
+    pub fn create_dm_room(&mut self, member_name: &str) -> Result<RoomCreateResult> {
+        let room_spec = self.manifest.spec.room.as_ref().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Bridge '{}' does not support room management.",
+                self.bridge_name()
+            )
+        })?;
+
+        // Use room-create-dm recipe (convention: create recipe name + "-dm" suffix)
+        let create_recipe = format!("{}-dm", room_spec.create);
+        let result = self.invoke_recipe(&create_recipe, &[member_name])?;
+
+        let now = chrono::Utc::now().to_rfc3339();
+
+        let (room_name, room_id) = if let Some(val) = result {
+            (
+                val.get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or(member_name)
+                    .to_string(),
+                val.get("room_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+            )
+        } else {
+            (member_name.to_string(), None)
+        };
+
+        self.add_room(BridgeRoom {
+            name: room_name.clone(),
+            room_id: room_id.clone(),
+            created_at: now,
+            member: Some(member_name.to_string()),
         });
 
         Ok(RoomCreateResult {

@@ -251,6 +251,7 @@ mod provision_bridge {
                 name: "general".to_string(),
                 room_id: Some("existing-room-id".to_string()),
                 created_at: "2026-01-01T00:00:00Z".to_string(),
+                member: None,
             }],
             ..BridgeState::default()
         };

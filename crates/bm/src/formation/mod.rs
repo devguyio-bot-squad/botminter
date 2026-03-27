@@ -7,7 +7,9 @@ mod start_members;
 mod stop_members;
 
 pub use self::init::{register_team, setup_new_team_repo};
-pub use self::launch::{check_robot_enabled_mismatch, is_brain_member, launch_brain, launch_ralph};
+pub use self::launch::{
+    check_robot_enabled_mismatch, is_brain_member, launch_brain, BrainLaunchConfig, launch_ralph,
+};
 pub use self::local_topology::write_local_topology;
 pub use self::manager::{run_formation_manager, FormationManagerResult};
 pub use self::start_members::{

@@ -4,8 +4,8 @@ use clap_complete::CompleteEnv;
 
 use bm::cli::{
     BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Cli, Command, DaemonCommand,
-    KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand, RolesCommand,
-    RuntimeCommand, TeamsCommand,
+    DebugCommand, KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand,
+    RolesCommand, RuntimeCommand, TeamsCommand,
 };
 use bm::commands;
 
@@ -142,6 +142,9 @@ fn main() -> Result<()> {
                 BridgeRoomCommand::Create { name, team } => {
                     commands::bridge::room_create(&name, team.as_deref())?
                 }
+                BridgeRoomCommand::CreateDm { member, team } => {
+                    commands::bridge::room_create_dm(&member, team.as_deref())?
+                }
                 BridgeRoomCommand::List { team } => {
                     commands::bridge::room_list(team.as_deref())?
                 }
@@ -239,6 +242,16 @@ fn main() -> Result<()> {
         Command::Attach { team } => {
             commands::attach::run(team.as_deref())?;
         }
+        Command::Debug { command } => match command {
+            DebugCommand::BrainLogs {
+                member,
+                team,
+                lines,
+                entries,
+            } => {
+                commands::debug::brain_logs(&member, team.as_deref(), lines, entries)?;
+            }
+        },
         Command::Completions { shell } => {
             commands::completions::run(shell)?;
         }

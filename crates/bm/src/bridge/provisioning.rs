@@ -40,10 +40,18 @@ impl Bridge {
     /// - **Local bridges:** invoke the onboard recipe (creates user + returns token).
     /// - **External bridges:** check for existing credential; skip with warning if absent.
     ///
-    /// After provisioning, creates a team room if `rooms` is empty and the manifest
-    /// has a room spec. Caller must call `save()` to persist state changes.
+    /// For local bridges with a `verify` recipe, already-provisioned members are
+    /// verified against the actual bridge backend (reconciler pattern). If verification
+    /// fails, the stale identity is removed and the member is re-onboarded.
+    ///
+    /// After provisioning, creates a team room if `rooms` is empty (or was cleared
+    /// due to verify failures) and the manifest has a room spec.
+    /// Caller must call `save()` to persist state changes.
     pub fn provision(&mut self, members: &[super::BridgeMember], cred_store: &dyn CredentialStore) -> Result<ProvisionResult> {
         let mut results = Vec::new();
+        // Track whether any verify failed — indicates possible volume loss,
+        // which means rooms in state are also stale and need re-creation.
+        let mut any_verify_failed = false;
 
         for member in members {
             let is_reonboard = if self.state.identities.contains_key(&member.name) {
@@ -51,11 +59,44 @@ impl Bridge {
                 // re-onboard to recover from a previous keyring-locked failure.
                 let has_cred = resolve_credential_from_store(&member.name, cred_store)?;
                 if has_cred.is_some() || self.manifest.spec.bridge_type == "external" {
-                    results.push((member.name.clone(), ProvisionMemberResult::AlreadyProvisioned));
-                    continue;
+                    // External bridges: trust local state (no verify).
+                    if self.manifest.spec.bridge_type == "external" {
+                        results.push((member.name.clone(), ProvisionMemberResult::AlreadyProvisioned));
+                        continue;
+                    }
+                    // Local bridges with verify recipe: confirm credentials are
+                    // valid against the actual bridge backend.
+                    if let Some(ref verify_recipe) = self.manifest.spec.identity.verify {
+                        let verify_ok = self
+                            .invoke_recipe(verify_recipe, &[member.name.as_str()])
+                            .is_ok();
+                        if verify_ok {
+                            results.push((
+                                member.name.clone(),
+                                ProvisionMemberResult::AlreadyProvisioned,
+                            ));
+                            continue;
+                        }
+                        // Verify failed — stale credentials (e.g., volume loss).
+                        eprintln!(
+                            "  verify failed for {} — re-provisioning",
+                            member.name
+                        );
+                        any_verify_failed = true;
+                        self.state.identities.remove(&member.name);
+                        // Fall through to re-onboard below
+                    } else {
+                        // No verify recipe — trust local state (legacy behavior).
+                        results.push((
+                            member.name.clone(),
+                            ProvisionMemberResult::AlreadyProvisioned,
+                        ));
+                        continue;
+                    }
+                } else {
+                    // No credential in keyring — remove stale identity.
+                    self.state.identities.remove(&member.name);
                 }
-                // Remove stale identity so re-onboard proceeds below
-                self.state.identities.remove(&member.name);
                 true
             } else {
                 false
@@ -136,6 +177,13 @@ impl Bridge {
             }
         }
 
+        // If any verify failed (volume loss), rooms in state are also stale.
+        // Clear them so the room-creation logic below re-creates them.
+        if any_verify_failed && !self.state.rooms.is_empty() {
+            eprintln!("  clearing stale rooms from state (verify failures detected)");
+            self.state.rooms.clear();
+        }
+
         // Create team room if rooms are empty and manifest has room spec
         let mut room_created = None;
         if self.state.rooms.is_empty() {
@@ -156,6 +204,7 @@ impl Bridge {
                     name: room_name.clone(),
                     room_id,
                     created_at: chrono::Utc::now().to_rfc3339(),
+                    member: None,
                 });
                 room_created = Some(room_name);
             }

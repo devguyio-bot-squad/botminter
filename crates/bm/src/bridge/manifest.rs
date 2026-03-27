@@ -54,6 +54,11 @@ pub struct BridgeIdentitySpec {
     #[serde(rename = "rotate-credentials")]
     pub rotate_credentials: String,
     pub remove: String,
+    /// Optional verify recipe for local bridges. When present, provisioning
+    /// calls this recipe to confirm credentials are valid against the actual
+    /// bridge backend before deciding a member is already provisioned.
+    #[serde(default)]
+    pub verify: Option<String>,
 }
 
 /// Room command spec (optional).
@@ -116,6 +121,9 @@ pub struct BridgeRoom {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub room_id: Option<String>,
     pub created_at: String,
+    /// Member name this room belongs to (None = shared/team room).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub member: Option<String>,
 }
 
 impl Default for BridgeState {
@@ -323,6 +331,7 @@ spec:
                 name: "general".to_string(),
                 room_id: Some("r-123".to_string()),
                 created_at: "2026-03-08T00:00:00Z".to_string(),
+                member: None,
             }],
         };
 
@@ -452,6 +461,43 @@ spec:
         let err = result.unwrap_err().to_string();
         assert!(err.contains("nonexistent"));
         assert!(err.contains("does not exist"));
+    }
+
+    #[test]
+    fn bridge_room_member_field_round_trip() {
+        let room = BridgeRoom {
+            name: "dm-alice".to_string(),
+            room_id: Some("!abc:localhost".to_string()),
+            created_at: "2026-03-23T00:00:00Z".to_string(),
+            member: Some("superman-alice".to_string()),
+        };
+
+        let json = serde_json::to_string(&room).unwrap();
+        assert!(json.contains("\"member\":\"superman-alice\""));
+
+        let loaded: BridgeRoom = serde_json::from_str(&json).unwrap();
+        assert_eq!(loaded.member.as_deref(), Some("superman-alice"));
+    }
+
+    #[test]
+    fn bridge_room_member_none_omitted_in_json() {
+        let room = BridgeRoom {
+            name: "general".to_string(),
+            room_id: Some("!xyz:localhost".to_string()),
+            created_at: "2026-03-23T00:00:00Z".to_string(),
+            member: None,
+        };
+
+        let json = serde_json::to_string(&room).unwrap();
+        assert!(!json.contains("member"), "member: None should be omitted from JSON");
+    }
+
+    #[test]
+    fn bridge_room_member_defaults_to_none() {
+        // Old bridge-state.json files won't have the member field
+        let json = r#"{"name": "general", "room_id": "!xyz:localhost", "created_at": "2026-03-23T00:00:00Z"}"#;
+        let room: BridgeRoom = serde_json::from_str(json).unwrap();
+        assert!(room.member.is_none());
     }
 
     #[test]
