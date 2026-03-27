@@ -6,6 +6,7 @@ use anyhow::Result;
 use crate::bridge::{self, Bridge, LocalCredentialStore};
 use crate::profile::{self, CodingAgentDef, ProfileManifest};
 use crate::workspace;
+use crate::workspace::GhRemoteOps;
 
 // ── Sync parameters ─────────────────────────────────────────────────
 
@@ -95,12 +96,26 @@ pub fn sync_team_workspaces(params: &TeamSyncParams) -> Result<TeamSyncResult> {
     // Set up bridge context for RObot injection
     let robot_context = build_robot_context(params, &bridge_dir)?;
 
+    // Build remote ops for push mode
+    let gh_ops = if params.repos {
+        params.gh_token.map(|token| GhRemoteOps {
+            gh_token: token.to_string(),
+        })
+    } else {
+        None
+    };
+
     let mut created = 0u32;
     let mut updated = 0u32;
     let mut failures: Vec<String> = Vec::new();
 
     for member_dir_name in &members {
         let ws = params.team_path.join(member_dir_name);
+
+        // Clean up stale local dir without a workspace marker
+        if ws.exists() && !ws.join(".botminter.workspace").exists() {
+            fs::remove_dir_all(&ws).ok();
+        }
 
         if ws.join(".botminter.workspace").exists() {
             // Existing workspace — sync it
@@ -128,6 +143,8 @@ pub fn sync_team_workspaces(params: &TeamSyncParams) -> Result<TeamSyncResult> {
                 push: params.repos,
                 gh_token: params.gh_token,
                 coding_agent: params.coding_agent,
+                remote_ops: gh_ops.as_ref().map(|o| o as &dyn workspace::RemoteRepoOps),
+                team_submodule_url: None,
             };
             match workspace::create_workspace_repo(&ws_params) {
                 Ok(()) => {
@@ -210,8 +227,11 @@ fn provision_bridge(
     )
     .with_collection(params.keyring_collection.clone());
 
-    // Auto-start local bridge if stopped
-    if b.is_local() && !b.is_running() {
+    // Ensure local bridge is running before provisioning.
+    // Always call start() — it's idempotent: health-checks first and
+    // returns AlreadyRunning if healthy, or restarts if the container
+    // died (e.g., after VM reboot while state still says "running").
+    if b.is_local() {
         if which::which("just").is_err() {
             events.push(TeamSyncEvent::BridgeAutoStartSkipped {
                 reason: "'just' not found. Cannot start bridge for provisioning. \

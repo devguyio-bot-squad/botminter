@@ -49,6 +49,9 @@ just e2e-step     # Progressive E2E — one case at a time
 just e2e-reset    # Clean up progressive E2E state
 just test         # All tests: unit + conformance + e2e
 just clippy       # cargo clippy -p bm -- -D warnings
+just exploratory-test  # Exploratory tests: bridge lifecycle, workspace sync, idempotency (requires podman, keyring, gh)
+just exploratory-test-full  # Same + Lima VM boot script test (~10 min extra)
+just exploratory-test-clean # Clean up exploratory test artifacts
 just docs-serve   # Live-reload MkDocs dev server at localhost:8000
 just docs-build   # Build static docs site
 just release version notes_file  # Tag + GitHub release
@@ -237,8 +240,37 @@ Key rules:
 - There is a local checked out version under /opt/workspace/ralph-orchestrator
 - The checked out version has a local commit that we created to support setting a custom Telegram URL which is needed to run a Telegram mock server in e2e tests
 
+## Exploratory Testing
+
+Exploratory tests live at `crates/bm/tests/exploratory/` and cover bridge lifecycle, workspace sync idempotency, and Lima VM boot script idempotency. They test real infrastructure: podman containers (Tuwunel Matrix server), keyring credential storage, GitHub repos, and Lima VMs. These are the agentic replacement of a QE/QA engineer's verification workflow — fully scripted, repeatable, and agent-interpretable (see ADR-0009).
+
+**After each batch of code changes, exploratory tests MUST run before the work is considered done.** These tests catch integration issues that unit and e2e tests cannot — real container recovery, real keyring interactions, real Matrix API flows.
+
+```bash
+just exploratory-test        # Phases B-G: init, bridge, workspace, sync (~5 min)
+just exploratory-test-full   # All phases including Lima VM boot script (~15 min)
+just exploratory-test-clean  # Clean up artifacts (GitHub repos, containers, keyring)
+```
+
+**Keeping tests current:** When adding features or changing behavior in bridge, workspace, sync, or Lima provisioning, you MUST update the exploratory test plan (`PLAN.md`) and Justfile with corresponding test cases. Exploratory tests must reflect the current feature set — stale tests are as bad as no tests.
+
+**Prerequisites:** podman (rootless), unlocked keyring, `gh` authenticated with org delete permissions, port 8008 free. The suite runs a `preflight` check automatically.
+
+**Files:**
+- `crates/bm/tests/exploratory/PLAN.md` — 78 test cases across 7 phases
+- `crates/bm/tests/exploratory/Justfile` — automated execution recipes
+- `crates/bm/tests/exploratory/REPORT.md` — generated report from last run
+
 ## GUIARDRAILS / INVARIANTS / MUST COMPLY
-- You MUST use just test to validate any changes at least once before the task is done.
+- You MUST use `just test` to validate any changes at least once before the task is done.
+- You MUST run `just exploratory-test` after each batch of code changes that touch bridge, workspace, sync, or Lima provisioning.
 - You MUST fix any failures even if they're unrelated to your changes. You CAN present the user the situation before you fix such irrelevant failures.
 - You MUST focus on improving the quality of the code and you SHOULD leave the code better than you found it.
 - You SHOULD suggest any improvement or enhancements to the code or to CLAUDE.md whenever an improvement presents itself.
+
+## NON-NEGOTIABLE EXPECTATIONS
+- You MUST always do the engineering-wise proper fix to any problem you find, even in cases where the problems or failures are pre-existing conditions.
+- You MUST NOT accept pre-existing failures or pre-existing technical debt.
+- You SHOULD present the user with the proper solution if it's a signifcant change. 
+- Optimize for correctness and high quality standards. 
+- Tardiness and mediocrity are UNACCEPTABLE

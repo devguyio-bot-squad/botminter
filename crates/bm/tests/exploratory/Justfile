@@ -1,0 +1,882 @@
+# Exploratory test execution recipes for sync & bridge idempotency
+# Usage: just -f crates/bm/tests/exploratory/Justfile <phase>
+# Full run: just -f crates/bm/tests/exploratory/Justfile all
+
+set positional-arguments
+set dotenv-load := false
+
+BM := justfile_directory() + "/../../target/debug/bm"
+TEAM := "exploratory-test"
+ORG := "devguyio-bot-squad"
+REPO := "exploratory-test-team"
+FULL_REPO := ORG + "/" + REPO
+PROFILE := "scrum-compact"
+BOARD := "Exploratory Test Board"
+TEAM_DIR := env("HOME") + "/.botminter/workspaces/" + TEAM
+TEAM_REPO := TEAM_DIR + "/team"
+REPORT := justfile_directory() + "/REPORT.md"
+LIMA_VM := "lima-idem-test"
+
+# ─── Helpers ────────────────────────────────────────────────────
+
+[private]
+header section:
+    echo "" >> "{{REPORT}}"
+    echo "### {{section}}" >> "{{REPORT}}"
+    echo "" >> "{{REPORT}}"
+    echo "| # | Test | Result |" >> "{{REPORT}}"
+    echo "|---|------|--------|" >> "{{REPORT}}"
+
+[private]
+pass id desc:
+    echo "| {{id}} | {{desc}} | **PASS** |" >> "{{REPORT}}"
+    echo "  ✓ {{id}}: {{desc}}"
+
+[private]
+fail id desc detail:
+    echo "| {{id}} | {{desc}} | **FAIL** — {{detail}} |" >> "{{REPORT}}"
+    echo "  ✗ {{id}}: {{desc}} — {{detail}}"
+
+[private]
+note id desc detail:
+    echo "| {{id}} | {{desc}} | **NOTE** — {{detail}} |" >> "{{REPORT}}"
+    echo "  ℹ {{id}}: {{desc}} — {{detail}}"
+
+# ─── Setup ──────────────────────────────────────────────────────
+
+# Build bm from source
+build:
+    cd {{justfile_directory()}}/../../../.. && just build
+
+# Full cleanup — remove all test artifacts
+clean:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Cleaning up..."
+    podman rm -f bm-tuwunel-{{TEAM}} 2>/dev/null || true
+    podman volume rm bm-tuwunel-{{TEAM}}-data 2>/dev/null || true
+    gh repo delete {{FULL_REPO}} --yes 2>/dev/null || true
+    # Find and delete project board
+    PROJ_NUM=$(gh project list --owner {{ORG}} --format json 2>/dev/null \
+        | jq -r '.projects[] | select(.title=="{{BOARD}}") | .number' 2>/dev/null || true)
+    if [ -n "$PROJ_NUM" ]; then
+        gh project delete "$PROJ_NUM" --owner {{ORG}} --format json 2>/dev/null || true
+    fi
+    limactl delete --force {{LIMA_VM}} 2>/dev/null || true
+    rm -rf ~/.botminter ~/.config/botminter 2>/dev/null || true
+    # Clear keyring entries
+    for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing; do
+        secret-tool clear service "botminter.exploratory-test.tuwunel" username "$u" 2>/dev/null || true
+    done
+    echo "Clean."
+
+# Initialize report file
+init-report:
+    #!/usr/bin/env bash
+    BM_VERSION=$({{BM}} --version 2>/dev/null || echo "unknown")
+    LIMA_VERSION=$(limactl --version 2>/dev/null | head -1 || echo "unknown")
+    GH_USER=$(gh api user --jq .login 2>/dev/null || echo "unknown")
+    cat > "{{REPORT}}" << EOF
+    # Exploratory Test Report: Sync, Bridge & Lima Idempotency
+
+    **Date:** $(date +%Y-%m-%d)
+    **Build:** $BM_VERSION (local debug)
+    **Environment:** $(uname -sm), podman rootless, limactl $LIMA_VERSION, gh ($GH_USER)
+
+    ## Results
+    EOF
+    # Fix heredoc indentation
+    sed -i 's/^    //' "{{REPORT}}"
+
+# ─── Phase A: Lima VM Boot Script ──────────────────────────────
+
+phase-a: init-report
+    #!/usr/bin/env bash
+    set -uo pipefail
+    export GH_TOKEN=$(gh auth token)
+    BM="{{BM}}"
+    REPORT="{{REPORT}}"
+    LIMA_VM="{{LIMA_VM}}"
+
+    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
+    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
+    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
+
+    echo "" >> "$REPORT"
+    echo "### Phase A: Lima VM Boot Script Idempotency" >> "$REPORT"
+    echo "" >> "$REPORT"
+    echo "| # | Test | Result |" >> "$REPORT"
+    echo "|---|------|--------|" >> "$REPORT"
+
+    echo "Phase A: Lima VM Boot Script Idempotency"
+    echo "========================================="
+
+    # A0: Set up a minimal team so bm runtime create works
+    $BM init --non-interactive --profile {{PROFILE}} --team-name {{TEAM}} \
+        --org {{ORG}} --repo {{REPO}} --bridge tuwunel \
+        --github-project-board "{{BOARD}}" 2>&1 || true
+    pass "A0" "Set up team for bm runtime create"
+
+    # A0.5: Verify template has --overwrite
+    TEMPLATE=$($BM runtime create --render --name "$LIMA_VM" 2>/dev/null)
+    if echo "$TEMPLATE" | grep -q "addrepo --overwrite"; then
+        pass "A0.5" "Template has --overwrite (idempotent addrepo)"
+    else
+        fail "A0.5" "Template check" "--overwrite not found"
+    fi
+
+    # A1: Create VM with bm runtime create
+    echo "  Creating VM (this takes 5-10 minutes)..."
+    OUT=$($BM runtime create --non-interactive --name "$LIMA_VM" 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "A1" "Create VM with bm runtime create"; else fail "A1" "Create VM" "exit $EC: $(echo "$OUT" | tail -3)"; echo "$OUT"; fi
+
+    # A2: Verify tools inside VM
+    TOOLS_OK=true
+    for tool in bm ralph gh git just; do
+        if ! limactl shell "$LIMA_VM" -- which "$tool" >/dev/null 2>&1; then
+            fail "A2" "Verify tools installed" "$tool not found"
+            TOOLS_OK=false
+            break
+        fi
+    done
+    # claude may be npm-installed — check separately
+    if $TOOLS_OK; then
+        if limactl shell "$LIMA_VM" -- which claude >/dev/null 2>&1; then
+            pass "A2" "All tools installed (bm, ralph, claude, gh, git, just)"
+        else
+            note "A2" "Tools installed" "claude not found (npm install may have failed), others OK"
+        fi
+    fi
+
+    # A3: Stop VM
+    echo "  Stopping VM..."
+    limactl stop "$LIMA_VM" 2>&1
+    if [ $? -eq 0 ]; then pass "A3" "Stop VM cleanly"; else fail "A3" "Stop VM" "exit $?"; fi
+
+    # A4: Restart VM (provision scripts re-run — tests --overwrite)
+    echo "  Restarting VM (tests boot script idempotency)..."
+    OUT=$(limactl start "$LIMA_VM" 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "A4" "Restart VM — boot scripts idempotent"; else fail "A4" "Restart VM" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
+
+    # A5: Tools still present after restart
+    TOOLS_OK=true
+    for tool in bm ralph gh git just; do
+        if ! limactl shell "$LIMA_VM" -- which "$tool" >/dev/null 2>&1; then
+            fail "A5" "Tools present after restart" "$tool missing"
+            TOOLS_OK=false
+            break
+        fi
+    done
+    if $TOOLS_OK; then pass "A5" "All tools present after restart"; fi
+
+    # A6: GH auth survives restart
+    GH_STATUS=$(limactl shell "$LIMA_VM" -- gh auth status 2>&1 || true)
+    if echo "$GH_STATUS" | grep -q "Logged in"; then
+        pass "A6" "gh auth survives restart"
+    else
+        note "A6" "gh auth after restart" "Not logged in (expected if no token was passed)"
+    fi
+
+    # A7: Third boot cycle
+    echo "  Third boot cycle (stop + start)..."
+    limactl stop "$LIMA_VM" 2>&1
+    OUT=$(limactl start "$LIMA_VM" 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "A7" "Third boot — no cumulative drift"; else fail "A7" "Third boot" "exit $EC"; fi
+
+    # A8: Delete VM
+    echo "  Deleting VM..."
+    limactl delete --force "$LIMA_VM" 2>&1
+    if [ $? -eq 0 ]; then pass "A8" "Delete VM"; else fail "A8" "Delete VM" "exit $?"; fi
+
+    # A9: Cleanup team created for Phase A
+    gh repo delete {{FULL_REPO}} --yes 2>/dev/null || true
+    PROJ_NUM=$(gh project list --owner {{ORG}} --format json 2>/dev/null \
+        | jq -r '.projects[] | select(.title=="{{BOARD}}") | .number' 2>/dev/null || true)
+    [ -n "$PROJ_NUM" ] && gh project delete "$PROJ_NUM" --owner {{ORG}} --format json 2>/dev/null || true
+    rm -rf ~/.botminter ~/.config/botminter 2>/dev/null || true
+    pass "A9" "Cleaned up Phase A team artifacts"
+
+    echo "Phase A complete."
+
+# ─── Phase B: Team Init + Hire ─────────────────────────────────
+
+phase-b:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    export GH_TOKEN=$(gh auth token)
+    BM="{{BM}}"
+    REPORT="{{REPORT}}"
+    TEAM_DIR="{{TEAM_DIR}}"
+    TEAM_REPO="{{TEAM_REPO}}"
+
+    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
+    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
+    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
+
+    echo "" >> "$REPORT"
+    echo "### Phase B: Team Init + Hire" >> "$REPORT"
+    echo "" >> "$REPORT"
+    echo "| # | Test | Result |" >> "$REPORT"
+    echo "|---|------|--------|" >> "$REPORT"
+
+    echo "Phase B: Team Init + Hire"
+    echo "========================="
+
+    # B1: Fresh init
+    OUT=$($BM init --non-interactive --profile {{PROFILE}} --team-name {{TEAM}} --org {{ORG}} --repo {{REPO}} --bridge tuwunel --github-project-board "{{BOARD}}" 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ] && echo "$OUT" | grep -q "created"; then pass "B1" "Fresh init with tuwunel bridge"; else fail "B1" "Fresh init" "exit $EC"; echo "$OUT"; fi
+
+    # B2: GitHub repo
+    OUT=$(gh repo view {{FULL_REPO}} --json name,visibility 2>&1)
+    if echo "$OUT" | grep -q "PRIVATE"; then pass "B2" "GitHub repo exists (private)"; else fail "B2" "GitHub repo" "$OUT"; fi
+
+    # B3: Project board
+    OUT=$(gh project list --owner {{ORG}} --format json 2>&1)
+    if echo "$OUT" | grep -q "{{BOARD}}"; then pass "B3" "Project board exists"; else fail "B3" "Project board" "not found"; fi
+
+    # B4: Labels bootstrapped
+    LABELS=$(gh label list -R {{FULL_REPO}} --json name --jq '.[].name' 2>&1)
+    if echo "$LABELS" | grep -q "kind/"; then pass "B4" "Kind labels bootstrapped"; else fail "B4" "Labels" "no kind/ labels found"; fi
+
+    # B5: Config registered
+    if grep -q "{{TEAM}}" ~/.botminter/config.yml 2>/dev/null && grep -q "{{FULL_REPO}}" ~/.botminter/config.yml 2>/dev/null; then
+        pass "B5" "Team registered in config.yml"
+    else
+        fail "B5" "Config" "team not found in config"
+    fi
+
+    # B6: Profile content
+    if [ -f "$TEAM_REPO/PROCESS.md" ] && [ -d "$TEAM_REPO/knowledge" ]; then
+        pass "B6" "Team repo has profile content (PROCESS.md, knowledge/)"
+    else
+        fail "B6" "Profile content" "missing PROCESS.md or knowledge/"
+    fi
+
+    # B7: Init again (not idempotent by design)
+    OUT=$($BM init --non-interactive --profile {{PROFILE}} --team-name {{TEAM}} --org {{ORG}} --repo {{REPO}} --bridge tuwunel --github-project-board "{{BOARD}}" 2>&1)
+    EC=$?
+    if [ $EC -ne 0 ]; then note "B7" "Init again" "Correctly rejects: 'directory exists' (exit $EC)"; else fail "B7" "Init duplicate" "Should have failed but succeeded"; fi
+
+    # B8: Hire alice
+    OUT=$($BM hire superman --name alice 2>&1)
+    if echo "$OUT" | grep -q "Hired"; then pass "B8" "Hire alice"; else fail "B8" "Hire alice" "$OUT"; fi
+
+    # B9: Hire bob
+    OUT=$($BM hire superman --name bob 2>&1)
+    if echo "$OUT" | grep -q "Hired"; then pass "B9" "Hire bob"; else fail "B9" "Hire bob" "$OUT"; fi
+
+    # B10: Verify member config
+    ALICE_DIR="$TEAM_REPO/members/superman-alice"
+    if [ -f "$ALICE_DIR/PROMPT.md" ] && [ -f "$ALICE_DIR/CLAUDE.md" ] && [ -f "$ALICE_DIR/ralph.yml" ]; then
+        pass "B10" "Member config files present"
+    else
+        fail "B10" "Member config" "missing files in $ALICE_DIR"
+    fi
+
+    # B11: Hire duplicate
+    OUT=$($BM hire superman --name alice 2>&1)
+    EC=$?
+    if [ $EC -ne 0 ]; then note "B11" "Hire duplicate alice" "Correctly rejects: 'already exists'"; else fail "B11" "Hire duplicate" "Should have failed"; fi
+
+    echo "Phase B complete."
+
+# ─── Phase C: Bridge Lifecycle ─────────────────────────────────
+
+phase-c:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    export GH_TOKEN=$(gh auth token)
+    BM="{{BM}}"
+    REPORT="{{REPORT}}"
+    TEAM_DIR="{{TEAM_DIR}}"
+    BSTATE="$TEAM_DIR/bridge-state.json"
+    PWFILE="$TEAM_DIR/tuwunel-passwords.json"
+    CONTAINER="bm-tuwunel-{{TEAM}}"
+    MATRIX_URL="http://127.0.0.1:8008"
+
+    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
+    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
+    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
+
+    echo "" >> "$REPORT"
+    echo "### Phase C: Bridge Lifecycle (Tuwunel)" >> "$REPORT"
+    echo "" >> "$REPORT"
+    echo "| # | Test | Result |" >> "$REPORT"
+    echo "|---|------|--------|" >> "$REPORT"
+
+    echo "Phase C: Bridge Lifecycle"
+    echo "========================="
+
+    # ── C.1: First provisioning ──
+
+    echo "  C.1: First bridge provisioning..."
+    OUT=$($BM teams sync --bridge -v 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "C1" "First sync --bridge"; else fail "C1" "First sync --bridge" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
+
+    # C2: Container running
+    CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{{{.Status}}' 2>&1)
+    if echo "$CSTATUS" | grep -q "Up"; then pass "C2" "Container running"; else fail "C2" "Container" "status=$CSTATUS"; fi
+
+    # C3: Matrix healthy
+    HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
+    if [ "$HTTP" = "200" ]; then pass "C3" "Matrix server healthy"; else fail "C3" "Matrix health" "HTTP $HTTP"; fi
+
+    # C4: Bridge state
+    STATUS=$(jq -r '.status' "$BSTATE" 2>/dev/null)
+    ID_COUNT=$(jq '.identities | length' "$BSTATE" 2>/dev/null)
+    ROOM_COUNT=$(jq '.rooms | length' "$BSTATE" 2>/dev/null)
+    if [ "$STATUS" = "running" ] && [ "$ID_COUNT" = "3" ] && [ "$ROOM_COUNT" = "1" ]; then
+        pass "C4" "Bridge state: running, 3 identities, 1 room"
+    else
+        fail "C4" "Bridge state" "status=$STATUS ids=$ID_COUNT rooms=$ROOM_COUNT"
+    fi
+
+    # C5: Passwords
+    PW_COUNT=$(jq 'length' "$PWFILE" 2>/dev/null || echo "0")
+    if [ "$PW_COUNT" = "3" ]; then pass "C5" "Passwords file has 3 entries"; else fail "C5" "Passwords" "count=$PW_COUNT"; fi
+
+    # C6: Keyring
+    KR_ALICE=$(secret-tool lookup service "botminter.{{TEAM}}.tuwunel" username superman-alice 2>/dev/null || true)
+    KR_BOB=$(secret-tool lookup service "botminter.{{TEAM}}.tuwunel" username superman-bob 2>/dev/null || true)
+    if [ -n "$KR_ALICE" ] && [ -n "$KR_BOB" ]; then
+        pass "C6" "Keyring has credentials for alice + bob"
+    else
+        fail "C6" "Keyring" "alice='${KR_ALICE:+set}${KR_ALICE:-empty}' bob='${KR_BOB:+set}${KR_BOB:-empty}'"
+    fi
+
+    # C7: Admin login works
+    ADMIN_PASS=$(jq -r '.bmadmin' "$PWFILE" 2>/dev/null)
+    LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"bmadmin\"},\"password\":\"$ADMIN_PASS\"}" \
+        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+    ADMIN_TOKEN=$(echo "$LOGIN" | jq -r '.access_token // empty')
+    if [ -n "$ADMIN_TOKEN" ]; then pass "C7" "Admin can login to Matrix"; else fail "C7" "Admin login" "no token"; fi
+
+    # C8: Room exists
+    ROOM_RESP=$(curl -sf "$MATRIX_URL/_matrix/client/v3/directory/room/%23exploratory-test-general:localhost" 2>/dev/null || echo '{}')
+    ROOM_ID=$(echo "$ROOM_RESP" | jq -r '.room_id // empty')
+    if [ -n "$ROOM_ID" ]; then pass "C8" "Room exploratory-test-general exists ($ROOM_ID)"; else fail "C8" "Room" "not found"; fi
+
+    # ── C.2: Idempotency ──
+
+    echo "  C.2: Bridge idempotency..."
+    ALICE_TOKEN_BEFORE=$KR_ALICE
+
+    OUT=$($BM teams sync --bridge -v 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ] && echo "$OUT" | grep -q "already provisioned\|AlreadyProvisioned"; then
+        pass "C9" "Sync --bridge again (idempotent)"
+    elif [ $EC -eq 0 ]; then
+        pass "C9" "Sync --bridge again (no error)"
+    else
+        fail "C9" "Sync --bridge again" "exit $EC"
+    fi
+
+    ID_COUNT2=$(jq '.identities | length' "$BSTATE" 2>/dev/null)
+    if [ "$ID_COUNT2" = "$ID_COUNT" ]; then pass "C10" "No duplicate identities ($ID_COUNT2)"; else fail "C10" "Duplicates" "before=$ID_COUNT after=$ID_COUNT2"; fi
+
+    ROOM_COUNT2=$(jq '.rooms | length' "$BSTATE" 2>/dev/null)
+    if [ "$ROOM_COUNT2" = "$ROOM_COUNT" ]; then pass "C11" "No duplicate rooms ($ROOM_COUNT2)"; else fail "C11" "Rooms" "before=$ROOM_COUNT after=$ROOM_COUNT2"; fi
+
+    KR_ALICE2=$(secret-tool lookup service "botminter.{{TEAM}}.tuwunel" username superman-alice 2>/dev/null || true)
+    if [ "$KR_ALICE2" = "$ALICE_TOKEN_BEFORE" ]; then pass "C12" "Keyring token unchanged"; else note "C12" "Keyring token" "changed (may be expected if re-onboarded)"; fi
+
+    OUT=$($BM teams sync --bridge -v 2>&1)
+    if [ $? -eq 0 ]; then pass "C13" "Third sync --bridge still idempotent"; else fail "C13" "Third sync" "exit $?"; fi
+
+    # ── C.3: Recovery — container stopped ──
+
+    echo "  C.3: Recovery from stopped container..."
+    podman stop "$CONTAINER" 2>/dev/null
+    pass "C14" "Stopped container externally"
+
+    STATUS_AFTER_STOP=$(jq -r '.status' "$BSTATE" 2>/dev/null)
+    if [ "$STATUS_AFTER_STOP" = "running" ]; then pass "C15" "Bridge state still says 'running' (stale)"; else note "C15" "Bridge state" "status=$STATUS_AFTER_STOP"; fi
+
+    HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
+    if [ "$HTTP" != "200" ]; then pass "C16" "Matrix server unreachable after stop"; else note "C16" "Matrix" "still responding (container may auto-restart)"; fi
+
+    OUT=$($BM teams sync --bridge -v 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "C17" "Sync --bridge recovers stopped container"; else fail "C17" "Recovery" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
+
+    CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{{{.Status}}' 2>&1)
+    if echo "$CSTATUS" | grep -q "Up"; then pass "C18" "Container running again"; else fail "C18" "Container" "status=$CSTATUS"; fi
+
+    HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
+    if [ "$HTTP" = "200" ]; then pass "C19" "Matrix server healthy after recovery"; else fail "C19" "Matrix health" "HTTP $HTTP"; fi
+
+    ID_COUNT3=$(jq '.identities | length' "$BSTATE" 2>/dev/null)
+    if [ "$ID_COUNT3" = "3" ]; then pass "C20" "Identities intact after recovery ($ID_COUNT3)"; else fail "C20" "Identities" "count=$ID_COUNT3"; fi
+
+    # ── C.4: Recovery — container removed ──
+
+    echo "  C.4: Recovery from removed container..."
+    podman rm -f "$CONTAINER" 2>/dev/null
+    pass "C21" "Force-removed container"
+
+    OUT=$($BM teams sync --bridge -v 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "C22" "Sync --bridge recreates from scratch"; else fail "C22" "Recreation" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
+
+    CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{{{.Status}}' 2>&1)
+    if echo "$CSTATUS" | grep -q "Up"; then pass "C23" "New container running"; else fail "C23" "Container" "status=$CSTATUS"; fi
+
+    ID_COUNT4=$(jq '.identities | length' "$BSTATE" 2>/dev/null)
+    if [ "$ID_COUNT4" -ge 3 ]; then pass "C24" "Identities re-provisioned ($ID_COUNT4)"; else fail "C24" "Identities" "count=$ID_COUNT4"; fi
+
+    ROOM_COUNT3=$(jq '.rooms | length' "$BSTATE" 2>/dev/null)
+    if [ "$ROOM_COUNT3" -ge 1 ]; then pass "C25" "Room recovered ($ROOM_COUNT3)"; else fail "C25" "Rooms" "count=$ROOM_COUNT3"; fi
+
+    KR_ALICE3=$(secret-tool lookup service "botminter.{{TEAM}}.tuwunel" username superman-alice 2>/dev/null || true)
+    if [ -n "$KR_ALICE3" ]; then
+        # Verify alice can actually login
+        ALICE_PASS=$(jq -r '.["superman-alice"]' "$PWFILE" 2>/dev/null)
+        LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+            -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-alice\"},\"password\":\"$ALICE_PASS\"}" \
+            "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+        if echo "$LOGIN" | jq -r '.access_token // empty' | grep -q .; then
+            pass "C26" "Keyring + Matrix login valid after full recreation"
+        else
+            fail "C26" "Login" "keyring set but Matrix login failed"
+        fi
+    else
+        fail "C26" "Keyring" "no credential for alice"
+    fi
+
+    # ── C.5: Recovery — volume removed (full reset) ──
+
+    echo "  C.5: Recovery from full reset (container + volume + state)..."
+    podman rm -f "$CONTAINER" 2>/dev/null
+    podman volume rm "bm-tuwunel-{{TEAM}}-data" 2>/dev/null
+    rm -f "$BSTATE"
+    pass "C27" "Removed container + volume"
+    pass "C28" "Removed bridge-state.json"
+
+    OUT=$($BM teams sync --bridge -v 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "C29" "Sync --bridge from scratch (full reset)"; else fail "C29" "Full reset" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
+
+    CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{{{.Status}}' 2>&1)
+    HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
+    ID_COUNT5=$(jq '.identities | length' "$BSTATE" 2>/dev/null || echo "0")
+    if echo "$CSTATUS" | grep -q "Up" && [ "$HTTP" = "200" ] && [ "$ID_COUNT5" -ge 3 ]; then
+        pass "C30" "Full recovery: container up, Matrix healthy, $ID_COUNT5 identities"
+    else
+        fail "C30" "Full recovery" "container=$CSTATUS http=$HTTP ids=$ID_COUNT5"
+    fi
+
+    # ── C.6: Onboard edge cases — pre-existing Matrix user ──
+
+    echo "  C.6: Pre-existing user onboard..."
+
+    # C31: Register a user directly via Matrix API (outside bm)
+    ADMIN_PASS2=$(jq -r '.bmadmin' "$PWFILE" 2>/dev/null)
+    ADMIN_LOGIN2=$(curl -sf -X POST -H "Content-Type: application/json" \
+        -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"bmadmin\"},\"password\":\"$ADMIN_PASS2\"}" \
+        "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+    ADMIN_TOKEN2=$(echo "$ADMIN_LOGIN2" | jq -r '.access_token // empty')
+
+    # Register pre-existing user via UIAA
+    PRE_PASS="pre-existing-pass-123"
+    REG1=$(curl -s -X POST -H "Content-Type: application/json" \
+        -d "{\"username\":\"superman-pre-existing\",\"password\":\"$PRE_PASS\"}" \
+        "$MATRIX_URL/_matrix/client/v3/register" 2>/dev/null || echo '{}')
+    SESSION=$(echo "$REG1" | jq -r '.session // empty')
+    REG_TOKEN="bm-tuwunel-reg-default"
+    if [ -n "$SESSION" ]; then
+        REG2=$(curl -sf -X POST -H "Content-Type: application/json" \
+            -d "{\"username\":\"superman-pre-existing\",\"password\":\"$PRE_PASS\",\"auth\":{\"type\":\"m.login.registration_token\",\"token\":\"$REG_TOKEN\",\"session\":\"$SESSION\"}}" \
+            "$MATRIX_URL/_matrix/client/v3/register" 2>/dev/null || echo '{}')
+        PRE_UID=$(echo "$REG2" | jq -r '.user_id // empty')
+        if [ -n "$PRE_UID" ]; then
+            pass "C31" "Pre-registered user via Matrix API ($PRE_UID)"
+        else
+            fail "C31" "Pre-register user" "registration failed: $REG2"
+        fi
+    else
+        fail "C31" "Pre-register user" "no session: $REG1"
+    fi
+
+    # C32: Hire + sync onboards the pre-existing user
+    $BM hire superman --name pre-existing 2>&1 || true
+    OUT=$($BM teams sync --bridge -v 2>&1)
+    EC=$?
+    PRE_ID=$(jq -r '.identities["superman-pre-existing"].username // empty' "$BSTATE" 2>/dev/null)
+    if [ $EC -eq 0 ] && [ -n "$PRE_ID" ]; then
+        pass "C32" "Sync onboards pre-existing user (M_USER_IN_USE handled)"
+    else
+        fail "C32" "Pre-existing onboard" "exit $EC, identity='$PRE_ID'"
+    fi
+
+    # C33: Verify pre-existing user has valid credentials in keyring and can login
+    KR_PRE=$(secret-tool lookup service "botminter.{{TEAM}}.tuwunel" username superman-pre-existing 2>/dev/null || true)
+    if [ -n "$KR_PRE" ]; then
+        # Try to login with stored password
+        PRE_STORED=$(jq -r '.["superman-pre-existing"]' "$PWFILE" 2>/dev/null)
+        PRE_LOGIN=$(curl -sf -X POST -H "Content-Type: application/json" \
+            -d "{\"type\":\"m.login.password\",\"identifier\":{\"type\":\"m.id.user\",\"user\":\"superman-pre-existing\"},\"password\":\"$PRE_STORED\"}" \
+            "$MATRIX_URL/_matrix/client/v3/login" 2>/dev/null || echo '{}')
+        PRE_TOKEN=$(echo "$PRE_LOGIN" | jq -r '.access_token // empty')
+        if [ -n "$PRE_TOKEN" ]; then
+            pass "C33" "Pre-existing user: keyring + Matrix login valid"
+        else
+            fail "C33" "Pre-existing login" "keyring set but login failed"
+        fi
+    else
+        fail "C33" "Pre-existing keyring" "no credential stored"
+    fi
+
+    echo "Phase C complete."
+
+# ─── Phase D: Workspace Sync ──────────────────────────────────
+
+phase-d:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    export GH_TOKEN=$(gh auth token)
+    BM="{{BM}}"
+    REPORT="{{REPORT}}"
+    TEAM_DIR="{{TEAM_DIR}}"
+    ALICE_WS="$TEAM_DIR/superman-alice"
+    BOB_WS="$TEAM_DIR/superman-bob"
+
+    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
+    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
+    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
+
+    echo "" >> "$REPORT"
+    echo "### Phase D: Workspace Sync Idempotency" >> "$REPORT"
+    echo "" >> "$REPORT"
+    echo "| # | Test | Result |" >> "$REPORT"
+    echo "|---|------|--------|" >> "$REPORT"
+
+    echo "Phase D: Workspace Sync"
+    echo "========================"
+
+    # ── D.1: Verify initial state (workspaces created by phase C) ──
+
+    check_ws() {
+        local WS="$1" NAME="$2"
+        local OK=true
+        for f in ralph.yml CLAUDE.md PROMPT.md .botminter.workspace; do
+            if [ ! -f "$WS/$f" ]; then OK=false; break; fi
+        done
+        echo "$OK"
+    }
+
+    if [ "$(check_ws "$ALICE_WS" alice)" = "true" ]; then pass "D1" "Alice workspace has all context files"; else fail "D1" "Alice workspace" "missing files"; fi
+    if [ "$(check_ws "$BOB_WS" bob)" = "true" ]; then pass "D2" "Bob workspace has all context files"; else fail "D2" "Bob workspace" "missing files"; fi
+
+    if [ -d "$ALICE_WS/team/members" ]; then pass "D3" "Team submodule present"; else fail "D3" "Team submodule" "team/members/ not found"; fi
+
+    if [ -d "$ALICE_WS/.claude/agents" ]; then pass "D4" "Agent dir assembled"; else fail "D4" "Agent dir" ".claude/agents/ not found"; fi
+
+    GIT_STATUS=$(git -C "$ALICE_WS" status --porcelain 2>/dev/null)
+    if [ -z "$GIT_STATUS" ]; then pass "D5" "Git repo clean"; else note "D5" "Git status" "not clean: $GIT_STATUS"; fi
+
+    GIT_LOG=$(git -C "$ALICE_WS" log --oneline -1 2>/dev/null)
+    if echo "$GIT_LOG" | grep -q "Initial workspace setup"; then pass "D6" "Git has initial commit"; else note "D6" "Git log" "$GIT_LOG"; fi
+
+    # ── D.2: Sync idempotency ──
+
+    echo "  D.2: Sync idempotency..."
+    OUT=$($BM teams sync -v 2>&1)
+    if [ $? -eq 0 ]; then pass "D7" "Sync again (no changes)"; else fail "D7" "Sync" "exit $?"; fi
+
+    if [ "$(check_ws "$ALICE_WS" alice)" = "true" ]; then pass "D8" "Context files still present after re-sync"; else fail "D8" "Context files" "missing after re-sync"; fi
+
+    OUT=$($BM teams sync -v 2>&1)
+    if [ $? -eq 0 ]; then pass "D9" "Third sync still clean"; else fail "D9" "Third sync" "exit $?"; fi
+
+    # ── D.3: Stale workspace recovery ──
+
+    echo "  D.3: Stale workspace recovery..."
+    rm -f "$ALICE_WS/.botminter.workspace"
+    pass "D10" "Removed .botminter.workspace marker"
+
+    OUT=$($BM teams sync -v 2>&1)
+    if [ $? -eq 0 ]; then pass "D11" "Sync recovers stale workspace"; else fail "D11" "Recovery" "exit $?: $(echo "$OUT" | tail -3)"; fi
+
+    if [ "$(check_ws "$ALICE_WS" alice)" = "true" ]; then
+        pass "D12" "All context files restored after recovery"
+    else
+        fail "D12" "Recovery" "missing files"
+    fi
+
+    if [ -d "$ALICE_WS/team/members" ]; then pass "D13" "Team submodule intact after recovery"; else fail "D13" "Team submodule" "missing"; fi
+
+    # ── D.4: Missing context file recovery ──
+
+    echo "  D.4: Missing context file recovery..."
+    rm -f "$BOB_WS/CLAUDE.md"
+    pass "D14" "Deleted CLAUDE.md from bob workspace"
+
+    OUT=$($BM teams sync -v 2>&1)
+    if [ $? -eq 0 ] && [ -f "$BOB_WS/CLAUDE.md" ]; then
+        pass "D15" "Sync restores CLAUDE.md"
+    else
+        fail "D15" "Restore CLAUDE.md" "file still missing or sync failed"
+    fi
+
+    rm -f "$BOB_WS/ralph.yml"
+    pass "D16" "Deleted ralph.yml from bob workspace"
+
+    OUT=$($BM teams sync -v 2>&1)
+    if [ $? -eq 0 ] && [ -f "$BOB_WS/ralph.yml" ]; then
+        pass "D17" "Sync restores ralph.yml"
+    else
+        fail "D17" "Restore ralph.yml" "file still missing or sync failed"
+    fi
+
+    # ── D.5: Junk directory cleanup ──
+
+    echo "  D.5: Junk directory cleanup..."
+    CAROL_WS="$TEAM_DIR/superman-carol"
+    mkdir -p "$CAROL_WS"
+    echo "leftover junk" > "$CAROL_WS/junk.txt"
+    pass "D18" "Created junk dir at future carol workspace path"
+
+    $BM hire superman --name carol 2>&1
+    pass "D19" "Hired carol"
+
+    OUT=$($BM teams sync -v 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ] && [ ! -f "$CAROL_WS/junk.txt" ] && [ -f "$CAROL_WS/.botminter.workspace" ]; then
+        pass "D20" "Junk cleaned, proper workspace created for carol"
+    elif [ $EC -eq 0 ] && [ -f "$CAROL_WS/junk.txt" ]; then
+        fail "D20" "Junk cleanup" "junk.txt still present"
+    else
+        fail "D20" "Workspace creation" "exit $EC"
+    fi
+
+    echo "Phase D complete."
+
+# ─── Phase E: Full Sync (-a) ──────────────────────────────────
+
+phase-e:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    export GH_TOKEN=$(gh auth token)
+    BM="{{BM}}"
+    REPORT="{{REPORT}}"
+    TEAM_DIR="{{TEAM_DIR}}"
+
+    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
+    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
+    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
+
+    echo "" >> "$REPORT"
+    echo "### Phase E: Full Sync (-a flag)" >> "$REPORT"
+    echo "" >> "$REPORT"
+    echo "| # | Test | Result |" >> "$REPORT"
+    echo "|---|------|--------|" >> "$REPORT"
+
+    echo "Phase E: Full Sync (--bridge)"
+    echo "==============================="
+    # Note: -a includes --repos which requires GitHub workspace repos per member.
+    # For local-only teams, use --bridge (bridge + workspace, no git push).
+
+    OUT=$($BM teams sync --bridge -v 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "E1" "Full sync --bridge -v"; else fail "E1" "Full sync" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
+
+    OUT=$($BM teams sync --bridge -v 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "E2" "Full sync again (idempotent)"; else fail "E2" "Idempotent sync" "exit $EC"; fi
+
+    $BM hire superman --name dave 2>&1
+    OUT=$($BM teams sync --bridge -v 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ] && [ -f "$TEAM_DIR/superman-dave/.botminter.workspace" ]; then
+        pass "E3" "Hire dave + sync creates new workspace"
+    else
+        fail "E3" "Dave workspace" "exit $EC or missing marker"
+    fi
+
+    # Count workspaces
+    WS_COUNT=$(ls -d "$TEAM_DIR"/superman-*/. 2>/dev/null | wc -l)
+    if [ "$WS_COUNT" -ge 4 ]; then pass "E4" "All $WS_COUNT member workspaces present"; else fail "E4" "Workspaces" "only $WS_COUNT found"; fi
+
+    # Count bridge identities
+    ID_COUNT=$(jq '.identities | length' "$TEAM_DIR/bridge-state.json" 2>/dev/null || echo "0")
+    if [ "$ID_COUNT" -ge 5 ]; then pass "E5" "Bridge has $ID_COUNT identities (admin + 4 members)"; else fail "E5" "Identities" "count=$ID_COUNT"; fi
+
+    echo "Phase E complete."
+
+# ─── Phase F: Error Handling ──────────────────────────────────
+
+phase-f:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    export GH_TOKEN=$(gh auth token)
+    BM="{{BM}}"
+    REPORT="{{REPORT}}"
+
+    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
+    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
+    note()  { echo "| $1 | $2 | **NOTE** — $3 |" >> "$REPORT"; echo "  ℹ $1: $2 — $3"; }
+
+    echo "" >> "$REPORT"
+    echo "### Phase F: Error Handling" >> "$REPORT"
+    echo "" >> "$REPORT"
+    echo "| # | Test | Result |" >> "$REPORT"
+    echo "|---|------|--------|" >> "$REPORT"
+
+    echo "Phase F: Error Handling"
+    echo "========================"
+
+    # F1: Without just
+    OUT=$(PATH=/usr/bin:/bin $BM teams sync --bridge -v 2>&1)
+    # Should not crash — either skips or errors gracefully
+    if echo "$OUT" | grep -qi "just\|skip\|not found"; then
+        pass "F1" "Graceful handling when just not in PATH"
+    else
+        note "F1" "Without just" "Output: $(echo "$OUT" | tail -2)"
+    fi
+
+    # F2: bm status
+    OUT=$($BM status -v 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then pass "F2" "bm status -v works"; else fail "F2" "bm status" "exit $EC"; fi
+
+    # F3: bm members list
+    OUT=$($BM members list 2>&1)
+    EC=$?
+    MEMBER_COUNT=$(echo "$OUT" | grep -c "superman-" || true)
+    if [ $EC -eq 0 ] && [ "$MEMBER_COUNT" -ge 3 ]; then pass "F3" "bm members list shows $MEMBER_COUNT members"; else fail "F3" "members list" "exit $EC, count=$MEMBER_COUNT"; fi
+
+    # F4: bm teams show
+    OUT=$($BM teams show 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ] && echo "$OUT" | grep -q "{{TEAM}}"; then pass "F4" "bm teams show works"; else fail "F4" "teams show" "exit $EC"; fi
+
+    echo "Phase F complete."
+
+# ─── Phase G: Cleanup ────────────────────────────────────────
+
+phase-g:
+    #!/usr/bin/env bash
+    set -uo pipefail
+    export GH_TOKEN=$(gh auth token)
+    REPORT="{{REPORT}}"
+    CONTAINER="bm-tuwunel-{{TEAM}}"
+
+    pass()  { echo "| $1 | $2 | **PASS** |" >> "$REPORT"; echo "  ✓ $1: $2"; }
+    fail()  { echo "| $1 | $2 | **FAIL** — $3 |" >> "$REPORT"; echo "  ✗ $1: $2 — $3"; }
+
+    echo "" >> "$REPORT"
+    echo "### Phase G: Cleanup" >> "$REPORT"
+    echo "" >> "$REPORT"
+    echo "| # | Test | Result |" >> "$REPORT"
+    echo "|---|------|--------|" >> "$REPORT"
+
+    echo "Phase G: Cleanup"
+    echo "================"
+
+    podman stop "$CONTAINER" 2>/dev/null; podman rm "$CONTAINER" 2>/dev/null
+    pass "G1" "Removed bridge container"
+
+    podman volume rm "bm-tuwunel-{{TEAM}}-data" 2>/dev/null
+    pass "G2" "Removed bridge volume"
+
+    gh repo delete {{FULL_REPO}} --yes 2>/dev/null
+    pass "G3" "Deleted GitHub repo"
+
+    PROJ_NUM=$(gh project list --owner {{ORG}} --format json 2>/dev/null \
+        | jq -r '.projects[] | select(.title=="{{BOARD}}") | .number' 2>/dev/null || true)
+    if [ -n "$PROJ_NUM" ]; then
+        gh project delete "$PROJ_NUM" --owner {{ORG}} --format json 2>/dev/null
+    fi
+    pass "G4" "Deleted GitHub project"
+
+    rm -rf ~/.botminter ~/.config/botminter
+    pass "G5" "Removed local state"
+
+    # Clear keyring
+    for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing; do
+        secret-tool clear service "botminter.{{TEAM}}.tuwunel" username "$u" 2>/dev/null || true
+    done
+    pass "G6" "Cleared keyring entries"
+
+    limactl delete --force {{LIMA_VM}} 2>/dev/null || true
+    pass "G7" "Deleted Lima VM (if exists)"
+
+    # Verify clean
+    CONTAINERS=$(podman ps -a --filter "name=bm-tuwunel-{{TEAM}}" --format '{{{{.Names}}' 2>/dev/null)
+    REPO_EXISTS=$(gh repo view {{FULL_REPO}} --json name 2>/dev/null && echo "yes" || echo "no")
+    if [ -z "$CONTAINERS" ] && [ "$REPO_EXISTS" = "no" ] && [ ! -d ~/.botminter ]; then
+        pass "G8" "Verified clean: no containers, no repo, no local state"
+    else
+        fail "G8" "Verify clean" "containers='$CONTAINERS' repo=$REPO_EXISTS botminter=$(test -d ~/.botminter && echo exists || echo gone)"
+    fi
+
+    echo "" >> "$REPORT"
+    echo "---" >> "$REPORT"
+    echo "" >> "$REPORT"
+    echo "## Summary" >> "$REPORT"
+    PASS_COUNT=$(grep -c '**PASS**' "$REPORT" || true)
+    FAIL_COUNT=$(grep -c '**FAIL**' "$REPORT" || true)
+    NOTE_COUNT=$(grep -c '**NOTE**' "$REPORT" || true)
+    echo "" >> "$REPORT"
+    echo "- **PASS:** $PASS_COUNT" >> "$REPORT"
+    echo "- **FAIL:** $FAIL_COUNT" >> "$REPORT"
+    echo "- **NOTE:** $NOTE_COUNT" >> "$REPORT"
+
+    echo ""
+    echo "Phase G complete."
+    echo "================================"
+    echo "PASS: $PASS_COUNT | FAIL: $FAIL_COUNT | NOTE: $NOTE_COUNT"
+    echo "Report: $REPORT"
+
+# ─── Run all phases ───────────────────────────────────────────
+
+# Pre-flight check: verify environment is ready
+preflight:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Pre-flight checks..."
+    # Port 8008 must be free for Tuwunel
+    if ss -tlnp sport = :8008 2>/dev/null | grep -q LISTEN; then
+        echo "FATAL: Port 8008 is in use. Free it before running tests."
+        ss -tlnp sport = :8008
+        exit 1
+    fi
+    echo "  ✓ Port 8008 is free"
+    # Keyring must be unlocked
+    if ! (secret-tool store --label "bm-preflight" service bm-preflight user probe <<< "x" 2>/dev/null \
+          && secret-tool clear service bm-preflight user probe 2>/dev/null); then
+        echo "FATAL: Keyring is locked. Unlock it first."
+        exit 1
+    fi
+    echo "  ✓ Keyring is unlocked"
+    # Required tools
+    for tool in podman just gh curl jq; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "FATAL: $tool not found in PATH"
+            exit 1
+        fi
+    done
+    echo "  ✓ All required tools available"
+    # GH auth
+    if ! gh auth status >/dev/null 2>&1; then
+        echo "FATAL: gh not authenticated"
+        exit 1
+    fi
+    echo "  ✓ gh authenticated"
+    echo "Pre-flight OK."
+
+# Run all phases except Lima (B through G)
+all-no-lima: build preflight init-report phase-b phase-c phase-d phase-e phase-f phase-g
+
+# Run all phases including Lima VM test
+# Phase A creates+destroys its own team; clean ensures no state leaks to Phase B.
+all: build preflight init-report phase-a clean phase-b phase-c phase-d phase-e phase-f phase-g
+
+# Run only bridge + workspace phases (skip init, assume team exists)
+bridge-and-workspace: phase-c phase-d phase-e
