@@ -80,8 +80,6 @@ impl BridgeLifecycle {
 /// Stored credentials for a team (tokens).
 #[derive(Debug, Serialize, Deserialize, Clone, Default)]
 pub struct Credentials {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gh_token: Option<String>,
     /// Legacy field: kept for backward compat with existing config.yml files.
     /// New code uses the CredentialStore (system keyring) for bridge tokens.
     /// Read from old configs but never written to new ones.
@@ -164,19 +162,6 @@ pub fn save_to(path: &Path, config: &BotminterConfig) -> Result<()> {
     Ok(())
 }
 
-/// Extracts GH_TOKEN from team credentials, erroring if missing.
-pub fn require_gh_token(team: &TeamEntry) -> Result<String> {
-    team.credentials
-        .gh_token
-        .clone()
-        .with_context(|| {
-            format!(
-                "No GH token configured for team '{}'. \
-                 Run `bm init` or edit `~/.botminter/config.yml`.",
-                team.name
-            )
-        })
-}
 
 /// Loads the existing config or returns a fresh default.
 pub fn load_or_default() -> BotminterConfig {
@@ -306,7 +291,6 @@ mod tests {
                 profile: "scrum".to_string(),
                 github_repo: "org/my-team".to_string(),
                 credentials: Credentials {
-                    gh_token: Some("ghp_test123".to_string()),
                     telegram_bot_token: None,
                     webhook_secret: None,
                 },
@@ -326,10 +310,6 @@ mod tests {
         assert_eq!(loaded.teams.len(), 1);
         assert_eq!(loaded.teams[0].name, "my-team");
         assert_eq!(loaded.teams[0].profile, "scrum");
-        assert_eq!(
-            loaded.teams[0].credentials.gh_token,
-            Some("ghp_test123".to_string())
-        );
         assert!(loaded.teams[0].credentials.telegram_bot_token.is_none());
     }
 

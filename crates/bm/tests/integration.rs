@@ -378,7 +378,11 @@ fn hire_duplicate_name_errors() {
 
     bm_hire(tmp.path(), "architect", "bob", "test-team");
     let stderr = bm_run_fail(tmp.path(), &["hire", "architect", "--name", "bob"]);
-    assert!(stderr.contains("already exists"));
+    assert!(stderr.contains("already exists"), "Should error on duplicate: {stderr}");
+    assert!(
+        stderr.contains("--reuse-app"),
+        "Error should suggest --reuse-app for credential attachment: {stderr}"
+    );
 }
 
 // ── Projects tests ───────────────────────────────────────────────────

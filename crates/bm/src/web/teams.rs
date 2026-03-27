@@ -87,7 +87,6 @@ mod tests {
                     profile: "scrum".to_string(),
                     github_repo: "org/beta-team".to_string(),
                     credentials: config::Credentials {
-                        gh_token: Some("ghp_secret".to_string()),
                         telegram_bot_token: None,
                         webhook_secret: None,
                     },

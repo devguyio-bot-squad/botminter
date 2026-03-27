@@ -12,8 +12,6 @@ metadata:
   category: workflow
   tags: [github, projects-v2, status, workflow, transitions]
   requires-tools: [gh, jq]
-  requires-env: [GH_TOKEN]
-  requires-scope: [project]
 ---
 
 # Status Workflow

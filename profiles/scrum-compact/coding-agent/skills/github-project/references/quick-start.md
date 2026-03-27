@@ -77,19 +77,17 @@ source "$SCRIPT_DIR/setup.sh"
 
 ## Prerequisites
 
-- `gh` CLI installed
-- `GH_TOKEN` env var set
-- **Token has `project` scope:** `gh auth refresh -s project`
+- `gh` CLI installed (auth is auto-managed via `GH_CONFIG_DIR`)
 - `team/` is a git repo with GitHub remote
 - `.botminter.yml` exists in workspace root
 
 ## Troubleshooting
 
-**Error: "Missing 'project' scope"**
-→ `gh auth refresh -s project`
+**Error: "Cannot access GitHub Projects"**
+→ Verify the GitHub App has `organization_projects: admin` permission
 
 **Error: "Status verification failed"**
-→ Check token scope, retry operation
+→ Check App permissions, retry operation
 
 **Other errors?**
 → See `references/troubleshooting.md`

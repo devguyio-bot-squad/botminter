@@ -131,7 +131,7 @@ Once you approve, the agent moves the epic to `po:backlog`.
 Alternatively, you can move the issue's Status to `po:backlog` directly on the Project board — the agent will pick it up on the next scan.
 
 !!! note "Why `@bot`?"
-    Since all agents share a single GitHub token, the agent and the human post comments as the same GitHub user. Prefixing your comments with `@bot` lets the agent distinguish your responses from its own comments. This is a temporary convention — per-role GitHub tokens are planned, which will eliminate the need for the prefix.
+    Each agent has its own GitHub App identity and posts as a bot user (e.g., `team-superman[bot]`). The `@bot` prefix on your comments helps the agent reliably identify human input in contexts where comment parsing is ambiguous.
 
 ## Backlog activation
 
@@ -254,8 +254,8 @@ Throughout the epic lifecycle, you'll interact at these gates:
 
 The agent never auto-approves at any of these gates. You can interact via comments or by moving the Status directly on the Project board.
 
-!!! warning "Shared token limitation"
-    Currently, all agents share a single GitHub token — so the agent and you post comments as the same GitHub user. The `@bot` prefix on your comments helps the agent distinguish your responses from its own. Per-role GitHub tokens are planned for a future release, which will remove the need for this prefix.
+!!! tip "Comment attribution"
+    Each agent posts as its own GitHub App bot user (e.g., `team-superman[bot]`), making it easy to distinguish agent comments from your own. The `@bot` prefix on your comments provides an additional signal for reliable parsing.
 
 ## Monitor progress
 

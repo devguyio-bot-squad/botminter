@@ -11,7 +11,9 @@ use anyhow::Context;
 
 use super::log::daemon_log;
 use super::run::DaemonState;
-use crate::formation;
+use crate::formation::{self, CredentialDomain};
+use crate::git::app_auth;
+use crate::git::manifest_flow::credential_keys;
 use crate::state;
 
 // ── Request types ────────────────────────────────────────────────────
@@ -167,6 +169,48 @@ pub(super) async fn start_members_handler(
 
     match result {
         Ok(Ok(start_result)) => {
+            // After successful launch, cache App credentials for launched members
+            // and spawn refresh loops (on-demand — Req 8).
+            let team_name_for_cache = state.team_name.clone();
+            let app_creds = Arc::clone(&state.app_credentials);
+            let shutdown_for_refresh = Arc::clone(&state.shutdown);
+            let paths_for_refresh = Arc::clone(&state.paths);
+
+            for member in &start_result.launched {
+                if let Ok(cached) = cache_app_credentials(
+                    &team_name_for_cache,
+                    &member.name,
+                    &member.pid,
+                ) {
+                    let member_name = member.name.clone();
+                    app_creds
+                        .lock()
+                        .unwrap()
+                        .insert(member_name.clone(), cached.clone());
+
+                    daemon_log(
+                        &paths,
+                        "INFO",
+                        &format!("Cached App credentials for member '{}'", member_name),
+                    );
+
+                    // Spawn background refresh task (50-minute interval — Req 11)
+                    let refresh_creds = cached;
+                    let refresh_shutdown = Arc::clone(&shutdown_for_refresh);
+                    let refresh_paths = Arc::clone(&paths_for_refresh);
+                    let refresh_team = team_name_for_cache.clone();
+                    tokio::spawn(async move {
+                        run_token_refresh_loop(
+                            refresh_creds,
+                            &refresh_team,
+                            &refresh_paths,
+                            &refresh_shutdown,
+                        )
+                        .await;
+                    });
+                }
+            }
+
             let has_errors = !start_result.errors.is_empty();
             let resp = StartMembersResponse {
                 ok: !has_errors,
@@ -223,6 +267,184 @@ pub(super) async fn start_members_handler(
                 .into_response()
         }
     }
+}
+
+/// Reads App credentials from keyring for a launched member and returns
+/// cached credentials for the refresh loop. Returns Err if the member
+/// has no App credentials (not an error — just means legacy auth).
+fn cache_app_credentials(
+    team_name: &str,
+    member_name: &str,
+    _pid: &u32,
+) -> anyhow::Result<formation::AppCredentialsCached> {
+    let formation = formation::local::create_local_formation(team_name)?;
+    let store = formation.credential_store(CredentialDomain::GitHubApp {
+        team_name: team_name.to_string(),
+        member_name: member_name.to_string(),
+    })?;
+
+    let client_id = store
+        .retrieve(&credential_keys::client_id(member_name))?
+        .ok_or_else(|| anyhow::anyhow!("No App client_id for member"))?;
+    let private_key = store
+        .retrieve(&credential_keys::private_key(member_name))?
+        .ok_or_else(|| anyhow::anyhow!("No App private_key for member"))?;
+    let installation_id_str = store
+        .retrieve(&credential_keys::installation_id(member_name))?
+        .ok_or_else(|| anyhow::anyhow!("No App installation_id for member"))?;
+    let installation_id: u64 = installation_id_str
+        .parse()
+        .context("Invalid installation ID")?;
+
+    // Resolve workspace from state.json
+    let runtime_state = state::load()?;
+    let state_key = format!("{}/{}", team_name, member_name);
+    let workspace = runtime_state
+        .members
+        .get(&state_key)
+        .map(|rt| rt.workspace.clone())
+        .ok_or_else(|| anyhow::anyhow!("Member not in state.json"))?;
+
+    Ok(formation::AppCredentialsCached {
+        member_name: member_name.to_string(),
+        client_id,
+        private_key,
+        installation_id,
+        workspace,
+    })
+}
+
+/// Background task: refreshes installation tokens every 50 minutes.
+/// On failure, retries with exponential backoff. The existing token
+/// remains valid until its 1-hour expiry (Req 11).
+async fn run_token_refresh_loop(
+    creds: formation::AppCredentialsCached,
+    team_name: &str,
+    paths: &super::config::DaemonPaths,
+    shutdown: &std::sync::atomic::AtomicBool,
+) {
+    use super::log::daemon_log;
+
+    // 50 minutes = 3000 seconds
+    const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(50 * 60);
+    const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300); // 5 min
+
+    let mut backoff = std::time::Duration::from_secs(10);
+
+    loop {
+        tokio::time::sleep(REFRESH_INTERVAL).await;
+
+        if shutdown.load(Ordering::SeqCst) {
+            daemon_log(
+                paths,
+                "INFO",
+                &format!("Token refresh loop stopping for member '{}'", creds.member_name),
+            );
+            break;
+        }
+
+        // Check if the member process is still alive
+        let state_key = format!("{}/{}", team_name, creds.member_name);
+        if !is_member_alive(&state_key) {
+            daemon_log(
+                paths,
+                "INFO",
+                &format!(
+                    "Member '{}' no longer running, stopping refresh loop",
+                    creds.member_name
+                ),
+            );
+            break;
+        }
+
+        // Attempt token refresh with inner retry loop on failure.
+        // Tokens expire after 60 minutes. We refresh at 50 minutes, leaving
+        // a 10-minute window for retries before the token becomes invalid.
+        loop {
+            let refresh_result = attempt_token_refresh(&creds, team_name).await;
+
+            match refresh_result {
+                Ok(Ok(())) => {
+                    daemon_log(
+                        paths,
+                        "INFO",
+                        &format!("Refreshed token for member '{}'", creds.member_name),
+                    );
+                    backoff = std::time::Duration::from_secs(10);
+                    break; // Success — resume outer 50-min cycle
+                }
+                Ok(Err(e)) => {
+                    daemon_log(
+                        paths,
+                        "ERROR",
+                        &format!(
+                            "Token refresh failed for '{}': {}. Retrying in {}s. Existing token valid until expiry.",
+                            creds.member_name,
+                            e,
+                            backoff.as_secs()
+                        ),
+                    );
+                    tokio::time::sleep(backoff).await;
+                    backoff = std::cmp::min(backoff * 2, MAX_BACKOFF);
+
+                    // Before retrying, check shutdown and member liveness
+                    if shutdown.load(Ordering::SeqCst) || !is_member_alive(&state_key) {
+                        daemon_log(
+                            paths,
+                            "INFO",
+                            &format!(
+                                "Stopping retry loop for '{}' (shutdown or member exited)",
+                                creds.member_name
+                            ),
+                        );
+                        return; // Exit the entire refresh function
+                    }
+                }
+                Err(e) => {
+                    daemon_log(
+                        paths,
+                        "ERROR",
+                        &format!("Token refresh task panicked for '{}': {}", creds.member_name, e),
+                    );
+                    return; // Unrecoverable — exit
+                }
+            }
+        }
+    }
+}
+
+/// Check if a member process is still alive based on state.json.
+fn is_member_alive(state_key: &str) -> bool {
+    match state::load() {
+        Ok(s) => s
+            .members
+            .get(state_key)
+            .map(|rt| state::is_alive(rt.pid))
+            .unwrap_or(false),
+        Err(_) => false,
+    }
+}
+
+/// Attempt a single token refresh: JWT generation + exchange + atomic write.
+async fn attempt_token_refresh(
+    creds: &formation::AppCredentialsCached,
+    team_name: &str,
+) -> Result<anyhow::Result<()>, tokio::task::JoinError> {
+    tokio::task::spawn_blocking({
+        let creds = creds.clone();
+        let team_name = team_name.to_string();
+        move || -> anyhow::Result<()> {
+            let jwt = app_auth::generate_jwt(&creds.client_id, &creds.private_key)?;
+            let inst_token =
+                app_auth::exchange_for_installation_token(&jwt, creds.installation_id)?;
+
+            let formation = formation::local::create_local_formation(&team_name)?;
+            formation.refresh_token(&creds.member_name, &creds.workspace, &inst_token.token)?;
+
+            Ok(())
+        }
+    })
+    .await
 }
 
 /// POST /api/members/stop — stops team members.
@@ -516,18 +738,11 @@ fn start_loop_blocking(
     std::fs::write(&prompt_file, &req.prompt)
         .with_context(|| format!("Failed to write loop prompt to {}", prompt_file.display()))?;
 
-    let gh_token = team_entry
-        .credentials
-        .gh_token
-        .as_deref()
-        .unwrap_or("");
-
     // Spawn ralph run with the prompt
     let mut cmd = std::process::Command::new("ralph");
     cmd.args(["run", "-p"])
         .arg(&prompt_file)
         .current_dir(&ws)
-        .env("GH_TOKEN", gh_token)
         .env_remove("CLAUDECODE")
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())

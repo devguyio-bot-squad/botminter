@@ -183,12 +183,10 @@ pub fn validate_knowledge_path(path: &str) -> Result<()> {
 }
 
 /// Builds env vars from team credentials for interactive sessions.
-pub fn credentials_env(team: &crate::config::TeamEntry) -> Vec<(String, String)> {
-    let mut env = Vec::new();
-    if let Some(token) = &team.credentials.gh_token {
-        env.push(("GH_TOKEN".to_string(), token.clone()));
-    }
-    env
+pub fn credentials_env(_team: &crate::config::TeamEntry) -> Vec<(String, String)> {
+    // GH_TOKEN is no longer stored in config — members use GH_CONFIG_DIR
+    // (daemon-managed) and operators use `gh auth login`.
+    Vec::new()
 }
 
 /// Augments the botminter.yml in the team repo with a projects section.

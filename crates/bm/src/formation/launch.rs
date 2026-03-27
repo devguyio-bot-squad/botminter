@@ -5,19 +5,28 @@ use anyhow::{Context, Result};
 
 /// Launches `ralph run -p PROMPT.md` in the given workspace directory.
 /// Returns the child PID.
+///
+/// If `gh_config_dir` is set, `GH_CONFIG_DIR` is set instead of `GH_TOKEN`.
+/// This is used for members with GitHub App credentials: the daemon writes
+/// `hosts.yml` with the installation token, and `gh` reads from it.
+/// `GH_TOKEN` would override `hosts.yml`, so we must not set both.
 pub fn launch_ralph(
     workspace: &std::path::Path,
-    gh_token: &str,
     member_token: Option<&str>,
     bridge_type: Option<&str>,
     service_url: Option<&str>,
+    gh_config_dir: Option<&std::path::Path>,
 ) -> Result<u32> {
     let mut cmd = Command::new("ralph");
     cmd.args(["run", "-p", "PROMPT.md"])
         .current_dir(workspace)
-        .env("GH_TOKEN", gh_token)
-        // Unset CLAUDECODE to avoid nested-Claude issues
         .env_remove("CLAUDECODE");
+
+    // App-credential members use GH_CONFIG_DIR (daemon-managed hosts.yml).
+    // Members without App creds rely on the host's `gh auth` session.
+    if let Some(config_dir) = gh_config_dir {
+        cmd.env("GH_CONFIG_DIR", config_dir);
+    }
 
     if let Some(token) = member_token {
         match bridge_type {
@@ -54,7 +63,6 @@ pub fn launch_ralph(
 /// Configuration for launching a brain process, bundling bridge-related params.
 pub struct BrainLaunchConfig<'a> {
     pub workspace: &'a std::path::Path,
-    pub gh_token: &'a str,
     pub system_prompt_path: &'a std::path::Path,
     pub member_token: Option<&'a str>,
     pub bridge_type: Option<&'a str>,
@@ -63,6 +71,8 @@ pub struct BrainLaunchConfig<'a> {
     pub user_id: Option<&'a str>,
     pub operator_user_id: Option<&'a str>,
     pub team_repo: Option<&'a std::path::Path>,
+    /// When set, uses GH_CONFIG_DIR instead of GH_TOKEN (App credential path).
+    pub gh_config_dir: Option<&'a std::path::Path>,
 }
 
 /// Launches the brain multiplexer for a chat-first member.
@@ -82,8 +92,13 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
     .arg("--system-prompt")
     .arg(config.system_prompt_path)
     .current_dir(config.workspace)
-    .env("GH_TOKEN", config.gh_token)
     .env_remove("CLAUDECODE");
+
+    // App-credential members use GH_CONFIG_DIR (daemon-managed hosts.yml).
+    // Members without App creds rely on the host's `gh auth` session.
+    if let Some(config_dir) = config.gh_config_dir {
+        cmd.env("GH_CONFIG_DIR", config_dir);
+    }
 
     if let Some(token) = config.member_token {
         match config.bridge_type {
@@ -192,8 +207,8 @@ mod tests {
         // The real test is that `bm start` resolves credentials per-member
         // via resolve_credential_from_store() in the member loop.
 
-        // Verify launch_ralph compiles with bridge-type-aware parameters
-        let _: fn(&std::path::Path, &str, Option<&str>, Option<&str>, Option<&str>) -> Result<u32> =
+        // Verify launch_ralph compiles with bridge-type-aware parameters + gh_config_dir
+        let _: fn(&std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32> =
             launch_ralph;
     }
 

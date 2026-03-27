@@ -16,7 +16,7 @@ case "$1" in
       curl -s "${RALPH_MATRIX_HOMESERVER_URL}/_matrix/client/versions" \
         > "$PWD/.ralph-stub-matrix-response" 2>&1
     fi
-    env | grep -E '^(RALPH_|GH_TOKEN)' | sort > "$PWD/.ralph-stub-env"
+    env | grep -E '^(RALPH_|GH_TOKEN|GH_CONFIG_DIR)' | sort > "$PWD/.ralph-stub-env"
     if [ -f "$PWD/.ralph-stub-ignore-sigterm" ]; then
       echo "$(date -u +%FT%TZ) SIGTERM trap set to ignore" >> "$PWD/.ralph-stub-sigterm.log"
       trap 'echo "$(date -u +%FT%TZ) SIGTERM received and ignored" >> "$PWD/.ralph-stub-sigterm.log"' SIGTERM

@@ -3,9 +3,9 @@ use clap::Parser;
 use clap_complete::CompleteEnv;
 
 use bm::cli::{
-    BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Cli, Command, DaemonCommand,
-    DebugCommand, EnvCommand, KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand,
-    RolesCommand, RuntimeCommand, TeamsCommand,
+    BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Cli, Command, CredentialsCommand,
+    DaemonCommand, DebugCommand, EnvCommand, KnowledgeCommand, MembersCommand, ProfilesCommand,
+    ProjectsCommand, RolesCommand, RuntimeCommand, TeamsCommand,
 };
 use bm::commands;
 
@@ -26,6 +26,7 @@ fn main() -> Result<()> {
             bridge,
             skip_github,
             workzone,
+            credentials_file,
         } => {
             if non_interactive {
                 commands::init::run_non_interactive(
@@ -38,6 +39,7 @@ fn main() -> Result<()> {
                     bridge,
                     skip_github,
                     workzone,
+                    credentials_file,
                 )?;
             } else {
                 commands::init::run()?;
@@ -64,8 +66,34 @@ fn main() -> Result<()> {
             }
         },
 
-        Command::Hire { role, name, team } => {
-            commands::hire::run(&role, name.as_deref(), team.as_deref())?;
+        Command::Hire {
+            role,
+            name,
+            team,
+            reuse_app,
+            app_id,
+            client_id,
+            private_key_file,
+            installation_id,
+            save_credentials,
+        } => {
+            let app_flags = commands::hire::AppCredentialFlags {
+                reuse_app,
+                app_id: app_id.as_deref(),
+                client_id: client_id.as_deref(),
+                private_key_file: private_key_file.as_deref(),
+                installation_id: installation_id.as_deref(),
+                save_credentials: save_credentials.as_deref(),
+            };
+            commands::hire::run(&role, name.as_deref(), team.as_deref(), app_flags)?;
+        }
+
+        Command::Fire {
+            member,
+            team,
+            keep_app,
+        } => {
+            commands::fire::run(&member, team.as_deref(), keep_app)?;
         }
 
         Command::Members { command } => match command {
@@ -95,6 +123,12 @@ fn main() -> Result<()> {
             }
             ProjectsCommand::Sync { team } => {
                 commands::projects::sync(team.as_deref())?;
+            }
+        },
+
+        Command::Credentials { command } => match command {
+            CredentialsCommand::Export { output, team } => {
+                commands::credentials::export(&output, team.as_deref())?;
             }
         },
 

@@ -51,6 +51,10 @@ pub enum Command {
         /// Override workzone directory
         #[arg(long)]
         workzone: Option<String>,
+
+        /// Import App credentials from a YAML file (for machine migration)
+        #[arg(long)]
+        credentials_file: Option<String>,
     },
 
     /// Hire a member into a role
@@ -65,6 +69,45 @@ pub enum Command {
         /// Team to operate on (defaults to default team)
         #[arg(short, long)]
         team: Option<String>,
+
+        /// Reuse an existing GitHub App instead of creating a new one.
+        /// Requires --app-id, --client-id, --private-key-file, and --installation-id.
+        #[arg(long)]
+        reuse_app: bool,
+
+        /// GitHub App ID (used with --reuse-app)
+        #[arg(long, requires = "reuse_app")]
+        app_id: Option<String>,
+
+        /// GitHub App Client ID (used with --reuse-app)
+        #[arg(long, requires = "reuse_app")]
+        client_id: Option<String>,
+
+        /// Path to PEM file with the GitHub App private key (used with --reuse-app)
+        #[arg(long, requires = "reuse_app")]
+        private_key_file: Option<String>,
+
+        /// GitHub App installation ID (used with --reuse-app)
+        #[arg(long, requires = "reuse_app")]
+        installation_id: Option<String>,
+
+        /// Save created App credentials to a file
+        #[arg(long)]
+        save_credentials: Option<String>,
+    },
+
+    /// Fire a member (stop, uninstall App, remove credentials and directories)
+    Fire {
+        /// Member name to fire
+        member: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+
+        /// Preserve the GitHub App installation for reuse
+        #[arg(long)]
+        keep_app: bool,
     },
 
     /// Start members (all, or a specific one)
@@ -184,6 +227,12 @@ pub enum Command {
     Projects {
         #[command(subcommand)]
         command: ProjectsCommand,
+    },
+
+    /// Credential management (export/import for machine migration)
+    Credentials {
+        #[command(subcommand)]
+        command: CredentialsCommand,
     },
 
     /// Knowledge and invariant management
@@ -506,6 +555,20 @@ pub enum ProjectsCommand {
 
     /// Sync GitHub Project board status options and print view setup instructions
     Sync {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum CredentialsCommand {
+    /// Export all members' credentials to a YAML file (for machine migration)
+    Export {
+        /// Output file path
+        #[arg(short, long)]
+        output: String,
+
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,

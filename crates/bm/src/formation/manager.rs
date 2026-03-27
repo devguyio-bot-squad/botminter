@@ -37,12 +37,10 @@ pub fn run_formation_manager(
 
     // Prepare env vars
     let mut env_vars = Vec::new();
-    if let Some(token) = &team.credentials.gh_token {
-        env_vars.push(("GH_TOKEN".to_string(), token.clone()));
+    // GH_TOKEN is no longer stored in config. Detect from environment.
+    if let Some(token) = crate::git::detect_token() {
+        env_vars.push(("GH_TOKEN".to_string(), token));
     }
-    // Legacy fallback: formation manager gets team-wide token.
-    // TODO: Formation manager should resolve per-member credentials via CredentialStore
-    // when non-local formations support bridge integration.
     if let Some(token) = &team.credentials.telegram_bot_token {
         // Determine bridge type for correct env var dispatch
         let team_bridge_type = bridge::discover(team_repo, &team.name)

@@ -135,7 +135,7 @@ Comments are GitHub issue comments, added via `gh issue comment`. Each comment u
 Comment text here. May contain markdown formatting, code blocks, etc.
 ```
 
-The `<emoji>` and `<role>` are read from the member's `.botminter.yml` file at runtime by the `github-project` skill. Since all agents share one `GH_TOKEN` (one GitHub user), the role attribution in the comment body is the primary way to identify which hat/role wrote it.
+The `<emoji>` and `<role>` are read from the member's `.botminter.yml` file at runtime by the `github-project` skill. Each member has its own GitHub App identity (e.g., `team-superman[bot]`). The role attribution in the comment body provides additional context about which hat/role wrote the comment.
 
 ### Standard Emoji Mapping
 

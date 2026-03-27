@@ -29,7 +29,6 @@ pub fn sync(repos: bool, bridge_flag: bool, verbose: bool, team_flag: Option<&st
         manifest: &manifest,
         coding_agent,
         github_repo: gh,
-        gh_token: team.credentials.gh_token.as_deref(),
         repos,
         verbose,
         bridge_flag,

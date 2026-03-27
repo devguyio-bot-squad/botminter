@@ -168,3 +168,18 @@ ensure_gh_token() {
         GH_TOKEN=$(gh auth token)
     fi
 }
+
+# ── Hire Wrapper ──────────────────────────────────────────────
+# bm_hire wraps `bm hire` with --reuse-app and pre-provisioned App credentials.
+# Usage: bm_hire <role> --name <name> [extra args...]
+# Requires TESTS_APP_ID, TESTS_APP_CLIENT_ID, TESTS_APP_INSTALLATION_ID,
+# TESTS_APP_PRIVATE_KEY_FILE env vars.
+
+bm_hire() {
+    bm hire "$@" \
+        --reuse-app \
+        --app-id "$TESTS_APP_ID" \
+        --client-id "$TESTS_APP_CLIENT_ID" \
+        --private-key-file "$TESTS_APP_PRIVATE_KEY_FILE" \
+        --installation-id "$TESTS_APP_INSTALLATION_ID"
+}

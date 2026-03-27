@@ -62,10 +62,21 @@ fn init_with_tg_bridge_fn(
 
 fn hire_member_fn(
     _gh_token: String,
+    app_id: String,
+    app_client_id: String,
+    app_installation_id: String,
+    app_private_key_file: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let stdout = env.command("bm")
-            .args(["hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME])
+            .args([
+                "hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME,
+                "--reuse-app",
+                "--app-id", &app_id,
+                "--client-id", &app_client_id,
+                "--private-key-file", &app_private_key_file,
+                "--installation-id", &app_installation_id,
+            ])
             .run();
         assert!(stdout.contains(MEMBER_DIR) || stdout.contains(MEMBER_NAME));
     }
@@ -137,8 +148,8 @@ fn start_and_verify_fn(
                 "stub env should contain RALPH_TELEGRAM_API_URL");
             assert!(env_content.contains(&format!("RALPH_TELEGRAM_BOT_TOKEN={}", BOT_TOKEN)),
                 "stub env should contain RALPH_TELEGRAM_BOT_TOKEN");
-            assert!(env_content.contains("GH_TOKEN="),
-                "stub env should contain GH_TOKEN");
+            assert!(env_content.contains("GH_CONFIG_DIR="),
+                "stub env should contain GH_CONFIG_DIR (App credential path)");
             let tg_response = fs::read_to_string(ws.join(".ralph-stub-tg-response")).unwrap();
             assert!(tg_response.contains("ok"),
                 "stub should have received ok from tg-mock");
@@ -163,7 +174,11 @@ fn stop_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::pan
 
 // ── Scenario construction ────────────────────────────────────────────
 
-fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
+fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSuite {
+    let app_id = config.app_id.clone();
+    let app_client_id = config.app_client_id.clone();
+    let app_installation_id = config.app_installation_id.clone();
+    let app_private_key_file = config.app_private_key_file.clone();
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -200,7 +215,7 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
             }
         })
         .case("01_init_with_tg_bridge", init_with_tg_bridge_fn(gh_org.clone(), gh_token.clone()))
-        .case("02_hire_member", hire_member_fn(gh_token.clone()))
+        .case("02_hire_member", hire_member_fn(gh_token.clone(), app_id.clone(), app_client_id.clone(), app_installation_id.clone(), app_private_key_file.clone()))
         .case("03_bridge_identity_add", bridge_identity_add_fn(gh_token.clone()))
         .case("04_sync_bridge_and_repos", sync_bridge_and_repos_fn(gh_token.clone()))
         .case("05_start_and_verify", start_and_verify_fn(gh_token.clone()))
@@ -237,9 +252,9 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
 }
 
 pub fn scenario(config: &E2eConfig) -> Trial {
-    build_suite(config.gh_org.clone(), config.gh_token.clone()).build(config)
+    build_suite(config.gh_org.clone(), config.gh_token.clone(), config).build(config)
 }
 
 pub fn scenario_progressive(config: &E2eConfig) -> Trial {
-    build_suite(config.gh_org.clone(), config.gh_token.clone()).build_progressive(config)
+    build_suite(config.gh_org.clone(), config.gh_token.clone(), config).build_progressive(config)
 }

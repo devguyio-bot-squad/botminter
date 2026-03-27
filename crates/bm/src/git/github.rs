@@ -5,6 +5,13 @@ use anyhow::{bail, Context, Result};
 
 use crate::profile;
 
+/// Applies the detected GH_TOKEN to a Command, if available.
+fn apply_detected_token(cmd: &mut Command) {
+    if let Some(token) = detect_token() {
+        cmd.env("GH_TOKEN", token);
+    }
+}
+
 /// Derives the project name from a git URL (basename minus .git suffix).
 pub fn derive_project_name(url: &str) -> String {
     let url = url.trim_end_matches('/');
@@ -16,7 +23,7 @@ pub fn derive_project_name(url: &str) -> String {
 ///
 /// Rejects local paths — workspace repos need remote URLs so they can be cloned
 /// on any machine. Runs `gh repo view` to verify the repo exists and is accessible.
-pub fn verify_fork_url(url: &str, gh_token: Option<&str>) -> Result<()> {
+pub fn verify_fork_url(url: &str) -> Result<()> {
     if url.starts_with("file://") {
         // file:// URI — check the local path exists and is a git repo
         let path_str = url.strip_prefix("file://").unwrap();
@@ -40,9 +47,7 @@ pub fn verify_fork_url(url: &str, gh_token: Option<&str>) -> Result<()> {
 
     let mut cmd = Command::new("gh");
     cmd.args(["repo", "view", url, "--json", "name"]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
+    apply_detected_token(&mut cmd);
     let output = cmd.output().context("Failed to run `gh repo view`")?;
     if !output.status.success() {
         bail!(
@@ -61,7 +66,6 @@ pub fn create_github_label(
     name: &str,
     color: &str,
     description: &str,
-    gh_token: Option<&str>,
 ) -> Result<()> {
     let mut cmd = Command::new("gh");
     cmd.args([
@@ -77,9 +81,7 @@ pub fn create_github_label(
         repo,
     ]);
 
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
+    apply_detected_token(&mut cmd);
 
     let output = cmd.output().with_context(|| {
         format!("Failed to create label '{}'", name)
@@ -101,7 +103,6 @@ pub fn create_github_label(
 pub fn find_project_number(
     owner: &str,
     team_name: &str,
-    gh_token: Option<&str>,
 ) -> Result<u64> {
     let board_title = format!("{} Board", team_name);
     let mut cmd = Command::new("gh");
@@ -113,9 +114,7 @@ pub fn find_project_number(
         "--format",
         "json",
     ]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
+    apply_detected_token(&mut cmd);
     let output = cmd
         .output()
         .context("Failed to run `gh project list`")?;
@@ -145,7 +144,6 @@ pub fn sync_project_status_field(
     owner: &str,
     project_number: u64,
     statuses: &[profile::StatusDef],
-    gh_token: Option<&str>,
 ) -> Result<()> {
     let num_str = project_number.to_string();
 
@@ -160,9 +158,7 @@ pub fn sync_project_status_field(
         "--format",
         "json",
     ]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
+    apply_detected_token(&mut cmd);
     let output = cmd
         .output()
         .context("Failed to run `gh project field-list`")?;
@@ -209,9 +205,7 @@ pub fn sync_project_status_field(
 
     let mut cmd = Command::new("gh");
     cmd.args(["api", "graphql", "-f", &format!("query={}", mutation)]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
+    apply_detected_token(&mut cmd);
     let output = cmd
         .output()
         .context("Failed to run GraphQL updateProjectV2Field")?;
@@ -248,12 +242,10 @@ pub struct TokenInfo {
 }
 
 /// Checks if a GitHub repository exists and is accessible.
-pub fn repo_exists(repo_name: &str, gh_token: Option<&str>) -> Result<bool> {
+pub fn repo_exists(repo_name: &str) -> Result<bool> {
     let mut cmd = Command::new("gh");
     cmd.args(["repo", "view", repo_name, "--json", "name"]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
+    apply_detected_token(&mut cmd);
     let output = cmd.output().context("Failed to run `gh repo view`")?;
     Ok(output.status.success())
 }
@@ -262,7 +254,6 @@ pub fn repo_exists(repo_name: &str, gh_token: Option<&str>) -> Result<bool> {
 pub fn create_repo_and_push(
     local_repo: &Path,
     repo_name: &str,
-    gh_token: Option<&str>,
 ) -> Result<()> {
     let mut cmd = Command::new("gh");
     cmd.args([
@@ -270,9 +261,7 @@ pub fn create_repo_and_push(
     ])
     .current_dir(local_repo);
 
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
+    apply_detected_token(&mut cmd);
 
     let output = cmd.output().context("Failed to run `gh repo create`")?;
 
@@ -296,14 +285,12 @@ pub fn create_repo_and_push(
 }
 
 /// Clones an existing GitHub repo into `{parent_dir}/team/`.
-pub fn clone_repo(parent_dir: &Path, repo_name: &str, gh_token: Option<&str>) -> Result<()> {
+pub fn clone_repo(parent_dir: &Path, repo_name: &str) -> Result<()> {
     let target = parent_dir.join("team");
     let mut cmd = Command::new("gh");
     cmd.args(["repo", "clone", repo_name, &target.to_string_lossy()]);
 
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
+    apply_detected_token(&mut cmd);
 
     let output = cmd.output().context("Failed to run `gh repo clone`")?;
 
@@ -329,16 +316,16 @@ pub fn clone_repo(parent_dir: &Path, repo_name: &str, gh_token: Option<&str>) ->
 }
 
 /// Lists repository names for a given GitHub owner (org or user).
-pub fn list_repos(gh_token: &str, owner: &str) -> Result<Vec<String>> {
-    let output = Command::new("gh")
-        .args([
+pub fn list_repos(owner: &str) -> Result<Vec<String>> {
+    let mut cmd = Command::new("gh");
+    cmd.args([
             "repo", "list", owner,
             "--limit", "50",
             "--json", "name",
             "--jq", ".[].name",
-        ])
-        .env("GH_TOKEN", gh_token)
-        .output()
+        ]);
+    apply_detected_token(&mut cmd);
+    let output = cmd.output()
         .context("Failed to list repos")?;
 
     if !output.status.success() {
@@ -351,13 +338,13 @@ pub fn list_repos(gh_token: &str, owner: &str) -> Result<Vec<String>> {
 }
 
 /// Lists GitHub Project boards for a given owner. Returns `(number, title)` pairs.
-pub fn list_projects(gh_token: &str, owner: &str) -> Result<Vec<(u64, String)>> {
-    let output = Command::new("gh")
-        .args([
+pub fn list_projects(owner: &str) -> Result<Vec<(u64, String)>> {
+    let mut cmd = Command::new("gh");
+    cmd.args([
             "project", "list", "--owner", owner, "--format", "json",
-        ])
-        .env("GH_TOKEN", gh_token)
-        .output()
+        ]);
+    apply_detected_token(&mut cmd);
+    let output = cmd.output()
         .context("Failed to run `gh project list`")?;
 
     if !output.status.success() {
@@ -390,7 +377,6 @@ pub fn create_project(
     owner: &str,
     title: &str,
     statuses: &[profile::StatusDef],
-    gh_token: Option<&str>,
 ) -> Result<u64> {
     let mut cmd = Command::new("gh");
     cmd.args([
@@ -398,9 +384,7 @@ pub fn create_project(
         "--title", title,
         "--format", "json",
     ]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
+    apply_detected_token(&mut cmd);
     let output = cmd.output().context("Failed to run `gh project create`")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -414,7 +398,7 @@ pub fn create_project(
         .as_u64()
         .context("Could not find 'number' field in gh project create output")?;
 
-    sync_project_status_field(owner, project_number, statuses, gh_token)?;
+    sync_project_status_field(owner, project_number, statuses)?;
 
     Ok(project_number)
 }
@@ -424,10 +408,9 @@ pub fn create_project(
 pub fn bootstrap_labels(
     repo: &str,
     labels: &[profile::LabelDef],
-    gh_token: Option<&str>,
 ) -> Result<()> {
     for label in labels {
-        create_github_label(repo, &label.name, &label.color, &label.description, gh_token)?;
+        create_github_label(repo, &label.name, &label.color, &label.description)?;
     }
     Ok(())
 }
@@ -506,22 +489,22 @@ pub fn mask_token(token: &str) -> String {
 }
 
 /// Returns the authenticated GitHub user's login.
-pub fn get_user_login(gh_token: &str) -> Result<String> {
-    let output = Command::new("gh")
-        .args(["api", "user", "--jq", ".login"])
-        .env("GH_TOKEN", gh_token)
-        .output()
+pub fn get_user_login() -> Result<String> {
+    let mut cmd = Command::new("gh");
+    cmd.args(["api", "user", "--jq", ".login"]);
+    apply_detected_token(&mut cmd);
+    let output = cmd.output()
         .context("Failed to get GitHub user")?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 /// Lists the authenticated user's GitHub organizations.
 /// May return empty if the token lacks the Organization:Read scope.
-pub fn list_user_orgs(gh_token: &str) -> Result<Vec<String>> {
-    let output = Command::new("gh")
-        .args(["api", "user/orgs", "--jq", ".[].login"])
-        .env("GH_TOKEN", gh_token)
-        .output()
+pub fn list_user_orgs() -> Result<Vec<String>> {
+    let mut cmd = Command::new("gh");
+    cmd.args(["api", "user/orgs", "--jq", ".[].login"]);
+    apply_detected_token(&mut cmd);
+    let output = cmd.output()
         .context("Failed to list GitHub orgs")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     Ok(stdout.lines().filter(|l| !l.is_empty()).map(String::from).collect())
@@ -568,7 +551,7 @@ mod tests {
 
     #[test]
     fn verify_fork_url_rejects_bare_local_path() {
-        let result = verify_fork_url("/tmp/some-repo", None);
+        let result = verify_fork_url("/tmp/some-repo");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("must use a URI scheme"), "{}", err);
@@ -576,7 +559,7 @@ mod tests {
 
     #[test]
     fn verify_fork_url_rejects_relative_path() {
-        let result = verify_fork_url("../my-project", None);
+        let result = verify_fork_url("../my-project");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("must use a URI scheme"), "{}", err);
@@ -584,7 +567,7 @@ mod tests {
 
     #[test]
     fn verify_fork_url_rejects_dot_path() {
-        let result = verify_fork_url("./local-repo", None);
+        let result = verify_fork_url("./local-repo");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("must use a URI scheme"), "{}", err);
@@ -597,12 +580,12 @@ mod tests {
         std::fs::create_dir_all(&repo).unwrap();
         Command::new("git").args(["init", "-b", "main"]).current_dir(&repo).output().unwrap();
         let url = format!("file://{}", repo.to_string_lossy());
-        assert!(verify_fork_url(&url, None).is_ok());
+        assert!(verify_fork_url(&url).is_ok());
     }
 
     #[test]
     fn verify_fork_url_rejects_nonexistent_file_uri() {
-        let result = verify_fork_url("file:///tmp/does-not-exist-repo-xyz", None);
+        let result = verify_fork_url("file:///tmp/does-not-exist-repo-xyz");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("not found") || err.contains("not a git repository"), "{}", err);

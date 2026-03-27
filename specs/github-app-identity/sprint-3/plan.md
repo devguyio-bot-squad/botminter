@@ -39,34 +39,23 @@
 
 **Tests:** Unit tests with mock private key and mocked HTTP responses for token exchange.
 
-### 2. Manifest Flow in `bm hire`
+### 2. App Credential Storage in `bm hire`
 
-**Objective:** `bm hire` creates a GitHub App per member via the manifest flow.
+**Objective:** `bm hire` stores GitHub App credentials and ensures the App has access to team repos.
 
-**Implementation:**
-- Uses a scoped `tokio::runtime::Runtime::new().block_on()` for the axum server (same pattern as `daemon/run.rs`)
-- Construct manifest JSON (name, permissions including `organization_projects:admin`, redirect_url, setup_url)
-- Start temporary axum server on `127.0.0.1:{random_port}` with:
-  - `GET /start` — serves auto-submitting HTML form with manifest JSON
-  - `GET /callback` — receives `code` + `state`, validates state, exchanges code via `POST /app-manifests/{code}/conversions`, stores App ID + Client ID + PEM. Then **redirects browser to `{html_url}/installations/new`** to prompt App installation.
-  - `GET /installed` — receives redirect after user installs the App on org. Signs JWT from the new PEM, queries `GET /app/installations` to get `installation_id`. Stores installation ID. Shows success page.
-  - 5-minute timeout per step, clean shutdown on timeout
-- Two browser clicks required: (1) "Create GitHub App", (2) "Install" on org
-- Determine org via `gh api /repos/{owner}/{repo}` → `owner.type`
-  - Org → `https://github.com/organizations/{org}/settings/apps/new`
-  - Personal → block with error (org required)
-- Open browser to `http://127.0.0.1:{port}/start` (or print URL for headless)
-- For headless: print URLs at each step (create URL, then install URL after first callback)
-- Name collision check: `GET https://github.com/apps/{slug}` before starting
-- After installation ID obtained: add team repo + all existing project repos to the installation
-- Flags: `--reuse-app` + `--app-id`/`--client-id`/`--private-key-file`/`--installation-id` bypass entire browser flow (client-id is required for JWT signing)
-- `--save-credentials <path>` writes credentials to file
-- Handle existing member dir: replace App (no --reuse-app) or reconnect (--reuse-app)
-- **Sequencing with `hire_member()`:** The manifest flow and credential storage MUST happen AFTER `hire_member()` completes (which includes `finalize_member_manifest()` and `render_member_placeholders()`). The placeholder rendering is profile-level and must complete before App credentials are stored. The App creation step should be a new function called after `hire_member()` returns, not inserted into `hire_member()` itself.
+**Implementation (current — `--reuse-app` path):**
+- CLI flags: `--reuse-app`, `--app-id`, `--client-id`, `--private-key-file`, `--installation-id`, `--save-credentials`
+- Reads PEM file, validates all 4 required flags, stores via `formation.credential_store(GitHubApp)`
+- After storing: calls `ensure_app_on_repos()` which checks each team + project repo via `GET /repos/{owner}/{repo}/installation` and adds missing repos via `PUT /user/installations/{id}/repositories/{repo_id}` (operator PAT auth)
+- `--save-credentials <path>` writes credentials to YAML file with 0600 permissions
+- Skips App setup entirely when `github_repo` is empty (test teams, v1 teams)
+- **Sequencing:** App credential storage happens AFTER `hire_member()` completes (placeholder rendering must finish first)
 
-See `research/manifest-flow-installation-gap.md` for the corrected two-step flow.
+**Implementation (deferred — browser manifest flow):**
+- The manifest flow code exists in `git/manifest_flow.rs` (axum server, form POST, code exchange, installation redirect)
+- Not the focus of this sprint — will be validated after the auth pipeline is proven end-to-end
 
-**Tests:** Unit tests for manifest JSON construction, name collision detection. Integration test with `InMemoryCredentialStore`.
+**Tests:** Unit tests for manifest JSON construction, credential key conventions, credential storage with `InMemoryCredentialStore`, file permissions on saved credentials.
 
 ### 3. Wire into `bm init`
 

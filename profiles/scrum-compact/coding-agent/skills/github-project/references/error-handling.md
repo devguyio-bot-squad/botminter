@@ -144,11 +144,11 @@ fi
 
 ### Scope Errors
 
-**Error:** `Missing 'project' scope on GH_TOKEN`
+**Error:** `Cannot access GitHub Projects`
 
-**Detection:** Checked at start of `setup.sh`
+**Detection:** Checked during project access in `setup.sh`
 
-**Solution:** Automatic failure with clear instructions
+**Solution:** Automatic failure with clear instructions to verify App permissions
 
 ### API Rate Limits
 

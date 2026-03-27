@@ -43,15 +43,15 @@ OUT=$(bm init --non-interactive --profile "$PROFILE" --team-name "$TEAM" \
 EC=$?
 if [ $EC -ne 0 ]; then note "B7" "Init again" "Correctly rejects: already exists"; else pass "B7" "Init again (idempotent or re-init)"; fi
 
-# B8: Hire alice
-OUT=$(bm hire superman --name alice 2>&1)
+# B8: Hire alice (with --reuse-app via bm_hire wrapper)
+OUT=$(bm_hire superman --name alice 2>&1)
 EC=$?
-if [ $EC -eq 0 ]; then pass "B8" "Hired alice"; else fail "B8" "Hire alice" "exit $EC: $(echo "$OUT" | tail -3)"; fi
+if [ $EC -eq 0 ]; then pass "B8" "Hired alice (--reuse-app)"; else fail "B8" "Hire alice" "exit $EC: $(echo "$OUT" | tail -3)"; fi
 
-# B9: Hire bob
-OUT=$(bm hire superman --name bob 2>&1)
+# B9: Hire bob (with --reuse-app via bm_hire wrapper)
+OUT=$(bm_hire superman --name bob 2>&1)
 EC=$?
-if [ $EC -eq 0 ]; then pass "B9" "Hired bob"; else fail "B9" "Hire bob" "exit $EC: $(echo "$OUT" | tail -3)"; fi
+if [ $EC -eq 0 ]; then pass "B9" "Hired bob (--reuse-app)"; else fail "B9" "Hire bob" "exit $EC: $(echo "$OUT" | tail -3)"; fi
 
 # B10: Member dirs exist
 if [ -d "$TEAM_REPO/members/superman-alice" ] && [ -d "$TEAM_REPO/members/superman-bob" ]; then
@@ -60,8 +60,8 @@ else
     fail "B10" "Member dirs" "missing"
 fi
 
-# B11: Hire duplicate
-OUT=$(bm hire superman --name alice 2>&1)
+# B11: Hire duplicate (still uses bm_hire — should fail because member dir exists)
+OUT=$(bm_hire superman --name alice 2>&1)
 EC=$?
 if [ $EC -ne 0 ]; then note "B11" "Hire duplicate alice" "Correctly rejects: 'already exists'"; else fail "B11" "Hire duplicate" "Should have failed"; fi
 

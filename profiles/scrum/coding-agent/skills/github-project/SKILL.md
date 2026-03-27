@@ -1,7 +1,7 @@
 ---
 name: github-project
 description: Manages GitHub Projects v2 workflows for issue tracking and project management. Use when user asks to "show the board", "view issues", "what's in [status]", "create an epic", "add a story", "create a bug", "move issue #N to [status]", "transition #N from [status] to [status]", "comment on #N", "create a milestone", "assign #N to [user]", "create a PR", "create a sub-issue", or "review PR #N". Wraps gh CLI with validation and verification.
-compatibility: "Requires gh CLI (GitHub CLI) with 'project' token scope, GitHub Projects v2, GH_TOKEN environment variable, and read/write access to the team repository. Intended for Claude Code and API usage."
+compatibility: "Requires gh CLI (GitHub CLI) with GitHub Projects v2 access, and read/write access to the team repository. Auth is auto-managed via GH_CONFIG_DIR (GitHub App installation token). Intended for Claude Code and API usage."
 license: MIT
 metadata:
   author: botminter
@@ -9,8 +9,6 @@ metadata:
   category: project-management
   tags: [github, issues, projects-v2, workflow, automation]
   requires-tools: [gh, jq]
-  requires-env: [GH_TOKEN]
-  requires-scope: [project]
 ---
 
 # GitHub CLI Skill
@@ -21,9 +19,7 @@ Unified interface for GitHub Projects v2 workflows. Manages issues, epics, stori
 
 Before using this skill, ensure:
 
-- `gh` CLI installed and authenticated
-- `GH_TOKEN` environment variable set (shared team token)
-- **`project` token scope** enabled: `gh auth refresh -s project`
+- `gh` CLI installed (auth is auto-managed via `GH_CONFIG_DIR`)
 - `team/` directory has a GitHub remote
 - `.botminter.yml` exists in workspace root (for comment attribution)
 
@@ -582,20 +578,18 @@ For detailed documentation:
 
 ## Troubleshooting
 
-### Error: "Missing 'project' scope on GH_TOKEN"
+### Error: "Cannot access GitHub Projects"
 
-**Solution:**
-```bash
-gh auth refresh -s project
-gh auth status  # Verify scope is enabled
-```
+**Cause:** The GitHub App may not have `organization_projects: admin` permission, or the App is not installed on the organization.
+
+**Solution:** Verify the App is installed and has the correct permissions. Re-run `bm hire` if needed.
 
 ### Error: "Status verification failed"
 
 **Cause:** Status didn't actually change despite gh CLI success
 
 **Solution:**
-1. Verify token has `project` scope
+1. Verify the GitHub App has `organization_projects: admin` permission
 2. Check rate limits: `gh api rate_limit`
 3. Retry the operation
 
@@ -605,7 +599,7 @@ See [Troubleshooting Guide](references/troubleshooting.md) for complete error re
 
 ## Notes
 
-- **Token scope:** The `project` scope is required for all project operations. Verified at start of every script.
+- **App permissions:** The GitHub App must have `organization_projects: admin` permission for project operations. This is set in the App manifest during `bm hire`.
 - **Idempotent:** All operations are safe to retry. Re-setting same status, re-assigning same user is safe.
 - **Rate limits:** The gh CLI respects GitHub's rate limits. For bulk operations, add delays between calls.
 - **Error handling:** v3.0.0 includes comprehensive validation and verification. All failures are caught and reported with detailed context.

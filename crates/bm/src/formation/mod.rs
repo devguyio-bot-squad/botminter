@@ -15,8 +15,8 @@ pub use self::launch::{
 pub use self::local_topology::write_local_topology;
 pub use self::manager::{run_formation_manager, FormationManagerResult};
 pub use self::start_members::{
-    auto_start_bridge, start_local_members, BridgeAutoStartOutcome, MemberLaunched, MemberSkipped,
-    StartResult,
+    auto_start_bridge, start_local_members, AppCredentialsCached, BridgeAutoStartOutcome,
+    MemberLaunched, MemberSkipped, StartResult,
 };
 pub use self::stop_members::{
     stop_local_members, BridgeStopOutcome, MemberStopped, StopResult,

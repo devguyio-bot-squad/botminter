@@ -38,6 +38,8 @@ The project has completed Milestone 6 (Minty and Friends). See `.planning/ROADMA
 bm init                              # Interactive wizard — create a new team
 bm init --non-interactive ...        # Scripted/CI mode (requires --profile, --team-name, --org, --repo; optional --bridge)
 bm hire <role> [--name <n>] [-t team] # Hire a member into a role
+bm fire <member> [-t team] [--keep-app] # Fire a member (stop, uninstall App, remove)
+bm credentials export -o <file> [-t team] # Export credentials for machine migration
 bm chat <member> [-t team] [--hat h]  # Interactive session with a member
 bm projects add <url> [-t team]       # Add a project to the team
 bm projects list [-t team]            # List configured projects
@@ -127,9 +129,9 @@ Profiles define a team methodology — process conventions, role definitions, me
 | **Team repo instance** | e.g., `~/workspaces/my-team/team/` | Project-specific knowledge, hired members, runtime state | Team operators (via `bm` CLI) |
 
 `bm init` runs an interactive wizard that:
-1. Detects existing GitHub auth (`GH_TOKEN` env var or `gh auth token`) — prompts only if none found
-2. Validates the token via `gh api user` before proceeding
-3. Lists the user's GitHub orgs and personal account for interactive selection
+1. Requires existing GitHub auth (`gh auth login` or `GH_TOKEN` env var) — fails if no session found
+2. Validates credentials via `gh api user` before proceeding
+3. Lists the user's GitHub organizations for selection (personal accounts are blocked — GitHub App identity requires an org)
 4. Offers to create a new repo or select an existing one from the chosen org
 5. Bootstraps labels and a GitHub Project (v2) with Status field options from the profile
 6. Extracts the profile's content into a new team repo and registers it in `~/.botminter/config.yml`
@@ -175,7 +177,7 @@ Resolution order — all levels are additive:
 
 ### GitHub Coordination
 
-Issues, milestones, and PRs live on the team repo's GitHub. Status transitions use labels following the pattern `status/<role>:<phase>` — the specific roles and phases are profile-defined (e.g., `status/po:triage`, `status/arch:design` in the `scrum` profile). Comments use emoji-attributed format `### <emoji> <role> — <ISO-timestamp>`. Auth uses a shared `GH_TOKEN` stored in `~/.botminter/config.yml` — auto-detected from the environment during `bm init` and passed to all `gh` CLI calls and Ralph instances at runtime.
+Issues, milestones, and PRs live on the team repo's GitHub. Status transitions use labels following the pattern `status/<role>:<phase>` — the specific roles and phases are profile-defined (e.g., `status/po:triage`, `status/arch:design` in the `scrum` profile). Comments use emoji-attributed format `### <emoji> <role> — <ISO-timestamp>`. Each member has its own GitHub App identity — tokens are auto-managed by the daemon via `GH_CONFIG_DIR` + `hosts.yml`. Operator commands (`bm init`, `bm hire`, etc.) use the operator's `gh auth` session.
 
 ## Key Directories
 

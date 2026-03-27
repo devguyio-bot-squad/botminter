@@ -73,6 +73,6 @@ my-team/                                    # Team repo
 
 ## Next steps
 
-1. **[Prerequisites](prerequisites.md)** - Install the required tools and set up GitHub auth
+1. **[Prerequisites](prerequisites.md)** - Install the required tools and authenticate `gh`
 2. **[Bootstrap Your Team](bootstrap-your-team.md)** - Create your first team with `bm init`
 3. **[Your First Journey](first-journey.md)** - End-to-end walkthrough of creating an epic and watching the pipeline

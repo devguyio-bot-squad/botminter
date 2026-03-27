@@ -1,9 +1,12 @@
 pub(crate) mod credential;
 
+use std::fs;
+use std::io::Write;
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
 use std::process::Command;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::daemon::{self, DaemonClient};
 use crate::formation::{
@@ -116,17 +119,81 @@ impl Formation for LinuxLocalFormation {
     fn setup_token_delivery(
         &self,
         _member: &str,
-        _workspace: &Path,
-        _bot_user: &str,
+        workspace: &Path,
+        bot_user: &str,
     ) -> Result<()> {
-        // No-op in Sprint 1. Token delivery is implemented in Sprint 3
-        // when the auth model swaps to GitHub App identity.
+        // Create GH_CONFIG_DIR at {workspace}/.config/gh/
+        let gh_config_dir = workspace.join(".config").join("gh");
+        fs::create_dir_all(&gh_config_dir)
+            .with_context(|| format!("Failed to create {}", gh_config_dir.display()))?;
+
+        // Write an initial hosts.yml with a placeholder token.
+        // The actual token is written by refresh_token() immediately after.
+        let hosts_yml = gh_config_dir.join("hosts.yml");
+        let hosts_content = format!(
+            "github.com:\n    user: {bot_user}\n    oauth_token: placeholder\n    git_protocol: https\n"
+        );
+        fs::write(&hosts_yml, &hosts_content)
+            .with_context(|| format!("Failed to write {}", hosts_yml.display()))?;
+
+        // Configure git credential helper in {workspace}/.git/config (NOT global).
+        // This tells git to use `gh auth git-credential` which reads from GH_CONFIG_DIR.
+        let git_config = workspace.join(".git").join("config");
+        if git_config.exists() {
+            let existing = fs::read_to_string(&git_config)
+                .with_context(|| format!("Failed to read {}", git_config.display()))?;
+
+            // Only add if not already configured
+            if !existing.contains("[credential \"https://github.com\"]") {
+                let credential_block = "\n[credential \"https://github.com\"]\n\thelper = \n\thelper = !/usr/bin/gh auth git-credential\n";
+                let mut file = fs::OpenOptions::new()
+                    .append(true)
+                    .open(&git_config)
+                    .with_context(|| format!("Failed to open {}", git_config.display()))?;
+                file.write_all(credential_block.as_bytes())
+                    .with_context(|| format!("Failed to append to {}", git_config.display()))?;
+            }
+        }
+
         Ok(())
     }
 
-    fn refresh_token(&self, _member: &str, _workspace: &Path, _token: &str) -> Result<()> {
-        // No-op in Sprint 1. Token refresh is implemented in Sprint 3
-        // when the auth model swaps to GitHub App identity.
+    fn refresh_token(&self, _member: &str, workspace: &Path, token: &str) -> Result<()> {
+        let gh_config_dir = workspace.join(".config").join("gh");
+        let hosts_yml = gh_config_dir.join("hosts.yml");
+
+        // Read existing hosts.yml to preserve bot_user
+        let existing = fs::read_to_string(&hosts_yml)
+            .with_context(|| format!("Failed to read {}", hosts_yml.display()))?;
+
+        // Extract bot_user from existing file
+        let bot_user = existing
+            .lines()
+            .find_map(|line| {
+                let trimmed = line.trim();
+                trimmed.strip_prefix("user: ")
+            })
+            .unwrap_or("bot");
+
+        let hosts_content = format!(
+            "github.com:\n    user: {bot_user}\n    oauth_token: {token}\n    git_protocol: https\n"
+        );
+
+        // Atomic write: write to temp file, then rename
+        let tmp_path = gh_config_dir.join("hosts.yml.tmp");
+        fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .mode(0o600)
+            .open(&tmp_path)
+            .with_context(|| format!("Failed to create {}", tmp_path.display()))?
+            .write_all(hosts_content.as_bytes())
+            .with_context(|| format!("Failed to write {}", tmp_path.display()))?;
+
+        fs::rename(&tmp_path, &hosts_yml)
+            .with_context(|| format!("Failed to rename {} → {}", tmp_path.display(), hosts_yml.display()))?;
+
         Ok(())
     }
 
@@ -286,19 +353,87 @@ mod tests {
     }
 
     #[test]
-    fn linux_formation_setup_token_delivery_is_noop() {
+    fn setup_token_delivery_creates_gh_config_dir_and_hosts_yml() {
         let f = LinuxLocalFormation::new("test-team");
         let tmp = tempfile::tempdir().unwrap();
-        f.setup_token_delivery("superman", tmp.path(), "bot-user")
+
+        // Create a .git/config so credential helper can be appended
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        std::fs::write(tmp.path().join(".git/config"), "[core]\n\tbare = false\n").unwrap();
+
+        f.setup_token_delivery("superman", tmp.path(), "test-bot[bot]")
             .unwrap();
+
+        // Verify GH config dir created
+        let gh_dir = tmp.path().join(".config/gh");
+        assert!(gh_dir.exists(), "GH config dir should exist");
+
+        // Verify hosts.yml written with bot user
+        let hosts = std::fs::read_to_string(gh_dir.join("hosts.yml")).unwrap();
+        assert!(hosts.contains("user: test-bot[bot]"));
+        assert!(hosts.contains("git_protocol: https"));
+
+        // Verify credential helper appended to .git/config
+        let git_config = std::fs::read_to_string(tmp.path().join(".git/config")).unwrap();
+        assert!(git_config.contains("[credential \"https://github.com\"]"));
+        assert!(git_config.contains("gh auth git-credential"));
     }
 
     #[test]
-    fn linux_formation_refresh_token_is_noop() {
+    fn setup_token_delivery_idempotent_credential_helper() {
         let f = LinuxLocalFormation::new("test-team");
         let tmp = tempfile::tempdir().unwrap();
-        f.refresh_token("superman", tmp.path(), "ghp_token123")
+
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        std::fs::write(tmp.path().join(".git/config"), "[core]\n\tbare = false\n").unwrap();
+
+        // Call twice — credential helper should only be added once
+        f.setup_token_delivery("superman", tmp.path(), "bot").unwrap();
+        f.setup_token_delivery("superman", tmp.path(), "bot").unwrap();
+
+        let git_config = std::fs::read_to_string(tmp.path().join(".git/config")).unwrap();
+        let count = git_config.matches("[credential \"https://github.com\"]").count();
+        assert_eq!(count, 1, "credential helper should be added only once");
+    }
+
+    #[test]
+    fn refresh_token_atomically_updates_hosts_yml() {
+        let f = LinuxLocalFormation::new("test-team");
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Setup first
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        std::fs::write(tmp.path().join(".git/config"), "").unwrap();
+        f.setup_token_delivery("superman", tmp.path(), "my-bot[bot]").unwrap();
+
+        // Refresh with a real token
+        f.refresh_token("superman", tmp.path(), "ghs_installation_token_abc")
             .unwrap();
+
+        let hosts = std::fs::read_to_string(tmp.path().join(".config/gh/hosts.yml")).unwrap();
+        assert!(hosts.contains("oauth_token: ghs_installation_token_abc"));
+        assert!(hosts.contains("user: my-bot[bot]"), "bot user should be preserved");
+        assert!(!hosts.contains("placeholder"), "placeholder token should be replaced");
+
+        // Verify tmp file is cleaned up (rename removes it)
+        assert!(!tmp.path().join(".config/gh/hosts.yml.tmp").exists());
+    }
+
+    #[test]
+    fn refresh_token_subsequent_updates_replace_token() {
+        let f = LinuxLocalFormation::new("test-team");
+        let tmp = tempfile::tempdir().unwrap();
+
+        std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
+        std::fs::write(tmp.path().join(".git/config"), "").unwrap();
+        f.setup_token_delivery("superman", tmp.path(), "bot").unwrap();
+
+        f.refresh_token("superman", tmp.path(), "ghs_first").unwrap();
+        f.refresh_token("superman", tmp.path(), "ghs_second").unwrap();
+
+        let hosts = std::fs::read_to_string(tmp.path().join(".config/gh/hosts.yml")).unwrap();
+        assert!(hosts.contains("ghs_second"));
+        assert!(!hosts.contains("ghs_first"));
     }
 
     #[test]

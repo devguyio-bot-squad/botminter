@@ -95,7 +95,7 @@ mkdir -p "$CAROL_WS"
 echo "leftover junk" > "$CAROL_WS/junk.txt"
 pass "D18" "Created junk dir at future carol workspace path"
 
-bm hire superman --name carol 2>&1
+bm_hire superman --name carol 2>&1
 pass "D19" "Hired carol"
 
 OUT=$(bm teams sync -v 2>&1)

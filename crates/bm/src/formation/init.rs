@@ -89,8 +89,6 @@ pub fn register_team(
     team_dir: &Path,
     profile_name: &str,
     github_repo: &str,
-    gh_token: Option<String>,
-    telegram_bot_token: Option<String>,
     workzone: &Path,
 ) -> Result<()> {
     let mut cfg = config::load_or_default();
@@ -100,11 +98,7 @@ pub fn register_team(
         path: team_dir.to_path_buf(),
         profile: profile_name.to_string(),
         github_repo: github_repo.to_string(),
-        credentials: Credentials {
-            gh_token,
-            telegram_bot_token,
-            webhook_secret: None,
-        },
+        credentials: Credentials::default(),
         coding_agent: None,
         project_number: None,
         bridge_lifecycle: Default::default(),
@@ -218,11 +212,7 @@ mod tests {
             path: team_dir.clone(),
             profile: "scrum".to_string(),
             github_repo: "org/repo".to_string(),
-            credentials: Credentials {
-                gh_token: Some("ghp_test".to_string()),
-                telegram_bot_token: None,
-                webhook_secret: None,
-            },
+            credentials: Credentials::default(),
             coding_agent: None,
             project_number: None,
             bridge_lifecycle: Default::default(),

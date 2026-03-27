@@ -120,7 +120,7 @@ All comments use emoji-attributed format to identify which role wrote them:
 Comment text here.
 ````
 
-The emoji and role name are read from each member's `.botminter.yml` file. Since all agents share one `GH_TOKEN`, the role attribution in the comment body is the primary way to identify which agent wrote it.
+The emoji and role name are read from each member's `.botminter.yml` file. Each member posts as its own GitHub App bot user (e.g., `team-superman[bot]`). The role attribution in the comment body provides additional context about which hat/role wrote the comment.
 
 ???+ example "Example: scrum emoji mapping"
     | Role | Emoji |

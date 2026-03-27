@@ -133,6 +133,11 @@ pub fn build_cli_with_completions() -> clap::Command {
             c.mut_arg("role", |a| a.add(make(roles)))
                 .mut_arg("team", |a| a.add(make(teams.clone())))
         })
+        // ── fire ──────────────────────────────────────────────
+        .mut_subcommand("fire", |c| {
+            c.mut_arg("member", |a| a.add(make(members.clone())))
+                .mut_arg("team", |a| a.add(make(teams.clone())))
+        })
         // ── chat ──────────────────────────────────────────────
         .mut_subcommand("chat", |c| {
             c.mut_arg("member", |a| a.add(make(members.clone())))
@@ -222,6 +227,12 @@ pub fn build_cli_with_completions() -> clap::Command {
         // ── minty ─────────────────────────────────────────────
         .mut_subcommand("minty", |c| {
             c.mut_arg("team", |a| a.add(make(teams.clone())))
+        })
+        // ── credentials ─────────────────────────────────────────
+        .mut_subcommand("credentials", |c| {
+            c.mut_subcommand("export", |s| {
+                s.mut_arg("team", |a| a.add(make(teams.clone())))
+            })
         })
         // ── daemon ────────────────────────────────────────────
         .mut_subcommand("daemon", |c| {
@@ -456,9 +467,9 @@ projects:
     #[test]
     fn all_commands_covered_by_completions() {
         use crate::cli::{
-            BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Command, DaemonCommand,
-            DebugCommand, EnvCommand, KnowledgeCommand, MembersCommand, ProfilesCommand,
-            ProjectsCommand, RolesCommand, RuntimeCommand, TeamsCommand,
+            BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Command, CredentialsCommand,
+            DaemonCommand, DebugCommand, EnvCommand, KnowledgeCommand, MembersCommand,
+            ProfilesCommand, ProjectsCommand, RolesCommand, RuntimeCommand, TeamsCommand,
         };
 
         // This exhaustive match ensures that if a new Command variant is
@@ -468,6 +479,7 @@ projects:
             match cmd {
                 Command::Init { .. } => {}
                 Command::Hire { .. } => {}
+                Command::Fire { .. } => {}
                 Command::Chat { .. } => {}
                 Command::Minty { .. } => {}
                 Command::Start { .. } => {}
@@ -503,6 +515,9 @@ projects:
                     ProjectsCommand::Show { .. } => {}
                     ProjectsCommand::Add { .. } => {}
                     ProjectsCommand::Sync { .. } => {}
+                },
+                Command::Credentials { command } => match command {
+                    CredentialsCommand::Export { .. } => {}
                 },
                 Command::Knowledge { command, .. } => match command {
                     Some(KnowledgeCommand::List { .. }) => {}

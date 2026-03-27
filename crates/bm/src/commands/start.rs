@@ -145,9 +145,6 @@ fn display_bridge_outcome(outcome: &formation::BridgeAutoStartOutcome) {
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::path::PathBuf;
-
-    use crate::config::{self, Credentials, TeamEntry};
 
     // -- list_member_dirs --
 
@@ -211,54 +208,6 @@ mod tests {
         assert_eq!(result, None);
     }
 
-    // -- require_gh_token --
-
-    #[test]
-    fn require_gh_token_present() {
-        let team = TeamEntry {
-            name: "test-team".to_string(),
-            path: PathBuf::from("/tmp/team"),
-            profile: "scrum".to_string(),
-            github_repo: "org/repo".to_string(),
-            credentials: Credentials {
-                gh_token: Some("ghp_test123".to_string()),
-                telegram_bot_token: None,
-                webhook_secret: None,
-            },
-            coding_agent: None,
-            project_number: None,
-            bridge_lifecycle: Default::default(),
-            vm: None,
-        };
-        let token = config::require_gh_token(&team).unwrap();
-        assert_eq!(token, "ghp_test123");
-    }
-
-    #[test]
-    fn require_gh_token_missing_errors_with_team_name() {
-        let team = TeamEntry {
-            name: "my-team".to_string(),
-            path: PathBuf::from("/tmp/team"),
-            profile: "scrum".to_string(),
-            github_repo: "org/repo".to_string(),
-            credentials: Credentials {
-                gh_token: None,
-                telegram_bot_token: None,
-                webhook_secret: None,
-            },
-            coding_agent: None,
-            project_number: None,
-            bridge_lifecycle: Default::default(),
-            vm: None,
-        };
-        let err = config::require_gh_token(&team).unwrap_err();
-        let msg = format!("{}", err);
-        assert!(
-            msg.contains("my-team"),
-            "Error should mention team name, got: {msg}"
-        );
-    }
-
     // -- Per-member credential resolution tests --
 
     #[test]
@@ -315,7 +264,7 @@ mod tests {
         use crate::formation;
         use anyhow::Result;
 
-        let _: fn(&std::path::Path, &str, Option<&str>, Option<&str>, Option<&str>) -> Result<u32> =
+        let _: fn(&std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32> =
             formation::launch_ralph;
     }
 

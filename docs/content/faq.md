@@ -51,4 +51,4 @@ These skills are markdown files under `~/.config/botminter/minty/skills/` and ar
 
 ## Why do I need to prefix my comments with `@bot`?
 
-Currently, all agents share a single GitHub token — so the agent and you post comments as the same GitHub user. The `@bot` prefix helps the agent distinguish your responses from its own comments. This is a temporary convention. Per-role GitHub tokens are planned, which will let each agent (or hat) use its own GitHub identity and eliminate the need for the prefix.
+Each agent has its own GitHub App identity and posts as a bot user (e.g., `team-superman[bot]`). The `@bot` prefix helps the agent reliably identify human input when parsing issue comments. While agent and human comments are now distinguishable by author, the prefix remains a useful convention for clarity.

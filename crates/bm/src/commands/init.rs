@@ -3,6 +3,7 @@ use std::path::Path;
 
 use anyhow::{bail, Context, Result};
 
+use crate::bridge;
 use crate::config;
 use crate::formation;
 use crate::git;
@@ -70,6 +71,7 @@ pub fn run_non_interactive(
     bridge: Option<String>,
     skip_github: bool,
     workzone_override: Option<String>,
+    credentials_file: Option<String>,
 ) -> Result<()> {
     let selected_profile =
         profile_name.ok_or_else(|| anyhow::anyhow!("--profile is required with --non-interactive"))?;
@@ -128,13 +130,15 @@ pub fn run_non_interactive(
         None
     };
 
-    let gh_token = if skip_github {
-        None
-    } else {
+    if !skip_github {
         let token = git::detect_token_non_interactive()?;
         git::validate_token(&token)?;
-        Some(token)
-    };
+        // Validate that the org is actually a GitHub Organization (not a personal account).
+        // resolve_org_from_repo does `GET /users/{owner}` and checks `.type == "Organization"`.
+        git::manifest_flow::resolve_org_from_repo(
+            &format!("{}/{}", github_org, repo_name),
+        )?;
+    }
 
     eprintln!(
         "Creating team '{}' with profile '{}' at {}",
@@ -149,7 +153,7 @@ pub fn run_non_interactive(
     let is_new_repo = if skip_github {
         true
     } else {
-        !git::repo_exists(&github_repo, gh_token.as_deref())?
+        !git::repo_exists(&github_repo)?
     };
 
     let team_repo = team_dir.join("team");
@@ -167,20 +171,19 @@ pub fn run_non_interactive(
         )?;
 
         if !skip_github {
-            git::create_repo_and_push(&team_repo, &github_repo, gh_token.as_deref())?;
+            git::create_repo_and_push(&team_repo, &github_repo)?;
         }
     } else {
         eprintln!("Repository '{}' already exists — cloning it.", github_repo);
-        git::clone_repo(&team_dir, &github_repo, gh_token.as_deref())?;
+        git::clone_repo(&team_dir, &github_repo)?;
     }
 
     formation::register_team(
-        &team_name, &team_dir, &selected_profile, &github_repo,
-        gh_token.clone(), None, &workzone,
+        &team_name, &team_dir, &selected_profile, &github_repo, &workzone,
     )?;
 
     if !skip_github {
-        if let Err(e) = git::bootstrap_labels(&github_repo, &manifest.labels, gh_token.as_deref()) {
+        if let Err(e) = git::bootstrap_labels(&github_repo, &manifest.labels) {
             bail!(
                 "Failed to bootstrap labels: {}. Run `bm init` interactively for recovery steps.",
                 e
@@ -193,16 +196,13 @@ pub fn run_non_interactive(
 
         // Find existing board by title, or create one
         let project_number = {
-            let projects = git::list_projects(
-                gh_token.as_deref().unwrap_or(""),
-                owner,
-            )?;
+            let projects = git::list_projects(owner)?;
             if let Some((number, _)) = projects.iter().find(|(_, t)| t == &board_title) {
                 eprintln!("Using existing project board '{}' (#{})", board_title, number);
-                git::sync_project_status_field(owner, *number, &manifest.statuses, gh_token.as_deref())?;
+                git::sync_project_status_field(owner, *number, &manifest.statuses)?;
                 *number
             } else {
-                match git::create_project(owner, &board_title, &manifest.statuses, gh_token.as_deref()) {
+                match git::create_project(owner, &board_title, &manifest.statuses) {
                     Ok(n) => n,
                     Err(e) => {
                         bail!(
@@ -221,6 +221,11 @@ pub fn run_non_interactive(
             }
             config::save(&cfg)?;
         }
+    }
+
+    // ── Credential import ──────────────────────────────────────────
+    if let Some(ref creds_path) = credentials_file {
+        import_credentials_file(creds_path, &team_name)?;
     }
 
     eprintln!("{}", next_steps_message(&team_name, &team_dir, &team_repo, selected_bridge.is_some()));
@@ -285,19 +290,18 @@ pub fn run() -> Result<()> {
         .interact()
         .map(|s: &str| s.to_string())?;
 
-    // GitHub integration
-    let token = detect_or_prompt_gh_token()?;
+    // GitHub integration — require existing `gh auth` session (no manual PAT prompt)
+    let token = git::detect_token_non_interactive()
+        .context("GitHub App identity requires an authenticated `gh` session.\nRun `gh auth login` first.")?;
     let token_info = git::validate_token(&token)?;
     cliclack::log::info(format!("Authenticated as: {}", token_info.login))?;
 
-    let github_org = select_github_org(&token)?;
-    let (github_repo, is_new_repo) = select_or_create_repo(&token, &github_org, &team_name)?;
+    let github_org = select_github_org()?;
+    let (github_repo, is_new_repo) = select_or_create_repo(&github_org, &team_name)?;
 
     let github_owner = github_repo.split('/').next().unwrap_or(&github_org);
-    let project_choice = select_or_create_project(&token, github_owner, &team_name)?;
+    let project_choice = select_or_create_project(github_owner, &team_name)?;
 
-    let gh_token = Some(token);
-    let telegram_bot_token: Option<String> = None;
     let manifest = profile::read_manifest(&selected_profile)?;
 
     // Bridge selection
@@ -328,7 +332,7 @@ pub fn run() -> Result<()> {
     let (members_to_hire, projects_to_add) = if is_new_repo {
         let role_names: Vec<String> = manifest.roles.iter().map(|r| r.name.clone()).collect();
         let members = collect_members(&role_names)?;
-        let projects = collect_projects(gh_token.as_deref(), Some(&github_org))?;
+        let projects = collect_projects(Some(&github_org))?;
         (members, projects)
     } else {
         cliclack::log::info(
@@ -392,21 +396,20 @@ pub fn run() -> Result<()> {
         )?;
 
         spinner.start("Creating GitHub repository...");
-        git::create_repo_and_push(&team_repo, &github_repo, gh_token.as_deref())?;
+        git::create_repo_and_push(&team_repo, &github_repo)?;
     } else {
         spinner.start("Cloning existing repository...");
-        git::clone_repo(&team_dir, &github_repo, gh_token.as_deref())?;
+        git::clone_repo(&team_dir, &github_repo)?;
     }
 
     spinner.start("Registering team...");
     formation::register_team(
-        &team_name, &team_dir, &selected_profile, &github_repo,
-        gh_token.clone(), telegram_bot_token.clone(), &workzone,
+        &team_name, &team_dir, &selected_profile, &github_repo, &workzone,
     )?;
 
     // Bootstrap labels
     spinner.start("Bootstrapping labels...");
-    if let Err(e) = git::bootstrap_labels(&github_repo, &manifest.labels, gh_token.as_deref()) {
+    if let Err(e) = git::bootstrap_labels(&github_repo, &manifest.labels) {
         spinner.stop("Label bootstrap failed");
         let label_cmds: Vec<String> = manifest
             .labels.iter()
@@ -429,7 +432,7 @@ pub fn run() -> Result<()> {
         ProjectChoice::CreateNew => {
             spinner.start("Creating GitHub Project board...");
             let board_title = format!("{} Board", team_name);
-            match git::create_project(owner, &board_title, &manifest.statuses, gh_token.as_deref()) {
+            match git::create_project(owner, &board_title, &manifest.statuses) {
                 Ok(n) => {
                     spinner.stop("GitHub Project board created");
                     n
@@ -450,7 +453,7 @@ pub fn run() -> Result<()> {
         }
         ProjectChoice::UseExisting(n) => {
             spinner.start("Syncing project board statuses...");
-            git::sync_project_status_field(owner, n, &manifest.statuses, gh_token.as_deref())?;
+            git::sync_project_status_field(owner, n, &manifest.statuses)?;
             spinner.stop("Project board statuses synced");
             n
         }
@@ -479,45 +482,22 @@ pub fn run() -> Result<()> {
 
 // ── Domain-calling helpers (interactive prompts) ──────────────────
 
-/// Detects an existing GH_TOKEN or prompts the user for one.
-fn detect_or_prompt_gh_token() -> Result<String> {
-    if let Some(existing) = git::detect_token() {
-        let masked = git::mask_token(&existing);
-        let use_existing: bool =
-            cliclack::confirm(format!("GitHub token detected ({}). Use it?", masked))
-                .initial_value(true)
-                .interact()?;
-        if use_existing {
-            return Ok(existing);
-        }
+/// Lists the user's GitHub orgs, returns selected org login.
+///
+/// Personal accounts are excluded — GitHub App identity requires an
+/// organization for `organization_projects` permissions.
+fn select_github_org() -> Result<String> {
+    let orgs = git::list_user_orgs()?;
+
+    if orgs.is_empty() {
+        bail!(
+            "GitHub App identity requires an organization, but no organizations were found.\n\
+             Create a GitHub organization first: https://github.com/organizations/plan\n\
+             Then re-run `bm init`."
+        );
     }
-    prompt_gh_token()
-}
 
-/// Prompts for a GitHub token manually.
-fn prompt_gh_token() -> Result<String> {
-    let token: String = cliclack::input("GitHub token (GH_TOKEN)")
-        .placeholder("ghp_... or github_pat_...")
-        .validate(|input: &String| {
-            if input.is_empty() {
-                Err("GitHub token is required when a GitHub repo is specified")
-            } else {
-                Ok(())
-            }
-        })
-        .interact()?;
-    Ok(token)
-}
-
-/// Lists the user's GitHub orgs + personal account, returns selected org login.
-fn select_github_org(gh_token: &str) -> Result<String> {
-    let user_login = git::get_user_login(gh_token)?;
-    let orgs = git::list_user_orgs(gh_token)?;
-
-    let personal_label = format!("{} (personal)", user_login);
-    let mut select_items: Vec<(String, String, String)> = vec![
-        (user_login.clone(), personal_label, "Your personal GitHub account".to_string()),
-    ];
+    let mut select_items: Vec<(String, String, String)> = Vec::new();
     for org in &orgs {
         select_items.push((org.clone(), org.clone(), "Organization".to_string()));
     }
@@ -531,7 +511,7 @@ fn select_github_org(gh_token: &str) -> Result<String> {
         .map(|(v, l, d)| (v.as_str(), l.as_str(), d.as_str()))
         .collect();
 
-    let selected: &str = cliclack::select("GitHub owner (type to filter)")
+    let selected: &str = cliclack::select("GitHub organization (type to filter)")
         .items(&items_ref)
         .filter_mode()
         .interact()?;
@@ -543,6 +523,8 @@ fn select_github_org(gh_token: &str) -> Result<String> {
                 if input.is_empty() { Err("Organization name cannot be empty") } else { Ok(()) }
             })
             .interact()?;
+        // Validate via GitHub API that the entered name is actually an Organization
+        git::manifest_flow::validate_is_org(&org)?;
         Ok(org)
     } else {
         Ok(selected.to_string())
@@ -550,8 +532,8 @@ fn select_github_org(gh_token: &str) -> Result<String> {
 }
 
 /// Lists repos for an org/user, lets the user select or create. Returns `(owner/repo, is_new)`.
-fn select_or_create_repo(gh_token: &str, owner: &str, team_name: &str) -> Result<(String, bool)> {
-    let repos = git::list_repos(gh_token, owner)?;
+fn select_or_create_repo(owner: &str, team_name: &str) -> Result<(String, bool)> {
+    let repos = git::list_repos(owner)?;
     let default_name = format!("{}-team", team_name);
     let create_label = format!("Create new repo ({})", default_name);
 
@@ -583,8 +565,8 @@ fn select_or_create_repo(gh_token: &str, owner: &str, team_name: &str) -> Result
 }
 
 /// Lists GitHub Projects, lets the user select or create a new one.
-fn select_or_create_project(gh_token: &str, owner: &str, team_name: &str) -> Result<ProjectChoice> {
-    let projects = git::list_projects(gh_token, owner)?;
+fn select_or_create_project(owner: &str, team_name: &str) -> Result<ProjectChoice> {
+    let projects = git::list_projects(owner)?;
     let default_title = format!("{} Board", team_name);
     let create_label = format!("Create new board ({})", default_title);
 
@@ -666,7 +648,7 @@ fn collect_members(roles: &[String]) -> Result<Vec<(String, String)>> {
 }
 
 /// Collect projects to add during init (optional).
-fn collect_projects(gh_token: Option<&str>, org: Option<&str>) -> Result<Vec<(String, String)>> {
+fn collect_projects(org: Option<&str>) -> Result<Vec<(String, String)>> {
     let add_projects: bool = cliclack::confirm("Add projects now?")
         .initial_value(false)
         .interact()?;
@@ -677,8 +659,8 @@ fn collect_projects(gh_token: Option<&str>, org: Option<&str>) -> Result<Vec<(St
 
     let mut projects = Vec::new();
     loop {
-        let url = if let (Some(token), Some(org)) = (gh_token, org) {
-            select_project_repo(token, org)?
+        let url = if let Some(org) = org {
+            select_project_repo(org)?
         } else {
             prompt_project_url()?
         };
@@ -717,8 +699,8 @@ fn prompt_project_url() -> Result<String> {
 }
 
 /// Lists repos for an org/user and lets the user select one as a project fork.
-fn select_project_repo(gh_token: &str, org: &str) -> Result<String> {
-    let repos = git::list_repos(gh_token, org)?;
+fn select_project_repo(org: &str) -> Result<String> {
+    let repos = git::list_repos(org)?;
 
     if repos.is_empty() {
         cliclack::log::warning(format!("No repos found in '{}'. Enter URL manually.", org))?;
@@ -738,6 +720,107 @@ fn select_project_repo(gh_token: &str, org: &str) -> Result<String> {
     Ok(format!("https://github.com/{}/{}.git", org, selected))
 }
 
+// ── Credential import ─────────────────────────────────────────────
+
+/// Imports App and bridge credentials from a YAML file into the formation credential store.
+///
+/// Supports two YAML formats:
+/// - **Nested (design spec):** `members.<name>.github_app.{app_id,client_id,...}` + optional `bridge.token`
+/// - **Flat (legacy):** `members.<name>.{app_id,client_id,...}` (no github_app wrapper)
+///
+/// ```yaml
+/// team: my-team
+/// members:
+///   superman:
+///     github_app:
+///       app_id: "123"
+///       client_id: "Iv1.abc"
+///       private_key: "-----BEGIN RSA PRIVATE KEY-----\n..."
+///       installation_id: "456"
+///     bridge:
+///       token: "syt_xxx"
+/// ```
+fn import_credentials_file(path: &str, team_name: &str) -> Result<()> {
+    let content = fs::read_to_string(path)
+        .with_context(|| format!("Failed to read credentials file: {path}"))?;
+    let doc: serde_json::Value = serde_yml::from_str(&content)
+        .with_context(|| format!("Failed to parse credentials file: {path}"))?;
+
+    let members = doc.get("members")
+        .and_then(|m| m.as_object())
+        .context("Credentials file must have a top-level 'members' key with member entries")?;
+
+    let f = formation::create_local_formation(team_name)?;
+
+    // Discover bridge once (needed for bridge credential import)
+    let bridge_context = {
+        let cfg = config::load().ok();
+        cfg.and_then(|c| {
+            let team = config::resolve_team(&c, None).ok()?;
+            let team_repo_path = team.path.join("team");
+            let bridge_dir = bridge::discover(&team_repo_path, team_name).ok()??;
+            let manifest = bridge::load_manifest(&bridge_dir).ok()?;
+            let bstate_path = bridge::state_path(&c.workzone, team_name);
+            Some((manifest.metadata.name, bstate_path))
+        })
+    };
+
+    for (member_name, entry) in members {
+        // Determine if nested (github_app key present) or flat format
+        let app_section = entry.get("github_app").unwrap_or(entry);
+
+        let app_id = app_section.get("app_id")
+            .and_then(|v| v.as_str())
+            .context(format!("Missing 'app_id' for member '{member_name}'"))?;
+        let client_id = app_section.get("client_id")
+            .and_then(|v| v.as_str())
+            .context(format!("Missing 'client_id' for member '{member_name}'"))?;
+        let private_key = app_section.get("private_key")
+            .and_then(|v| v.as_str())
+            .context(format!("Missing 'private_key' for member '{member_name}'"))?;
+        let installation_id = app_section.get("installation_id")
+            .and_then(|v| v.as_str())
+            .context(format!("Missing 'installation_id' for member '{member_name}'"))?;
+
+        let cred_store = f.credential_store(formation::CredentialDomain::GitHubApp {
+            team_name: team_name.to_string(),
+            member_name: member_name.to_string(),
+        })?;
+
+        let creds = git::manifest_flow::PreGeneratedCredentials {
+            app_id: app_id.to_string(),
+            client_id: client_id.to_string(),
+            private_key: private_key.to_string(),
+            installation_id: installation_id.to_string(),
+        };
+
+        git::manifest_flow::store_pregenerated_credentials(cred_store.as_ref(), member_name, &creds)?;
+        eprintln!("Imported App credentials for member '{member_name}'.");
+
+        // Import bridge credentials if present
+        if let Some(bridge_section) = entry.get("bridge") {
+            if let Some(token) = bridge_section.get("token").and_then(|v| v.as_str()) {
+                if let Some((ref bridge_name, ref bstate_path)) = bridge_context {
+                    let bridge_store = f.credential_store(formation::CredentialDomain::Bridge {
+                        team_name: team_name.to_string(),
+                        bridge_name: bridge_name.clone(),
+                        state_path: bstate_path.clone(),
+                    })?;
+                    bridge_store.store(member_name, token)?;
+                    eprintln!("Imported bridge credentials for member '{member_name}'.");
+                } else {
+                    eprintln!(
+                        "Warning: Bridge credentials found for '{}' but no bridge configured — skipping.",
+                        member_name
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -748,5 +831,109 @@ mod tests {
         // validate_bridge_selection is only called when --bridge is provided.
         let bridges: Vec<profile::BridgeDef> = Vec::new();
         assert!(bridges.is_empty());
+    }
+
+    #[test]
+    fn credentials_file_yaml_parsing_valid() {
+        let yaml = r#"
+members:
+  superman:
+    app_id: "123"
+    client_id: "Iv1.abc"
+    private_key: "-----BEGIN RSA PRIVATE KEY-----\nfake"
+    installation_id: "456"
+  batman:
+    app_id: "789"
+    client_id: "Iv1.def"
+    private_key: "-----BEGIN RSA PRIVATE KEY-----\nfake2"
+    installation_id: "012"
+"#;
+        let doc: serde_json::Value = serde_yml::from_str(yaml).unwrap();
+        let members = doc.get("members").unwrap().as_object().unwrap();
+        assert_eq!(members.len(), 2);
+        assert!(members.contains_key("superman"));
+        assert!(members.contains_key("batman"));
+
+        let superman = &members["superman"];
+        assert_eq!(superman["app_id"].as_str().unwrap(), "123");
+        assert_eq!(superman["client_id"].as_str().unwrap(), "Iv1.abc");
+        assert_eq!(superman["installation_id"].as_str().unwrap(), "456");
+    }
+
+    #[test]
+    fn credentials_file_yaml_missing_members_key() {
+        let yaml = r#"
+app_id: "123"
+client_id: "Iv1.abc"
+"#;
+        let doc: serde_json::Value = serde_yml::from_str(yaml).unwrap();
+        assert!(doc.get("members").is_none(), "Should not have a 'members' key");
+    }
+
+    #[test]
+    fn credentials_file_yaml_missing_field_detected() {
+        let yaml = r#"
+members:
+  superman:
+    app_id: "123"
+    client_id: "Iv1.abc"
+"#;
+        let doc: serde_json::Value = serde_yml::from_str(yaml).unwrap();
+        let members = doc.get("members").unwrap().as_object().unwrap();
+        let superman = &members["superman"];
+        // private_key and installation_id are missing
+        assert!(superman.get("private_key").is_none());
+        assert!(superman.get("installation_id").is_none());
+    }
+
+    #[test]
+    fn credentials_file_nested_format_parsing() {
+        let yaml = r#"
+team: my-team
+members:
+  superman:
+    github_app:
+      app_id: "123"
+      client_id: "Iv1.abc"
+      private_key: "-----BEGIN RSA PRIVATE KEY-----\nfake"
+      installation_id: "456"
+    bridge:
+      token: "syt_xxx"
+"#;
+        let doc: serde_json::Value = serde_yml::from_str(yaml).unwrap();
+        let members = doc.get("members").unwrap().as_object().unwrap();
+        let superman = &members["superman"];
+
+        // Nested format: github_app wrapper
+        let app_section = superman.get("github_app").unwrap_or(superman);
+        assert_eq!(app_section["app_id"].as_str().unwrap(), "123");
+        assert_eq!(app_section["client_id"].as_str().unwrap(), "Iv1.abc");
+        assert_eq!(app_section["installation_id"].as_str().unwrap(), "456");
+
+        // Bridge section
+        let bridge = superman.get("bridge").unwrap();
+        assert_eq!(bridge["token"].as_str().unwrap(), "syt_xxx");
+    }
+
+    #[test]
+    fn credentials_file_flat_format_fallback() {
+        // The flat format (no github_app wrapper) should also work via unwrap_or fallback
+        let yaml = r#"
+members:
+  batman:
+    app_id: "789"
+    client_id: "Iv1.def"
+    private_key: "-----BEGIN RSA PRIVATE KEY-----\nfake2"
+    installation_id: "012"
+"#;
+        let doc: serde_json::Value = serde_yml::from_str(yaml).unwrap();
+        let members = doc.get("members").unwrap().as_object().unwrap();
+        let batman = &members["batman"];
+
+        // Flat format: no github_app wrapper, unwrap_or returns the entry itself
+        let app_section = batman.get("github_app").unwrap_or(batman);
+        assert_eq!(app_section["app_id"].as_str().unwrap(), "789");
+        assert_eq!(app_section["client_id"].as_str().unwrap(), "Iv1.def");
+        assert_eq!(app_section["installation_id"].as_str().unwrap(), "012");
     }
 }

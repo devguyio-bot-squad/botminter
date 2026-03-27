@@ -16,7 +16,7 @@ The wizard will prompt you for:
 2. **Team name** — identifier for your team (e.g., `my-team`)
 3. **Profile** — team methodology (e.g., `scrum-compact`)
 4. **Bridge** — communication bridge (e.g., Matrix via Tuwunel, the default) if the profile supports one
-5. **GitHub integration** — auto-detects your `GH_TOKEN` or `gh auth` session, validates the token, then lets you browse orgs and select or create a repo
+5. **GitHub integration** — auto-detects your `gh auth` session, validates it, then lets you browse orgs and select or create a repo
 6. **Project board** — select an existing GitHub Project board or create a new one
 7. **Members** — optionally hire members during init (new repos only)
 8. **Projects** — select project repos from the same GitHub org (HTTPS-only, new repos only)
@@ -28,8 +28,8 @@ The wizard will prompt you for:
 
 **For new repos:**
 
-1. **Detects GitHub auth** — checks `GH_TOKEN` env var, then `gh auth token`; shows masked token for confirmation
-2. **Validates token** — calls `gh api user` to verify credentials before proceeding
+1. **Detects GitHub auth** — auto-detects your `gh auth` session; shows masked token for confirmation
+2. **Validates credentials** — calls `gh api user` to verify authentication before proceeding
 3. **Creates team directory** — `{workzone}/{team-name}/team/` with git init
 4. **Extracts profile** — copies PROCESS.md, context.md (renamed to the agent's context file), knowledge/, invariants/, coding-agent/ from the profile on disk, filtering agent-specific content
 5. **Hires members** — if specified, extracts member skeletons into `members/{role}-{name}/`
@@ -64,7 +64,7 @@ bm init --non-interactive \
   --project new
 ```
 
-This runs the full init flow without prompts -- creates the GitHub repo, bootstraps labels, creates a Project board, and registers the team. Requires `GH_TOKEN` in the environment.
+This runs the full init flow without prompts -- creates the GitHub repo, bootstraps labels, creates a Project board, and registers the team. Requires `gh auth login` or `GH_TOKEN` in the environment.
 
 All required parameters must be provided as flags. See the [CLI reference](../reference/cli.md#non-interactive-mode) for the full parameter list.
 

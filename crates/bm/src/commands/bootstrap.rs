@@ -37,7 +37,7 @@ pub fn run(
     let mut cfg = config::load()?;
     let team_entry = config::resolve_team(&cfg, team)?;
     let team_name = team_entry.name.clone();
-    let gh_token = config::require_gh_token(team_entry)?;
+    let gh_token = crate::git::detect_token();
 
     let bm_config = config::config_dir()?.display().to_string();
     let xdg_config = dirs::config_dir()
@@ -58,7 +58,7 @@ pub fn run(
         }
 
         let parsed_env = parse_env_vars(env_vars)?;
-        let result = lima.bootstrap(&vm_name, cpus, memory, disk, mounts, Some(&gh_token), &parsed_env)?;
+        let result = lima.bootstrap(&vm_name, cpus, memory, disk, mounts, gh_token.as_deref(), &parsed_env)?;
 
         if result.created {
             eprintln!("VM '{}' created.", result.vm_name);
@@ -142,7 +142,7 @@ pub fn run(
     let spinner = cliclack::spinner();
     spinner.start("Provisioning VM...");
 
-    let result = lima.bootstrap(&vm_name, cpus, &memory, &disk, mounts, Some(&gh_token), &collected_env)?;
+    let result = lima.bootstrap(&vm_name, cpus, &memory, &disk, mounts, gh_token.as_deref(), &collected_env)?;
 
     if result.created && result.started {
         spinner.stop("VM created and started");

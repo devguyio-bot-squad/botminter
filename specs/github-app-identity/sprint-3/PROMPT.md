@@ -10,7 +10,11 @@ Sprint 2 delivered: daemon as formation-internal supervisor with HTTP API, `bm s
 
 ## Deviations from Design
 
-None — this sprint implements the full design. All prior sprint deviations are resolved here.
+1. **Browser manifest flow deferred.** The interactive browser flow (App creation via auto-submitting form + installation redirect) is implemented but not the focus of this sprint. Sprint 3 drives the entire auth pipeline through `--reuse-app` with a single pre-provisioned App. The browser flow will be validated as a follow-up.
+
+2. **Single shared test App.** Instead of one App per E2E scenario, all scenarios share one pre-provisioned App (`bm-test-app`). The App is installed on "All repositories" in the test org, so `ensure_app_on_repos` is a no-op.
+
+3. **`TESTS_GH_TOKEN` retained.** The operator PAT is still needed for test infrastructure (repo create/delete, `bm init`). Only member identity uses the App. Requirement 18 ("remove `TESTS_GH_TOKEN`") is deferred.
 
 ## Key References
 
@@ -58,9 +62,40 @@ None — this sprint implements the full design. All prior sprint deviations are
 
 17. `bm projects add` MUST install all hired members' Apps on the new project repo. Ref: design.md "bm projects add".
 
-18. E2E tests MUST use hybrid strategy: one manifest flow test (real App creation + cleanup), rest use pre-provisioned App via `--reuse-app`. `TESTS_GH_TOKEN` MUST be removed. Ref: requirements.md Q12.
+18. E2E tests MUST use pre-provisioned App via `--reuse-app` with credentials from `.envrc` env vars (`TESTS_APP_ID`, `TESTS_APP_CLIENT_ID`, `TESTS_APP_INSTALLATION_ID`, `TESTS_APP_PRIVATE_KEY_FILE`). `TESTS_GH_TOKEN` is retained for operator-level test infrastructure. Ref: requirements.md Q12.
 
 19. All profile docs, CLI reference docs, and knowledge files referencing `GH_TOKEN` or PATs MUST be updated. Note: the `gh` skill was renamed to `github-project` on main — update `github-project` skill docs (not `gh`).
+
+## Sprint 3 Build Notes
+
+### `just test` excludes E2E during Sprint 3
+The `just test` recipe was changed to `unit + conformance` only. E2E tests call `bm hire` which now triggers the manifest flow (browser open + 5-min timeout) for teams with real `github_repo` values. E2E tests cannot pass until Step 9 (Migrate E2E tests) adapts them to use `--reuse-app` with pre-provisioned credentials.
+
+Run E2E separately with `just e2e` only after Step 9 is complete.
+
+### Pre-provisioned GitHub App (DONE)
+
+One GitHub App (`bm-test-app`) has been created in `devguyio-bot-squad` and installed on "All repositories". Credentials are in `.envrc` (gitignored):
+
+- `TESTS_APP_ID=<REDACTED>`
+- `TESTS_APP_CLIENT_ID=<REDACTED>`
+- `TESTS_APP_INSTALLATION_ID=<REDACTED>`
+- `TESTS_APP_PRIVATE_KEY_FILE=$HOME/.config/github-apps/bm-test-app.pem`
+
+All E2E scenarios share this single App via `--reuse-app`. The operator PAT (`TESTS_GH_TOKEN`) is still used for test infrastructure (repo create/delete, init). The App provides member identity.
+
+### App permissions
+
+Repository: Contents (R/W), Issues (R/W), Pull requests (R/W), Administration (R/W).
+Organization: Projects (Admin) — this is "Organization projects", NOT classic "Projects".
+
+### `ensure_app_on_repos` behavior
+
+After `bm hire --reuse-app` stores credentials, it checks each team + project repo via `GET /repos/{owner}/{repo}/installation`. If the App isn't installed on a repo (404), it adds it via `PUT /user/installations/{id}/repositories/{repo_id}` using the operator's PAT. If the App is installed on "All repositories", this is a no-op (always 200).
+
+### Sprint approach change
+
+The manifest flow (browser-based App creation) is deferred. Sprint 3 focuses on the `--reuse-app` path end-to-end: credential storage, token lifecycle, token delivery, `bm fire`, credentials export/import. The browser flow will be added as a follow-up once the auth pipeline is proven.
 
 ## Acceptance Criteria
 

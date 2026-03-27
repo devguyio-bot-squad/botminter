@@ -212,11 +212,7 @@ mod tests {
             path: PathBuf::from("/tmp/test-team"),
             profile: "scrum-compact".to_string(),
             github_repo: "org/repo".to_string(),
-            credentials: Credentials {
-                gh_token: Some("ghp_test".to_string()),
-                telegram_bot_token: None,
-                webhook_secret: None,
-            },
+            credentials: Credentials::default(),
             coding_agent: None,
             project_number: None,
             bridge_lifecycle: BridgeLifecycle::default(),

@@ -84,7 +84,6 @@ fn do_sync(
         manifest: &manifest,
         coding_agent,
         github_repo: gh,
-        gh_token: team.credentials.gh_token.as_deref(),
         repos: false,
         verbose: true,
         bridge_flag: false,
@@ -156,7 +155,7 @@ mod tests {
         github_repo: &str,
     ) {
         let content = format!(
-            "workzone: {}\nteams:\n- name: {}\n  path: {}\n  profile: {}\n  github_repo: {}\n  credentials:\n    gh_token: null\n",
+            "workzone: {}\nteams:\n- name: {}\n  path: {}\n  profile: {}\n  github_repo: {}\n  credentials: {{}}\n",
             team_path.parent().unwrap().display(),
             team_name,
             team_path.display(),

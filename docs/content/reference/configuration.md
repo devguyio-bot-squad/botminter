@@ -180,8 +180,6 @@ metadata:
   category: workflow
   tags: [github, projects-v2, status, workflow]
   requires-tools: [gh, jq]
-  requires-env: [GH_TOKEN]
-  requires-scope: [project]
 ---
 
 # Status Workflow
@@ -346,8 +344,6 @@ teams:
     github_repo: org/my-team
     vm: bm-alpha
     credentials:
-      gh_token: ghp_...
-      telegram_bot_token: bot123:ABC...
       webhook_secret: my-secret
 ```
 
@@ -362,7 +358,6 @@ teams:
 | `teams[].github_repo` | No | GitHub `org/repo` for team coordination |
 | `teams[].vm` | No | Lima VM name this team is linked to (for `bm attach` resolution) |
 | `teams[].coding_agent` | No | Override the profile's `default_coding_agent` for this team (e.g., `gemini-cli`) |
-| `teams[].credentials.gh_token` | No | GitHub API token for `gh` CLI (auto-detected from `GH_TOKEN` env var or `gh auth token` during `bm init`) |
 | `teams[].credentials.telegram_bot_token` | No | Legacy field. Bridge tokens are now stored per-member in the system keyring via `bm bridge identity add`. |
 | `teams[].credentials.webhook_secret` | No | HMAC secret for daemon webhook signature validation |
 

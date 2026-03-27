@@ -4,8 +4,11 @@ use comfy_table::{
 };
 
 use crate::config;
+use crate::formation::{self, CredentialDomain};
 use crate::git;
+use crate::git::manifest_flow::{self, credential_keys};
 use crate::profile;
+use crate::workspace;
 
 /// Handles `bm projects list [-t team]`.
 pub fn list(team_flag: Option<&str>) -> Result<()> {
@@ -64,14 +67,80 @@ pub fn show(project: &str, team_flag: Option<&str>) -> Result<()> {
 pub fn add(url: &str, team_flag: Option<&str>) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
+    let team_repo = team.path.join("team");
     let name = git::add_project(
-        &team.path.join("team"),
+        &team_repo,
         url,
         &team.github_repo,
-        team.credentials.gh_token.as_deref(),
     )?;
     println!("Added project '{}' to team '{}'.", name, team.name);
+
+    // Install all hired members' Apps on the new project repo (Req 17).
+    if let Some(owner_repo) = manifest_flow::fork_url_to_owner_repo(url) {
+        install_member_apps_on_repo(team, &team_repo, &owner_repo);
+    }
+
     Ok(())
+}
+
+/// Installs each hired member's GitHub App on a project repo.
+/// Skips members without credentials (warns and continues).
+fn install_member_apps_on_repo(
+    team: &config::TeamEntry,
+    team_repo: &std::path::Path,
+    owner_repo: &str,
+) {
+    let members_dir = team_repo.join("members");
+    let members = match workspace::list_member_dirs(&members_dir) {
+        Ok(m) => m,
+        Err(e) => {
+            eprintln!("Warning: could not list members for App installation: {e}");
+            return;
+        }
+    };
+
+    if members.is_empty() {
+        return;
+    }
+
+    let formation = match formation::create_local_formation(&team.name) {
+        Ok(f) => f,
+        Err(e) => {
+            eprintln!("Warning: could not create formation for App installation: {e}");
+            return;
+        }
+    };
+
+    for member in &members {
+        let cred_store = match formation.credential_store(CredentialDomain::GitHubApp {
+            team_name: team.name.clone(),
+            member_name: member.clone(),
+        }) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("Warning: could not access credentials for {member}: {e}");
+                continue;
+            }
+        };
+
+        let installation_id = match cred_store.retrieve(&credential_keys::installation_id(member))
+        {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                eprintln!("Warning: no installation ID for member '{member}', skipping App installation on {owner_repo}");
+                continue;
+            }
+            Err(e) => {
+                eprintln!("Warning: could not read credentials for {member}: {e}");
+                continue;
+            }
+        };
+
+        eprintln!("Installing {member}'s App on {owner_repo}...");
+        if let Err(e) = manifest_flow::ensure_app_on_repos(&installation_id, &[owner_repo]) {
+            eprintln!("Warning: failed to install {member}'s App on {owner_repo}: {e}");
+        }
+    }
 }
 
 /// Handles `bm projects sync [-t team]`.

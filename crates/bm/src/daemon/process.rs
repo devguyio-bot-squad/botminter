@@ -98,7 +98,7 @@ pub fn launch_members_oneshot(
         return Ok(0);
     }
 
-    let gh_token = team.credentials.gh_token.as_deref().unwrap_or("");
+    let gh_token = crate::git::detect_token().unwrap_or_default();
     let member_token: Option<&str> = None;
 
     let workzone = &cfg.workzone;
@@ -122,7 +122,7 @@ pub fn launch_members_oneshot(
 
         match launch_ralph_oneshot(
             &ws,
-            gh_token,
+            &gh_token,
             member_token,
             None,
             None,
@@ -208,8 +208,10 @@ fn launch_ralph_oneshot(
     let mut cmd = Command::new("ralph");
     cmd.args(["run", "-p", "PROMPT.md"])
         .current_dir(workspace)
-        .env("GH_TOKEN", gh_token)
         .env_remove("CLAUDECODE");
+    if !gh_token.is_empty() {
+        cmd.env("GH_TOKEN", gh_token);
+    }
 
     if let Some(token) = member_token {
         match bridge_type {

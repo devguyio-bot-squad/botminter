@@ -1,14 +1,36 @@
 use std::fs;
 use std::io::IsTerminal;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::bridge::{self, CredentialStore};
 use crate::config;
+use crate::formation::{self, CredentialDomain};
+use crate::git::manifest_flow;
 use crate::profile;
 
-/// Handles `bm hire <role> [--name <name>] [-t team]`.
-pub fn run(role: &str, name: Option<&str>, team_flag: Option<&str>) -> Result<()> {
+/// GitHub App credential flags from the CLI.
+pub struct AppCredentialFlags<'a> {
+    pub reuse_app: bool,
+    pub app_id: Option<&'a str>,
+    pub client_id: Option<&'a str>,
+    pub private_key_file: Option<&'a str>,
+    pub installation_id: Option<&'a str>,
+    pub save_credentials: Option<&'a str>,
+}
+
+/// Handles `bm hire <role> [--name <name>] [-t team] [--reuse-app ...]`.
+///
+/// After creating the member directory (profile rendering), this function
+/// stores pre-generated App credentials via `--reuse-app`. The App creation
+/// step is deliberately separate from `hire_member()` — profile-level
+/// placeholder rendering must complete first.
+pub fn run(
+    role: &str,
+    name: Option<&str>,
+    team_flag: Option<&str>,
+    app_flags: AppCredentialFlags<'_>,
+) -> Result<()> {
     super::ensure_profiles(false)?;
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
@@ -23,16 +45,109 @@ pub fn run(role: &str, name: Option<&str>, team_flag: Option<&str>) -> Result<()
     profile::check_schema_version(&team.profile, &manifest.schema_version)?;
     let coding_agent = profile::resolve_coding_agent(team, &manifest)?;
 
-    // Hire the member (domain operation)
+    // Hire the member (domain operation — creates dir, renders placeholders)
     let result = profile::hire_member(&team_repo, &team.profile, role, name, coding_agent)?;
+
+    if result.already_existed {
+        if app_flags.reuse_app {
+            // Member exists, attach credentials (reconnect / migration)
+            println!(
+                "Member {} already exists in team '{}'. Storing App credentials.",
+                result.member_dir_name, team.name
+            );
+            setup_github_app(team, &result.member_dir_name, &app_flags)?;
+            return Ok(());
+        }
+        bail!(
+            "Member '{}' already exists. Use --reuse-app to attach App credentials \
+             to an existing member, or choose a different --name.",
+            result.member_dir_name
+        );
+    }
 
     println!(
         "Hired {} as {} in team '{}'.",
         role, result.member_name, team.name
     );
 
+    // ── GitHub App credential storage ──────────────────────────────
+    //
+    // Store pre-generated credentials via --reuse-app.
+    // Skip if no github_repo is configured and no --reuse-app (v1/test teams).
+    if app_flags.reuse_app {
+        setup_github_app(team, &result.member_dir_name, &app_flags)?;
+    } else if !team.github_repo.is_empty() {
+        // No --reuse-app and team has a github_repo — the operator needs
+        // to provide credentials. The browser manifest flow is deferred.
+        eprintln!(
+            "Note: GitHub App credentials not configured for {}.\n\
+             Use --reuse-app with --app-id, --client-id, --private-key-file, \
+             and --installation-id to provide App credentials.",
+            result.member_name
+        );
+    }
+
     // Prompt for bridge token if team has an external bridge configured
-    prompt_bridge_token(&team_repo, team, &cfg, &result.member_name)?;
+    prompt_bridge_token(&team_repo, team, &cfg, &result.member_dir_name)?;
+
+    Ok(())
+}
+
+/// Stores pre-generated GitHub App credentials for a newly hired member
+/// and ensures the App has access to all team + project repos.
+fn setup_github_app(
+    team: &config::TeamEntry,
+    member_name: &str,
+    flags: &AppCredentialFlags<'_>,
+) -> Result<()> {
+    let formation = formation::create_local_formation(&team.name)?;
+    let cred_store = formation.credential_store(CredentialDomain::GitHubApp {
+        team_name: team.name.clone(),
+        member_name: member_name.to_string(),
+    })?;
+
+    // Validate that all required flags are present
+    let app_id = flags.app_id.context(
+        "--reuse-app requires --app-id. Provide the GitHub App ID.",
+    )?;
+    let client_id = flags.client_id.context(
+        "--reuse-app requires --client-id. Provide the GitHub App Client ID.",
+    )?;
+    let key_file = flags.private_key_file.context(
+        "--reuse-app requires --private-key-file. Provide the path to the PEM file.",
+    )?;
+    let installation_id = flags.installation_id.context(
+        "--reuse-app requires --installation-id. Provide the installation ID.",
+    )?;
+
+    let private_key = fs::read_to_string(key_file)
+        .with_context(|| format!("Failed to read private key file: {key_file}"))?;
+
+    let creds = manifest_flow::PreGeneratedCredentials {
+        app_id: app_id.to_string(),
+        client_id: client_id.to_string(),
+        private_key,
+        installation_id: installation_id.to_string(),
+    };
+
+    manifest_flow::store_pregenerated_credentials(cred_store.as_ref(), member_name, &creds)?;
+    println!("GitHub App credentials stored for {}.", member_name);
+
+    // Ensure the App has access to team repo + project repos
+    let repos = manifest_flow::collect_team_repos(team);
+    let repo_refs: Vec<&str> = repos.iter().map(|s| s.as_str()).collect();
+    if !repo_refs.is_empty() {
+        eprintln!("Ensuring App installation has access to repos...");
+        manifest_flow::ensure_app_on_repos(
+            installation_id,
+            &repo_refs,
+        )?;
+    }
+
+    if let Some(path) = flags.save_credentials {
+        manifest_flow::save_credentials_to_file(path, member_name, &creds)?;
+        println!("Credentials saved to {path}");
+    }
 
     Ok(())
 }

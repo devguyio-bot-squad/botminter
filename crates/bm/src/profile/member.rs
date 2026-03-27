@@ -13,6 +13,10 @@ pub struct HireResult {
     pub member_dir_name: String,
     /// The member's display name (e.g., "01").
     pub member_name: String,
+    /// True when the member directory already existed (skipped extraction).
+    /// The caller can use this to decide whether to attach credentials
+    /// without re-creating the member skeleton.
+    pub already_existed: bool,
 }
 
 /// Hires a new member into a team by extracting the role skeleton, finalizing
@@ -48,10 +52,11 @@ pub fn hire_member(
     let member_dir = team_repo.join("members").join(&member_dir_name);
 
     if member_dir.exists() {
-        bail!(
-            "Member directory '{}' already exists. Choose a different name.",
-            member_dir_name
-        );
+        return Ok(HireResult {
+            member_dir_name,
+            member_name,
+            already_existed: true,
+        });
     }
 
     // Extract member skeleton from embedded profile
@@ -77,6 +82,7 @@ pub fn hire_member(
     Ok(HireResult {
         member_dir_name,
         member_name,
+        already_existed: false,
     })
 }
 
@@ -261,6 +267,55 @@ mod tests {
 
         let result = auto_suffix(team_repo, "architect").unwrap();
         assert_eq!(result, "03");
+    }
+
+    #[test]
+    fn hire_existing_member_returns_already_existed() {
+        // Set HOME to a temp dir so profiles_dir() resolves there
+        let home = tempfile::tempdir().unwrap();
+        let profiles_path = crate::profile::profiles_dir_for(home.path());
+        fs::create_dir_all(&profiles_path).unwrap();
+        crate::profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
+        // Temporarily override HOME for list_roles() resolution
+        let orig_home = std::env::var("HOME").ok();
+        std::env::set_var("HOME", home.path());
+
+        // Set up minimal git config so commits work in the temp HOME
+        let gitconfig = home.path().join(".gitconfig");
+        fs::write(&gitconfig, "[user]\n\tname = Test\n\temail = test@test.com\n").unwrap();
+
+        let team_tmp = tempfile::tempdir().unwrap();
+        let team_repo = team_tmp.path();
+        let profile = "scrum-compact";
+        let manifest = crate::profile::read_manifest_from(profile, &profiles_path).unwrap();
+        let coding_agent = manifest
+            .coding_agents
+            .get(&manifest.default_coding_agent)
+            .unwrap();
+
+        // Bootstrap a minimal team repo
+        crate::formation::setup_new_team_repo(
+            team_repo, profile, &manifest, &[], &[], None, Some(&profiles_path),
+        )
+        .unwrap();
+
+        // First hire — creates directory
+        let r1 = hire_member(team_repo, profile, "superman", Some("01"), coding_agent).unwrap();
+        assert!(!r1.already_existed, "First hire should create a new member");
+        assert_eq!(r1.member_dir_name, "superman-01");
+
+        // Second hire with same name — returns already_existed
+        let r2 = hire_member(team_repo, profile, "superman", Some("01"), coding_agent).unwrap();
+        assert!(r2.already_existed, "Second hire should detect existing member");
+        assert_eq!(r2.member_dir_name, "superman-01");
+        assert_eq!(r2.member_name, "01");
+
+        // Restore HOME
+        match orig_home {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
     }
 
     #[test]

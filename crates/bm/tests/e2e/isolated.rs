@@ -63,7 +63,7 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
                     .expect("Failed to create temp GitHub Project");
 
                     let projects =
-                        bm::git::list_projects(&cfg.gh_token, &cfg.gh_org)
+                        bm::git::list_projects(&cfg.gh_org)
                             .expect("list_gh_projects should succeed");
 
                     let found = projects.iter().find(|(n, _)| *n == project.number);
@@ -79,7 +79,7 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
 
                     // Idempotency
                     let projects2 =
-                        bm::git::list_projects(&cfg.gh_token, &cfg.gh_org)
+                        bm::git::list_projects(&cfg.gh_org)
                             .expect("second list_gh_projects should succeed");
                     let found2 = projects2.iter().find(|(n, _)| *n == project.number);
                     assert!(found2.is_some());

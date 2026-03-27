@@ -31,3 +31,5 @@ Tests use full process isolation — no global environment variable mutation.
 | Test | Failure mode | Suspected cause | Date |
 |------|-------------|-----------------|------|
 | `daemon_poll_launches_member_existing` | "Daemon did not launch member within 30s" | Race between daemon poll interval and 30s timeout; under CI load the daemon may not complete a full poll cycle + member launch within the window | 2026-03-17 |
+| exploratory H32 | "brain is alive but did not respond within 30s" | LLM API latency; brain process is running but Claude API response exceeds 30s poll timeout | 2026-03-26 |
+| exploratory H29b | "no brain response to evaluate" | Depends on H32 (brain chat response); when H32 times out, H29b has no response to verify | 2026-03-26 |

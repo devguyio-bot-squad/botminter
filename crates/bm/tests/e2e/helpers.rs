@@ -18,6 +18,11 @@ pub struct E2eConfig {
     pub gh_token: String,
     pub gh_org: String,
     pub progressive: Option<ProgressiveMode>,
+    /// GitHub App credentials for --reuse-app (pre-provisioned test App).
+    pub app_id: String,
+    pub app_client_id: String,
+    pub app_installation_id: String,
+    pub app_private_key_file: String,
 }
 
 #[derive(Clone, Debug)]

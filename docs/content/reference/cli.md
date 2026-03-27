@@ -15,9 +15,9 @@ bm init
 **Behavior:**
 
 - Prompts for workzone directory, team name, and profile
-- Auto-detects GitHub auth from `GH_TOKEN` env var or `gh auth token` — prompts only if none found
-- Validates the token via `gh api user` before proceeding
-- Lists GitHub orgs and personal account for interactive selection
+- Requires existing GitHub auth (`gh auth login` or `GH_TOKEN` env var) — fails if no session found
+- Validates credentials via `gh api user` before proceeding
+- Lists GitHub organizations for interactive selection (personal accounts are blocked — GitHub App identity requires an org)
 - Offers to create a new repo or select an existing one from the chosen org
 - Offers to create a new GitHub Project board or select an existing one
 - If the selected profile supports bridges, prompts for bridge selection (or "No bridge")
@@ -41,16 +41,17 @@ bm init --non-interactive --profile <profile> --team-name <name> --org <org> --r
 | `--non-interactive` | Yes | Run without interactive prompts |
 | `--profile <profile>` | Yes | Profile name (e.g., `scrum-compact`) |
 | `--team-name <name>` | Yes | Team identifier |
-| `--org <org>` | Yes | GitHub org or user account |
+| `--org <org>` | Yes | GitHub organization (personal accounts not allowed) |
 | `--repo <repo>` | Yes | GitHub repo name |
 | `--bridge <name>` | No | Bridge to configure (e.g., `telegram`). Must be supported by the profile. Omit for no bridge |
 | `--project <url>` | No | Project fork URL to add, or `new` to create a GitHub Project board |
 | `--workzone <path>` | No | Override workzone directory (default: `~/.botminter/workspaces`) |
+| `--credentials-file <path>` | No | Import App credentials from a YAML file (for machine migration) |
 
 **Behavior:**
 
 - Runs the full init flow without prompts
-- Requires `GH_TOKEN` in the environment (auto-detected from `gh auth token` or env var)
+- Requires existing GitHub auth (`gh auth login` or `GH_TOKEN`) — validates that `--org` is a real GitHub Organization
 - Creates the GitHub repo, bootstraps labels, creates a Project board, and registers the team
 - In non-interactive mode, profile version mismatches are auto-resolved (same as `--force`)
 
@@ -156,7 +157,7 @@ bm attach -t my-team
 Hire a member into a role.
 
 ```bash
-bm hire <role> [--name <name>] [-t <team>]
+bm hire <role> [--name <name>] [-t <team>] [--reuse-app --app-id <id> --client-id <id> --private-key-file <path> --installation-id <id>] [--save-credentials <path>]
 ```
 
 | Parameter | Required | Description |
@@ -164,15 +165,101 @@ bm hire <role> [--name <name>] [-t <team>]
 | `<role>` | Yes | Role name (must exist in the team's profile, e.g., `architect`) |
 | `--name <name>` | No | Member name. Auto-generates a 2-digit suffix (e.g., `01`) if omitted |
 | `-t <team>` | No | Team to operate on (defaults to default team) |
+| `--reuse-app` | No | Use pre-existing GitHub App credentials instead of creating a new App |
+| `--app-id <id>` | With `--reuse-app` | GitHub App ID |
+| `--client-id <id>` | With `--reuse-app` | GitHub App Client ID |
+| `--private-key-file <path>` | With `--reuse-app` | Path to the App's PEM private key file |
+| `--installation-id <id>` | With `--reuse-app` | GitHub App Installation ID |
+| `--save-credentials <path>` | No | Save App credentials to file during creation |
 
 **Behavior:**
 
 - Performs schema version guard (rejects if team schema doesn't match profile)
 - Extracts member skeleton from the profile on disk into `members/{role}-{name}/`
 - Finalizes `botminter.yml` with the member's name
+- **GitHub App setup:** Creates a new GitHub App for the member via the manifest flow (browser-based), or stores pre-existing credentials with `--reuse-app`. App credentials are saved in the system keyring.
+- Ensures the App is installed on the team repo and all project repos
 - If the team has an external bridge configured, prompts for an optional bridge token (interactive mode only). The token is stored in the system keyring.
 - Creates a git commit (no auto-push)
 - Auto-suffix fills gaps: if `01` and `03` exist, returns `02`
+- **Idempotent:** Re-hiring an existing member without `--reuse-app` creates a new App (replacement). With `--reuse-app`, stores the provided credentials (reconnect).
+
+### `bm fire`
+
+Fire a member — stop, uninstall App, remove credentials and directories.
+
+```bash
+bm fire <member> [-t <team>] [--keep-app]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<member>` | Yes | Member name to fire (e.g., `superman-01`) |
+| `-t <team>` | No | Team to operate on (defaults to default team) |
+| `--keep-app` | No | Preserve the GitHub App installation for reuse |
+
+**Behavior:**
+
+Executes a 6-step teardown sequence:
+
+1. **Stop member** — via Team → Formation → Daemon pipeline (graceful stop)
+2. **Uninstall App** — signs JWT from stored credentials, calls `DELETE /app/installations/{id}` (skipped with `--keep-app`)
+3. **Remove credentials** — deletes all App credential keys from the system keyring
+4. **Remove member directory** — deletes `members/{member}/` from the team repo
+5. **Remove member workspace** — deletes the workspace directory under the workzone
+6. **Print instructions** — shows URL for manual App deletion via GitHub UI (App itself can't be deleted via API)
+
+Steps execute sequentially. On partial failure, the command reports what succeeded and what failed — no rollback. Re-running `bm fire` for a partially cleaned-up member is safe.
+
+### `bm credentials export`
+
+Export all members' credentials to a YAML file for machine migration.
+
+```bash
+bm credentials export -o <file> [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-o <file>` | Yes | Output file path |
+| `-t <team>` | No | Team to operate on (defaults to default team) |
+
+**Behavior:**
+
+- Enumerates all hired members from the team repo
+- Reads GitHub App credentials (app_id, client_id, private_key, installation_id) from the system keyring
+- Reads bridge credentials (token) if a bridge is configured
+- Writes YAML file with 0600 permissions
+- Prints security warning to stderr
+
+**Output format:**
+
+```yaml
+team: my-team
+members:
+  superman:
+    github_app:
+      app_id: "123456"
+      client_id: "Iv1.abc123"
+      private_key: |
+        -----BEGIN RSA PRIVATE KEY-----
+        ...
+        -----END RSA PRIVATE KEY-----
+      installation_id: "789012"
+    bridge:
+      token: "syt_xxxxxxxxx"
+```
+
+**Machine migration workflow:**
+
+```bash
+# Old machine:
+bm credentials export -o team-creds.yml
+
+# New machine:
+bm init --credentials-file team-creds.yml
+bm teams sync -a
+```
 
 ### `bm members list`
 
@@ -330,6 +417,7 @@ bm projects add <url> [-t <team>]
 - Appends to `botminter.yml` projects list
 - Creates `projects/{name}/knowledge/` and `projects/{name}/invariants/` directories
 - Creates a git commit (no auto-push)
+- Installs all hired members' GitHub Apps on the new project repo (skips members without credentials)
 - Errors if the project name already exists
 
 ### `bm projects sync`

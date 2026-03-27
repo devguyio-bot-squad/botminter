@@ -107,10 +107,23 @@ fn init_with_bridge_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEn
     }
 }
 
-fn hire_member_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn hire_member_fn(
+    _gh_token: String,
+    app_id: String,
+    app_client_id: String,
+    app_installation_id: String,
+    app_private_key_file: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let stdout = env.command("bm")
-            .args(["hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME])
+            .args([
+                "hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME,
+                "--reuse-app",
+                "--app-id", &app_id,
+                "--client-id", &app_client_id,
+                "--private-key-file", &app_private_key_file,
+                "--installation-id", &app_installation_id,
+            ])
             .run();
         assert!(stdout.contains(MEMBER_DIR) || stdout.contains(MEMBER_NAME));
     }
@@ -567,14 +580,14 @@ fn sync_idempotent_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::
     }
 }
 
-fn projects_sync_fn(gh_org: String, gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn projects_sync_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let stdout = env.command("bm")
             .args(["projects", "sync", "-t", TEAM_NAME])
             .run();
         assert!(stdout.contains("Status field synced"));
 
-        let _projects = bm::git::list_projects(&gh_token, &gh_org)
+        let _projects = bm::git::list_projects(&gh_org)
             .expect("list_gh_projects should succeed");
 
         // Idempotency
@@ -644,8 +657,8 @@ fn bridge_functional_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSa
             "stub env should contain RALPH_MATRIX_ACCESS_TOKEN, got: {}", env_content);
         assert!(env_content.contains("RALPH_MATRIX_HOMESERVER_URL="),
             "stub env should contain RALPH_MATRIX_HOMESERVER_URL, got: {}", env_content);
-        assert!(env_content.contains("GH_TOKEN="),
-            "stub env should contain GH_TOKEN, got: {}", env_content);
+        assert!(env_content.contains("GH_CONFIG_DIR="),
+            "stub env should contain GH_CONFIG_DIR (App credential path), got: {}", env_content);
 
         // Verify the stub successfully contacted the Matrix homeserver
         let matrix_response = fs::read_to_string(ws.join(".ralph-stub-matrix-response")).unwrap();
@@ -1069,7 +1082,11 @@ fn inbox_resync_preserves_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send 
 
 // ── Scenario construction ────────────────────────────────────────────
 
-fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
+fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSuite {
+    let app_id = config.app_id.clone();
+    let app_client_id = config.app_client_id.clone();
+    let app_installation_id = config.app_installation_id.clone();
+    let app_private_key_file = config.app_private_key_file.clone();
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
@@ -1090,7 +1107,7 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         .case("env_create_fresh", env_create_fn())
         .case("attach_local_formation_fresh", attach_local_formation_fn())
         // ── Continue operator journey ────────────────────────────
-        .case("hire_member_fresh", hire_member_fn(gh_token.clone()))
+        .case("hire_member_fresh", hire_member_fn(gh_token.clone(), app_id.clone(), app_client_id.clone(), app_installation_id.clone(), app_private_key_file.clone()))
         .case("projects_add_fresh", projects_add_fn(gh_org.clone(), gh_token.clone()))
         .case("teams_show_fresh", teams_show_fn())
         .case("bridge_start_fresh", bridge_start_fn(gh_token.clone()))
@@ -1162,12 +1179,11 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         // ── Second pass: existing repo ───────────────────────────────
         .case("verify_board_survives_reset", {
             let gh_org = gh_org.clone();
-            let gh_token = gh_token.clone();
             move |env: &mut TestEnv| {
                 let board_title = env.get_export("board_title")
                     .expect("board_title export should survive reset_home")
                     .to_string();
-                let projects = bm::git::list_projects(&gh_token, &gh_org)
+                let projects = bm::git::list_projects(&gh_org)
                     .expect("list_projects should succeed");
                 assert!(
                     projects.iter().any(|(_, t)| t == &board_title),
@@ -1179,8 +1195,7 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         .case("init_with_bridge_existing", init_with_bridge_fn(gh_org.clone(), gh_token.clone()))
         .case("env_create_existing", env_create_fn())
         .case("attach_local_formation_existing", attach_local_formation_fn())
-        .case_expect_error("hire_member_existing", hire_member_fn(gh_token.clone()),
-            |err| err.contains("already exists"))
+        .case("hire_member_existing", hire_member_fn(gh_token.clone(), app_id.clone(), app_client_id.clone(), app_installation_id.clone(), app_private_key_file.clone()))
         .case_expect_error("projects_add_existing", projects_add_fn(gh_org.clone(), gh_token.clone()),
             |err| err.contains("already exists"))
         .case("teams_show_existing", teams_show_fn())
@@ -1301,9 +1316,9 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
 }
 
 pub fn scenario(config: &E2eConfig) -> Trial {
-    build_suite(config.gh_org.clone(), config.gh_token.clone()).build(config)
+    build_suite(config.gh_org.clone(), config.gh_token.clone(), config).build(config)
 }
 
 pub fn scenario_progressive(config: &E2eConfig) -> Trial {
-    build_suite(config.gh_org.clone(), config.gh_token.clone()).build_progressive(config)
+    build_suite(config.gh_org.clone(), config.gh_token.clone(), config).build_progressive(config)
 }

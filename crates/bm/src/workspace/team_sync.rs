@@ -19,7 +19,6 @@ pub struct TeamSyncParams<'a> {
     pub manifest: &'a ProfileManifest,
     pub coding_agent: &'a CodingAgentDef,
     pub github_repo: Option<&'a str>,
-    pub gh_token: Option<&'a str>,
     pub repos: bool,
     pub verbose: bool,
     pub bridge_flag: bool,
@@ -100,8 +99,8 @@ pub fn sync_team_workspaces(params: &TeamSyncParams) -> Result<TeamSyncResult> {
 
     // Build remote ops for push mode
     let gh_ops = if params.repos {
-        params.gh_token.map(|token| GhRemoteOps {
-            gh_token: token.to_string(),
+        crate::git::detect_token().map(|token| GhRemoteOps {
+            gh_token: token,
         })
     } else {
         None
@@ -143,7 +142,6 @@ pub fn sync_team_workspaces(params: &TeamSyncParams) -> Result<TeamSyncResult> {
                 projects: &project_refs,
                 github_repo: params.github_repo,
                 push: params.repos,
-                gh_token: params.gh_token,
                 coding_agent: params.coding_agent,
                 remote_ops: gh_ops.as_ref().map(|o| o as &dyn workspace::RemoteRepoOps),
                 team_submodule_url: None,

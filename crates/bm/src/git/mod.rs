@@ -1,3 +1,5 @@
+pub mod app_auth;
+pub mod manifest_flow;
 mod github;
 mod project;
 

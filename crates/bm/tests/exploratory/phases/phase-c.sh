@@ -227,7 +227,7 @@ if [ -n "${PRE_USER_ID:-}" ]; then
         mv "${PWFILE}.tmp" "$PWFILE"
     fi
     # Hire pre-existing as a member so sync will provision them
-    bm hire superman --name pre-existing 2>&1 >/dev/null || true
+    bm_hire superman --name pre-existing 2>&1 >/dev/null || true
 fi
 OUT=$(bm teams sync --bridge -v 2>&1)
 EC=$?

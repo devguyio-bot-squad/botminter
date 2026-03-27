@@ -1,6 +1,6 @@
 # Prerequisites
 
-Before setting up BotMinter, you need a few tools installed, a GitHub token with the right permissions, and a plan for where your repos will live.
+Before setting up BotMinter, you need a few tools installed, a GitHub account with access to an organization, and a plan for where your repos will live.
 
 ## Tools
 
@@ -49,7 +49,7 @@ Your BotMinter agents will run autonomously — cloning repos, pushing code, cre
 
 We recommend running your agents under a **separate user account** on Linux or macOS (e.g., a `BotMinter` user). Agents run with push access to GitHub repos and execute code autonomously — keeping them isolated from your personal account is a good security and hygiene practice.
 
-- **Isolated credentials** — the agent's GitHub token and `gh` config are scoped to that user, not mixed with your personal credentials
+- **Isolated credentials** — the agent's GitHub App credentials and `gh` config are scoped to that user, not mixed with your personal credentials
 - **Clean environment** — no interference from your personal shell config, editor plugins, or other tools
 - **Easy cleanup** — remove the user account to cleanly remove all agent state
 - **Security boundary** — agents can't accidentally access your personal files or tokens
@@ -88,11 +88,11 @@ my-ai-team/                # Dedicated org
 Benefits:
 
 - **Clean separation** — human work and agent work don't mix
-- **Scoped permissions** — scope the GitHub token to one org for tighter access control
+- **Scoped permissions** — each member's GitHub App is installed per-org for tighter access control
 - **No noise** — agent activity (issues, PRs, comments) stays out of your main repos
 - **Portability** — easy to share with collaborators or archive later
 
-If you prefer to keep things under your personal account, that works too — `bm init` lets you choose any org or your personal account interactively.
+A GitHub organization is **required** — `bm init` will not allow personal accounts. Each team member gets its own GitHub App identity, which requires `organization_projects` permissions only available to organizations.
 
 ### Understanding the repo layout
 
@@ -108,66 +108,45 @@ BotMinter works with two types of repos:
 
 ## Git and GitHub setup
 
-Agents use `gh` for GitHub operations (issues, labels, Project boards) and `git` for cloning and pushing repos. Both need to be authenticated with the same token, and both must work non-interactively — agents can't respond to login prompts.
+BotMinter uses two layers of GitHub authentication:
 
-### 1. Create a Personal Access Token
+- **Operator auth** — You (the operator) need an authenticated `gh` session for running `bm` commands (`bm init`, `bm hire`, etc.). This is your personal GitHub identity.
+- **Member auth** — Each team member gets its own **GitHub App** identity, created automatically during `bm hire`. Tokens are auto-managed by the daemon — you never need to create or rotate them manually.
 
-#### Classic PAT (recommended)
+### Authenticate `gh` for operator commands
 
-Create a [classic PAT](https://github.com/settings/tokens/new) with these scopes:
-
-| Scope | Why it's needed |
-|-------|----------------|
-| `repo` | Create and manage repos, clone forks, read/write issues and PRs |
-| `project` | Create and manage GitHub Projects (v2) for status tracking |
-| `read:org` | List your GitHub organizations during `bm init` |
-
-#### Fine-grained PAT (alternative)
-
-If you prefer fine-grained tokens, create one at [Settings > Fine-grained tokens](https://github.com/settings/personal-access-tokens/new) with these permissions:
-
-| Permission | Access | Why |
-|-----------|--------|-----|
-| Administration | Read & Write | Create repos via `gh repo create` |
-| Contents | Read & Write | Clone, create, and push repos |
-| Issues | Read & Write | Create labels, read/write issues for coordination |
-| Pull requests | Read & Write | Open and manage PRs |
-| Projects | Admin | Create and configure GitHub Project boards |
-| Metadata | Read | Access repository and organization metadata |
-
-!!! tip
-    If you're using an org, make sure the token has access to that org. For fine-grained tokens, set the **resource owner** to the org.
-
-!!! note "Fine-grained PAT limitation"
-    Fine-grained tokens cannot list your GitHub organizations automatically. During `bm init`, the org selection step will only show your personal account — you'll need to type your org name manually when prompted. Classic PATs don't have this limitation.
-
-### 2. Authenticate `gh` and `git`
-
-Two things need authentication:
-
-- **`bm` and `gh` commands** — `bm init` detects your token automatically from the `GH_TOKEN` environment variable or `gh auth token`, and stores it in BotMinter's own config (`~/.botminter/config.yml`). All subsequent `gh` calls use this stored token. If no token is detected, `bm init` will prompt you to paste one interactively.
-- **`git clone` and `git push`** — During `bm teams sync`, plain `git` commands clone project forks. These need `gh` configured as a credential helper so `git` can authenticate with the same token.
-
-Save your token to a file and run:
+`bm init` requires an existing `gh` auth session. Run:
 
 ```bash
-# Authenticate gh and set HTTPS as the Git protocol
-gh auth login --with-token --git-protocol https < gh-token.txt
+# Interactive login (recommended)
+gh auth login --git-protocol https
 
 # Wire up git to use gh as a credential helper (required for git clone/push)
 gh auth setup-git
 ```
 
-Verify everything works:
+Verify:
 
 ```bash
 gh auth status
 ```
 
-You can delete `gh-token.txt` after login — the token is stored in `gh`'s config.
+Your `gh` session needs access to the GitHub organization you'll use for the team. If you haven't created an org yet, do so at [github.com/organizations/new](https://github.com/organizations/new).
 
-`bm init` validates the token before proceeding — if it can't authenticate, the wizard will tell you.
+!!! tip "Scopes"
+    If using a classic PAT instead of interactive login, ensure it has `repo`, `project`, and `read:org` scopes.
+
+### Member authentication (automatic)
+
+When you hire a member with `bm hire`, BotMinter creates a GitHub App for that member (or accepts pre-existing App credentials via `--reuse-app`). The daemon then:
+
+1. Signs JWTs from the App's private key
+2. Exchanges them for short-lived installation tokens (1-hour expiry)
+3. Writes tokens to `hosts.yml` in each member's `GH_CONFIG_DIR`
+4. Refreshes tokens automatically at the 50-minute mark
+
+The `gh` CLI and `git` commands in member workspaces read credentials from `GH_CONFIG_DIR` automatically — no manual token management needed.
 
 ## Next step
 
-Once you have your environment set up and token configured, head to [Bootstrap Your Team](bootstrap-your-team.md) to create your first team.
+Once you have your environment set up and `gh` authenticated, head to [Bootstrap Your Team](bootstrap-your-team.md) to create your first team.

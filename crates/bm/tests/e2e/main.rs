@@ -28,10 +28,10 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
 
     // Extract custom args before passing remaining args to libtest-mimic
-    let (gh_token, gh_org, progressive, remaining_args) = extract_custom_args(&args);
+    let parsed = extract_custom_args(&args);
 
     // Handle --progressive-reset before anything else
-    if let Some(ProgressiveMode::Reset(ref suite_filter)) = progressive {
+    if let Some(ProgressiveMode::Reset(ref suite_filter)) = parsed.progressive {
         handle_reset(suite_filter);
         return;
     }
@@ -40,13 +40,17 @@ fn main() {
     helpers::preflight_gh_auth();
 
     let config = E2eConfig {
-        gh_token,
-        gh_org,
-        progressive,
+        gh_token: parsed.gh_token,
+        gh_org: parsed.gh_org,
+        progressive: parsed.progressive,
+        app_id: parsed.app_id,
+        app_client_id: parsed.app_client_id,
+        app_installation_id: parsed.app_installation_id,
+        app_private_key_file: parsed.app_private_key_file,
     };
 
     // Parse libtest-mimic arguments from remaining args
-    let test_args = Arguments::from_iter(remaining_args);
+    let test_args = Arguments::from_iter(parsed.remaining);
 
     // Collect tests based on mode
     let mut tests = Vec::new();
@@ -59,12 +63,26 @@ fn main() {
     libtest_mimic::run(&test_args, tests).exit();
 }
 
-/// Extracts --gh-token, --gh-org, and --progressive/--progressive-reset from args.
-fn extract_custom_args(
-    args: &[String],
-) -> (String, String, Option<ProgressiveMode>, Vec<String>) {
+/// Parsed custom arguments from the CLI.
+struct ParsedArgs {
+    gh_token: String,
+    gh_org: String,
+    app_id: String,
+    app_client_id: String,
+    app_installation_id: String,
+    app_private_key_file: String,
+    progressive: Option<ProgressiveMode>,
+    remaining: Vec<String>,
+}
+
+/// Extracts custom args from the CLI.
+fn extract_custom_args(args: &[String]) -> ParsedArgs {
     let mut token: Option<String> = None;
     let mut org: Option<String> = None;
+    let mut app_id: Option<String> = None;
+    let mut app_client_id: Option<String> = None;
+    let mut app_installation_id: Option<String> = None;
+    let mut app_private_key_file: Option<String> = None;
     let mut progressive: Option<ProgressiveMode> = None;
     let mut remaining = Vec::new();
     let mut iter = args.iter().peekable();
@@ -87,6 +105,34 @@ fn extract_custom_args(
                 org = iter.next().cloned();
                 if org.is_none() {
                     eprintln!("Error: --gh-org requires a value");
+                    std::process::exit(1);
+                }
+            }
+            "--app-id" => {
+                app_id = iter.next().cloned();
+                if app_id.is_none() {
+                    eprintln!("Error: --app-id requires a value");
+                    std::process::exit(1);
+                }
+            }
+            "--app-client-id" => {
+                app_client_id = iter.next().cloned();
+                if app_client_id.is_none() {
+                    eprintln!("Error: --app-client-id requires a value");
+                    std::process::exit(1);
+                }
+            }
+            "--app-installation-id" => {
+                app_installation_id = iter.next().cloned();
+                if app_installation_id.is_none() {
+                    eprintln!("Error: --app-installation-id requires a value");
+                    std::process::exit(1);
+                }
+            }
+            "--app-private-key-file" => {
+                app_private_key_file = iter.next().cloned();
+                if app_private_key_file.is_none() {
+                    eprintln!("Error: --app-private-key-file requires a value");
                     std::process::exit(1);
                 }
             }
@@ -118,13 +164,25 @@ fn extract_custom_args(
     }
 
     let mut missing = Vec::new();
-    // Token and org not required for --progressive-reset
+    // Token, org, and App creds not required for --progressive-reset
     if !matches!(progressive, Some(ProgressiveMode::Reset(_))) {
         if token.is_none() {
             missing.push("--gh-token <TOKEN>");
         }
         if org.is_none() {
             missing.push("--gh-org <ORG>");
+        }
+        if app_id.is_none() {
+            missing.push("--app-id <APP_ID>");
+        }
+        if app_client_id.is_none() {
+            missing.push("--app-client-id <CLIENT_ID>");
+        }
+        if app_installation_id.is_none() {
+            missing.push("--app-installation-id <INSTALLATION_ID>");
+        }
+        if app_private_key_file.is_none() {
+            missing.push("--app-private-key-file <PATH>");
         }
     }
     if !missing.is_empty() {
@@ -135,12 +193,16 @@ fn extract_custom_args(
         std::process::exit(1);
     }
 
-    (
-        token.unwrap_or_default(),
-        org.unwrap_or_default(),
+    ParsedArgs {
+        gh_token: token.unwrap_or_default(),
+        gh_org: org.unwrap_or_default(),
+        app_id: app_id.unwrap_or_default(),
+        app_client_id: app_client_id.unwrap_or_default(),
+        app_installation_id: app_installation_id.unwrap_or_default(),
+        app_private_key_file: app_private_key_file.unwrap_or_default(),
         progressive,
         remaining,
-    )
+    }
 }
 
 /// Handle --progressive-reset: clean up GitHub repos, tg-mock containers, and state files.

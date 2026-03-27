@@ -4,13 +4,6 @@
 
 set -euo pipefail
 
-# Verify project scope by testing access
-if ! gh project list --owner "$(gh api user -q .login)" --limit 1 --format json &>/dev/null; then
-  echo "❌ ERROR: Missing 'project' scope on GH_TOKEN"
-  echo "Run: gh auth refresh -s project -h github.com"
-  exit 1
-fi
-
 # Detect team repo
 TEAM_REPO=$(cd team && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
 
@@ -36,7 +29,8 @@ fi
 # Get project number with error checking
 PROJECT_NUM=$(gh project list --owner "$OWNER" --format json 2>&1 | jq -r '.projects[0].number')
 if [ -z "$PROJECT_NUM" ] || [ "$PROJECT_NUM" = "null" ]; then
-  echo "❌ ERROR: No GitHub Project found for organization: $OWNER"
+  echo "❌ ERROR: Cannot access GitHub Projects for organization: $OWNER"
+  echo "Verify the GitHub App has 'organization_projects: admin' permission and is installed on the org"
   exit 1
 fi
 

@@ -33,7 +33,7 @@ hats:
     - solve.unblocked
     publishes:
     - build.completed
-    - build.blocked
+    - build.deadend
     default_publishes: build.completed
     instructions: |
       ## BUILDER MODE
@@ -85,8 +85,8 @@ hats:
       Follow the suggested path forward — do NOT re-evaluate whether the problem is solvable.
       The Problem Solver has already determined it IS solvable. Your job is to execute the solution.
 
-      ### When to emit build.blocked
-      If you encounter ANY of the following, you MUST emit `build.blocked` instead of giving up or declaring the problem unsolvable:
+      ### When to emit build.deadend
+      If you encounter ANY of the following, you MUST emit `build.deadend` instead of giving up or declaring the problem unsolvable:
       - **Environment issues:** missing dependencies, broken toolchain, failing infrastructure
       - **Pre-existing test failures:** tests that were already failing before your changes
       - **Pre-existing condition failures:** broken state, stale artifacts, misconfigured systems
@@ -94,7 +94,7 @@ hats:
       - **Unfamiliar territory:** errors you don't understand or can't diagnose
       - **Exhausted approaches:** you've tried multiple fixes and none worked
 
-      Before emitting `build.blocked`, append a structured entry to `.ralph/agent/blockers.md`:
+      Before emitting `build.deadend`, append a structured entry to `.ralph/agent/blockers.md`:
 
       ```markdown
       ## BLOCKER — <ISO-timestamp>
@@ -122,7 +122,7 @@ hats:
       cleared by other hats. `.ralph/agent/blockers.md` is a persistent context file that survives
       across iterations and is visible to all hats in the "AVAILABLE CONTEXT FILES" listing.
 
-      CRITICAL: You MUST NOT rationalize inaction. "This is a pre-existing issue" or "this is outside my scope" are NOT valid reasons to skip or ignore a problem. If it blocks your work, emit `build.blocked` and let the Problem Solver find a path forward. Giving up is not an option — escalation is.
+      CRITICAL: You MUST NOT rationalize inaction. "This is a pre-existing issue" or "this is outside my scope" are NOT valid reasons to skip or ignore a problem. If it blocks your work, emit `build.deadend` and let the Problem Solver find a path forward. Giving up is not an option — escalation is.
 
       ### DON'T
       - ❌ Skip the explore step
@@ -136,7 +136,7 @@ hats:
     name: Problem Solver
     description: Fresh-perspective troubleshooter for environmental issues, pre-existing failures, and blockers the Builder cannot resolve. Always finds a path forward.
     triggers:
-    - build.blocked
+    - build.deadend
     publishes:
     - solve.unblocked
     - human.interact

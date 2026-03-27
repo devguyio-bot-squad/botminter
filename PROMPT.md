@@ -1,1 +1,1 @@
-specs/github-app-identity/sprint-1/PROMPT.md
+specs/github-app-identity/sprint-3/PROMPT.md

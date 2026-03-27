@@ -1,26 +1,18 @@
 # Troubleshooting Guide
 
-## Error: "Missing 'project' scope on GH_TOKEN"
+## Error: "Cannot access GitHub Projects"
 
 **When:** At skill invocation (setup.sh verification)
 
-**Cause:** The GitHub token doesn't have the `project` scope enabled
+**Cause:** The GitHub App doesn't have `organization_projects: admin` permission, or the App is not installed on the organization.
 
 **Solution:**
 
-```bash
-# Refresh token with project scope
-gh auth refresh -s project
+1. Verify the App is installed on the organization
+2. Check the App's permissions include `organization_projects: admin`
+3. If needed, re-run `bm hire` to create/configure the App with correct permissions
 
-# Or for specific host:
-gh auth refresh -h github.com -s project
-
-# Verify scope is enabled:
-gh auth status
-# Look for: ✓ Token scopes: ..., 'project'
-```
-
-**Why this happens:** GitHub Projects v2 operations require the `project` scope. This is separate from `repo` scope.
+**Why this happens:** GitHub Projects v2 operations require the `organization_projects: admin` permission on the GitHub App. This is set in the App manifest during `bm hire`.
 
 ---
 
@@ -62,25 +54,16 @@ This may indicate a permissions issue or an API error.
 
 **Root causes:**
 
-1. **Token lacks `project` scope** (most common)
+1. **GitHub App lacks `organization_projects: admin` permission** (most common)
 2. GraphQL API rate limit or transient error
 3. Status option ID was invalid
 4. Permissions issue (read vs write access)
 
 **Solution:**
 
-1. **First, verify token scope:**
+1. **First, verify App permissions:**
 
-```bash
-gh auth status
-# Look for: ✓ Token scopes: ..., 'project'
-```
-
-If missing:
-
-```bash
-gh auth refresh -s project
-```
+The GitHub App must have `organization_projects: admin` permission. This is set in the App manifest during `bm hire`. If missing, re-run `bm hire`.
 
 2. **Check rate limits:**
 
@@ -115,15 +98,11 @@ gh project list --owner ORG_NAME
    - Open the project in GitHub UI
    - Verify there's a single-select field named exactly "Status"
 
-3. **Check token has `project` scope:**
+3. **Verify App permissions:** The GitHub App must have `organization_projects: admin` permission.
 
-```bash
-gh auth status
-```
-
-4. **Verify you have project access:**
-   - Check you're a member of the organization
-   - Verify you have read access to the project
+4. **Verify project access:**
+   - Check the App is installed on the organization
+   - Verify the App has access to the project
 
 ---
 
@@ -248,13 +227,9 @@ gh repo view
 
 **Solution:** Usually transient. The operation succeeded. If this happens repeatedly:
 
-1. Check token has `repo` scope for issue comments:
+1. Verify the GitHub App has `issues: write` permission
 
-```bash
-gh auth status
-```
-
-2. Verify you have write access to issues
+2. Verify the App is installed on the repository
 
 ---
 
@@ -322,7 +297,7 @@ This shows every command executed and variable expansion.
 If you encounter errors not covered here:
 
 1. Check the error message for specific details
-2. Verify token scope with `gh auth status`
+2. Verify the GitHub App permissions and installation status
 3. Review [Error Handling Patterns](error-handling.md)
 4. Check [GraphQL Queries Reference](graphql-queries.md) for API details
 5. Run with `bash -x` for detailed trace

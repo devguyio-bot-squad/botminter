@@ -140,7 +140,6 @@ pub struct WorkspaceRepoParams<'a> {
     pub projects: &'a [(&'a str, &'a str)], // [(project_name, fork_url)]
     pub github_repo: Option<&'a str>,
     pub push: bool,
-    pub gh_token: Option<&'a str>,
     pub coding_agent: &'a CodingAgentDef,
     /// Remote repo operations. Required when `push` is true.
     /// Pass `None` for local-only mode.
@@ -507,7 +506,6 @@ pub(super) mod tests {
             projects,
             github_repo: None,
             push: false,
-            gh_token: None,
             coding_agent,
             remote_ops: None,
             team_submodule_url: None,
@@ -1039,7 +1037,6 @@ pub(super) mod tests {
             projects: &[],
             github_repo: Some("myorg/my-team"),
             push: true,
-            gh_token: Some("fake-token"),
             coding_agent,
             remote_ops: Some(remote_ops),
             team_submodule_url: Some(team_repo_url),

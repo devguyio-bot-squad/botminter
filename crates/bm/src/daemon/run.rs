@@ -1,6 +1,7 @@
+use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use anyhow::{Context, Result};
 use axum::body::Bytes;
@@ -20,6 +21,7 @@ use super::event::{
 use super::log::daemon_log;
 use super::process::handle_member_launch;
 use crate::config as app_config;
+use crate::formation::AppCredentialsCached;
 use crate::web::state::WebState;
 use crate::web::web_router;
 
@@ -37,6 +39,9 @@ pub(super) struct DaemonState {
     /// when the HOME directory changes (e.g., in E2E tests).
     pub(super) config: Arc<app_config::BotminterConfig>,
     pub(super) team_entry: Arc<app_config::TeamEntry>,
+    /// In-memory cache of App credentials for members that have been started.
+    /// Used by the background refresh loop to re-sign JWTs without re-reading keyring.
+    pub(super) app_credentials: Arc<Mutex<HashMap<String, AppCredentialsCached>>>,
 }
 
 /// Runs the daemon event loop. Called by the hidden `bm daemon-run` command.
@@ -87,6 +92,7 @@ async fn run_daemon_async(
         started_at: Some(std::time::Instant::now()),
         config: Arc::new(cfg),
         team_entry: Arc::new(team_entry),
+        app_credentials: Arc::new(Mutex::new(HashMap::new())),
     };
 
     // Resolve config path for the web API (console routes)

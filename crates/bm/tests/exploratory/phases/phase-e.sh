@@ -19,7 +19,7 @@ OUT=$(bm teams sync --bridge -v 2>&1)
 EC=$?
 if [ $EC -eq 0 ]; then pass "E2" "Full sync again (idempotent)"; else fail "E2" "Idempotent sync" "exit $EC"; fi
 
-bm hire superman --name dave 2>&1
+bm_hire superman --name dave 2>&1
 OUT=$(bm teams sync --bridge -v 2>&1)
 EC=$?
 if [ $EC -eq 0 ] && [ -f "$TEAM_DIR/superman-dave/.botminter.workspace" ]; then

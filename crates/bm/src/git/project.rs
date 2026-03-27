@@ -17,7 +17,6 @@ pub fn add_project(
     team_repo: &Path,
     url: &str,
     github_repo: &str,
-    gh_token: Option<&str>,
 ) -> Result<String> {
     let manifest_path = team_repo.join("botminter.yml");
     let mut manifest = profile::read_team_repo_manifest(team_repo)?;
@@ -28,7 +27,7 @@ pub fn add_project(
         bail!("Project '{}' already exists in this team.", name);
     }
 
-    verify_fork_url(url, gh_token)?;
+    verify_fork_url(url)?;
 
     if !github_repo.is_empty() {
         let label_name = format!("project/{}", name);
@@ -37,7 +36,6 @@ pub fn add_project(
             &label_name,
             "BFD4F2",
             &format!("Issues for the {} project", name),
-            gh_token,
         )?;
     }
 
@@ -94,8 +92,6 @@ pub fn sync_project_board(
         .split('/')
         .next()
         .unwrap_or(&team.github_repo);
-    let gh_token = team.credentials.gh_token.as_deref();
-
     let project_number = team.project_number.with_context(|| {
         format!(
             "No project board number stored for team '{}'. \
@@ -103,7 +99,7 @@ pub fn sync_project_board(
             team.name
         )
     })?;
-    sync_project_status_field(owner, project_number, &manifest.statuses, gh_token)?;
+    sync_project_status_field(owner, project_number, &manifest.statuses)?;
 
     let views: Vec<ViewDisplay> = manifest
         .views

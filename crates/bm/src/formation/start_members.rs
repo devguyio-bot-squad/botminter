@@ -1,12 +1,14 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::Duration;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::bridge::{self, BridgeStartResult};
-use crate::config::{self, BotminterConfig, TeamEntry};
-use crate::formation;
+use crate::config::{BotminterConfig, TeamEntry};
+use crate::formation::{self, CredentialDomain};
+use crate::git::app_auth;
+use crate::git::manifest_flow::credential_keys;
 use crate::state::{self, MemberRuntime};
 use crate::workspace;
 
@@ -79,11 +81,15 @@ pub fn start_local_members(
         bail!("'ralph' not found in PATH. Install ralph-orchestrator first.");
     }
 
-    // Credentials
-    let gh_token = config::require_gh_token(team)?;
-
     // Per-member credential resolution via CredentialStore (system keyring)
     let bridge_creds = resolve_bridge_credentials(team_repo, team, cfg)?;
+
+    // GitHub App credential store — used to check per-member App availability
+    let local_formation = formation::local::create_local_formation(&team.name)?;
+    let app_cred_store = local_formation.credential_store(CredentialDomain::GitHubApp {
+        team_name: team.name.clone(),
+        member_name: String::new(), // store is team-level, member is in the key
+    })?;
 
     // Discover members
     let member_dirs = discover_members(team_repo, member_filter)?;
@@ -147,6 +153,25 @@ pub fn start_local_members(
             false
         };
 
+        // Resolve GitHub App credentials for this member (on-demand — Req 8).
+        // If App creds exist, do JWT→token exchange, setup delivery, and use GH_CONFIG_DIR.
+        let gh_config_dir: Option<PathBuf> = match resolve_app_credentials_and_deliver(
+            app_cred_store.as_ref(),
+            local_formation.as_ref(),
+            member_dir_name,
+            &ws,
+        ) {
+            Ok(Some(dir)) => Some(dir),
+            Ok(None) => None, // No App creds — fall back to GH_TOKEN
+            Err(e) => {
+                eprintln!(
+                    "Warning: App credential setup failed for {}, falling back to GH_TOKEN: {}",
+                    member_dir_name, e
+                );
+                None
+            }
+        };
+
         // Detect brain mode (chat-first member)
         let brain_mode = formation::is_brain_member(&ws);
 
@@ -155,7 +180,6 @@ pub fn start_local_members(
             let system_prompt_path = ws.join("brain-prompt.md");
             let brain_config = formation::BrainLaunchConfig {
                 workspace: &ws,
-                gh_token: &gh_token,
                 system_prompt_path: &system_prompt_path,
                 member_token: member_token.as_deref(),
                 bridge_type: bridge_creds.bridge_type_name.as_deref(),
@@ -164,15 +188,16 @@ pub fn start_local_members(
                 user_id: member_user_id.as_deref(),
                 operator_user_id: bridge_creds.operator_user_id.as_deref(),
                 team_repo: Some(team_repo),
+                gh_config_dir: gh_config_dir.as_deref(),
             };
             formation::launch_brain(&brain_config)
         } else {
             formation::launch_ralph(
                 &ws,
-                &gh_token,
                 member_token.as_deref(),
                 bridge_creds.bridge_type_name.as_deref(),
                 bridge_creds.service_url.as_deref(),
+                gh_config_dir.as_deref(),
             )
         };
 
@@ -350,6 +375,68 @@ fn resolve_bridge_credentials(
             operator_user_id: None,
         })
     }
+}
+
+/// Cached GitHub App credentials for a member, used by the daemon refresh loop.
+#[derive(Clone)]
+pub struct AppCredentialsCached {
+    pub member_name: String,
+    pub client_id: String,
+    pub private_key: String,
+    pub installation_id: u64,
+    pub workspace: PathBuf,
+}
+
+/// Resolves App credentials from keyring, exchanges JWT for installation token,
+/// sets up token delivery, and writes the initial token. Returns the GH_CONFIG_DIR
+/// path if App credentials were found, or None if the member has no App creds.
+fn resolve_app_credentials_and_deliver(
+    store: &dyn formation::KeyValueCredentialStore,
+    formation: &dyn formation::Formation,
+    member_name: &str,
+    workspace: &Path,
+) -> Result<Option<PathBuf>> {
+
+    // Check if this member has App credentials
+    let client_id = match store.retrieve(&credential_keys::client_id(member_name))? {
+        Some(v) => v,
+        None => return Ok(None), // No App creds — legacy path
+    };
+    let private_key = match store.retrieve(&credential_keys::private_key(member_name))? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    let installation_id_str = match store.retrieve(&credential_keys::installation_id(member_name))? {
+        Some(v) => v,
+        None => return Ok(None),
+    };
+    let installation_id: u64 = installation_id_str
+        .parse()
+        .context("Invalid installation ID in credential store")?;
+
+    // Generate JWT and exchange for installation token
+    let jwt = app_auth::generate_jwt(&client_id, &private_key)
+        .context("Failed to generate JWT for App authentication")?;
+    let inst_token = app_auth::exchange_for_installation_token(&jwt, installation_id)
+        .context("Failed to exchange JWT for installation token")?;
+
+    // Derive bot user from numeric App ID (convention: {app-id}[bot]).
+    // GitHub's canonical format is {app-slug}[bot], but the slug isn't stored
+    // in the credential store. The numeric ID works for gh auth and commits;
+    // the user field in hosts.yml is cosmetic — auth is driven by oauth_token.
+    let app_id = store
+        .retrieve(&credential_keys::app_id(member_name))?
+        .unwrap_or_default();
+    let bot_user = format!("{}[bot]", app_id);
+
+    // Setup token delivery (creates GH_CONFIG_DIR + git credential helper)
+    formation.setup_token_delivery(member_name, workspace, &bot_user)?;
+
+    // Write the initial token
+    formation.refresh_token(member_name, workspace, &inst_token.token)?;
+
+    let gh_config_dir = workspace.join(".config").join("gh");
+    Ok(Some(gh_config_dir))
 }
 
 /// Discover and filter member directories in the team repo.
