@@ -61,8 +61,9 @@ pub fn show(member: &str, team_flag: Option<&str>) -> Result<()> {
     let runtime_state = state::load().unwrap_or_default();
     let status = state::resolve_member_status(&runtime_state, &team.name, member);
     match &status {
-        MemberStatus::Running { pid, started_at } => {
-            println!("Status: running\nPID: {}\nStarted: {}", pid, started_at);
+        MemberStatus::Running { pid, started_at, brain_mode } => {
+            let label = if *brain_mode { "brain" } else { "running" };
+            println!("Status: {}\nPID: {}\nStarted: {}", label, pid, started_at);
         }
         MemberStatus::Crashed { pid, started_at } => {
             println!("Status: crashed\nPID: {}\nStarted: {}", pid, started_at);

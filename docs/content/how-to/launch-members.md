@@ -42,7 +42,7 @@ Updates submodules to latest, re-copies context files if team submodule versions
 bm start
 ```
 
-This discovers all member workspaces (via `.botminter.workspace` marker files), maps credentials from the config, and launches `ralph run -p PROMPT.md` as a background process per member. A `.topology` file is written to the team directory tracking member endpoints.
+This discovers all member workspaces (via `.botminter.workspace` marker files), maps credentials from the config, and launches each member as a background process. Members with a `brain-prompt.md` file in their workspace run in **brain mode** (chat-first) — an ACP-based multiplexer that monitors loops, responds on the bridge, and picks up work autonomously. Standard members launch `ralph run -p PROMPT.md` directly. A `.topology` file is written to the team directory tracking member endpoints.
 
 The `bm up` alias also works:
 

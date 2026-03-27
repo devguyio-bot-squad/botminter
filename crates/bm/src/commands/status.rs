@@ -55,8 +55,9 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
 
     for m in &info.members {
         let (label, started, pid_str) = match &m.status {
-            MemberStatus::Running { pid, started_at } => {
-                ("running", format_timestamp(started_at), pid.to_string())
+            MemberStatus::Running { pid, started_at, brain_mode } => {
+                let status = if *brain_mode { "brain" } else { "running" };
+                (status, format_timestamp(started_at), pid.to_string())
             }
             MemberStatus::Crashed { pid, started_at } => {
                 ("crashed", format_timestamp(started_at), pid.to_string())

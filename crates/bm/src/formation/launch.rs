@@ -51,6 +51,74 @@ pub fn launch_ralph(
     Ok(child.id())
 }
 
+/// Launches the brain multiplexer for a chat-first member.
+///
+/// Spawns `bm brain-run` as a background process, which runs the multiplexer
+/// event loop (ACP session + event watcher + heartbeat). Returns the child PID.
+pub fn launch_brain(
+    workspace: &std::path::Path,
+    gh_token: &str,
+    system_prompt_path: &std::path::Path,
+    member_token: Option<&str>,
+    bridge_type: Option<&str>,
+    service_url: Option<&str>,
+) -> Result<u32> {
+    let bm_binary = std::env::current_exe()
+        .context("Failed to determine bm binary path")?;
+
+    let mut cmd = Command::new(&bm_binary);
+    cmd.args([
+        "brain-run",
+        "--workspace",
+    ])
+    .arg(workspace)
+    .arg("--system-prompt")
+    .arg(system_prompt_path)
+    .current_dir(workspace)
+    .env("GH_TOKEN", gh_token)
+    .env_remove("CLAUDECODE");
+
+    if let Some(token) = member_token {
+        match bridge_type {
+            Some("rocketchat") => {
+                cmd.env("RALPH_ROCKETCHAT_AUTH_TOKEN", token);
+                if let Some(url) = service_url {
+                    cmd.env("RALPH_ROCKETCHAT_SERVER_URL", url);
+                }
+            }
+            Some("tuwunel") => {
+                cmd.env("RALPH_MATRIX_ACCESS_TOKEN", token);
+                if let Some(url) = service_url {
+                    cmd.env("RALPH_MATRIX_HOMESERVER_URL", url);
+                }
+            }
+            _ => {
+                cmd.env("RALPH_TELEGRAM_BOT_TOKEN", token);
+            }
+        }
+    }
+
+    // Detach from current process group
+    cmd.stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+
+    let child = cmd.spawn().with_context(|| {
+        format!(
+            "Failed to spawn brain in {}",
+            workspace.display()
+        )
+    })?;
+
+    Ok(child.id())
+}
+
+/// Returns true if the workspace has a `brain-prompt.md` file,
+/// indicating this member should run in brain (chat-first) mode.
+pub fn is_brain_member(workspace: &std::path::Path) -> bool {
+    workspace.join("brain-prompt.md").exists()
+}
+
 /// Checks if a member has a credential but RObot.enabled is false in ralph.yml.
 ///
 /// Returns `true` if there is a mismatch (credential present but RObot disabled),
@@ -102,6 +170,32 @@ mod tests {
         // Verify launch_ralph compiles with bridge-type-aware parameters
         let _: fn(&std::path::Path, &str, Option<&str>, Option<&str>, Option<&str>) -> Result<u32> =
             launch_ralph;
+    }
+
+    #[test]
+    fn launch_brain_signature_accepts_system_prompt_path() {
+        // Verify launch_brain compiles with the expected parameters
+        let _: fn(
+            &std::path::Path,
+            &str,
+            &std::path::Path,
+            Option<&str>,
+            Option<&str>,
+            Option<&str>,
+        ) -> Result<u32> = launch_brain;
+    }
+
+    #[test]
+    fn is_brain_member_with_brain_prompt() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join("brain-prompt.md"), "# Brain").unwrap();
+        assert!(is_brain_member(tmp.path()));
+    }
+
+    #[test]
+    fn is_brain_member_without_brain_prompt() {
+        let tmp = tempfile::tempdir().unwrap();
+        assert!(!is_brain_member(tmp.path()));
     }
 
     #[test]

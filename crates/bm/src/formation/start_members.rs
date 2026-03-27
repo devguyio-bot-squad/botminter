@@ -28,6 +28,7 @@ pub struct StartResult {
 pub struct MemberLaunched {
     pub name: String,
     pub pid: u32,
+    pub brain_mode: bool,
 }
 
 pub struct MemberSkipped {
@@ -143,14 +144,31 @@ pub fn start_local_members(
             false
         };
 
-        // Launch ralph
-        match formation::launch_ralph(
-            &ws,
-            &gh_token,
-            member_token.as_deref(),
-            bridge_type_name.as_deref(),
-            bridge_service_url.as_deref(),
-        ) {
+        // Detect brain mode (chat-first member)
+        let brain_mode = formation::is_brain_member(&ws);
+
+        // Launch ralph or brain
+        let launch_result = if brain_mode {
+            let system_prompt_path = ws.join("brain-prompt.md");
+            formation::launch_brain(
+                &ws,
+                &gh_token,
+                &system_prompt_path,
+                member_token.as_deref(),
+                bridge_type_name.as_deref(),
+                bridge_service_url.as_deref(),
+            )
+        } else {
+            formation::launch_ralph(
+                &ws,
+                &gh_token,
+                member_token.as_deref(),
+                bridge_type_name.as_deref(),
+                bridge_service_url.as_deref(),
+            )
+        };
+
+        match launch_result {
             Ok(pid) => {
                 let started_at = chrono::Utc::now().to_rfc3339();
                 state.members.insert(
@@ -159,6 +177,7 @@ pub fn start_local_members(
                         pid,
                         started_at,
                         workspace: ws,
+                        brain_mode,
                     },
                 );
                 state::save(&state)?;
@@ -169,6 +188,7 @@ pub fn start_local_members(
                     result.launched.push(MemberLaunched {
                         name: member_dir_name.clone(),
                         pid,
+                        brain_mode,
                     });
                 } else {
                     state.members.remove(&state_key);
@@ -318,6 +338,7 @@ mod tests {
             launched: vec![MemberLaunched {
                 name: "alice".to_string(),
                 pid: 1234,
+                brain_mode: false,
             }],
             skipped: vec![MemberSkipped {
                 name: "bob".to_string(),

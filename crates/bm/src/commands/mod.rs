@@ -1,5 +1,6 @@
 pub mod attach;
 pub mod bootstrap;
+pub mod brain_run;
 pub mod bridge;
 pub mod chat;
 pub mod completions;

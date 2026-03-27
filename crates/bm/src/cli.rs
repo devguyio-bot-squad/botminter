@@ -220,6 +220,22 @@ pub enum Command {
         interval: u64,
     },
 
+    /// Internal: run the brain multiplexer event loop (not user-facing)
+    #[command(hide = true)]
+    BrainRun {
+        /// Workspace directory for the brain
+        #[arg(long)]
+        workspace: String,
+
+        /// Path to the rendered brain system prompt
+        #[arg(long)]
+        system_prompt: String,
+
+        /// ACP agent binary (default: claude-code-acp-rs)
+        #[arg(long, default_value = "claude-code-acp-rs")]
+        acp_binary: String,
+    },
+
     /// Runtime infrastructure management (VMs)
     Runtime {
         #[command(subcommand)]
