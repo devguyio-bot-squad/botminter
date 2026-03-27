@@ -47,9 +47,9 @@ e2e-verbose:
 
 # Run exploratory tests on bm-test-user@localhost via SSH. Requires SSH access to test user, podman, gh auth.
 exploratory-test:
-    just -f crates/bm/tests/exploratory/Justfile all-no-lima
+    just -f crates/bm/tests/exploratory/Justfile all
 
-# Run exploratory tests including Lima VM boot script test (adds ~10 minutes)
+# Run all exploratory tests (alias for exploratory-test)
 exploratory-test-full:
     just -f crates/bm/tests/exploratory/Justfile all
 

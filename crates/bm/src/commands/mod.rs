@@ -5,6 +5,7 @@ pub mod bridge;
 pub mod chat;
 pub mod debug;
 pub mod completions;
+pub mod env;
 pub mod daemon;
 pub mod hire;
 pub mod init;

@@ -11,7 +11,8 @@ use axum::routing::{get, post};
 use axum::Router;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
-use super::config::{load_poll_state, save_poll_state, DaemonPaths};
+use super::api;
+use super::config::{load_poll_state, save_poll_state, DaemonConfig, DaemonPaths};
 use super::event::{
     is_relevant_event, load_webhook_secret, poll_github_events, resolve_github_repo,
     validate_webhook_signature,
@@ -24,11 +25,18 @@ use crate::web::web_router;
 
 /// Shared state for axum handlers.
 #[derive(Clone)]
-struct DaemonState {
-    team_name: String,
-    paths: Arc<DaemonPaths>,
-    webhook_secret: Option<String>,
-    shutdown: Arc<AtomicBool>,
+pub(super) struct DaemonState {
+    pub(super) team_name: String,
+    pub(super) paths: Arc<DaemonPaths>,
+    pub(super) webhook_secret: Option<String>,
+    pub(super) shutdown: Arc<AtomicBool>,
+    pub(super) mode: String,
+    pub(super) started_at: Option<std::time::Instant>,
+    /// Cached config loaded once at daemon startup. API handlers use this
+    /// instead of re-reading from disk on every request, which avoids failures
+    /// when the HOME directory changes (e.g., in E2E tests).
+    pub(super) config: Arc<app_config::BotminterConfig>,
+    pub(super) team_entry: Arc<app_config::TeamEntry>,
 }
 
 /// Runs the daemon event loop. Called by the hidden `bm daemon-run` command.
@@ -51,16 +59,34 @@ async fn run_daemon_async(
     interval: u64,
     bind: &str,
 ) -> Result<()> {
+    // NOTE: Do NOT set SIGCHLD=SIG_IGN here. While it prevents zombie children,
+    // it also breaks Command::output() (used by gh api in poll mode) because
+    // the auto-reaped child causes waitpid to return ECHILD. Instead, fire-and-forget
+    // child processes (launch_ralph) use pre_exec(setsid) to become session leaders
+    // that are reaped by init when they exit.
+
     let paths = Arc::new(DaemonPaths::new(team_name)?);
     let shutdown = Arc::new(AtomicBool::new(false));
 
     daemon_log(&paths, "INFO", &format!("Daemon starting in {} mode", mode));
+
+    // Load config once at startup and cache it. API handlers use these
+    // cached values instead of re-reading config from disk on every request.
+    let cfg = app_config::load()
+        .context("Daemon failed to load config at startup")?;
+    let team_entry = app_config::resolve_team(&cfg, Some(team_name))
+        .context("Daemon failed to resolve team at startup")?
+        .clone();
 
     let state = DaemonState {
         team_name: team_name.to_string(),
         paths: Arc::clone(&paths),
         webhook_secret: load_webhook_secret(team_name),
         shutdown: Arc::clone(&shutdown),
+        mode: mode.to_string(),
+        started_at: Some(std::time::Instant::now()),
+        config: Arc::new(cfg),
+        team_entry: Arc::new(team_entry),
     };
 
     // Resolve config path for the web API (console routes)
@@ -90,6 +116,13 @@ async fn run_daemon_async(
     let app = Router::new()
         .route("/webhook", post(webhook_handler))
         .route("/health", get(health_handler))
+        // Member lifecycle API
+        .route("/api/members/start", post(api::start_members_handler))
+        .route("/api/members/stop", post(api::stop_members_handler))
+        .route("/api/members", get(api::list_members_handler))
+        .route("/api/health", get(api::health_check_handler))
+        // Loop management API
+        .route("/api/loops/start", post(api::start_loop_handler))
         .with_state(state.clone())
         .merge(web_router(web_state))
         .layer(cors);
@@ -130,6 +163,30 @@ async fn run_daemon_async(
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("Failed to bind to {}", addr))?;
+
+    // After binding, write the daemon config with the actual port. This is
+    // critical when port=0 (OS-assigned): the parent process and clients
+    // read this file to discover the daemon's address.
+    let actual_addr = listener.local_addr()
+        .context("Failed to get listener local address")?;
+    let daemon_cfg = DaemonConfig {
+        team: team_name.to_string(),
+        mode: mode.to_string(),
+        port: actual_addr.port(),
+        interval_secs: interval,
+        pid: std::process::id(),
+        started_at: chrono::Utc::now().to_rfc3339(),
+    };
+    let cfg_contents = serde_json::to_string_pretty(&daemon_cfg)
+        .context("Failed to serialize daemon config")?;
+    std::fs::write(paths.config(), &cfg_contents)
+        .with_context(|| format!("Failed to write daemon config to {}", paths.config().display()))?;
+
+    daemon_log(
+        &paths,
+        "INFO",
+        &format!("Daemon config written (port={})", actual_addr.port()),
+    );
 
     let shutdown_flag = Arc::clone(&shutdown);
     axum::serve(listener, app)
@@ -304,7 +361,7 @@ async fn run_poll_loop(
                 daemon_log(
                     paths,
                     "ERROR",
-                    &format!("Poll cycle failed: {}", e),
+                    &format!("Poll cycle failed: {:#}", e),
                 );
             }
             Err(e) => {

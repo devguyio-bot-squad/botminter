@@ -22,7 +22,8 @@ pub fn render(name: Option<String>, cpus: u32, memory: &str, disk: &str, _team: 
     );
 }
 
-/// Runs `bm runtime create` — provisions a Lima VM for a team.
+/// Runs `bm runtime create` (deprecated) — provisions a Lima VM for a team.
+/// Prefer `bm env create` which delegates to `formation.setup()`.
 pub fn run(
     non_interactive: bool,
     name: Option<String>,
@@ -179,7 +180,8 @@ fn parse_env_vars(env_vars: &[String]) -> Result<Vec<(String, String)>> {
         .collect()
 }
 
-/// Runs `bm runtime delete` — deletes a Lima VM and removes it from config.
+/// Runs `bm runtime delete` (deprecated) — deletes a Lima VM and removes it from config.
+/// Also called by `bm env delete` when a VM name is provided.
 pub fn delete(name: &str, force: bool) -> Result<()> {
     let lima = Lima::check_prerequisites()?;
 

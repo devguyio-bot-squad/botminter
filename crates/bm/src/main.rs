@@ -4,7 +4,7 @@ use clap_complete::CompleteEnv;
 
 use bm::cli::{
     BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Cli, Command, DaemonCommand,
-    DebugCommand, KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand,
+    DebugCommand, EnvCommand, KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand,
     RolesCommand, RuntimeCommand, TeamsCommand,
 };
 use bm::commands;
@@ -208,8 +208,8 @@ fn main() -> Result<()> {
         } => {
             commands::start::run(team.as_deref(), formation.as_deref(), no_bridge, bridge_only, member.as_deref())?;
         }
-        Command::Stop { member, team, force, bridge } => {
-            commands::stop::run(team.as_deref(), force, member.as_deref(), bridge)?;
+        Command::Stop { member, team, force, bridge, all } => {
+            commands::stop::run(team.as_deref(), force, member.as_deref(), bridge, all)?;
         }
         Command::Status { team, verbose } => {
             commands::status::run(team.as_deref(), verbose)?;
@@ -222,6 +222,14 @@ fn main() -> Result<()> {
             commands::brain_run::run(&workspace, &system_prompt, &acp_binary)?;
         }
 
+        Command::Env { command } => match command {
+            EnvCommand::Create { team, formation } => {
+                commands::env::create(team.as_deref(), formation.as_deref())?;
+            }
+            EnvCommand::Delete { name, force, team } => {
+                commands::env::delete(name.as_deref(), force, team.as_deref())?;
+            }
+        },
         Command::Runtime { command } => match command {
             RuntimeCommand::Create {
                 non_interactive,

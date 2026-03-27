@@ -39,7 +39,7 @@ pub fn launch_ralph(
         }
     }
 
-    // Detach from current process group
+    // Detach stdio from current process
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
@@ -120,7 +120,7 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
         cmd.env("BM_TEAM_REPO", repo);
     }
 
-    // Detach from current process group — redirect stderr to log file for diagnostics
+    // Detach from current process group — redirect stderr to log file for diagnostics.
     let log_path = config.workspace.join("brain-stderr.log");
     let log_file = std::fs::File::create(&log_path)
         .with_context(|| format!("Failed to create brain stderr log at {}", log_path.display()))?;

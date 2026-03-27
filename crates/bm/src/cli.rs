@@ -106,6 +106,10 @@ pub enum Command {
         /// Also stop the bridge service
         #[arg(long)]
         bridge: bool,
+
+        /// Stop members, daemon, and bridge (full teardown)
+        #[arg(long)]
+        all: bool,
     },
 
     /// Status dashboard
@@ -248,7 +252,14 @@ pub enum Command {
         acp_binary: String,
     },
 
+    /// Environment management (prepare or tear down the runtime environment)
+    Env {
+        #[command(subcommand)]
+        command: EnvCommand,
+    },
+
     /// Runtime infrastructure management (VMs)
+    #[command(hide = true)]
     Runtime {
         #[command(subcommand)]
         command: RuntimeCommand,
@@ -380,6 +391,34 @@ pub enum RuntimeCommand {
         /// Skip confirmation prompt
         #[arg(long)]
         force: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum EnvCommand {
+    /// Prepare the runtime environment (verify prerequisites, provision infrastructure)
+    Create {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+
+        /// Formation to use (default: local)
+        #[arg(long)]
+        formation: Option<String>,
+    },
+
+    /// Tear down the runtime environment
+    Delete {
+        /// VM name to delete (required for Lima environments)
+        name: Option<String>,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
     },
 }
 

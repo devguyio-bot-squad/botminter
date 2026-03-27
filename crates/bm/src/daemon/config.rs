@@ -42,6 +42,15 @@ impl DaemonPaths {
         })
     }
 
+    /// Creates paths with a custom config directory. Used by tests.
+    #[cfg(test)]
+    pub fn new_with_dir(team_name: &str, dir: &str) -> Self {
+        Self {
+            team_name: team_name.to_string(),
+            config_dir: std::path::PathBuf::from(dir),
+        }
+    }
+
     /// PID file path: `~/.botminter/daemon-<team>.pid`
     pub fn pid(&self) -> PathBuf {
         self.config_dir

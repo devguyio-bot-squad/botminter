@@ -424,6 +424,31 @@ impl TestEnv {
 
 impl Drop for TestEnv {
     fn drop(&mut self) {
+        // Kill any daemon processes spawned during the test. Daemons write
+        // PID files to $HOME/.botminter/daemon-*.pid — find and kill them.
+        let botminter_dir = self.home.join(".botminter");
+        if botminter_dir.exists() {
+            if let Ok(entries) = fs::read_dir(&botminter_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if name.starts_with("daemon-") && name.ends_with(".pid") {
+                            if let Ok(pid_str) = fs::read_to_string(&path) {
+                                if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                                    eprintln!("  TestEnv: killing daemon PID {}", pid);
+                                    unsafe { libc::kill(pid, libc::SIGTERM); }
+                                    // Brief wait for graceful shutdown
+                                    std::thread::sleep(Duration::from_millis(500));
+                                    unsafe { libc::kill(pid, libc::SIGKILL); }
+                                }
+                            }
+                            let _ = fs::remove_file(&path);
+                        }
+                    }
+                }
+            }
+        }
+
         // Clean up Lima VMs tracked via exports
         if let Some(vm_name) = self.exports.get("lima_vm_name").cloned() {
             eprintln!("  TestEnv: deleting Lima VM '{}'", vm_name);

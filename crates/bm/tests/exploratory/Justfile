@@ -1,6 +1,6 @@
 # Exploratory test execution recipes for sync, bridge & brain lifecycle
 # Usage: just -f crates/bm/tests/exploratory/Justfile <phase>
-# Full run: just -f crates/bm/tests/exploratory/Justfile all-no-lima
+# Full run: just -f crates/bm/tests/exploratory/Justfile all
 #
 # Tests run on an isolated user account (TEST_USER@localhost) via SSH
 # to prevent test cleanup from affecting the operator's home directory.
@@ -37,7 +37,6 @@ REPO := "exploratory-test-team"
 FULL_REPO := ORG + "/" + REPO
 PROFILE := "scrum-compact"
 BOARD := "Exploratory Test Board"
-LIMA_VM := "lima-idem-test"
 TUWUNEL_PORT := env("TUWUNEL_PORT", "8008")
 
 # Remote paths derived from test user's HOME
@@ -65,7 +64,6 @@ clean:
         ORG=\"{{ORG}}\"
         FULL_REPO=\"{{FULL_REPO}}\"
         BOARD=\"{{BOARD}}\"
-        LIMA_VM=\"{{LIMA_VM}}\"
         source {{REMOTE_LIB}} 2>/dev/null || true
 
         # ── Processes ──
@@ -95,9 +93,6 @@ clean:
         gh repo delete $FULL_REPO --yes 2>/dev/null || true
         PROJ_NUM=\$(gh project list --owner $ORG --format json 2>/dev/null | jq -r \".projects[] | select(.title==\\\"$BOARD\\\") | .number\" 2>/dev/null)
         [ -n \"\$PROJ_NUM\" ] && gh project delete \"\$PROJ_NUM\" --owner $ORG --format json 2>/dev/null || true
-
-        # ── Lima VM ──
-        limactl delete --force $LIMA_VM 2>/dev/null || true
 
         # ── Keyring ──
         if type load_isolated_keyring &>/dev/null && load_isolated_keyring; then
@@ -165,7 +160,6 @@ deploy: build clean
         'export TEAM_DIR="{{REMOTE_TEAM_DIR}}"' \
         'export TEAM_REPO="{{REMOTE_TEAM_REPO}}"' \
         'export REPORT="{{REMOTE_REPORT}}"' \
-        'export LIMA_VM="{{LIMA_VM}}"' \
         'export LIB="{{REMOTE_LIB}}"' \
         'export CARGO_ROOT="{{REMOTE_STAGING}}"' \
         'export TUWUNEL_PORT="{{TUWUNEL_PORT}}"' \
@@ -179,14 +173,13 @@ init-report:
     #!/usr/bin/env bash
     ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && \
         BM_VERSION=\$(\$BM --version 2>/dev/null || echo unknown) && \
-        LIMA_VERSION=\$(limactl --version 2>/dev/null | head -1 || echo unknown) && \
         GH_USER=\$(gh api user --jq .login 2>/dev/null || echo unknown) && \
         printf \"%s\n\" \
-            \"# Exploratory Test Report: Sync, Bridge & Lima Idempotency\" \
+            \"# Exploratory Test Report: Sync & Bridge Idempotency\" \
             \"\" \
             \"**Date:** \$(date +%Y-%m-%d)\" \
             \"**Build:** \$BM_VERSION (local debug)\" \
-            \"**Environment:** \$(uname -sm), podman rootless, limactl \$LIMA_VERSION, gh (\$GH_USER)\" \
+            \"**Environment:** \$(uname -sm), podman rootless, gh (\$GH_USER)\" \
             \"**Test User:** {{TEST_USER}}@localhost (isolated)\" \
             \"\" \
             \"## Results\" \
@@ -246,8 +239,6 @@ preflight: ensure-keyring
 run-phase phase timeout="300":
     timeout --signal=TERM --kill-after=15 {{timeout}} ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && exec {{REMOTE_PHASES}}/{{phase}}"'
 
-phase-a: init-report (run-phase "phase-a.sh" "600")
-
 phase-b: ensure-keyring (run-phase "phase-b.sh")
 
 phase-c: ensure-keyring (run-phase "phase-c.sh")
@@ -267,13 +258,9 @@ phase-acp-isolated: ensure-keyring (run-phase "phase-acp-isolated.sh" "600")
 
 # ─── Orchestration ─────────────────────────────────────────────
 
-# Run all phases except Lima (B through H)
+# Run all phases (B through H)
 # Starts and ends with clean to ensure a known-good state.
-all-no-lima: clean deploy preflight init-report phase-b phase-c phase-d phase-e phase-f phase-h phase-g fetch-report clean
-
-# Run all phases including Lima VM test
-# Starts with clean; phase-a creates+destroys its own team; clean between A and B resets for the main phases; ends with clean.
-all: clean deploy preflight init-report phase-a clean deploy preflight init-report phase-b phase-c phase-d phase-e phase-f phase-h phase-g fetch-report clean
+all: clean deploy preflight init-report phase-b phase-c phase-d phase-e phase-f phase-h phase-g fetch-report clean
 
 # Run only bridge + workspace phases (skip init, assume team exists)
 bridge-and-workspace: ensure-keyring phase-c phase-d phase-e

@@ -1,1 +1,1 @@
-.planning/plans/brain-bridge-io-PROMPT.md
+specs/github-app-identity/sprint-1/PROMPT.md

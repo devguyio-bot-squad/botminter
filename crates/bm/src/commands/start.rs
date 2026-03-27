@@ -3,6 +3,7 @@ use anyhow::{bail, Result};
 use crate::config;
 use crate::formation;
 use crate::profile;
+use crate::team::Team;
 
 /// Handles `bm start [member] [-t team] [--formation <name>] [--no-bridge] [--bridge-only]`.
 pub fn run(
@@ -57,14 +58,30 @@ pub fn run(
     }
 
     // Start local formation members
-    let result = formation::start_local_members(
-        team,
-        &cfg,
-        &team_repo,
-        member_filter,
-        no_bridge,
-        resolved_formation.as_deref(),
-    )?;
+    let result = if resolved_formation.is_some() {
+        // v2 team with formations dir — use Team API boundary
+        let local_formation = formation::create_local_formation(&team.name)?;
+        let team_api = Team::new(team, local_formation);
+        let mut result = team_api.start(&cfg, member_filter)?;
+
+        // Bridge auto-start (command-layer responsibility, not formation)
+        if !no_bridge && member_filter.is_none() && team.bridge_lifecycle.start_on_up {
+            result.bridge =
+                formation::auto_start_bridge(&team_repo, &team.name, &cfg.workzone);
+        }
+
+        result
+    } else {
+        // v1 team (no formations dir) — legacy path
+        formation::start_local_members(
+            team,
+            &cfg,
+            &team_repo,
+            member_filter,
+            no_bridge,
+            None,
+        )?
+    };
 
     // Display results
     if let Some(ref bridge_outcome) = result.bridge {

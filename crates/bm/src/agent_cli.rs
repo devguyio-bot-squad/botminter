@@ -20,6 +20,23 @@ pub enum AgentCommand {
         #[command(subcommand)]
         command: ClaudeCommand,
     },
+    /// Loop management via daemon
+    Loop {
+        #[command(subcommand)]
+        command: LoopCommand,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum LoopCommand {
+    /// Start a new Ralph loop via the daemon
+    Start {
+        /// The prompt for the Ralph loop
+        prompt: String,
+        /// Member to run the loop as (defaults to first member)
+        #[arg(long)]
+        member: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

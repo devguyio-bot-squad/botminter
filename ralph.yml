@@ -292,6 +292,33 @@ hats:
          ```
          If anything fails, reject immediately with `qa.changes_requested`. No discussion.
 
+      **IMPORTANT: Record test execution evidence.** After ALL test suites pass, write a structured
+      evidence file to `.ralph/agent/test-evidence.md` so downstream hats can verify tests ran without
+      re-executing them. Format:
+
+      ```markdown
+      ## Test Evidence — <ISO-timestamp>
+
+      ### Executor: Devil's Advocate
+      ### Iteration: <current ralph iteration number>
+
+      ### just clippy
+      - Exit code: 0
+      - Summary: <last few lines of output>
+
+      ### just test
+      - Exit code: 0
+      - Summary: <last few lines of output showing test count and pass/fail>
+
+      ### just exploratory-test
+      - Exit code: 0
+      - Summary: <last few lines of output showing phase results>
+      ```
+
+      This file is append-only within a session. Include enough output to prove the tests actually ran
+      (test counts, phase names, timing) — not just "passed". The Slop Detector will use this to avoid
+      redundant test execution while still verifying the evidence is legitimate.
+
       2. **HUNT FOR MISSING COVERAGE** — This is your primary weapon:
 
          **a) Scenario gaps:**
@@ -404,6 +431,17 @@ hats:
 
       ### Process
 
+      0. **TEST EVIDENCE CHECK** — Before running any test suites, check `.ralph/agent/test-evidence.md`:
+         - If the file exists AND contains an entry from **Devil's Advocate** for the **current iteration**:
+           - Read the evidence: verify it contains real output (test counts, phase names, timing — not just "passed")
+           - If the evidence looks legitimate: **SKIP** running `just clippy`, `just test`, and `just exploratory-test`.
+             The Devil's Advocate already ran them in this iteration. Re-running is redundant, not zero-trust.
+           - Log in your scratchpad: "Test suites verified via Devil's Advocate evidence (iteration N) — skipping re-run"
+         - If the file is missing, stale (wrong iteration), or evidence looks hollow (no real output):
+           - Run all test suites yourself as described in step 1
+         - This check does NOT reduce your scrutiny on everything else — hallucinations, hollow tests, fake claims,
+           and skipped validations are still YOUR exclusive domain. You're skipping the mechanical re-run, not the analysis.
+
       1. **HALLUCINATION SCAN** — Check every factual claim in the code and tests:
          - Do referenced files actually exist? (`invariants/foo.md` — is there actually a file at that path?)
          - Do referenced functions actually exist with those signatures?
@@ -411,7 +449,7 @@ hats:
          - Do imported modules/crates actually export what's being used?
          - Are error messages accurate? (Does the error say "file not found" when the real error is a parse failure?)
          - Are comments accurate? (Does the comment say "this handles X" when the code actually handles Y?)
-         - Run `just clippy && just test` — compilation is the first hallucination detector
+         - If test evidence from Devil's Advocate was NOT available: run `just clippy && just test` — compilation is the first hallucination detector
 
       2. **HOLLOW TEST DETECTION** — Read every test the Builder wrote and ask:
          - Does this test actually test what its name says? (A test named `test_error_on_invalid_input` that only tests valid input is hollow)
@@ -430,10 +468,11 @@ hats:
          - "Documentation updated" — open the doc file. Does it reflect the actual current behavior or the previous behavior?
 
       4. **SKIPPED VALIDATION DETECTION** — Check what the Builder was SUPPOSED to do vs what they did:
-         - Did the Builder run `just test` or did they claim to? (Check the scratchpad for actual output, not just "✅ tests pass")
+         - Did the Builder run `just test` or did they claim to? (Check the scratchpad for actual output, not just "tests pass")
          - Did the Builder run `just exploratory-test` or skip it with a justification? ("Only docs changed" — did only docs change?)
          - Did the Builder read invariants or just say they did? (Check if their compliance log names specific invariants with specific verdicts)
          - Did the Devil's Advocate attempt manual breakage or just list theoretical scenarios?
+         - Did the Devil's Advocate write proper test evidence to `.ralph/agent/test-evidence.md`? (If the evidence is hollow or missing, that's a skipped validation by the Devil's Advocate itself — note it, but still check the code)
 
       5. **OVERPROMISE DETECTION** — Check if the implementation matches what was promised:
          - Does the commit message describe what actually changed, or what was INTENDED to change?

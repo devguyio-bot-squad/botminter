@@ -2,8 +2,9 @@ use std::process;
 
 use clap::Parser;
 
-use bm::agent_cli::{AgentCli, AgentCommand, ClaudeCommand, ClaudeHookCommand, InboxCommand, InboxFormat};
+use bm::agent_cli::{AgentCli, AgentCommand, ClaudeCommand, ClaudeHookCommand, InboxCommand, InboxFormat, LoopCommand};
 use bm::brain::inbox;
+use bm::daemon::{DaemonClient, StartLoopRequest};
 
 fn main() {
     let cli = AgentCli::parse();
@@ -11,6 +12,7 @@ fn main() {
     let result = match cli.command {
         AgentCommand::Inbox { command } => run_inbox(command),
         AgentCommand::Claude { command } => run_claude(command),
+        AgentCommand::Loop { command } => run_loop(command),
     };
 
     if let Err(e) = result {
@@ -57,6 +59,35 @@ fn run_inbox(command: InboxCommand) -> anyhow::Result<()> {
     }
 
     Ok(())
+}
+
+fn run_loop(command: LoopCommand) -> anyhow::Result<()> {
+    match command {
+        LoopCommand::Start { prompt, member } => {
+            let team_name = std::env::var("BM_TEAM_NAME")
+                .map_err(|_| anyhow::anyhow!(
+                    "BM_TEAM_NAME not set. This command must be run from a BotMinter member workspace."
+                ))?;
+
+            let client = DaemonClient::connect(&team_name)?;
+            let req = StartLoopRequest { prompt, member };
+            let resp = client.start_loop(&req)?;
+
+            if resp.ok {
+                if let Some(pid) = resp.pid {
+                    eprintln!("Loop started (PID {})", pid);
+                }
+                if let Some(ref loop_id) = resp.loop_id {
+                    println!("{}", loop_id);
+                }
+            } else {
+                let err = resp.error.unwrap_or_else(|| "unknown error".to_string());
+                anyhow::bail!("Failed to start loop: {}", err);
+            }
+
+            Ok(())
+        }
+    }
 }
 
 fn run_claude(command: ClaudeCommand) -> anyhow::Result<()> {

@@ -1,18 +1,17 @@
-# Exploratory Test Plan: Sync, Bridge & Lima Idempotency
+# Exploratory Test Plan: Sync & Bridge Idempotency
 
 **Date:** 2026-03-20 (updated 2026-03-22)
 **Build:** bm 0.2.0-pre-alpha (local debug)
-**Environment:** Linux x86_64, podman rootless, limactl 2.1.0, gh authenticated (devguyio)
+**Environment:** Linux x86_64, podman rootless, gh authenticated (devguyio)
 **Org:** devguyio-bot-squad
 
 ## Scope
 
-Four features under test:
+Three features under test:
 
-1. **Lima boot script idempotency** — `--overwrite` flag on `dnf config-manager addrepo`, full VM boot cycle
-2. **Workspace creation idempotency** — `RemoteRepoOps` trait, stale dir cleanup, context file assembly
-3. **Bridge provisioning idempotency** — Tuwunel onboard/start lifecycle, recovery from container failures
-4. **Full sync (`-a`) idempotency** — all subsystems together, repeated runs, member additions
+1. **Workspace creation idempotency** — `RemoteRepoOps` trait, stale dir cleanup, context file assembly
+2. **Bridge provisioning idempotency** — Tuwunel onboard/start lifecycle, recovery from container failures
+3. **Full sync (`-a`) idempotency** — all subsystems together, repeated runs, member additions
 
 ## Execution Model
 
@@ -35,7 +34,6 @@ An **isolated D-Bus + gnome-keyring-daemon** is started automatically on the tes
 
 **On the test user account (`bm-test-user`):**
 - `podman` (rootless), `just`, `curl`, `jq` available in PATH
-- `limactl` (only for Phase A / Lima VM tests)
 - `gh` authenticated with delete permission on the test org (devguyio-bot-squad)
 - `dbus-daemon` and `gnome-keyring-daemon` available (isolated keyring started automatically)
 - Port 8008 free (Tuwunel default)
@@ -43,24 +41,6 @@ An **isolated D-Bus + gnome-keyring-daemon** is started automatically on the tes
 - No existing `exploratory-test` team state (run `just exploratory-test-clean` first if needed)
 
 ---
-
-## Phase A: Lima VM Boot Script Idempotency
-
-Tests that the generated Lima template's provision scripts survive multiple VM boots.
-
-| # | Scenario | Method | Expected |
-|---|----------|--------|----------|
-| A0 | Set up team for bm runtime create | `bm init --non-interactive` | Team created (required for runtime create) |
-| A0.5 | Verify template has `--overwrite` | `bm runtime create --render` + grep | `addrepo --overwrite` present |
-| A1 | Create VM with `bm runtime create` | `bm runtime create --non-interactive --name lima-idem-test` | VM created, provisioned, readiness probe passes |
-| A2 | Verify tools installed inside VM | `limactl shell lima-idem-test -- which bm ralph claude gh git just` | All tools found |
-| A3 | Stop VM | `limactl stop lima-idem-test` | VM stopped cleanly |
-| A4 | Start VM again (re-runs provision scripts) | `limactl start lima-idem-test` | VM starts without errors — boot scripts idempotent |
-| A5 | Verify tools still present after restart | Same as A2 | All tools still found |
-| A6 | Verify gh auth survives restart (if token provided) | `limactl shell -- gh auth status` | Auth intact |
-| A7 | Third boot cycle | Stop + start again | Still succeeds — no cumulative drift |
-| A8 | Delete VM | `limactl delete --force lima-idem-test` | Cleaned up |
-| A9 | Clean up Phase A team artifacts | Delete GitHub repo + project + local state | Clean state for Phase B |
 
 ## Phase B: Team Init + Hire
 
@@ -242,7 +222,6 @@ For local-only teams (no per-member GitHub repos), use `--bridge` instead.
 | G4 | Delete GitHub project | `gh project delete <number>` | Board deleted |
 | G5 | Remove local state | `rm -rf ~/.botminter ~/.config/botminter` | Clean state |
 | G6 | Verify clean | No leftover containers, repos, or config | Everything gone |
-| G7 | Delete Lima test VM (if created) | `limactl delete --force lima-idem-test` | VM removed |
 
 ## Phase H: Brain Lifecycle Validation (Chat-First Member)
 

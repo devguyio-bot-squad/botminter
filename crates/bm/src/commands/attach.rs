@@ -3,12 +3,28 @@ use std::io::IsTerminal;
 use anyhow::{bail, Result};
 
 use crate::config;
+use crate::formation;
 use crate::formation::lima::{Lima, VmStatus};
 
 /// Handles `bm attach [-t <team>]`.
+///
+/// For v2 teams (with formations dir), delegates to `formation.shell()`.
+/// For v1 teams (Lima VMs), uses legacy Lima exec_shell behavior.
 pub fn run(team: Option<&str>) -> Result<()> {
-    let lima = Lima::check_prerequisites()?;
     let cfg = config::load_or_default();
+
+    // Try v2 formation path first: if the team has a formations dir,
+    // delegate to formation.shell().
+    if let Ok(team_entry) = config::resolve_team(&cfg, team) {
+        let team_repo = team_entry.path.join("team");
+        if let Ok(Some(_)) = formation::resolve_formation(&team_repo, None) {
+            let local_formation = formation::create_local_formation(&team_entry.name)?;
+            return local_formation.shell();
+        }
+    }
+
+    // v1 team (no formations dir) — legacy Lima path
+    let lima = Lima::check_prerequisites()?;
 
     let vm_name = match config::resolve_vm(&cfg, team) {
         Ok(name) => name,
@@ -35,7 +51,7 @@ pub fn run(team: Option<&str>) -> Result<()> {
         }
         VmStatus::NotFound => {
             bail!(
-                "VM '{}' does not exist. Run `bm runtime create --name {}` to create it.",
+                "VM '{}' does not exist. Run `bm env create` to set up the environment, or use `bm runtime create --name {}` for Lima VMs.",
                 vm_name, vm_name
             );
         }
@@ -98,7 +114,7 @@ mod tests {
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(err.contains("No VM found"));
-        assert!(err.contains("bm runtime create"));
+        assert!(err.contains("bm env create"));
     }
 
     #[test]

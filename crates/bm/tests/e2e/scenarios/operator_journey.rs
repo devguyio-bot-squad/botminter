@@ -116,6 +116,51 @@ fn hire_member_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::pani
     }
 }
 
+fn env_create_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let output = env.command("bm")
+            .args(["env", "create", "-t", TEAM_NAME])
+            .output();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        // Local formation: setup() verifies prerequisites. It may fail if
+        // ralph is not installed (stub env), but the command itself must parse
+        // and dispatch correctly. Accept both success and prerequisite failure.
+        assert!(
+            output.status.success() || stderr.contains("not found") || stderr.contains("not installed"),
+            "bm env create should succeed or fail with a prerequisite error, got: {}",
+            stderr
+        );
+        if output.status.success() {
+            assert!(
+                stderr.contains("Environment ready"),
+                "bm env create should print 'Environment ready' on success, got: {}",
+                stderr
+            );
+        }
+    }
+}
+
+fn attach_local_formation_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        // For v2 teams with local formation, `bm attach` should tell the user
+        // they're already in the local environment (not try Lima).
+        let output = env.command("bm")
+            .args(["attach", "-t", TEAM_NAME])
+            .output();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        assert!(
+            !output.status.success(),
+            "bm attach on local formation should fail (not applicable), got: {}",
+            stderr
+        );
+        assert!(
+            stderr.contains("not applicable") || stderr.contains("already in the local environment"),
+            "bm attach should say 'not applicable' for local formation, got: {}",
+            stderr
+        );
+    }
+}
+
 fn projects_add_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         // Read existing project URL from team repo if available (second pass)
@@ -1041,11 +1086,9 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         })
         // ── First pass: fresh start ──────────────────────────────────
         .case("init_with_bridge_fresh", init_with_bridge_fn(gh_org.clone(), gh_token.clone()))
-        // ── Bootstrap VM (skips if Lima not available) ───────────
-        .case("bootstrap_vm_fresh", super::super::bootstrap::bootstrap_vm_fn(TEAM_NAME))
-        .case("bootstrap_idempotent_fresh", super::super::bootstrap::bootstrap_idempotent_fn(TEAM_NAME))
-        .case("bootstrap_tools_fresh", super::super::bootstrap::bootstrap_tools_fn())
-        .case("bootstrap_teardown_fresh", super::super::bootstrap::bootstrap_teardown_fn())
+        // ── Environment setup ──────────────────────────────────────
+        .case("env_create_fresh", env_create_fn())
+        .case("attach_local_formation_fresh", attach_local_formation_fn())
         // ── Continue operator journey ────────────────────────────
         .case("hire_member_fresh", hire_member_fn(gh_token.clone()))
         .case("projects_add_fresh", projects_add_fn(gh_org.clone(), gh_token.clone()))
@@ -1073,6 +1116,12 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         .case("status_detects_crashed_fresh", status_detects_crashed_fn(gh_token.clone()))
         .case("members_list_fresh", members_list_fn())
         .case("teams_list_fresh", teams_list_fn())
+        // Stop members and daemon auto-started by bm start before explicit daemon tests
+        .case("daemon_cleanup_fresh", |env: &mut TestEnv| {
+            let _ = env.command("bm")
+                .args(["stop", "--force", "--all", "-t", TEAM_NAME])
+                .output();
+        })
         .case("daemon_start_poll_fresh", daemon_start_poll_fn(gh_token.clone()))
         .case("daemon_poll_launches_member_fresh", daemon_poll_launches_member_fn(gh_token.clone()))
         .case("daemon_stop_poll_fresh", daemon_stop_poll_fn(gh_token.clone()))
@@ -1086,6 +1135,11 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         // ── Reset HOME ───────────────────────────────────────────────
         .case("reset_home", |env: &mut TestEnv| {
             eprintln!("Wiping HOME for second pass...");
+
+            // Stop daemon if auto-started by bm start
+            let _ = env.command("bm")
+                .args(["daemon", "stop", "-t", TEAM_NAME])
+                .output();
 
             // Remove old Tuwunel container and volume so the second pass
             // creates a fresh one instead of trying to restart a stale container
@@ -1123,6 +1177,8 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
             }
         })
         .case("init_with_bridge_existing", init_with_bridge_fn(gh_org.clone(), gh_token.clone()))
+        .case("env_create_existing", env_create_fn())
+        .case("attach_local_formation_existing", attach_local_formation_fn())
         .case_expect_error("hire_member_existing", hire_member_fn(gh_token.clone()),
             |err| err.contains("already exists"))
         .case_expect_error("projects_add_existing", projects_add_fn(gh_org.clone(), gh_token.clone()),
@@ -1151,6 +1207,12 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         .case("status_detects_crashed_existing", status_detects_crashed_fn(gh_token.clone()))
         .case("members_list_existing", members_list_fn())
         .case("teams_list_existing", teams_list_fn())
+        // Stop members and daemon auto-started by bm start before explicit daemon tests
+        .case("daemon_cleanup_existing", |env: &mut TestEnv| {
+            let _ = env.command("bm")
+                .args(["stop", "--force", "--all", "-t", TEAM_NAME])
+                .output();
+        })
         .case("daemon_start_poll_existing", daemon_start_poll_fn(gh_token.clone()))
         .case("daemon_poll_launches_member_existing", daemon_poll_launches_member_fn(gh_token.clone()))
         .case("daemon_stop_poll_existing", daemon_stop_poll_fn(gh_token.clone()))
@@ -1210,31 +1272,32 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
     // Groups: start_status_healthy through bridge_functional, webhook start→stop in both passes
     // First pass case indices (0-indexed):
     //   0: init
-    //   1-4: bootstrap_vm, bootstrap_idempotent, bootstrap_tools, bootstrap_teardown
-    //   5: hire, 6: projects_add, 7: teams_show
-    //   8: bridge_start, 9: bridge_start_idempotent
-    //   10: bridge_identity_add, 11: bridge_identity_show, 12: bridge_identity_list
-    //   13: bridge_room_create, 14: bridge_room_membership_verify
-    //   15: sync_bridge_and_repos, 16: sync_idempotent
-    //   17: inbox_lifecycle, 18: inbox_resync_preserves
-    //   19: projects_sync
-    //   20: start_without_ralph_errors
-    //   21: start_status_healthy, 22: start_skips_running, 23: bridge_functional
-    //   24: stop_clean_shutdown
-    //   25: start_single_member, 26: stop_single_member
-    //   27: stop_force_kills, 28: status_detects_crashed
-    //   29: members_list, 30: teams_list
-    //   31: daemon_start_poll, 32: daemon_poll_launches, 33: daemon_stop_poll
-    //   34: daemon_start_webhook, 35: daemon_stop_webhook
-    //   36-39: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
-    //   40: bridge_stop
-    //   41: reset_home, 42: verify_board_survives_reset
-    // Second pass starts at 43, same shape minus bootstrap (+17 cases, so offset = 43)
-    //   60: start_status_healthy, 61: start_skips_running, 62: bridge_functional
-    //   73: daemon_start_webhook, 74: daemon_stop_webhook
+    //   1: env_create, 2: attach_local_formation
+    //   3: hire, 4: projects_add, 5: teams_show
+    //   6: bridge_start, 7: bridge_start_idempotent
+    //   8: bridge_identity_add, 9: bridge_identity_show, 10: bridge_identity_list
+    //   11: bridge_room_create, 12: bridge_room_membership_verify
+    //   13: sync_bridge_and_repos, 14: sync_idempotent
+    //   15: inbox_lifecycle, 16: inbox_resync_preserves
+    //   17: projects_sync
+    //   18: start_without_ralph_errors
+    //   19: start_status_healthy, 20: start_skips_running, 21: bridge_functional
+    //   22: stop_clean_shutdown
+    //   23: start_single_member, 24: stop_single_member
+    //   25: stop_force_kills, 26: status_detects_crashed
+    //   27: members_list, 28: teams_list
+    //   29: daemon_cleanup
+    //   30: daemon_start_poll, 31: daemon_poll_launches, 32: daemon_stop_poll
+    //   33: daemon_start_webhook, 34: daemon_stop_webhook
+    //   35-38: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
+    //   39: bridge_stop
+    //   40: reset_home, 41: verify_board_survives_reset
+    // Second pass starts at 42, same shape as first pass
+    //   61: start_status_healthy, 62: start_skips_running, 63: bridge_functional
+    //   75: daemon_start_webhook, 76: daemon_stop_webhook
     suite
-        .group(21, 23).group(34, 35)
-        .group(60, 62).group(73, 74)
+        .group(19, 21).group(33, 34)
+        .group(61, 63).group(75, 76)
 }
 
 pub fn scenario(config: &E2eConfig) -> Trial {

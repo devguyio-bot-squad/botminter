@@ -242,3 +242,41 @@ fn hook_graceful_with_corrupted_file() {
         .expect("hook with corrupted file");
     assert!(out.status.success(), "hook should always exit 0 even with corrupted file");
 }
+
+// --- Test 11: loop start requires BM_TEAM_NAME ---
+
+#[test]
+fn loop_start_requires_team_name_env() {
+    let ws = setup_workspace();
+
+    let out = agent_cmd(&ws)
+        .env_remove("BM_TEAM_NAME")
+        .args(["loop", "start", "Implement issue #1"])
+        .output()
+        .expect("loop start without BM_TEAM_NAME");
+    assert!(!out.status.success(), "loop start should fail without BM_TEAM_NAME");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("BM_TEAM_NAME"),
+        "should mention BM_TEAM_NAME, got: {stderr}"
+    );
+}
+
+// --- Test 12: loop start with no daemon fails gracefully ---
+
+#[test]
+fn loop_start_no_daemon_fails() {
+    let ws = setup_workspace();
+
+    let out = agent_cmd(&ws)
+        .env("BM_TEAM_NAME", "nonexistent-team-xyz")
+        .args(["loop", "start", "Implement issue #2"])
+        .output()
+        .expect("loop start with no daemon");
+    assert!(!out.status.success(), "loop start should fail when no daemon running");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("Daemon") || stderr.contains("config") || stderr.contains("not found"),
+        "should mention daemon not running, got: {stderr}"
+    );
+}

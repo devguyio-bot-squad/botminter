@@ -39,7 +39,7 @@ Follow this cycle continuously:
 
 Use Ralph Orchestrator to execute work:
 
-- **Start a loop:** `ralph run -p "Implement issue #N: <title>"`
+- **Start a loop:** `bm-agent loop start "Implement issue #N: <title>"`
 - **List active loops:** `ralph loops`
 - **View loop output:** `ralph loops logs <id> -f`
 - **Stop a loop:** `ralph loops stop <id>`

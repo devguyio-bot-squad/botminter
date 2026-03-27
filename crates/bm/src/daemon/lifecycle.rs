@@ -117,29 +117,38 @@ pub fn start_daemon(
     fs::write(&pid_file, pid.to_string())?;
     fs::set_permissions(&pid_file, fs::Permissions::from_mode(0o600))?;
 
-    // Write config
-    let daemon_cfg = DaemonConfig {
-        team: team_name.to_string(),
-        mode: mode.to_string(),
-        port,
-        interval_secs: interval,
-        pid,
-        started_at: chrono::Utc::now().to_rfc3339(),
-    };
+    // The daemon writes its own config file after binding (with the actual
+    // port, which may differ from the requested port when port=0). Poll
+    // for the config file to appear, which indicates the daemon is ready.
     let cfg_path = paths.config();
-    let contents = serde_json::to_string_pretty(&daemon_cfg)
-        .context("Failed to serialize daemon config")?;
-    fs::write(&cfg_path, contents)?;
+    let max_wait = Duration::from_secs(10);
+    let poll_interval = Duration::from_millis(100);
+    let start_time = std::time::Instant::now();
 
-    // Brief wait to detect immediate failures
-    thread::sleep(Duration::from_millis(500));
-    if !state::is_alive(pid) {
-        let _ = fs::remove_file(&pid_file);
-        let _ = fs::remove_file(&cfg_path);
-        bail!(
-            "Daemon process exited immediately. Check logs at {}",
-            log_file_path.display()
-        );
+    loop {
+        if !state::is_alive(pid) {
+            let _ = fs::remove_file(&pid_file);
+            let _ = fs::remove_file(&cfg_path);
+            bail!(
+                "Daemon process exited immediately. Check logs at {}",
+                log_file_path.display()
+            );
+        }
+
+        if cfg_path.exists() {
+            break;
+        }
+
+        if start_time.elapsed() > max_wait {
+            let _ = fs::remove_file(&pid_file);
+            bail!(
+                "Daemon did not write config within {:?}. Check logs at {}",
+                max_wait,
+                log_file_path.display()
+            );
+        }
+
+        thread::sleep(poll_interval);
     }
 
     Ok(DaemonStartResult { pid })

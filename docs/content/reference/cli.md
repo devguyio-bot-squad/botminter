@@ -54,81 +54,71 @@ bm init --non-interactive --profile <profile> --team-name <name> --org <org> --r
 - Creates the GitHub repo, bootstraps labels, creates a Project board, and registers the team
 - In non-interactive mode, profile version mismatches are auto-resolved (same as `--force`)
 
-## VM provisioning
+## Environment management
 
-### `bm runtime create`
+### `bm env create`
 
-Provision an isolated Fedora VM for a team. Requires a team to exist (run `bm init` first).
+Prepare the runtime environment for a team. Delegates to `formation.setup()`, which verifies prerequisites for the active formation type.
 
 ```bash
-bm runtime create [--non-interactive --name <vm-name>] [--cpus N] [--memory S] [--disk S] [-t <team>]
+bm env create [-t <team>] [--formation <name>]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `-t <team>` | No | Team to provision the VM for (defaults to default team) |
-| `--non-interactive` | No | Run without interactive prompts (requires `--name`) |
-| `--name <name>` | No* | VM name (e.g., `bm-alpha`). *Required with `--non-interactive` |
-| `--cpus <N>` | No | Number of CPUs to allocate (default: `4`) |
-| `--memory <size>` | No | Memory to allocate (default: `8GiB`) |
-| `--disk <size>` | No | Disk size (default: `100GiB`) |
+| `-t <team>` | No | Team to prepare the environment for (defaults to default team) |
+| `--formation <name>` | No | Formation to use (default: `local`) |
 
 **Prerequisites:**
 
 - A team must exist (created via `bm init`)
-- `limactl` must be installed. If not found, `bm runtime create` shows platform-specific install instructions.
 
 **Behavior:**
 
-- Generates a Lima YAML template with Fedora Cloud as the base image
-- Creates and starts a VM via `limactl create` and `limactl start`
-- Cloud-init provisioning installs all required tools: `git`, `jq`, `curl`, `gh`, `just`, `gnome-keyring`, `podman`, `bm`, `ralph`, and `claude`
-- Registers the VM in `~/.botminter/config.yml` under the `vms` list
-- Associates the VM with the team (sets the team's `vm` field)
-- Idempotent: re-running with the same name skips creation/start if the VM already exists and is running
-- The `~/.botminter` directory is mounted writable inside the VM
+- For **local** formations: verifies that required tools (`ralph`, `keyring`, `gh`) are available
+- For future formation types (Lima, K8s): provisions the required infrastructure
+- Idempotent: re-running succeeds without errors
 
 **Example:**
 
 ```bash
-# Interactive
-bm runtime create -t my-team
-
-# Non-interactive (CI/scripted)
-bm runtime create --non-interactive --name bm-test --cpus 8 --memory 16GiB -t my-team
+bm env create -t my-team
 ```
 
-### `bm runtime delete`
+### `bm env delete`
 
-Delete a Lima VM and remove it from the botminter config.
+Tear down the runtime environment.
 
 ```bash
-bm runtime delete <name> [--force]
+bm env delete [<name>] [--force] [-t <team>]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `<name>` | Yes | Name of the VM to delete |
+| `<name>` | No | VM name to delete (required for Lima environments) |
 | `--force` | No | Skip confirmation prompt |
+| `-t <team>` | No | Team to operate on |
 
 **Behavior:**
 
-- Stops and deletes the VM via `limactl delete --force`
-- Removes the VM from the `vms` list in `~/.botminter/config.yml`
-- Clears the `vm` field on any team that referenced this VM
-- Idempotent: deleting a non-existent VM succeeds with an informational message
-- Prompts for confirmation in interactive mode unless `--force` is given
+- For **local** formations: nothing to tear down (informational message)
+- For **Lima** environments: stops and deletes the VM, removes from config
+- Prompts for confirmation when deleting VMs unless `--force` is given
 
 **Example:**
 
 ```bash
-bm runtime delete bm-alpha
-bm runtime delete bm-alpha --force
+bm env delete
+bm env delete bm-alpha --force
 ```
+
+### `bm runtime` (deprecated)
+
+The `bm runtime create` and `bm runtime delete` commands are deprecated in favor of `bm env create` and `bm env delete`. They continue to work as hidden aliases for backward compatibility.
 
 ### `bm attach`
 
-Attach to a running Lima VM.
+Open an interactive shell in the team's formation environment.
 
 ```bash
 bm attach [-t <team>]
@@ -136,30 +126,26 @@ bm attach [-t <team>]
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `-t <team>` | No | Team to operate on (resolves VM from team's `vm` config field) |
-
-**Prerequisites:**
-
-- `limactl` must be installed. If not found, shows platform-specific install instructions.
-- At least one VM must be registered (via `bm runtime create`).
+| `-t <team>` | No | Team to operate on |
 
 **Behavior:**
 
-- Resolves the target VM using 3-step resolution:
-    1. If `-t <team>` is given and that team has a `vm` field set → uses that VM
-    2. If exactly one VM is registered in config → uses it automatically
-    3. If multiple VMs exist → prompts interactively (errors in non-interactive/piped contexts)
-- Checks that the VM is running via `limactl list --json`
-- If the VM exists but is stopped, offers to start it (auto-starts in non-interactive contexts)
-- Execs into `limactl shell <vm-name>` (replaces the current process with an SSH session into the VM)
+- For **v2 teams** (with formations dir): delegates to `formation.shell()`.
+    - **Local formation:** Returns an error — you are already in the local environment. Use your terminal directly.
+    - **Lima/remote formations:** Opens an interactive shell (SSH, kubectl exec, etc.) into the formation's environment.
+- For **v1 teams** (no formations dir, Lima VMs): legacy behavior using `limactl shell`.
+    - Resolves the target VM using 3-step resolution:
+        1. If `-t <team>` is given and that team has a `vm` field set → uses that VM
+        2. If exactly one VM is registered in config → uses it automatically
+        3. If multiple VMs exist → prompts interactively (errors in non-interactive/piped contexts)
+    - Requires `limactl` installed and at least one VM registered (via `bm env create`)
+    - Checks VM status, offers to start stopped VMs
+    - Execs into `limactl shell <vm-name>`
 
 **Example:**
 
 ```bash
-# Attach to the only configured VM
-bm attach
-
-# Attach to a specific team's VM
+# Attach to a specific team's environment
 bm attach -t my-team
 ```
 
@@ -256,7 +242,7 @@ bm chat <member> [-t <team>] [--hat <hat>] [--render-system-prompt]
     - `bm chat <member>` — hatless mode: agent has awareness of all hats, human drives the workflow
     - `bm chat <member> --hat executor` — hat-specific mode: agent is in character as that hat
     - `bm chat <member> --render-system-prompt` — prints the generated system prompt to stdout and exits (for debugging/inspection). Works with `--hat` too.
-- In normal mode: writes the meta-prompt to a temp file and launches the coding agent with `--append-system-prompt-file`, which gives the meta-prompt higher authority than `CLAUDE.md`
+- In normal mode: writes the meta-prompt to a temp file and launches the coding agent via `formation.exec_in()` (v2 teams) or direct process exec (v1 teams)
 - Requires a workspace created by `bm teams sync`
 
 ### `bm minty`
@@ -467,7 +453,7 @@ bm up [<member>] [-t <team>] [--formation <name>]
 Stop members (all, or a specific one).
 
 ```bash
-bm stop [<member>] [-t <team>] [-f|--force] [--bridge]
+bm stop [<member>] [-t <team>] [-f|--force] [--bridge] [--all]
 ```
 
 | Parameter | Required | Description |
@@ -475,6 +461,7 @@ bm stop [<member>] [-t <team>] [-f|--force] [--bridge]
 | `<member>` | No | Stop only this member (stops all if omitted) |
 | `-f` / `--force` | No | Send SIGTERM instead of graceful stop |
 | `--bridge` | No | Also stop the bridge service |
+| `--all` | No | Full teardown: stop members, daemon, and bridge |
 | `-t <team>` | No | Team to operate on |
 
 **Behavior:**
@@ -484,7 +471,8 @@ bm stop [<member>] [-t <team>] [-f|--force] [--bridge]
 - Cleans state.json entries
 - Suggests `bm stop -f` on graceful failure
 - When stopping a single member, bridge lifecycle is not affected
-- Bridge is left running unless `--bridge` is passed (prints a reminder to use `bm stop --bridge`)
+- Bridge is left running unless `--bridge` or `--all` is passed (prints a reminder to use `bm stop --bridge`)
+- `--all` stops members via the daemon, then shuts down the daemon itself, and stops the bridge
 
 ### `bm status`
 
@@ -963,6 +951,27 @@ bm-agent claude hook post-tool-use
 - If messages are pending: outputs JSON with `additionalContext` and consumes the messages
 - If no messages or not in a workspace: outputs nothing
 - Designed to be referenced in `.claude/settings.json` as a PostToolUse hook
+
+### `bm-agent loop start`
+
+Start a new Ralph loop via the daemon's HTTP API. Used by the brain process to delegate loop spawning to the daemon supervisor.
+
+```bash
+bm-agent loop start "Implement issue #5: add caching" [--member <name>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `prompt`  | Yes      | The prompt for the Ralph loop |
+| `--member`| No       | Member whose workspace to use (defaults to first member) |
+
+**Behavior:**
+
+- Requires `BM_TEAM_NAME` environment variable to be set
+- Connects to the running daemon via its HTTP API
+- Sends `POST /api/loops/start` with the prompt
+- Prints the loop ID to stdout on success
+- Exits with code 1 if the daemon is not running or the request fails
 
 ## Development commands
 

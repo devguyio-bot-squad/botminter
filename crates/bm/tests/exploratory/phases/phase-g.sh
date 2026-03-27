@@ -39,9 +39,6 @@ else
     pass "G6" "Keyring cleanup skipped (no isolated keyring running)"
 fi
 
-limactl delete --force "$LIMA_VM" 2>/dev/null || true
-pass "G7" "Deleted Lima VM (if exists)"
-
 # Verify clean
 CONTAINERS=$(podman ps -a --filter "name=bm-tuwunel-$TEAM" --format '{{.Names}}' 2>/dev/null)
 REPO_EXISTS=$(gh repo view "$FULL_REPO" --json name 2>/dev/null && echo "yes" || echo "no")

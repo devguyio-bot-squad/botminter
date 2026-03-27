@@ -1,10 +1,17 @@
-//! Runtime create utilities and case functions for `bm runtime create` E2E tests.
+//! Environment (VM) create utilities and case functions for E2E tests.
 //!
+//! These cases exercise `bm runtime create` (deprecated, kept for backward compat).
+//! The replacement command is `bm env create` which delegates to `formation.setup()`.
 //! These cases are registered by the operator journey scenario, which already
 //! runs `bm init` — so a team exists when runtime create runs. Cases skip
 //! gracefully when Lima is not available (like bridge cases skip without podman).
 //!
 //! VM cleanup is handled by TestEnv's Drop via the `lima_vm_name` export.
+//!
+//! NOTE: Lima steps are currently disabled in the operator journey scenario.
+//! The module is retained so the cases can be re-enabled when needed.
+
+#![allow(dead_code)]
 
 use std::process::Command;
 

@@ -79,10 +79,32 @@ pub fn save_to(path: &Path, state: &RuntimeState) -> Result<()> {
     Ok(())
 }
 
-/// Checks if a process with the given PID is alive using `kill(pid, 0)`.
+/// Checks if a process with the given PID is alive and not a zombie.
+///
+/// Uses `kill(pid, 0)` for existence check, then reads `/proc/<pid>/stat`
+/// to exclude zombie processes. Zombies are dead processes that haven't been
+/// waited for — they appear alive to `kill()` but are not actually running.
 pub fn is_alive(pid: u32) -> bool {
     // Safety: kill with signal 0 only checks existence, sends no signal.
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    if unsafe { libc::kill(pid as i32, 0) } != 0 {
+        return false;
+    }
+
+    // Check if the process is a zombie by reading /proc/<pid>/stat.
+    // The third field is the state character: R=running, S=sleeping,
+    // D=disk sleep, Z=zombie, T=stopped, etc.
+    if let Ok(stat) = std::fs::read_to_string(format!("/proc/{}/stat", pid)) {
+        // Format: "pid (comm) state ..." — state is after the closing paren
+        if let Some(state_start) = stat.rfind(')') {
+            let rest = &stat[state_start + 1..];
+            let state_char = rest.trim_start().chars().next().unwrap_or('?');
+            if state_char == 'Z' {
+                return false; // zombie — not actually alive
+            }
+        }
+    }
+
+    true
 }
 
 /// Status of a team member process.

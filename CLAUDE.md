@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 1. **You MUST run `just test` (includes E2E tests) before any task is considered done.** No exceptions. No substitutes. Unit tests alone are NOT sufficient.
 
-2. **You MUST run `just exploratory-test` after changes that touch bridge, workspace, sync, Lima provisioning, OR the exploratory test infrastructure itself.** If you changed anything under `crates/bm/tests/exploratory/`, you MUST run the exploratory tests.
+2. **You MUST run `just exploratory-test` after changes that touch bridge, workspace, sync, OR the exploratory test infrastructure itself.** If you changed anything under `crates/bm/tests/exploratory/`, you MUST run the exploratory tests.
 
 3. **You MUST NOT substitute E2E or exploratory test runs with "lighter" verification.** Checking that a Justfile parses, that a keyring probe works, or that unit tests pass is NOT a substitute for running `just test` and `just exploratory-test`. These are supplements, not replacements.
 
@@ -45,8 +45,8 @@ bm projects show <project> [-t team]  # Show project details
 bm attach [-t team]                          # Attach to a running Lima VM
 bm teams list                         # List registered teams
 bm teams show [<name>] [-t team]      # Show detailed team info
-bm runtime create [-t team] [--non-interactive --name <n>]   # Provision a Fedora VM for a team
-bm runtime delete <name> [--force]                          # Delete a Lima VM and clean up config
+bm env create [-t team] [--formation <name>]                 # Prepare runtime environment (verify prereqs, provision infra)
+bm env delete [<name>] [--force] [-t team]                  # Tear down runtime environment
 bm teams sync [--repos] [--bridge] [--all|-a] [-v] [-t team] # Provision and reconcile workspaces
 bm start [<member>] [-t team]         # Launch members (alias: bm up)
 bm stop [<member>] [-t team] [-f]     # Stop members (--bridge to also stop bridge)
@@ -69,6 +69,7 @@ bm-agent inbox write "message" [--from <sender>]  # Brain sends a message to the
 bm-agent inbox read [--format json|hook]           # Read and consume pending messages
 bm-agent inbox peek                                # View pending messages without consuming
 bm-agent claude hook post-tool-use                 # PostToolUse hook — always exits 0
+bm-agent loop start "prompt" [--member <name>]     # Start a Ralph loop via daemon HTTP API
 ```
 
 See ADR-0010 (`.planning/adrs/0010-agent-tools-namespace.md`) for why this is a separate binary.
@@ -85,7 +86,7 @@ just e2e-reset    # Clean up progressive E2E state
 just test         # All tests: unit + conformance + e2e
 just clippy       # cargo clippy -p bm -- -D warnings
 just exploratory-test  # Exploratory tests on bm-test-user@localhost via SSH (requires SSH access, podman, gh)
-just exploratory-test-full  # Same + Lima VM boot script test (~10 min extra)
+just exploratory-test-full  # Alias for exploratory-test
 just exploratory-test-clean # Clean up artifacts on remote test user (GitHub repos, containers, keyring)
 just docs-serve   # Live-reload MkDocs dev server at localhost:8000
 just docs-build   # Build static docs site
@@ -282,7 +283,7 @@ Key rules:
 
 ## Exploratory Testing
 
-Exploratory tests live at `crates/bm/tests/exploratory/` and cover bridge lifecycle, workspace sync idempotency, and Lima VM boot script idempotency. They test real infrastructure: podman containers (Tuwunel Matrix server), keyring credential storage, GitHub repos, and Lima VMs. These are the agentic replacement of a QE/QA engineer's verification workflow — fully scripted, repeatable, and agent-interpretable (see ADR-0009).
+Exploratory tests live at `crates/bm/tests/exploratory/` and cover bridge lifecycle and workspace sync idempotency. They test real infrastructure: podman containers (Tuwunel Matrix server), keyring credential storage, and GitHub repos. These are the agentic replacement of a QE/QA engineer's verification workflow — fully scripted, repeatable, and agent-interpretable (see ADR-0009).
 
 **Execution model:** Tests run on a separate user account (`bm-test-user@localhost`) via SSH. The operator machine builds binaries and orchestrates execution; the test user's home directory is disposable, preventing destructive cleanup (`rm -rf ~/.botminter`, etc.) from affecting the operator's real home. The `deploy` recipe copies built binaries (`bm`, `bm-agent`, `ralph`, `claude`, `claude-code-acp-rs`) and test scripts to the remote user. Each phase runs via `ssh bm-test-user@localhost`. An isolated D-Bus + gnome-keyring-daemon is started on the test user's session automatically (no system keyring dependency).
 
@@ -290,11 +291,11 @@ Exploratory tests live at `crates/bm/tests/exploratory/` and cover bridge lifecy
 
 ```bash
 just exploratory-test        # Phases B-H: deploy + preflight + all phases (~5 min)
-just exploratory-test-full   # All phases including Lima VM boot script (~15 min)
+just exploratory-test-full   # Alias for exploratory-test
 just exploratory-test-clean  # Clean up artifacts on remote (GitHub repos, containers, keyring)
 ```
 
-**Keeping tests current:** When adding features or changing behavior in bridge, workspace, sync, or Lima provisioning, you MUST update the exploratory test plan (`PLAN.md`) and Justfile with corresponding test cases. Exploratory tests must reflect the current feature set — stale tests are as bad as no tests.
+**Keeping tests current:** When adding features or changing behavior in bridge, workspace, or sync, you MUST update the exploratory test plan (`PLAN.md`) and Justfile with corresponding test cases. Exploratory tests must reflect the current feature set — stale tests are as bad as no tests.
 
 **Prerequisites:**
 - A local `bm-test-user` account accessible via `ssh bm-test-user@localhost` (passwordless SSH key)
@@ -313,7 +314,7 @@ just exploratory-test-clean  # Clean up artifacts on remote (GitHub repos, conta
 
 ## GUIARDRAILS / INVARIANTS / MUST COMPLY
 - You MUST use `just test` to validate any changes at least once before the task is done.
-- You MUST run `just exploratory-test` after each batch of code changes that touch bridge, workspace, sync, or Lima provisioning.
+- You MUST run `just exploratory-test` after each batch of code changes that touch bridge, workspace, or sync.
 - You MUST fix any failures even if they're unrelated to your changes. You CAN present the user the situation before you fix such irrelevant failures.
 - You MUST focus on improving the quality of the code and you SHOULD leave the code better than you found it.
 - You SHOULD suggest any improvement or enhancements to the code or to CLAUDE.md whenever an improvement presents itself.

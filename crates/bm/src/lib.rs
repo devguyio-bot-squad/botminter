@@ -13,6 +13,7 @@ pub mod git;
 pub mod profile;
 pub mod session;
 pub mod state;
+pub mod team;
 pub mod topology;
 pub mod web;
 pub mod workspace;

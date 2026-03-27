@@ -5,6 +5,7 @@ use anyhow::{bail, Context, Result};
 use crate::bridge;
 use crate::chat;
 use crate::config;
+use crate::formation;
 use crate::profile;
 use crate::state;
 
@@ -78,16 +79,35 @@ pub fn run(
         .context("Failed to write meta-prompt to temp file")?;
     let tmp_path = tmp_file.into_temp_path();
 
-    // Launch coding agent via exec (replaces this process)
-    use std::os::unix::process::CommandExt;
-    let mut cmd = std::process::Command::new(&coding_agent.binary);
-    cmd.current_dir(&session.ws_path)
-        .arg("--append-system-prompt-file")
-        .arg(&tmp_path);
+    // Build command arguments for the coding agent
+    let tmp_path_str = tmp_path.to_str().context("Temp path is not valid UTF-8")?;
+    let mut args: Vec<&str> = vec!["--append-system-prompt-file", tmp_path_str];
     if autonomous {
-        cmd.arg("--dangerously-skip-permissions");
+        args.push("--dangerously-skip-permissions");
     }
-    let err = cmd.exec();
 
-    bail!("Failed to launch {}: {}", coding_agent.binary, err);
+    // Resolve formation: v2 teams delegate through formation.exec_in(),
+    // v1 teams (no formations dir) use direct process exec for backward compat.
+    let resolved_formation = formation::resolve_formation(&team_repo, None)?;
+
+    if resolved_formation.is_some() {
+        // v2 team — delegate to formation.exec_in()
+        let local_formation = formation::create_local_formation(&team.name)?;
+        let mut cmd_parts: Vec<&str> = vec![&coding_agent.binary];
+        cmd_parts.extend(&args);
+        local_formation.exec_in(&session.ws_path, &cmd_parts)?;
+        Ok(())
+    } else {
+        // v1 team (no formations dir) — legacy path: exec() replaces this process
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new(&coding_agent.binary);
+        cmd.current_dir(&session.ws_path)
+            .arg("--append-system-prompt-file")
+            .arg(&tmp_path);
+        if autonomous {
+            cmd.arg("--dangerously-skip-permissions");
+        }
+        let err = cmd.exec();
+        bail!("Failed to launch {}: {}", coding_agent.binary, err);
+    }
 }

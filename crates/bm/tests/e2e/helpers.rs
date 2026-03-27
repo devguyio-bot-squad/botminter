@@ -131,7 +131,7 @@ pub fn preflight_gh_auth() {
 // ── Process helpers ─────────────────────────────────────────────────
 
 pub fn is_alive(pid: u32) -> bool {
-    unsafe { libc::kill(pid as i32, 0) == 0 }
+    bm::state::is_alive(pid)
 }
 
 pub fn force_kill(pid: u32) {

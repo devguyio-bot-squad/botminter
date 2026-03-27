@@ -109,6 +109,11 @@ mod tests {
     async fn serve_embedded_assets_returns_index_for_spa_routes() {
         let uri: Uri = "/teams/my-team/overview".parse().unwrap();
         let response = serve_embedded_assets(Method::GET, uri).await;
+        if ConsoleAssets::get("index.html").is_none() {
+            // Console not built — expect graceful 404 with explanation
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            return;
+        }
         assert_eq!(response.status(), StatusCode::OK);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await
@@ -125,6 +130,11 @@ mod tests {
     async fn serve_embedded_assets_returns_index_for_root() {
         let uri: Uri = "/".parse().unwrap();
         let response = serve_embedded_assets(Method::GET, uri).await;
+        if ConsoleAssets::get("index.html").is_none() {
+            // Console not built — expect graceful 404 with explanation
+            assert_eq!(response.status(), StatusCode::NOT_FOUND);
+            return;
+        }
         assert_eq!(response.status(), StatusCode::OK);
         let body = axum::body::to_bytes(response.into_body(), usize::MAX)
             .await

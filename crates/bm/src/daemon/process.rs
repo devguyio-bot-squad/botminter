@@ -50,6 +50,7 @@ pub fn wait_interruptible(
                 }
                 thread::sleep(Duration::from_millis(500));
             }
+            // ECHILD or other wait error — treat as terminated.
             Err(_) => return None,
         }
     }
@@ -75,6 +76,25 @@ pub fn launch_members_oneshot(
     let member_dirs = workspace::list_member_dirs(&members_dir)?;
     if member_dirs.is_empty() {
         daemon_log(paths, "WARN", "No members found");
+        return Ok(0);
+    }
+
+    // Check if members are already running (started via HTTP API). If so,
+    // skip one-shot launch to avoid spawning duplicate processes that conflict
+    // with the HTTP-managed members.
+    let runtime_state = crate::state::load().unwrap_or_default();
+    let team_prefix = format!("{}/", team_name);
+    let has_running_members = runtime_state
+        .members
+        .iter()
+        .any(|(key, rt)| key.starts_with(&team_prefix) && crate::state::is_alive(rt.pid));
+
+    if has_running_members {
+        daemon_log(
+            paths,
+            "INFO",
+            "Members already running (started via API), skipping one-shot launch",
+        );
         return Ok(0);
     }
 
