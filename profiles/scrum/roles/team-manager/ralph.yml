@@ -11,8 +11,8 @@ cli:
 
 core:
   guardrails:
-    - "Comply with all invariants in team/invariants/ and team/members/team-manager-*/invariants/"
-    - "All issue operations use the gh skill — no write-locks needed"
+    - "Comply with all invariants in team/invariants/ and team/members/{{member_dir}}/invariants/"
+    - "All issue operations use the `github-project` skill — no write-locks needed"
 
 hats:
   executor:
@@ -32,8 +32,8 @@ hats:
 
       Reference these when working — consult as needed, not all upfront:
       - Team: `team/knowledge/`
-      - Member: `team/members/team-manager-*/knowledge/`
-      - Hat: `team/members/team-manager-*/hats/executor/knowledge/`
+      - Member: `team/members/{{member_dir}}/knowledge/`
+      - Hat: `team/members/{{member_dir}}/hats/executor/knowledge/`
 
       ### Status Transitions
 
@@ -85,7 +85,7 @@ skills:
   dirs:
     - team/coding-agent/skills
     - team/projects/<project>/coding-agent/skills
-    - team/members/team-manager/coding-agent/skills
+    - team/members/{{member_dir}}/coding-agent/skills
   overrides:
     board-scanner:
       auto_inject: true

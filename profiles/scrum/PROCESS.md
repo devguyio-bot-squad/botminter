@@ -1,12 +1,12 @@
 # Scrum Process
 
-This document defines the conventions used by the agentic scrum team. All team members follow these formats when creating and updating issues, milestones, PRs, and comments on GitHub. All GitHub operations go through the `gh` skill.
+This document defines the conventions used by the agentic scrum team. All team members follow these formats when creating and updating issues, milestones, PRs, and comments on GitHub. All GitHub operations go through the `github-project` skill.
 
 ---
 
 ## Issue Format
 
-Issues are GitHub issues on the **team repo** (not the project repo). The `gh` skill auto-detects the team repo from `team/`'s git remote.
+Issues are GitHub issues on the **team repo** (not the project repo). The `github-project` skill auto-detects the team repo from `team/`'s git remote.
 
 ### Fields
 
@@ -14,26 +14,29 @@ Issues are GitHub issues on the **team repo** (not the project repo). The `gh` s
 |-------|---------------|-------------|
 | `title` | Issue title | Concise, descriptive issue title |
 | `state` | Issue state | `open` or `closed` |
-| `labels` | Issue labels | Kind labels (see below) |
+| `type` | Native issue type | Epic, Task (story), Bug |
 | `assignee` | Issue assignee | GitHub username or unassigned |
 | `milestone` | Issue milestone | Milestone name or none |
-| `parent` | `parent/<number>` label + `Parent: #<number>` in body | Links stories to their parent epic |
+| `parent` | Native sub-issue relationship | Links stories to their parent epic |
 | `body` | Issue body | Description, acceptance criteria, and context (markdown) |
 
-Issues are created via `gh issue create` and managed via `gh issue edit`. See the `gh` skill for exact commands.
+Issues are created via the `github-project` skill (create-issue operation). See the skill for exact commands.
 
 ---
 
-## Kind Labels
+## Issue Types
 
-Kind labels classify the type of work:
+Issue classification uses GitHub's native issue types:
 
-| Label | Description |
-|-------|-------------|
-| `kind/epic` | A large body of work spanning multiple stories |
-| `kind/story` | A single deliverable unit of work |
+| Issue Type | Kind | Description |
+|------------|------|-------------|
+| **Epic** | `epic` | A large body of work spanning multiple stories |
+| **Task** | `story` | A single deliverable unit of work (sub-issue of an Epic) |
+| **Bug** | `bug` | A bug requiring investigation, planning, and fix |
 
-Every issue MUST have exactly one `kind/*` label.
+Stories are linked to epics as native sub-issues.
+
+Every issue MUST have exactly one issue type set.
 
 ---
 
@@ -92,6 +95,28 @@ The feedback comment uses the standard comment format and includes the human's s
 |--------|-------------|
 | `dev:ready` | Deliberate M3 placeholder. Stories sit idle until M3 brings dev/qe agents. |
 
+### Bug Statuses
+
+Bugs use GitHub's native Bug issue type and follow a two-track workflow:
+
+**Simple Track** (QE fixes directly, arch reviews):
+`bug:investigate` → `arch:review` → `qe:verify` → `done`
+
+**Complex Track** (QE plans, arch refines, PO approves, subtask breakdown):
+`bug:investigate` → `arch:refine` → `po:plan-review` → `bug:breakdown` → `bug:in-progress` → `qe:verify` → `done`
+
+| Status | Owner | Description | Next (happy path) |
+|--------|-------|-------------|-------------------|
+| `bug:investigate` | QE | Reproduce, root cause, determine simple vs complex | `arch:review` (simple) or `arch:refine` (complex) |
+| `arch:review` | Arch | Review simple bug fix, can approve or escalate to complex | `qe:verify` (approve) or `arch:refine` (escalate) |
+| `arch:refine` | Arch | Review/amend complex bug plan | `po:plan-review` |
+| `po:plan-review` | PO (human) | Approve or reject complex bug plan | `bug:breakdown` (approve) or `arch:refine` (reject) |
+| `bug:breakdown` | Arch | Create GitHub native subtask issues | `bug:in-progress` |
+| `bug:in-progress` | Monitor | Track subtask completion | `qe:verify` (all done) |
+| `qe:verify` | QE | Verify fix (shared with story workflow) | `done` |
+
+Subtasks created during `bug:breakdown` are Task-type sub-issues that flow through the story workflow. When all subtasks reach `done`, the bug monitor advances the parent bug to `qe:verify` for final verification.
+
 ### Error Status
 
 | Status | Description |
@@ -110,7 +135,7 @@ Comments are GitHub issue comments, added via `gh issue comment`. Each comment u
 Comment text here. May contain markdown formatting, code blocks, etc.
 ```
 
-The `<emoji>` and `<role>` are read from the member's `.botminter.yml` file at runtime by the `gh` skill. Since all agents share one `GH_TOKEN` (one GitHub user), the role attribution in the comment body is the primary way to identify which hat/role wrote it.
+The `<emoji>` and `<role>` are read from the member's `.botminter.yml` file at runtime by the `github-project` skill. Since all agents share one `GH_TOKEN` (one GitHub user), the role attribution in the comment body is the primary way to identify which hat/role wrote it.
 
 ### Standard Emoji Mapping
 
@@ -138,7 +163,7 @@ Comments are append-only. Never edit or delete existing comments.
 
 ## Milestone Format
 
-Milestones are GitHub milestones on the team repo, managed via the `gh` skill.
+Milestones are GitHub milestones on the team repo, managed via the `github-project` skill.
 
 **Fields:**
 
@@ -149,7 +174,7 @@ Milestones are GitHub milestones on the team repo, managed via the `gh` skill.
 | `description` | Milestone description | Goals and scope of the milestone |
 | `due_on` | Milestone due date | Optional ISO 8601 date |
 
-Issues are assigned to milestones via `gh issue edit --milestone "<title>"`. The `gh` skill provides commands for creating, listing, and managing milestones.
+Issues are assigned to milestones via `gh issue edit --milestone "<title>"`. The `github-project` skill provides commands for creating, listing, and managing milestones.
 
 ---
 
@@ -191,7 +216,7 @@ Valid review statuses: `approved`, `changes-requested`.
 
 ## Communication Protocols
 
-Team members coordinate through GitHub issues and PRs on the team repo using the `gh` skill:
+Team members coordinate through GitHub issues and PRs on the team repo using the `github-project` skill:
 
 ### Status Transitions
 

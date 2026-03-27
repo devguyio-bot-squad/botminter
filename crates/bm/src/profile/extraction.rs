@@ -480,7 +480,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("{profile}: skills.dirs should be a sequence"));
 
             let has_skill_dir = dirs.iter().any(|d| {
-                d.as_str().map_or(false, |s| s.contains("team-manager/coding-agent/skills"))
+                d.as_str().map_or(false, |s| {
+                    s.contains("team-manager/coding-agent/skills")
+                        || s.contains("{{member_dir}}/coding-agent/skills")
+                })
             });
             assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
         }
@@ -683,7 +686,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("{profile}: skills.dirs should be a sequence"));
 
             let has_skill_dir = dirs.iter().any(|d| {
-                d.as_str().map_or(false, |s| s.contains("team-manager/coding-agent/skills"))
+                d.as_str().map_or(false, |s| {
+                    s.contains("team-manager/coding-agent/skills")
+                        || s.contains("{{member_dir}}/coding-agent/skills")
+                })
             });
             assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
         }
@@ -880,7 +886,10 @@ mod tests {
                 .unwrap_or_else(|| panic!("{profile}: skills.dirs should be a sequence"));
 
             let has_skill_dir = dirs.iter().any(|d| {
-                d.as_str().map_or(false, |s| s.contains("team-manager/coding-agent/skills"))
+                d.as_str().map_or(false, |s| {
+                    s.contains("team-manager/coding-agent/skills")
+                        || s.contains("{{member_dir}}/coding-agent/skills")
+                })
             });
             assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
         }

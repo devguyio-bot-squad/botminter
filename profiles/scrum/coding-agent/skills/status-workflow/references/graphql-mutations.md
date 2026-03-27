@@ -6,24 +6,21 @@ After updating a project item's status via `gh project item-edit`, verify the ch
 
 ```bash
 CURRENT_STATUS=$(gh api graphql -f query='
-query($projectId: ID!, $itemId: ID!) {
-  node(id: $projectId) {
-    ... on ProjectV2 {
-      items(first: 100) {
-        nodes {
-          id
-          fieldValueByName(name: "Status") {
-            ... on ProjectV2ItemFieldSingleSelectValue {
-              name
-            }
-          }
+query($itemId: ID!) {
+  node(id: $itemId) {
+    ... on ProjectV2Item {
+      fieldValueByName(name: "Status") {
+        ... on ProjectV2ItemFieldSingleSelectValue {
+          name
         }
       }
     }
   }
-}' -F projectId="$PROJECT_ID" -F itemId="$ITEM_ID" \
-  | jq -r ".data.node.items.nodes[] | select(.id == \"$ITEM_ID\") | .fieldValueByName.name")
+}' -F itemId="$ITEM_ID" \
+  | jq -r '.data.node.fieldValueByName.name')
 ```
+
+This queries the specific project item by node ID — no pagination, works regardless of project size.
 
 **Why verify?** The `gh project item-edit` command may exit 0 without the status actually changing — permissions issues, rate limits, or invalid option IDs cause silent failures.
 

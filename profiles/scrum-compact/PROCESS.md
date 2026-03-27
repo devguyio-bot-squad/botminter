@@ -1,6 +1,6 @@
 # Compact Process
 
-This document defines the conventions used by the compact single-member team. All hats follow these formats when creating and updating issues, milestones, PRs, and comments on GitHub. All GitHub operations go through the `gh` skill.
+This document defines the conventions used by the compact single-member team. All hats follow these formats when creating and updating issues, milestones, PRs, and comments on GitHub. All GitHub operations go through the `github-project` skill.
 
 The compact profile has a single member ("superman") — the agent self-transitions through the full issue lifecycle wearing different hats.
 
@@ -8,7 +8,7 @@ The compact profile has a single member ("superman") — the agent self-transiti
 
 ## Issue Format
 
-Issues are GitHub issues on the **team repo** (not the project repo). The `gh` skill auto-detects the team repo from `team/`'s git remote.
+Issues are GitHub issues on the **team repo** (not the project repo). The `github-project` skill auto-detects the team repo from `team/`'s git remote.
 
 ### Fields
 
@@ -16,33 +16,45 @@ Issues are GitHub issues on the **team repo** (not the project repo). The `gh` s
 |-------|---------------|-------------|
 | `title` | Issue title | Concise, descriptive issue title |
 | `state` | Issue state | `open` or `closed` |
-| `labels` | Issue labels | Kind labels (see below) |
+| `type` | Native issue type | Epic, Task (story), Bug |
 | `assignee` | Issue assignee | GitHub username or unassigned |
 | `milestone` | Issue milestone | Milestone name or none |
-| `parent` | `parent/<number>` label + `Parent: #<number>` in body | Links stories to their parent epic |
+| `parent` | Native sub-issue relationship | Links stories to their parent epic |
 | `body` | Issue body | Description, acceptance criteria, and context (markdown) |
 
-Issues are created via `gh issue create` and managed via `gh issue edit`. See the `gh` skill for exact commands.
+Issues are created via the `github-project` skill (create-issue operation). See the skill for exact commands.
 
 ---
 
-## Kind Labels
+## Issue Types
 
-Kind labels classify the type of work:
+Issue classification uses GitHub's native issue types:
+
+| Issue Type | Kind | Description |
+|------------|------|-------------|
+| **Epic** | `epic` | A large body of work spanning multiple stories |
+| **Task** | `story` | A single deliverable unit of work (sub-issue of an Epic) |
+| **Bug** | `bug` | A bug requiring investigation, planning, and fix |
+
+Stories are linked to epics as native sub-issues.
+Subtasks for complex bugs are also native sub-issues (Task type under a Bug).
+
+Every issue MUST have exactly one issue type set.
+
+### Labels
+
+Labels are used as modifiers on any issue type, not for classification:
 
 | Label | Description |
 |-------|-------------|
-| `kind/epic` | A large body of work spanning multiple stories |
-| `kind/story` | A single deliverable unit of work |
-| `kind/docs` | A documentation story, routed to content writer hats |
-
-Every issue MUST have exactly one `kind/*` label.
+| `kind/docs` | Routes the issue to content writer hats for documentation work |
+| `role/*` | Assigns the issue to a specific role |
 
 ---
 
 ## Project Status Convention
 
-Status is tracked via a single-select "Status" field on the team's GitHub Project board (v2), NOT via labels. Status values follow the naming pattern:
+Status is tracked via a single-select "Status" field on the team's GitHub Project board (v2). Status values follow the naming pattern:
 
 ```
 <role>:<phase>
@@ -115,6 +127,91 @@ The story lifecycle follows a TDD flow:
 
 - `dev:code-review` → `dev:implement` (code reviewer rejects with feedback)
 - `qe:verify` → `dev:implement` (QE rejects with feedback)
+
+---
+
+## Bug Statuses
+
+The bug workflow has two tracks: **simple** (fast path) and **complex** (full planning).
+
+| Status | Role | Description |
+|--------|------|-------------|
+| `bug:investigate` | QE | QE reproduces bug, determines simple vs complex, and either fixes (simple) or plans (complex) |
+| `arch:review` | architect | Reviews simple bug fix — approves or escalates to complex track |
+| `arch:refine` | architect | Refines complex bug plan (after QE's proposal or arch escalation) |
+| `po:plan-review` | PO | Human reviews complex bug plan (reused from epic workflow) |
+| `bug:breakdown` | architect | Creates GitHub native subtask issues for complex bugs |
+| `bug:in-progress` | architect | Monitors subtask completion |
+| `done` | — | Bug complete |
+
+### Simple vs Complex Criteria
+
+During `bug:investigate`, QE determines track using these criteria:
+
+| Criterion | Simple ✅ | Complex ❌ |
+|-----------|----------|-----------|
+| Files affected | Single file | Multiple files/modules |
+| Lines changed | < 20 lines | > 20 lines |
+| Scope | Isolated fix | Touches shared code/APIs |
+| Architecture | No design change | Requires architectural change |
+| Dependencies | No new dependencies | New libraries/packages |
+| Testing | Covered by existing tests or trivial addition | Requires new test infrastructure |
+| Risk | Low - localized impact | Medium/High - wide impact |
+
+**Rule of thumb:** If QE can fix it in one sitting without subtasks, it's simple.
+
+### Simple Bug Track (Fast Path)
+
+```
+bug:investigate → arch:review → qe:verify → done
+```
+
+QE implements the fix during investigation, arch reviews code quality, QE validates the fix works.
+
+### Complex Bug Track (Full Planning)
+
+```
+bug:investigate → arch:refine → po:plan-review → bug:breakdown → bug:in-progress → qe:verify → done
+```
+
+QE proposes plan, arch refines, PO approves, arch creates subtasks, monitor tracks completion, QE validates integrated fix.
+
+### Bug Rejection Loops
+
+- `arch:review` → `arch:refine` (Arch escalates simple bug as too complex)
+- `po:plan-review` → `arch:refine` (PO rejects complex bug plan with feedback)
+- `qe:verify` → `bug:investigate` (QE verification fails - simple bugs)
+- `qe:verify` → `bug:in-progress` (QE verification fails - complex bugs)
+
+### Detailed Workflow
+
+#### Simple Bug Track
+
+| Status | Actions | Next |
+|--------|---------|------|
+| `bug:investigate` | QE: Reproduce, apply criteria, implement fix, commit to branch | `arch:review` |
+| `arch:review` | Arch: Code review, verify simplicity. Approve → next, Too complex → escalate | `qe:verify` or `arch:refine` |
+| `qe:verify` | QE: Re-run reproduction, verify bug resolved, test suite. Pass → close, Fail → reopen | `done` or `bug:investigate` |
+
+#### Complex Bug Track
+
+| Status | Actions | Next |
+|--------|---------|------|
+| `bug:investigate` | QE: Reproduce, root cause, propose solution + subtask breakdown | `arch:refine` |
+| `arch:refine` | Arch: Review/amend plan, refine subtasks, add architectural notes | `po:plan-review` |
+| `po:plan-review` | PO (human): Approve via comment or reject with feedback | `bug:breakdown` or `arch:refine` |
+| `bug:breakdown` | Arch: Create GitHub native subtask issues, set to `dev:implement` | `bug:in-progress` |
+| `bug:in-progress` | Arch (monitor): Query subtask status, wait for all to reach `done` | `qe:verify` |
+| `qe:verify` | QE: Integration test, re-run original reproduction, verify full fix. Pass → close, Fail → reopen | `done` or `bug:in-progress` |
+
+### Subtask Integration (Complex Bugs Only)
+
+Subtasks created during `bug:breakdown` use GitHub's native sub-issue feature. Each subtask:
+- Has native issue type "Task"
+- Is a native sub-issue of the parent Bug
+- Flows through the normal story workflow: `dev:implement` → `dev:code-review` → `qe:verify` → `arch:sign-off` → `po:merge` → `done`
+
+When all subtasks reach `done`, the bug monitor advances the parent bug to `qe:verify` for final verification.
 
 ---
 
@@ -195,7 +292,7 @@ Comments are GitHub issue comments, added via `gh issue comment`. Each comment u
 Comment text here. May contain markdown formatting, code blocks, etc.
 ```
 
-The `<emoji>` and `<role>` are read from the member's `.botminter.yml` file at runtime by the `gh` skill. Since all agents share one `GH_TOKEN` (one GitHub user), the role attribution in the comment body is the primary way to identify which hat/role wrote it.
+The `<emoji>` and `<role>` are read from the member's `.botminter.yml` file at runtime by the `github-project` skill. Since all agents share one `GH_TOKEN` (one GitHub user), the role attribution in the comment body is the primary way to identify which hat/role wrote it.
 
 ### Standard Emoji Mapping
 
@@ -226,7 +323,7 @@ Comments are append-only. Never edit or delete existing comments.
 
 ## Milestone Format
 
-Milestones are GitHub milestones on the team repo, managed via the `gh` skill.
+Milestones are GitHub milestones on the team repo, managed via the `github-project` skill.
 
 **Fields:**
 
@@ -237,7 +334,7 @@ Milestones are GitHub milestones on the team repo, managed via the `gh` skill.
 | `description` | Milestone description | Goals and scope of the milestone |
 | `due_on` | Milestone due date | Optional ISO 8601 date |
 
-Issues are assigned to milestones via `gh issue edit --milestone "<title>"`. The `gh` skill provides commands for creating, listing, and managing milestones.
+Issues are assigned to milestones via the `github-project` skill (milestone-ops operation).
 
 ---
 
@@ -279,7 +376,7 @@ Valid review statuses: `approved`, `changes-requested`.
 
 ## Communication Protocols
 
-The compact profile uses a single-member self-transition model. All operations use the `gh` skill:
+The compact profile uses a single-member self-transition model. All operations use the `github-project` skill:
 
 ### Status Transitions
 
@@ -305,6 +402,18 @@ PRs are NOT used for code changes to the project repo. Code changes go through t
 
 ---
 
+## Team Agreements
+
+All significant process changes, role changes, and team decisions MUST be recorded as team agreements before the change is applied. Agreements provide traceability for why changes were made and who participated in the decision.
+
+- **Decisions** go in `agreements/decisions/` — role changes, process changes, tool adoption
+- **Retrospective outcomes** go in `agreements/retros/` — summaries from retrospective sessions
+- **Working norms** go in `agreements/norms/` — living team agreements (e.g., "we prefer small PRs")
+
+See `knowledge/team-agreements.md` for the full convention including file format and lifecycle.
+
+---
+
 ## Process Evolution
 
 The team process can evolve through two paths:
@@ -322,13 +431,3 @@ The team process can evolve through two paths:
 3. Commit the change to the team repo
 
 The informal path is appropriate for urgent corrections or clarifications. The formal path is preferred for significant process changes.
-
-### Team Agreements
-
-All significant process changes, role changes, and team decisions MUST be recorded as team agreements before the change is applied. Agreements provide traceability for why changes were made and who participated in the decision.
-
-- **Decisions** go in `agreements/decisions/` — role changes, process changes, tool adoption
-- **Retrospective outcomes** go in `agreements/retros/` — summaries from retrospective sessions
-- **Working norms** go in `agreements/norms/` — living team agreements (e.g., "we prefer small PRs")
-
-See `knowledge/team-agreements.md` for the full convention including file format and lifecycle.

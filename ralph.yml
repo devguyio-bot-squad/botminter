@@ -493,4 +493,4 @@ RObot:
   enabled: true
   timeout_seconds: 120
   telegram:
-    bot_token: 8377779532:AAHpxtdfwYfPc3UOg0hU3ZMkpqZ_gD6oXZM
+    bot_token: ${RALPH_TELEGRAM_BOT_TOKEN}

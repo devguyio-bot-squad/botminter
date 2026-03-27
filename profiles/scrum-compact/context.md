@@ -18,10 +18,10 @@ The member runs in a **project repo clone** with the team repo cloned into `team
 project-repo-superman/               # Project repo clone (agent CWD)
   team/                           # Team repo clone
     knowledge/, invariants/             # Team-level
-    members/superman/                    # Member config
+    members/{{member_dir}}/                    # Member config
     projects/<project>/                 # Project-specific
-  PROMPT.md → team/members/superman/PROMPT.md
-  context.md → team/members/superman/context.md
+  PROMPT.md → team/members/{{member_dir}}/PROMPT.md
+  context.md → team/members/{{member_dir}}/context.md
   ralph.yml                             # Copy
   poll-log.txt                          # Board scan audit log
 ```
@@ -32,7 +32,7 @@ Pulling `team/` updates all team configuration. Copies (ralph.yml, settings.loca
 
 The compact profile uses **self-transition coordination**:
 - The single member scans the project board for all status values
-- Board scanning and all issue operations use the `gh` skill (wraps `gh` CLI)
+- Board scanning and all issue operations use the `github-project` skill (wraps `gh` CLI)
 - The board-scanner skill (auto-injected into the coordinator) dispatches to the appropriate hat based on priority
 - No concurrent agents, no coordination overhead
 
@@ -42,9 +42,9 @@ Work items, milestones, and PRs live on the team repo's GitHub:
 
 | Resource | Access Method | Tool |
 |----------|--------------|------|
-| Issues (epics + stories) | `gh issue list/view/create/edit` | `gh` skill |
-| Milestones | `gh api` (milestones endpoint) | `gh` skill |
-| Pull requests | `gh pr create/view/merge` | `gh` skill |
+| Issues (epics + stories) | `gh issue list/view/create/edit` | `github-project` skill |
+| Milestones | `gh api` (milestones endpoint) | `github-project` skill |
+| Pull requests | `gh pr create/view/merge` | `github-project` skill |
 
 See `PROCESS.md` for label conventions, status transitions, and comment format.
 
@@ -54,9 +54,9 @@ Knowledge is resolved in order of specificity. All levels are additive:
 
 1. **Team knowledge** — `team/knowledge/` (applies to all hats)
 2. **Project knowledge** — `team/projects/<project>/knowledge/` (project-specific)
-3. **Member knowledge** — `team/members/superman/knowledge/` (member-specific)
-4. **Member+project knowledge** — `team/members/superman/projects/<project>/knowledge/` (member+project-specific)
-5. **Hat knowledge** — `team/members/superman/hats/<hat>/knowledge/` (hat-specific)
+3. **Member knowledge** — `team/members/{{member_dir}}/knowledge/` (member-specific)
+4. **Member+project knowledge** — `team/members/{{member_dir}}/projects/<project>/knowledge/` (member+project-specific)
+5. **Hat knowledge** — `team/members/{{member_dir}}/hats/<hat>/knowledge/` (hat-specific)
 
 ## Invariant Scoping
 
@@ -64,7 +64,7 @@ Invariants follow the same recursive pattern as knowledge. All applicable invari
 
 1. **Team invariants** — `team/invariants/` (apply to all hats)
 2. **Project invariants** — `team/projects/<project>/invariants/` (apply to project work)
-3. **Member invariants** — `team/members/superman/invariants/` (member-specific)
+3. **Member invariants** — `team/members/{{member_dir}}/invariants/` (member-specific)
 
 ## Agent Capabilities (`coding-agent/` directory)
 
@@ -72,16 +72,16 @@ Skills, sub-agents, and settings are scoped across multiple levels using a `codi
 
 | Level | Location | Naming Convention |
 |-------|----------|-------------------|
-| Team | `team/coding-agent/{skills,agents}/` | `{item-name}` (e.g., `gh`) |
+| Team | `team/coding-agent/{skills,agents}/` | `{item-name}` (e.g., `github-project`) |
 | Project | `team/projects/<project>/coding-agent/{skills,agents}/` | `{project}.{item-name}` |
-| Member | `team/members/superman/coding-agent/{skills,agents}/` | `superman.{item-name}` |
+| Member | `team/members/{{member_dir}}/coding-agent/{skills,agents}/` | `superman.{item-name}` |
 
 **Skills** — Ralph reads them directly from source directories via `skills.dirs` in ralph.yml. No merging needed.
 
 <!-- +agent:claude-code -->
 **Agents** — symlinked into `.claude/agents/` at workspace creation. All agent files from team, project, and member scopes are merged into one directory via symlinks.
 
-**Settings** — `.claude/settings.json` is copied from the team's `coding-agent/settings.json` (shared hooks like PostToolUse). `.claude/settings.local.json` is copied from the member's `coding-agent/settings.local.json` if it exists.
+**Settings** — `.claude/settings.local.json` is copied from the member's `coding-agent/settings.local.json` if it exists.
 <!-- -agent -->
 
 ## Propagation Model
@@ -94,18 +94,17 @@ Skills, sub-agents, and settings are scoped across multiple levels using a `codi
 | Skills, agents (all levels) | Auto — read via `team/` paths (skills.dirs) or symlinks (.claude/agents/) |
 <!-- -agent -->
 | ralph.yml | **Manual** — requires `just sync` + agent restart |
-| settings.json (team hooks) | Auto — copied from `coding-agent/settings.json` on every sync |
 | settings.local.json | **Manual** — requires `just sync` (re-copy) |
 
 ## Team Repo Access Paths
 
-From a workspace, access team repo content through `team/` and the `gh` skill:
+From a workspace, access team repo content through `team/` and the `github-project` skill:
 
 | Content | Access Method |
 |---------|--------------|
-| Board (issues) | `gh issue list --repo "$TEAM_REPO"` (via `gh` skill) |
-| Milestones | `gh api` milestones endpoint (via `gh` skill) |
-| Pull requests | `gh pr list --repo "$TEAM_REPO"` (via `gh` skill) |
+| Board (issues) | `github-project` skill (board-view operation) |
+| Milestones | `gh api` milestones endpoint (via `github-project` skill) |
+| Pull requests | `gh pr list --repo "$TEAM_REPO"` (via `github-project` skill) |
 | Team knowledge | `team/knowledge/` |
 | Team invariants | `team/invariants/` |
 | Project knowledge | `team/projects/<project>/knowledge/` |
@@ -115,18 +114,7 @@ From a workspace, access team repo content through `team/` and the `gh` skill:
 
 The team repo (`$TEAM_REPO`) is auto-detected from `team/`'s git remote.
 
-## Brain Feedback
-
-You may receive messages marked "Brain Feedback" injected after tool calls.
-These come from your team member's brain — the consciousness that monitors
-your work, receives human messages, and manages the board.
-
-When you receive brain feedback:
-1. It takes priority over your current subtask
-2. Acknowledge by adjusting your approach
-3. If feedback conflicts with your current task, comply with the feedback
-
 ## Reference
 
 - Process conventions and label scheme: see `PROCESS.md`
-- Member-specific context: see `team/members/superman/context.md`
+- Member-specific context: see `team/members/{{member_dir}}/context.md`

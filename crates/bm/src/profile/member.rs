@@ -63,6 +63,9 @@ pub fn hire_member(
     // Finalize member manifest: .botminter.yml → botminter.yml with name added
     finalize_member_manifest(&member_dir, &member_name)?;
 
+    // Render {{member_dir}} placeholders in all text files
+    render_member_placeholders(&member_dir, &member_dir_name, role, &member_name)?;
+
     // Git add + commit (no auto-push)
     run_git(
         team_repo,
@@ -147,6 +150,58 @@ pub fn finalize_member_manifest(member_dir: &Path, name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Renders `{{member_dir}}`, `{{role}}`, and `{{member_name}}` placeholders
+/// in all text files within the member directory. Called during `bm hire`
+/// after the member skeleton is extracted and the manifest is finalized.
+fn render_member_placeholders(
+    member_dir: &Path,
+    member_dir_name: &str,
+    role: &str,
+    member_name: &str,
+) -> Result<()> {
+    render_placeholders_recursive(member_dir, member_dir_name, role, member_name)
+}
+
+fn render_placeholders_recursive(
+    dir: &Path,
+    member_dir_name: &str,
+    role: &str,
+    member_name: &str,
+) -> Result<()> {
+    for entry in fs::read_dir(dir)? {
+        let entry = entry?;
+        let path = entry.path();
+
+        if path.is_dir() {
+            render_placeholders_recursive(&path, member_dir_name, role, member_name)?;
+        } else if is_text_file(&path) {
+            let content = fs::read_to_string(&path)?;
+            if content.contains("{{member_dir}}")
+                || content.contains("{{role}}")
+                || content.contains("{{member_name}}")
+            {
+                let rendered = content
+                    .replace("{{member_dir}}", member_dir_name)
+                    .replace("{{role}}", role)
+                    .replace("{{member_name}}", member_name);
+                fs::write(&path, rendered)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_text_file(path: &Path) -> bool {
+    matches!(
+        path.extension().and_then(|e| e.to_str()),
+        Some(
+            "md" | "yml" | "yaml" | "json" | "txt" | "sh" | "toml" | "graphql" | "env" | "cfg"
+                | "conf" | "ini" | "xml" | "html" | "css" | "js" | "ts" | "py" | "rs" | "go"
+                | "rb" | "dot"
+        )
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -206,5 +261,49 @@ mod tests {
 
         let result = auto_suffix(team_repo, "architect").unwrap();
         assert_eq!(result, "03");
+    }
+
+    #[test]
+    fn render_member_placeholders_replaces_all() {
+        let tmp = tempfile::tempdir().unwrap();
+        let member_dir = tmp.path();
+
+        // Create a test file with placeholders
+        fs::write(
+            member_dir.join("test.md"),
+            "Knowledge at team/members/{{member_dir}}/knowledge/\nRole: {{role}}\nName: {{member_name}}\n",
+        )
+        .unwrap();
+
+        // Create a subdirectory with a file
+        fs::create_dir_all(member_dir.join("hats")).unwrap();
+        fs::write(
+            member_dir.join("hats/config.yml"),
+            "path: team/members/{{member_dir}}/hats/arch/knowledge/\n",
+        )
+        .unwrap();
+
+        render_member_placeholders(member_dir, "superman-alice", "superman", "alice").unwrap();
+
+        let content = fs::read_to_string(member_dir.join("test.md")).unwrap();
+        assert!(content.contains("team/members/superman-alice/knowledge/"));
+        assert!(content.contains("Role: superman"));
+        assert!(content.contains("Name: alice"));
+        assert!(!content.contains("{{member_dir}}"));
+
+        let hat_content = fs::read_to_string(member_dir.join("hats/config.yml")).unwrap();
+        assert!(hat_content.contains("team/members/superman-alice/hats/arch/knowledge/"));
+    }
+
+    #[test]
+    fn render_member_placeholders_skips_binary_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let member_dir = tmp.path();
+
+        // Create a non-text file
+        fs::write(member_dir.join("image.png"), b"\x89PNG\r\n").unwrap();
+
+        // Should not panic or error on binary files
+        render_member_placeholders(member_dir, "superman-bob", "superman", "bob").unwrap();
     }
 }

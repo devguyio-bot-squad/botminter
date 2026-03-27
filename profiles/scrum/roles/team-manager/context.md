@@ -12,7 +12,7 @@ Your workspace has the team repo cloned into `team/`. All your work happens insi
 
 - **Knowledge and invariants**: Read from `team/knowledge/` and `team/invariants/`
 - **Process conventions**: Follow `team/PROCESS.md`
-- **Member config**: Your config lives in `team/members/team-manager-*/`
+- **Member config**: Your config lives in `team/members/{{member_dir}}/`
 - **Committing changes**: Commit and push within `team/` — this is a submodule, not the workspace root
 
 ## B. Team Member Skills & Capabilities
@@ -31,7 +31,7 @@ Board scanning is handled by an auto-inject skill, not a hat.
 team-manager-workspace/              # Workspace (CWD)
   team/                              # Team repo clone (submodule)
     knowledge/, invariants/          # Team-level
-    members/team-manager-*/          # Member config
+    members/{{member_dir}}/          # Member config
     projects/<project>/              # Project-specific
   PROMPT.md
 <!-- +agent:claude-code -->
@@ -45,15 +45,15 @@ team-manager-workspace/              # Workspace (CWD)
 | Level | Path |
 |-------|------|
 | Team knowledge | `team/knowledge/` |
-| Member knowledge | `team/members/team-manager-*/knowledge/` |
-| Hat knowledge (executor) | `team/members/team-manager-*/hats/executor/knowledge/` |
+| Member knowledge | `team/members/{{member_dir}}/knowledge/` |
+| Hat knowledge (executor) | `team/members/{{member_dir}}/hats/executor/knowledge/` |
 
 ### Invariant Compliance
 
 | Level | Path |
 |-------|------|
 | Team invariants | `team/invariants/` |
-| Member invariants | `team/members/team-manager-*/invariants/` |
+| Member invariants | `team/members/{{member_dir}}/invariants/` |
 
 ### Coordination Conventions
 
@@ -61,7 +61,7 @@ See `team/PROCESS.md` for issue format, status transitions, comment attribution,
 
 ### GitHub Access
 
-All GitHub operations use the `gh` skill. The team repo is auto-detected from `team/`'s git remote.
+All GitHub operations use the `github-project` skill. The team repo is auto-detected from `team/`'s git remote.
 
 ### Reference Files
 
