@@ -220,6 +220,19 @@ pub enum Command {
         interval: u64,
     },
 
+    /// Runtime infrastructure management (VMs)
+    Runtime {
+        #[command(subcommand)]
+        command: RuntimeCommand,
+    },
+
+    /// Attach to a running Lima VM
+    Attach {
+        /// Team to operate on (resolves VM from team config)
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
     /// Generate dynamic shell completions
     ///
     /// Completions are dynamic: tab suggestions include real team names, roles,
@@ -285,6 +298,54 @@ pub enum TeamsCommand {
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum RuntimeCommand {
+    /// Provision an isolated Fedora VM for a team
+    Create {
+        /// Run without interactive prompts (requires --name)
+        #[arg(long)]
+        non_interactive: bool,
+
+        /// Print the rendered Lima template and exit (does not create a VM)
+        #[arg(long)]
+        render: bool,
+
+        /// VM name (e.g. bm-alpha)
+        #[arg(long)]
+        name: Option<String>,
+
+        /// Number of CPUs to allocate
+        #[arg(long, default_value = "4")]
+        cpus: u32,
+
+        /// Memory to allocate (e.g. "8GiB")
+        #[arg(long, default_value = "8GiB")]
+        memory: String,
+
+        /// Disk size (e.g. "100GiB")
+        #[arg(long, default_value = "100GiB")]
+        disk: String,
+
+        /// Environment variables to set in the VM (repeatable, e.g. --env ANTHROPIC_API_KEY=sk-...)
+        #[arg(long = "env", value_name = "KEY=VALUE")]
+        env_vars: Vec<String>,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Delete a Lima VM and remove it from config
+    Delete {
+        /// VM name to delete
+        name: String,
+
+        /// Skip confirmation prompt
+        #[arg(long)]
+        force: bool,
     },
 }
 

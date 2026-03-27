@@ -855,6 +855,12 @@ fn build_suite(gh_org: String, gh_token: String) -> GithubSuite {
         })
         // ── First pass: fresh start ──────────────────────────────────
         .case("init_with_bridge_fresh", init_with_bridge_fn(gh_org.clone(), gh_token.clone()))
+        // ── Bootstrap VM (skips if Lima not available) ───────────
+        .case("bootstrap_vm_fresh", super::super::bootstrap::bootstrap_vm_fn(TEAM_NAME))
+        .case("bootstrap_idempotent_fresh", super::super::bootstrap::bootstrap_idempotent_fn(TEAM_NAME))
+        .case("bootstrap_tools_fresh", super::super::bootstrap::bootstrap_tools_fn())
+        .case("bootstrap_teardown_fresh", super::super::bootstrap::bootstrap_teardown_fn())
+        // ── Continue operator journey ────────────────────────────
         .case("hire_member_fresh", hire_member_fn(gh_token.clone()))
         .case("projects_add_fresh", projects_add_fn(gh_org.clone(), gh_token.clone()))
         .case("teams_show_fresh", teams_show_fn())

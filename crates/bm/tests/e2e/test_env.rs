@@ -424,6 +424,14 @@ impl TestEnv {
 
 impl Drop for TestEnv {
     fn drop(&mut self) {
+        // Clean up Lima VMs tracked via exports
+        if let Some(vm_name) = self.exports.get("lima_vm_name").cloned() {
+            eprintln!("  TestEnv: deleting Lima VM '{}'", vm_name);
+            let _ = Command::new("limactl")
+                .args(["delete", "--force", &vm_name])
+                .output();
+        }
+
         // Kill isolated D-Bus daemon (gnome-keyring-daemon dies with it)
         if let Some(pid) = self.dbus_pid {
             unsafe {

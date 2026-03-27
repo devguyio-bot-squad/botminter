@@ -287,6 +287,11 @@ pub fn create_repo_and_push(
         );
     }
 
+    // Ensure remote uses HTTPS — gh may set an SSH URL based on the
+    // user's git_protocol config, which breaks token-based auth in VMs.
+    let https_url = format!("https://github.com/{}.git", repo_name);
+    super::run_git(local_repo, &["remote", "set-url", "origin", &https_url])?;
+
     Ok(())
 }
 
@@ -314,6 +319,11 @@ pub fn clone_repo(parent_dir: &Path, repo_name: &str, gh_token: Option<&str>) ->
             target.display(),
         );
     }
+
+    // Ensure remote uses HTTPS — gh may set an SSH URL based on the
+    // user's git_protocol config, which breaks token-based auth in VMs.
+    let https_url = format!("https://github.com/{}.git", repo_name);
+    super::run_git(&target, &["remote", "set-url", "origin", &https_url])?;
 
     Ok(())
 }

@@ -127,6 +127,8 @@ mod provision_bridge {
         save_state(&state_path, &state).unwrap();
 
         let cred_store = InMemoryCredentialStore::new();
+        // Alice is already provisioned — store her credential so she's truly "complete"
+        cred_store.store("alice", "alice-existing-token").unwrap();
         let members = vec![
             BridgeMember { name: "alice".to_string(), is_operator: false },
             BridgeMember { name: "bob".to_string(), is_operator: false },
@@ -148,6 +150,70 @@ mod provision_bridge {
         assert!(
             state.identities.contains_key("bob"),
             "bob should be provisioned"
+        );
+    }
+
+    #[test]
+    fn sync_bridge_reonboards_member_with_missing_keyring_credential() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_with_bridge(tmp.path());
+        let state_path = bridge::state_path(tmp.path(), "test-team");
+
+        // Pre-populate state with alice provisioned but NO credential in keyring
+        // (simulates keyring-locked failure during first provision)
+        let mut identities = HashMap::new();
+        identities.insert(
+            "alice".to_string(),
+            BridgeIdentity {
+                username: "alice".to_string(),
+                user_id: "stale-id".to_string(),
+                token: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                is_operator: false,
+            },
+        );
+        let state = BridgeState {
+            identities,
+            ..BridgeState::default()
+        };
+        save_state(&state_path, &state).unwrap();
+
+        // Keyring is now "unlocked" — empty store, no credential for alice
+        let cred_store = InMemoryCredentialStore::new();
+        let members = vec![
+            BridgeMember { name: "alice".to_string(), is_operator: false },
+        ];
+
+        let mut bridge = make_test_bridge(&team_repo, tmp.path());
+        let result = bridge.provision(&members, &cred_store).unwrap();
+        bridge.save().unwrap();
+
+        // alice should have been re-onboarded (new identity from onboard recipe)
+        let state = load_state(&state_path).unwrap();
+        assert!(
+            state.identities.contains_key("alice"),
+            "alice should still be in state after re-onboard"
+        );
+        assert_ne!(
+            state.identities.get("alice").unwrap().user_id,
+            "stale-id",
+            "alice's user_id should be updated from re-onboard"
+        );
+
+        // Credential should now be in the store
+        assert!(
+            cred_store.retrieve("alice").unwrap().is_some(),
+            "alice should now have a keyring credential"
+        );
+
+        // Result should indicate re-onboard
+        assert!(
+            matches!(
+                result.members[0].1,
+                bridge::ProvisionMemberResult::ReOnboarded
+            ),
+            "result should be ReOnboarded, got: {:?}",
+            result.members[0].1,
         );
     }
 

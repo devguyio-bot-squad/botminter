@@ -54,6 +54,115 @@ bm init --non-interactive --profile <profile> --team-name <name> --org <org> --r
 - Creates the GitHub repo, bootstraps labels, creates a Project board, and registers the team
 - In non-interactive mode, profile version mismatches are auto-resolved (same as `--force`)
 
+## VM provisioning
+
+### `bm runtime create`
+
+Provision an isolated Fedora VM for a team. Requires a team to exist (run `bm init` first).
+
+```bash
+bm runtime create [--non-interactive --name <vm-name>] [--cpus N] [--memory S] [--disk S] [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-t <team>` | No | Team to provision the VM for (defaults to default team) |
+| `--non-interactive` | No | Run without interactive prompts (requires `--name`) |
+| `--name <name>` | No* | VM name (e.g., `bm-alpha`). *Required with `--non-interactive` |
+| `--cpus <N>` | No | Number of CPUs to allocate (default: `4`) |
+| `--memory <size>` | No | Memory to allocate (default: `8GiB`) |
+| `--disk <size>` | No | Disk size (default: `100GiB`) |
+
+**Prerequisites:**
+
+- A team must exist (created via `bm init`)
+- `limactl` must be installed. If not found, `bm runtime create` shows platform-specific install instructions.
+
+**Behavior:**
+
+- Generates a Lima YAML template with Fedora Cloud as the base image
+- Creates and starts a VM via `limactl create` and `limactl start`
+- Cloud-init provisioning installs all required tools: `git`, `jq`, `curl`, `gh`, `just`, `gnome-keyring`, `podman`, `bm`, `ralph`, and `claude`
+- Registers the VM in `~/.botminter/config.yml` under the `vms` list
+- Associates the VM with the team (sets the team's `vm` field)
+- Idempotent: re-running with the same name skips creation/start if the VM already exists and is running
+- The `~/.botminter` directory is mounted writable inside the VM
+
+**Example:**
+
+```bash
+# Interactive
+bm runtime create -t my-team
+
+# Non-interactive (CI/scripted)
+bm runtime create --non-interactive --name bm-test --cpus 8 --memory 16GiB -t my-team
+```
+
+### `bm runtime delete`
+
+Delete a Lima VM and remove it from the botminter config.
+
+```bash
+bm runtime delete <name> [--force]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<name>` | Yes | Name of the VM to delete |
+| `--force` | No | Skip confirmation prompt |
+
+**Behavior:**
+
+- Stops and deletes the VM via `limactl delete --force`
+- Removes the VM from the `vms` list in `~/.botminter/config.yml`
+- Clears the `vm` field on any team that referenced this VM
+- Idempotent: deleting a non-existent VM succeeds with an informational message
+- Prompts for confirmation in interactive mode unless `--force` is given
+
+**Example:**
+
+```bash
+bm runtime delete bm-alpha
+bm runtime delete bm-alpha --force
+```
+
+### `bm attach`
+
+Attach to a running Lima VM.
+
+```bash
+bm attach [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `-t <team>` | No | Team to operate on (resolves VM from team's `vm` config field) |
+
+**Prerequisites:**
+
+- `limactl` must be installed. If not found, shows platform-specific install instructions.
+- At least one VM must be registered (via `bm runtime create`).
+
+**Behavior:**
+
+- Resolves the target VM using 3-step resolution:
+    1. If `-t <team>` is given and that team has a `vm` field set → uses that VM
+    2. If exactly one VM is registered in config → uses it automatically
+    3. If multiple VMs exist → prompts interactively (errors in non-interactive/piped contexts)
+- Checks that the VM is running via `limactl list --json`
+- If the VM exists but is stopped, offers to start it (auto-starts in non-interactive contexts)
+- Execs into `limactl shell <vm-name>` (replaces the current process with an SSH session into the VM)
+
+**Example:**
+
+```bash
+# Attach to the only configured VM
+bm attach
+
+# Attach to a specific team's VM
+bm attach -t my-team
+```
+
 ## Member management
 
 ### `bm hire`

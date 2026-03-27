@@ -161,6 +161,12 @@ pub fn build_cli_with_completions() -> clap::Command {
                 s.mut_arg("team", |a| a.add(make(teams.clone())))
             })
         })
+        // ── runtime ──────────────────────────────────────────
+        .mut_subcommand("runtime", |c| {
+            c.mut_subcommand("create", |s| {
+                s.mut_arg("team", |a| a.add(make(teams.clone())))
+            })
+        })
         // ── members ───────────────────────────────────────────
         .mut_subcommand("members", |c| {
             c.mut_subcommand("list", |s| {
@@ -325,6 +331,7 @@ mod tests {
             config: Some(BotminterConfig {
                 workzone: PathBuf::from("/tmp"),
                 default_team: None,
+                vms: Vec::new(),
                 teams: vec![
                     TeamEntry {
                         name: "alpha".into(),
@@ -335,6 +342,7 @@ mod tests {
                         coding_agent: None,
                         project_number: None,
                         bridge_lifecycle: Default::default(),
+                        vm: None,
                     },
                     TeamEntry {
                         name: "beta".into(),
@@ -345,6 +353,7 @@ mod tests {
                         coding_agent: None,
                         project_number: None,
                         bridge_lifecycle: Default::default(),
+                        vm: None,
                     },
                 ],
                 keyring_collection: None,
@@ -371,6 +380,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
+                vm: None,
             }),
             team_repo: None,
         };
@@ -446,7 +456,7 @@ projects:
         use crate::cli::{
             BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Command, DaemonCommand,
             KnowledgeCommand, MembersCommand, ProfilesCommand, ProjectsCommand, RolesCommand,
-            TeamsCommand,
+            RuntimeCommand, TeamsCommand,
         };
 
         // This exhaustive match ensures that if a new Command variant is
@@ -465,6 +475,10 @@ projects:
                     TeamsCommand::List => {}
                     TeamsCommand::Show { .. } => {}
                     TeamsCommand::Sync { .. } => {}
+                },
+                Command::Runtime { command } => match command {
+                    RuntimeCommand::Create { .. } => {}
+                    RuntimeCommand::Delete { .. } => {}
                 },
                 Command::Members { command } => match command {
                     MembersCommand::List { .. } => {}
@@ -511,6 +525,7 @@ projects:
                     DaemonCommand::Status { .. } => {}
                 },
                 Command::DaemonRun { .. } => {}
+                Command::Attach { .. } => {}
                 Command::Completions { .. } => {}
             }
         }
@@ -529,5 +544,6 @@ projects:
         assert!(cmd.find_subcommand("daemon").is_some());
         assert!(cmd.find_subcommand("knowledge").is_some());
         assert!(cmd.find_subcommand("teams").is_some());
+        assert!(cmd.find_subcommand("runtime").is_some());
     }
 }

@@ -30,7 +30,4 @@ Tests use full process isolation — no global environment variable mutation.
 
 | Test | Failure mode | Suspected cause | Date |
 |------|-------------|-----------------|------|
-
-No known flaky tests. The isolation model described above was introduced to fix
-historical flakiness caused by `env::set_var` race conditions, hardcoded ports,
-and fixed-duration sleeps (2026-03-04).
+| `daemon_poll_launches_member_existing` | "Daemon did not launch member within 30s" | Race between daemon poll interval and 30s timeout; under CI load the daemon may not complete a full poll cycle + member launch within the window | 2026-03-17 |

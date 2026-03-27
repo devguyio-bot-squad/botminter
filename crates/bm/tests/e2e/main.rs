@@ -12,6 +12,7 @@
 mod helpers;
 mod test_env;
 
+mod bootstrap;
 mod github;
 mod rocketchat;
 mod telegram;
@@ -50,7 +51,7 @@ fn main() {
     // Collect tests based on mode
     let mut tests = Vec::new();
     if config.progressive.is_none() {
-        // Normal mode: isolated + all scenarios
+        // Normal mode: isolated + all scenarios (bootstrap cases are in operator journey)
         tests.extend(isolated::tests(&config));
     }
     tests.extend(scenarios::tests(&config));

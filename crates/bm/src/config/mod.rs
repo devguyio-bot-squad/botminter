@@ -16,10 +16,19 @@ pub struct BotminterConfig {
     pub default_team: Option<String>,
     #[serde(default)]
     pub teams: Vec<TeamEntry>,
+    /// Lima VMs provisioned by `bm runtime create`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub vms: Vec<VmEntry>,
     /// Override the Secret Service collection used for credential storage.
     /// Default (None) uses the `login` collection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keyring_collection: Option<String>,
+}
+
+/// A provisioned Lima VM.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct VmEntry {
+    pub name: String,
 }
 
 /// A registered team.
@@ -39,6 +48,9 @@ pub struct TeamEntry {
     /// Bridge lifecycle configuration.
     #[serde(default, skip_serializing_if = "BridgeLifecycle::is_default")]
     pub bridge_lifecycle: BridgeLifecycle,
+    /// Optional Lima VM name this team is linked to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vm: Option<String>,
 }
 
 /// Controls bridge lifecycle relative to member start/stop.
@@ -172,6 +184,7 @@ pub fn load_or_default() -> BotminterConfig {
         workzone: default_workzone_path(),
         default_team: None,
         teams: Vec::new(),
+        vms: Vec::new(),
         keyring_collection: None,
     })
 }
@@ -241,6 +254,34 @@ pub fn resolve_team<'a>(
         })
 }
 
+/// Resolves which VM to use via 3-step resolution:
+/// 1. If a team flag (or default team) has `vm` set, use it
+/// 2. If exactly one VM is registered, use it
+/// 3. If zero or multiple, return an error
+pub fn resolve_vm(config: &BotminterConfig, team_flag: Option<&str>) -> Result<String> {
+    // Step 1: team's VM binding
+    if let Some(flag) = team_flag {
+        if let Ok(team) = resolve_team(config, Some(flag)) {
+            if let Some(ref vm) = team.vm {
+                return Ok(vm.clone());
+            }
+        }
+    } else if let Ok(team) = resolve_team(config, None) {
+        if let Some(ref vm) = team.vm {
+            return Ok(vm.clone());
+        }
+    }
+
+    // Step 2: single VM auto-select
+    match config.vms.len() {
+        0 => bail!("No VM found. Run `bm runtime create` first."),
+        1 => Ok(config.vms[0].name.clone()),
+        _ => bail!(
+            "Multiple VMs configured. Use `-t <team>` to select one, \
+             or set `vm` on a team entry in ~/.botminter/config.yml."
+        ),
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -272,7 +313,9 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
+                vm: None,
             }],
+            vms: Vec::new(),
             keyring_collection: None,
         };
 
@@ -310,6 +353,7 @@ mod tests {
             workzone: PathBuf::from("/tmp/ws"),
             default_team: None,
             teams: vec![],
+            vms: Vec::new(),
             keyring_collection: None,
         };
         save_to(&path, &config).unwrap();
@@ -334,6 +378,7 @@ mod tests {
                     coding_agent: None,
                     project_number: None,
                     bridge_lifecycle: Default::default(),
+                vm: None,
                 },
                 TeamEntry {
                     name: "other".to_string(),
@@ -344,8 +389,10 @@ mod tests {
                     coding_agent: None,
                     project_number: None,
                     bridge_lifecycle: Default::default(),
+                vm: None,
                 },
             ],
+            vms: Vec::new(),
             keyring_collection: None,
         };
 
@@ -369,7 +416,9 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
+                vm: None,
             }],
+            vms: Vec::new(),
             keyring_collection: None,
         };
 
@@ -383,6 +432,7 @@ mod tests {
             workzone: PathBuf::from("/tmp"),
             default_team: None,
             teams: vec![],
+            vms: Vec::new(),
             keyring_collection: None,
         };
 
@@ -437,7 +487,9 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
+                vm: None,
             }],
+            vms: Vec::new(),
             keyring_collection: None,
         };
 

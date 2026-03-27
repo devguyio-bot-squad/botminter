@@ -108,6 +108,7 @@ pub fn register_team(
         coding_agent: None,
         project_number: None,
         bridge_lifecycle: Default::default(),
+        vm: None,
     };
     cfg.teams.push(team_entry);
 
@@ -208,6 +209,7 @@ mod tests {
             workzone: tmp.path().to_path_buf(),
             default_team: None,
             teams: Vec::new(),
+            vms: Vec::new(),
             keyring_collection: None,
         };
 
@@ -224,6 +226,7 @@ mod tests {
             coding_agent: None,
             project_number: None,
             bridge_lifecycle: Default::default(),
+        vm: None,
         });
         cfg.default_team = Some("my-team".to_string());
 

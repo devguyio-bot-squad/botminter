@@ -20,8 +20,11 @@ bm chat <member> [-t team] [--hat h]  # Interactive session with a member
 bm projects add <url> [-t team]       # Add a project to the team
 bm projects list [-t team]            # List configured projects
 bm projects show <project> [-t team]  # Show project details
+bm attach [-t team]                          # Attach to a running Lima VM
 bm teams list                         # List registered teams
 bm teams show [<name>] [-t team]      # Show detailed team info
+bm runtime create [-t team] [--non-interactive --name <n>]   # Provision a Fedora VM for a team
+bm runtime delete <name> [--force]                          # Delete a Lima VM and clean up config
 bm teams sync [--repos] [--bridge] [--all|-a] [-v] [-t team] # Provision and reconcile workspaces
 bm start [-t team]                    # Launch all members (alias: bm up)
 bm stop [-t team] [--force]           # Stop all members

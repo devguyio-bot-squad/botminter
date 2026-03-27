@@ -1,5 +1,6 @@
 mod init;
 mod launch;
+pub mod lima;
 mod local_topology;
 mod manager;
 mod start_members;
