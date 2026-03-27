@@ -414,7 +414,7 @@ pub(super) fn assemble_agent_dir_submodule(
         &agents_subdir,
     )?;
 
-    // 4. Copy settings.local.json if present
+    // 4. Copy settings.local.json if present (member-level)
     let settings_src = team_sub
         .join("members")
         .join(member_dir_name)
@@ -425,6 +425,17 @@ pub(super) fn assemble_agent_dir_submodule(
             .join(&coding_agent.agent_dir)
             .join("settings.local.json");
         fs::copy(&settings_src, &dst).context("Failed to copy settings.local.json")?;
+    }
+
+    // 5. Copy settings.json if present (team-level — shared hooks for all members)
+    let team_settings_src = team_sub
+        .join("coding-agent")
+        .join("settings.json");
+    if team_settings_src.exists() {
+        let dst = ws_root
+            .join(&coding_agent.agent_dir)
+            .join("settings.json");
+        fs::copy(&team_settings_src, &dst).context("Failed to copy settings.json")?;
     }
 
     Ok(())
@@ -1114,6 +1125,116 @@ pub(super) mod tests {
         assert!(ws.join("CLAUDE.md").exists(), "CLAUDE.md missing");
         assert!(ws.join("PROMPT.md").exists(), "PROMPT.md missing");
         assert!(ws.join(".botminter.workspace").exists(), "marker missing");
+    }
+
+    #[test]
+    fn workspace_repo_surfaces_team_settings_json() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Create a team repo with coding-agent/settings.json at team level
+        let team_repo = tmp.path().join("team_repo");
+        let member_cfg = team_repo.join("members/arch-01");
+        fs::create_dir_all(&member_cfg).unwrap();
+        fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
+        fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
+        fs::write(member_cfg.join("ralph.yml"), "v: 1").unwrap();
+        fs::create_dir_all(member_cfg.join("coding-agent/agents")).unwrap();
+
+        let team_coding_agent = team_repo.join("coding-agent");
+        fs::create_dir_all(team_coding_agent.join("agents")).unwrap();
+        fs::write(
+            team_coding_agent.join("settings.json"),
+            r#"{"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"bm-agent claude hook post-tool-use"}]}]}}"#,
+        ).unwrap();
+
+        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.email", "test@test"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
+        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
+
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+        let settings = ws.join(".claude/settings.json");
+        assert!(settings.exists(), ".claude/settings.json should be surfaced");
+        let content = fs::read_to_string(&settings).unwrap();
+        assert!(
+            content.contains("bm-agent claude hook post-tool-use"),
+            "settings.json should contain PostToolUse hook command"
+        );
+    }
+
+    #[test]
+    fn workspace_repo_no_settings_json_ok() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+        assert!(
+            !ws.join(".claude/settings.json").exists(),
+            ".claude/settings.json should not exist when team has no settings.json"
+        );
+    }
+
+    #[test]
+    fn workspace_repo_settings_json_content_preserved() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        let team_repo = tmp.path().join("team_repo");
+        let member_cfg = team_repo.join("members/arch-01");
+        fs::create_dir_all(&member_cfg).unwrap();
+        fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
+        fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
+        fs::write(member_cfg.join("ralph.yml"), "v: 1").unwrap();
+        fs::create_dir_all(member_cfg.join("coding-agent/agents")).unwrap();
+
+        let team_coding_agent = team_repo.join("coding-agent");
+        fs::create_dir_all(team_coding_agent.join("agents")).unwrap();
+        let original_content = r#"{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bm-agent claude hook post-tool-use"
+          }
+        ]
+      }
+    ]
+  }
+}
+"#;
+        fs::write(team_coding_agent.join("settings.json"), original_content).unwrap();
+
+        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.email", "test@test"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
+        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
+
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+        let copied = fs::read_to_string(ws.join(".claude/settings.json")).unwrap();
+        assert_eq!(copied, original_content, "settings.json content should be byte-for-byte identical");
     }
 
     #[test]

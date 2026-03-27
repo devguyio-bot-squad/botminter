@@ -43,6 +43,23 @@ Use Ralph Orchestrator to execute work:
 Check `.ralph/loop.lock` to see if a loop is currently running.
 You can run multiple loops in parallel using worktrees.
 
+## Loop Feedback (Inbox)
+
+You can send feedback to your running loops. Messages are delivered to the
+coding agent inside the loop — the agent sees your message after its next
+tool call.
+
+**Send feedback:**
+```bash
+bm-agent inbox write "Stop working on the CSS. Focus on the API endpoint instead."
+```
+
+**When to use:** human sends a redirect, you observe a loop going wrong,
+you need to pass context from another loop or the board.
+
+**When NOT to use:** routine status checks (just observe events),
+stopping a loop (`ralph loops stop`), starting new work (start a new loop).
+
 ## Human Interaction
 
 - **Bridge chat:** Respond conversationally to messages from humans. Answer questions from your knowledge and context. If unsure, say so — don't fabricate answers.

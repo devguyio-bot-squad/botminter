@@ -38,6 +38,19 @@ bm profiles describe <profile>        # Show detailed profile information
 
 All commands accepting `-t`/`--team` resolve to the default team when the flag is omitted.
 
+### `bm-agent` CLI
+
+A separate binary for agent-consumed tools (not operator-facing). Runs inside member workspaces.
+
+```bash
+bm-agent inbox write "message" [--from <sender>]  # Brain sends a message to the loop inbox
+bm-agent inbox read [--format json|hook]           # Read and consume pending messages
+bm-agent inbox peek                                # View pending messages without consuming
+bm-agent claude hook post-tool-use                 # PostToolUse hook — always exits 0
+```
+
+See ADR-0010 (`.planning/adrs/0010-agent-tools-namespace.md`) for why this is a separate binary.
+
 ### Development (root Justfile)
 
 ```bash
@@ -121,7 +134,9 @@ workzone/
       PROMPT.md                      # Copied from team/members/<member>/
       CLAUDE.md                      # Copied from team/members/<member>/
       ralph.yml                      # Copied from team/members/<member>/
-      .claude/agents/                # Symlinks into team/ submodule paths
+      .claude/
+        agents/                      # Symlinks into team/ submodule paths
+        settings.json                # Team-level hooks (from coding-agent/settings.json)
       .botminter.workspace           # Workspace marker file
 ```
 
@@ -168,6 +183,9 @@ Issues, milestones, and PRs live on the team repo's GitHub. Status transitions u
 | `session.rs` | Ralph session management (start/stop/status) |
 | `state.rs` | Runtime state persistence (`state.json`) |
 | `agent_tags.rs` | Agent identification tags in workspace markers |
+| `agent_cli.rs` | Clap CLI definition for the `bm-agent` binary |
+| `agent_main.rs` | Entry point for the `bm-agent` binary |
+| `brain/` | Brain process logic (event watcher, ACP session, inbox) |
 | `commands/` | One file per CLI subcommand (init, hire, start, stop, etc.) |
 
 ## Development Patterns

@@ -151,7 +151,7 @@ pub fn sync_workspace(
         }
     }
 
-    // Re-copy settings.local.json if source is newer
+    // Re-copy settings.local.json if source is newer (member-level)
     let settings_src = member_src
         .join("coding-agent")
         .join("settings.local.json");
@@ -166,6 +166,9 @@ pub fn sync_workspace(
             result.events.push(SyncEvent::FileSkipped("settings.local.json".to_string()));
         }
     }
+
+    // NOTE: settings.json (team-level) is copied unconditionally by
+    // assemble_agent_dir_submodule below — no need to copy_if_newer here.
 
     // Discover project names from projects/ submodules
     let project_names: Vec<String> = if projects_dir.is_dir() {
@@ -435,6 +438,106 @@ mod tests {
             branch.trim(),
             member,
             "team/ should remain on member branch after sync (not detached HEAD)"
+        );
+    }
+
+    /// Helper: create a workspace with team-level settings.json for sync tests.
+    fn setup_syncable_workspace_with_settings(tmp: &Path) -> (PathBuf, String, CodingAgentDef) {
+        let member = "arch-01";
+        let team_repo = tmp.join("team_repo");
+        let member_cfg = team_repo.join("members/arch-01");
+        fs::create_dir_all(&member_cfg).unwrap();
+        fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
+        fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
+        fs::write(member_cfg.join("ralph.yml"), "v: 1").unwrap();
+        fs::create_dir_all(member_cfg.join("coding-agent/agents")).unwrap();
+
+        let team_coding_agent = team_repo.join("coding-agent");
+        fs::create_dir_all(team_coding_agent.join("agents")).unwrap();
+        fs::write(
+            team_coding_agent.join("settings.json"),
+            r#"{"hooks":{"PostToolUse":[{"hooks":[{"type":"command","command":"bm-agent claude hook post-tool-use"}]}]}}"#,
+        ).unwrap();
+
+        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.email", "test@test"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
+        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
+
+        let workspace_base = tmp.join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+        let agent = claude_code_agent();
+        let params = test_ws_params(&team_repo, &workspace_base, member, &[], &agent);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join(member);
+        (ws, member.to_string(), agent)
+    }
+
+    #[test]
+    fn sync_copies_team_settings_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace_with_settings(tmp.path());
+
+        // settings.json should already exist from initial creation
+        assert!(ws.join(".claude/settings.json").exists());
+
+        // Delete it and verify sync restores it
+        fs::remove_file(ws.join(".claude/settings.json")).unwrap();
+        assert!(!ws.join(".claude/settings.json").exists());
+
+        // assemble_agent_dir_submodule always copies settings.json unconditionally
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+
+        assert!(
+            ws.join(".claude/settings.json").exists(),
+            "Sync should restore settings.json"
+        );
+        let content = fs::read_to_string(ws.join(".claude/settings.json")).unwrap();
+        assert!(
+            content.contains("bm-agent claude hook post-tool-use"),
+            "Restored settings.json should contain hook command"
+        );
+    }
+
+    #[test]
+    fn sync_skips_unchanged_settings_json() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace_with_settings(tmp.path());
+
+        // Count commits before and after sync (settings.json already up-to-date)
+        let log_before = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
+
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+
+        let log_after = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
+        assert_eq!(
+            log_before.trim(),
+            log_after.trim(),
+            "No new commits should be created when settings.json is unchanged"
+        );
+    }
+
+    #[test]
+    fn sync_preserves_inbox_messages() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace_with_settings(tmp.path());
+
+        // Create inbox file with a pending message
+        let ralph_dir = ws.join(".ralph");
+        fs::create_dir_all(&ralph_dir).unwrap();
+        let inbox_content = r#"{"ts":"2026-03-22T12:00:00Z","from":"brain","message":"test message"}"#;
+        fs::write(ralph_dir.join("loop-inbox.jsonl"), inbox_content).unwrap();
+
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+
+        let inbox_after = fs::read_to_string(ralph_dir.join("loop-inbox.jsonl")).unwrap();
+        assert_eq!(
+            inbox_after.trim(),
+            inbox_content,
+            "Sync should not touch .ralph/loop-inbox.jsonl"
         );
     }
 

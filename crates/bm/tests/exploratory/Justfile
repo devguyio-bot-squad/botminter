@@ -6,6 +6,7 @@ set positional-arguments
 set dotenv-load := false
 
 BM := justfile_directory() + "/../../../../target/debug/bm"
+BM_AGENT := justfile_directory() + "/../../../../target/debug/bm-agent"
 TEAM := "exploratory-test"
 ORG := "devguyio-bot-squad"
 REPO := "exploratory-test-team"
@@ -653,6 +654,82 @@ phase-d:
         fail "D20" "Junk cleanup" "junk.txt still present"
     else
         fail "D20" "Workspace creation" "exit $EC"
+    fi
+
+    # ── D.6: Settings.json & Inbox ──
+
+    echo "  D.6: Settings.json & Inbox..."
+    BM_AGENT="{{BM_AGENT}}"
+
+    # D21: Settings.json surfaced after sync
+    if [ -f "$ALICE_WS/.claude/settings.json" ]; then
+        HOOK_CONTENT=$(cat "$ALICE_WS/.claude/settings.json")
+        if echo "$HOOK_CONTENT" | grep -q "bm-agent claude hook post-tool-use"; then
+            pass "D21" "Settings.json surfaced with PostToolUse hook"
+        else
+            fail "D21" "Settings.json content" "missing PostToolUse hook reference"
+        fi
+    else
+        fail "D21" "Settings.json" ".claude/settings.json not found in workspace"
+    fi
+
+    # D22: Inbox write/peek/read lifecycle
+    cd "$ALICE_WS"
+    WRITE_OUT=$($BM_AGENT inbox write "exploratory test message" --from brain 2>&1)
+    WRITE_EC=$?
+    if [ $WRITE_EC -eq 0 ]; then
+        PEEK_OUT=$($BM_AGENT inbox peek 2>&1)
+        if echo "$PEEK_OUT" | grep -q "exploratory test message"; then
+            READ_OUT=$($BM_AGENT inbox read --format json 2>&1)
+            if echo "$READ_OUT" | grep -q "exploratory test message"; then
+                PEEK_AFTER=$($BM_AGENT inbox peek 2>&1)
+                if echo "$PEEK_AFTER" | grep -qi "no pending"; then
+                    pass "D22" "Inbox write/peek/read lifecycle complete"
+                else
+                    fail "D22" "Inbox consume" "messages still present after read: $PEEK_AFTER"
+                fi
+            else
+                fail "D22" "Inbox read" "message not in JSON output: $READ_OUT"
+            fi
+        else
+            fail "D22" "Inbox peek" "message not visible: $PEEK_OUT"
+        fi
+    else
+        fail "D22" "Inbox write" "exit $WRITE_EC: $WRITE_OUT"
+    fi
+
+    # D23: Hook graceful degradation
+    # In workspace with no inbox file — should exit 0, empty output
+    HOOK_OUT=$($BM_AGENT claude hook post-tool-use 2>&1)
+    HOOK_EC=$?
+    if [ $HOOK_EC -eq 0 ]; then
+        pass "D23" "Hook exits 0 in workspace (no pending messages)"
+    else
+        fail "D23" "Hook in workspace" "exit $HOOK_EC: $HOOK_OUT"
+    fi
+    # In non-workspace dir — should also exit 0
+    cd /tmp
+    HOOK_OUT2=$($BM_AGENT claude hook post-tool-use 2>&1)
+    HOOK_EC2=$?
+    cd "$ALICE_WS"
+    if [ $HOOK_EC2 -eq 0 ]; then
+        pass "D23b" "Hook exits 0 outside workspace"
+    else
+        fail "D23b" "Hook outside workspace" "exit $HOOK_EC2: $HOOK_OUT2"
+    fi
+
+    # D24: Re-sync preserves inbox messages
+    $BM_AGENT inbox write "survive sync" --from brain 2>&1
+    cd "{{justfile_directory()}}/../../../.."
+    OUT=$($BM teams sync -v 2>&1)
+    cd "$ALICE_WS"
+    PEEK_SYNC=$($BM_AGENT inbox peek 2>&1)
+    if echo "$PEEK_SYNC" | grep -q "survive sync"; then
+        pass "D24" "Re-sync preserves inbox messages"
+        # Clean up
+        $BM_AGENT inbox read > /dev/null 2>&1
+    else
+        fail "D24" "Inbox after sync" "message lost: $PEEK_SYNC"
     fi
 
     echo "Phase D complete."

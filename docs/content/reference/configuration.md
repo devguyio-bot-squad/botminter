@@ -30,7 +30,7 @@ Profiles are stored on disk at `~/.config/botminter/profiles/`. This directory i
       roles/                        # Role skeletons
         architect/
         human-assistant/
-      coding-agent/                 # Shared agent skills
+      coding-agent/                 # Shared agent skills, hooks (settings.json), and sub-agents
       skills/                       # Profile skills
       formations/                   # Deployment targets
       .schema/                      # Schema validation layout

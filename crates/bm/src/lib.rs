@@ -1,4 +1,5 @@
 pub mod acp;
+pub mod agent_cli;
 pub mod agent_tags;
 pub mod brain;
 pub mod bridge;

@@ -174,6 +174,22 @@ Note: workspaces were already created in C1 (sync --bridge also creates workspac
 | D19 | Hire new member (carol) | `bm hire superman --name carol` | Member dir created in team repo |
 | D20 | Sync cleans junk + creates proper workspace | `bm teams sync -v` | Junk gone, proper workspace with all context files |
 
+### D.6: Settings.json & Inbox
+
+**User Journeys:**
+1. Fresh workspace setup: sync → settings.json surfaced → hook enabled (D21)
+2. Inbox full lifecycle: write → peek → read (consume) → peek (empty) (D22)
+3. Graceful degradation: hook in workspace with no messages, hook outside workspace (D23, D23b)
+4. Sync resilience: write message → re-sync → message survives (D24)
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| D21 | Settings.json surfaced after sync | `cat <workspace>/.claude/settings.json` | Valid JSON with PostToolUse hook referencing `bm-agent claude hook post-tool-use` |
+| D22 | Inbox write/peek/read lifecycle | `bm-agent inbox write "test message"` then `bm-agent inbox peek` then `bm-agent inbox read --format json` then `bm-agent inbox peek` | Message visible after write, JSON output on read, empty after consume |
+| D23 | Hook graceful degradation (in workspace) | `bm-agent claude hook post-tool-use` in workspace with no pending messages | Exit 0 with no output |
+| D23b | Hook graceful degradation (outside workspace) | `bm-agent claude hook post-tool-use` in non-workspace dir | Exit 0 with no output |
+| D24 | Re-sync preserves inbox messages | Write message, `bm teams sync -v`, `bm-agent inbox peek` | Message still present after sync |
+
 ## Phase E: Full Sync (`--bridge` flag)
 
 Note: `-a` includes `--repos` which requires GitHub workspace repos per member.
