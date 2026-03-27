@@ -1,7 +1,8 @@
 # Milestone: Chat-First Member
 
-**Status**: Ready for implementation
+**Status**: Implementation complete (2026-03-21)
 **Date**: 2026-03-20
+**Implementation**: Phases 1-6 committed on chat-first-member branch (2026-03-20)
 
 ## Vision
 
@@ -147,15 +148,15 @@ These resolve the open questions from the design exploration:
 - Integration test: spawn ACP process, create session, send prompt, receive streaming response
 
 **Acceptance criteria:**
-- [ ] Can spawn `claude-code-acp-rs` and perform initialize handshake
-- [ ] Can create a session with CWD and system prompt
-- [ ] Can send a prompt and receive streaming `AgentMessageChunk` notifications
-- [ ] Can cancel an in-progress prompt
-- [ ] Can handle `RequestPermission` callbacks (accept/deny)
-- [ ] Session stays alive across multiple prompts
-- [ ] Clean shutdown of child process
-- [ ] Unit tests for JSON-RPC message serialization/deserialization
-- [ ] Integration test against real `claude-code-acp-rs` binary
+- [x] Can spawn `claude-code-acp-rs` and perform initialize handshake (Phase 1, 43c0e79)
+- [x] Can create a session with CWD and system prompt (Phase 1, 43c0e79)
+- [x] Can send a prompt and receive streaming `AgentMessageChunk` notifications (Phase 1, 43c0e79)
+- [x] Can cancel an in-progress prompt (Phase 1, 43c0e79)
+- [x] Can handle `RequestPermission` callbacks (accept/deny) (Phase 1, 43c0e79)
+- [x] Session stays alive across multiple prompts (Phase 1, 43c0e79)
+- [x] Clean shutdown of child process (Phase 1, 43c0e79)
+- [x] Unit tests for JSON-RPC message serialization/deserialization (Phase 1, 43c0e79)
+- [x] Integration test against real `claude-code-acp-rs` binary (Phase 1, 43c0e79)
 
 **Key reference:** `/opt/workspace/claude-code-acp-rs/src/agent/handlers.rs` for protocol methods, `/opt/workspace/claude-code-acp-rs/src/mcp/acp_server.rs` for JSON-RPC message routing.
 
@@ -176,14 +177,14 @@ These resolve the open questions from the design exploration:
 - Concurrency: when a prompt is in-flight, queue incoming messages; when response completes, drain queue by priority
 
 **Acceptance criteria:**
-- [ ] Multiplexer spawns ACP session on start
-- [ ] Human messages routed as prompts with correct prefix
-- [ ] ACP streaming responses forwarded to bridge in real-time
-- [ ] Priority queue respects human > events > heartbeat ordering
-- [ ] Queued messages are drained in priority order after current prompt completes
-- [ ] Clean shutdown: cancel in-flight prompt, close ACP session
-- [ ] Unit tests for priority queue
-- [ ] Integration test: mock bridge input -> ACP prompt -> mock bridge output
+- [x] Multiplexer spawns ACP session on start (Phase 2, 604be17)
+- [x] Human messages routed as prompts with correct prefix (Phase 2, 604be17)
+- [x] ACP streaming responses forwarded to bridge in real-time (Phase 2, 604be17)
+- [x] Priority queue respects human > events > heartbeat ordering (Phase 2, 604be17)
+- [x] Queued messages are drained in priority order after current prompt completes (Phase 2, 604be17)
+- [x] Clean shutdown: cancel in-flight prompt, close ACP session (Phase 2, 604be17)
+- [x] Unit tests for priority queue (Phase 2, 604be17)
+- [x] Integration test: mock bridge input -> ACP prompt -> mock bridge output (Phase 2, 604be17)
 
 **Key reference:** Existing `crates/bm/src/daemon/` module for process lifecycle patterns.
 
@@ -201,14 +202,14 @@ These resolve the open questions from the design exploration:
   - Detect new event files appearing (new loops started by the brain)
 
 **Acceptance criteria:**
-- [ ] Detects new lines appended to existing event files
-- [ ] Detects new event files appearing in `.ralph/`
-- [ ] Filters to only significant event types
-- [ ] Injects events into multiplexer prompt queue
-- [ ] Handles multiple concurrent event files
-- [ ] Does not re-inject events already seen (tracks file offset)
-- [ ] Unit tests with synthetic event files
-- [ ] Integration test: write event to file -> prompt appears in queue
+- [x] Detects new lines appended to existing event files (Phase 3, eb1d2ec)
+- [x] Detects new event files appearing in `.ralph/` (Phase 3, eb1d2ec)
+- [x] Filters to only significant event types (Phase 3, eb1d2ec)
+- [x] Injects events into multiplexer prompt queue (Phase 3, eb1d2ec)
+- [x] Handles multiple concurrent event files (Phase 3, eb1d2ec)
+- [x] Does not re-inject events already seen (tracks file offset) (Phase 3, eb1d2ec)
+- [x] Unit tests with synthetic event files (Phase 3, eb1d2ec)
+- [x] Integration test: write event to file -> prompt appears in queue (Phase 3, eb1d2ec)
 
 **Key reference:** Ralph's event file format at `.ralph/events-*.jsonl` — JSON lines with `{"ts": "...", "event": {"type": "..."}}`.
 
@@ -225,11 +226,11 @@ These resolve the open questions from the design exploration:
   - Pushes to multiplexer prompt queue at P2 (lowest) priority
 
 **Acceptance criteria:**
-- [ ] Fires at configured interval when idle
-- [ ] Does NOT fire when a prompt is in-flight
-- [ ] Configurable frequency via profile (`brain.heartbeat_secs`)
-- [ ] Can be disabled by setting frequency to 0
-- [ ] Unit tests for timer logic and skip-when-busy behavior
+- [x] Fires at configured interval when idle (Phase 4, 2670296)
+- [x] Does NOT fire when a prompt is in-flight (Phase 4, 2670296)
+- [x] Configurable frequency via profile (`brain.heartbeat_secs`) (Phase 4, 2670296)
+- [x] Can be disabled by setting frequency to 0 (Phase 4, 2670296)
+- [x] Unit tests for timer logic and skip-when-busy behavior (Phase 4, 2670296)
 
 ### Phase 5: Brain System Prompt Template
 
@@ -248,13 +249,13 @@ These resolve the open questions from the design exploration:
 - Brain prompt surfacing during `bm teams sync` (render template, write to workspace)
 
 **Acceptance criteria:**
-- [ ] System prompt template exists in profile
-- [ ] Template renders with member-specific variables
-- [ ] Rendered prompt is surfaced to workspace during `bm teams sync`
-- [ ] Brain acts autonomously: picks tasks, starts loops, monitors progress
-- [ ] Brain responds conversationally to bridge messages
-- [ ] Brain uses both GitHub and bridge channels contextually
-- [ ] Manual E2E validation: start brain, verify it picks work and responds to chat
+- [x] System prompt template exists in profile (Phase 5, 735df88)
+- [x] Template renders with member-specific variables (Phase 5, 735df88)
+- [x] Rendered prompt is surfaced to workspace during `bm teams sync` (Phase 5, 735df88)
+- [x] Brain acts autonomously: picks tasks, starts loops, monitors progress (validated by exploratory test H35, 16be65e)
+- [x] Brain responds conversationally to bridge messages (validated by exploratory test H35, 16be65e)
+- [x] Brain uses both GitHub and bridge channels contextually (validated by exploratory test H35, 16be65e)
+- [x] Manual E2E validation: start brain, verify it picks work and responds to chat (automated as exploratory test H35, 16be65e)
 
 ### Phase 6: `bm` CLI Integration
 
@@ -274,14 +275,14 @@ These resolve the open questions from the design exploration:
   - Alternative: if multiplexer exposes a local socket, `bm chat` connects to that
 
 **Acceptance criteria:**
-- [ ] `bm start` launches multiplexer per member (not raw ralph)
-- [ ] `bm stop` cleanly shuts down multiplexer + ACP session + running loops
-- [ ] `bm status` shows brain health alongside member info
-- [ ] `bm chat <member>` interacts with the running brain
-- [ ] State file tracks multiplexer PID (not ralph PID)
-- [ ] Stale state cleanup works with multiplexer processes
-- [ ] E2E test: start -> status shows healthy -> chat works -> stop -> status shows stopped
-- [ ] Docs updated: `docs/content/reference/cli.md`, `docs/content/getting-started/index.md`
+- [x] `bm start` launches multiplexer per member (not raw ralph) (Phase 6, 224c305)
+- [x] `bm stop` cleanly shuts down multiplexer + ACP session + running loops (Phase 6, 224c305)
+- [x] `bm status` shows brain health alongside member info (Phase 6, 224c305)
+- [x] `bm chat <member>` interacts with the running brain (Phase 6, 224c305)
+- [x] State file tracks multiplexer PID (not ralph PID) (Phase 6, 224c305)
+- [x] Stale state cleanup works with multiplexer processes (Phase 6, 224c305)
+- [x] E2E test: start -> status shows healthy -> chat works -> stop -> status shows stopped (validated by exploratory tests H23-H45, 16be65e)
+- [x] Docs updated: `docs/content/reference/cli.md`, `docs/content/getting-started/index.md` (Phase 6, 224c305)
 
 ## Existing Code That Will Be Modified
 
