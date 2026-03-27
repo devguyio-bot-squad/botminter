@@ -322,3 +322,13 @@ The team process can evolve through two paths:
 3. Commit the change to the team repo
 
 The informal path is appropriate for urgent corrections or clarifications. The formal path is preferred for significant process changes.
+
+### Team Agreements
+
+All significant process changes, role changes, and team decisions MUST be recorded as team agreements before the change is applied. Agreements provide traceability for why changes were made and who participated in the decision.
+
+- **Decisions** go in `agreements/decisions/` — role changes, process changes, tool adoption
+- **Retrospective outcomes** go in `agreements/retros/` — summaries from retrospective sessions
+- **Working norms** go in `agreements/norms/` — living team agreements (e.g., "we prefer small PRs")
+
+See `knowledge/team-agreements.md` for the full convention including file format and lifecycle.
