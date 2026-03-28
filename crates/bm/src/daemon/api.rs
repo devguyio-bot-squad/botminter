@@ -23,6 +23,9 @@ use crate::state;
 pub struct StartMembersRequest {
     /// If set, start only this member. If None, start all members.
     pub member: Option<String>,
+    /// When true, skip brain mode detection and always launch Ralph.
+    #[serde(default)]
+    pub no_brain: bool,
 }
 
 /// Request body for `POST /api/members/stop`.
@@ -162,6 +165,7 @@ pub(super) async fn start_members_handler(
             &team_repo,
             req.member.as_deref(),
             false,
+            req.no_brain,
             None,
         )
     })
@@ -773,6 +777,7 @@ mod tests {
         let json = r#"{"member": "superman"}"#;
         let req: StartMembersRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.member, Some("superman".to_string()));
+        assert!(!req.no_brain);
     }
 
     #[test]
@@ -780,6 +785,14 @@ mod tests {
         let json = r#"{}"#;
         let req: StartMembersRequest = serde_json::from_str(json).unwrap();
         assert_eq!(req.member, None);
+        assert!(!req.no_brain);
+    }
+
+    #[test]
+    fn start_request_deserialize_with_no_brain() {
+        let json = r#"{"no_brain": true}"#;
+        let req: StartMembersRequest = serde_json::from_str(json).unwrap();
+        assert!(req.no_brain);
     }
 
     #[test]

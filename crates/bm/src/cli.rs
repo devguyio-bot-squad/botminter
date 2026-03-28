@@ -131,6 +131,10 @@ pub enum Command {
         /// Start bridge only, do not launch members
         #[arg(long)]
         bridge_only: bool,
+
+        /// Skip brain mode even if brain-prompt.md exists; launch Ralph instead
+        #[arg(long)]
+        no_brain: bool,
     },
 
     /// Stop members (all, or a specific one)

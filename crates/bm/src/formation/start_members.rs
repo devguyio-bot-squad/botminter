@@ -61,6 +61,7 @@ pub fn start_local_members(
     team_repo: &Path,
     member_filter: Option<&str>,
     no_bridge: bool,
+    no_brain: bool,
     resolved_formation: Option<&str>,
 ) -> Result<StartResult> {
     let mut result = StartResult {
@@ -172,8 +173,8 @@ pub fn start_local_members(
             }
         };
 
-        // Detect brain mode (chat-first member)
-        let brain_mode = formation::is_brain_member(&ws);
+        // Detect brain mode (chat-first member), unless --no-brain overrides
+        let brain_mode = !no_brain && formation::is_brain_member(&ws);
 
         // Launch ralph or brain
         let launch_result = if brain_mode {

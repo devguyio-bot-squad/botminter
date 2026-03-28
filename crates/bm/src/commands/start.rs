@@ -5,12 +5,13 @@ use crate::formation;
 use crate::profile;
 use crate::team::Team;
 
-/// Handles `bm start [member] [-t team] [--formation <name>] [--no-bridge] [--bridge-only]`.
+/// Handles `bm start [member] [-t team] [--formation <name>] [--no-bridge] [--bridge-only] [--no-brain]`.
 pub fn run(
     team_flag: Option<&str>,
     formation_flag: Option<&str>,
     no_bridge: bool,
     bridge_only: bool,
+    no_brain: bool,
     member_filter: Option<&str>,
 ) -> Result<()> {
     let cfg = config::load()?;
@@ -62,7 +63,7 @@ pub fn run(
         // v2 team with formations dir — use Team API boundary
         let local_formation = formation::create_local_formation(&team.name)?;
         let team_api = Team::new(team, local_formation);
-        let mut result = team_api.start(&cfg, member_filter)?;
+        let mut result = team_api.start(&cfg, member_filter, no_brain)?;
 
         // Bridge auto-start (command-layer responsibility, not formation)
         if !no_bridge && member_filter.is_none() && team.bridge_lifecycle.start_on_up {
@@ -79,6 +80,7 @@ pub fn run(
             &team_repo,
             member_filter,
             no_bridge,
+            no_brain,
             None,
         )?
     };

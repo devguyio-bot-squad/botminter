@@ -222,6 +222,7 @@ impl Formation for LinuxLocalFormation {
 
         let req = daemon::StartMembersRequest {
             member: params.member_filter.map(|s| s.to_string()),
+            no_brain: params.no_brain,
         };
         let resp = client.start_members(&req)?;
 

@@ -176,6 +176,8 @@ pub struct StartParams<'a> {
     pub config: &'a BotminterConfig,
     pub team_repo: &'a Path,
     pub member_filter: Option<&'a str>,
+    /// When true, skip brain mode detection and always launch Ralph.
+    pub no_brain: bool,
 }
 
 /// Parameters for `Formation::stop_members()`.

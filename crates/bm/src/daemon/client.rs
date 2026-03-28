@@ -271,11 +271,12 @@ mod tests {
     fn start_request_serializes_for_client() {
         let req = StartMembersRequest {
             member: Some("alice".to_string()),
+            no_brain: false,
         };
         let json = serde_json::to_string(&req).unwrap();
         assert!(json.contains("alice"));
 
-        let req_all = StartMembersRequest { member: None };
+        let req_all = StartMembersRequest { member: None, no_brain: false };
         let json = serde_json::to_string(&req_all).unwrap();
         // member: null should be present or absent depending on serde behavior
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();

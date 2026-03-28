@@ -239,8 +239,9 @@ fn main() -> Result<()> {
             formation,
             no_bridge,
             bridge_only,
+            no_brain,
         } => {
-            commands::start::run(team.as_deref(), formation.as_deref(), no_bridge, bridge_only, member.as_deref())?;
+            commands::start::run(team.as_deref(), formation.as_deref(), no_bridge, bridge_only, no_brain, member.as_deref())?;
         }
         Command::Stop { member, team, force, bridge, all } => {
             commands::stop::run(team.as_deref(), force, member.as_deref(), bridge, all)?;

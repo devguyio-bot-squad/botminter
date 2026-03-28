@@ -39,6 +39,7 @@ impl<'a> Team<'a> {
         &self,
         config: &BotminterConfig,
         member_filter: Option<&str>,
+        no_brain: bool,
     ) -> Result<StartResult> {
         let team_repo = self.entry.path.join("team");
         self.formation.start_members(&StartParams {
@@ -46,6 +47,7 @@ impl<'a> Team<'a> {
             config,
             team_repo: &team_repo,
             member_filter,
+            no_brain,
         })
     }
 
@@ -247,7 +249,7 @@ mod tests {
         let team = Team::new(&entry, Box::new(formation));
         let config = test_config();
 
-        let result = team.start(&config, None).unwrap();
+        let result = team.start(&config, None, false).unwrap();
 
         assert_eq!(result.launched.len(), 1);
         assert_eq!(result.launched[0].name, "superman");
@@ -262,7 +264,7 @@ mod tests {
         let team = Team::new(&entry, Box::new(formation));
         let config = test_config();
 
-        let result = team.start(&config, Some("superman")).unwrap();
+        let result = team.start(&config, Some("superman"), false).unwrap();
         assert_eq!(result.launched.len(), 1);
     }
 
@@ -299,7 +301,7 @@ mod tests {
         let team = Team::new(&entry, Box::new(formation));
         let config = test_config();
 
-        let result = team.start(&config, None);
+        let result = team.start(&config, None, false);
         assert!(result.is_err());
         assert!(result.err().unwrap().to_string().contains("mock start error"));
     }
