@@ -184,23 +184,19 @@ if [ -n "$ASSIGNEE" ]; then
     echo "⚠️  WARNING: Could not assign '$ASSIGNEE'"
 fi
 
-# Add issue to project with error checking
-ADD_OUTPUT=$(gh project item-add "$PROJECT_NUM" --owner "$OWNER" --url "$ISSUE_URL" 2>&1)
+# Add issue to project and capture the item ID directly from the response
+ADD_RESULT=$(gh project item-add "$PROJECT_NUM" --owner "$OWNER" --url "$ISSUE_URL" --format json 2>&1)
 if [ $? -ne 0 ]; then
   echo "❌ ERROR: Failed to add issue to project"
-  echo "Output: $ADD_OUTPUT"
+  echo "Output: $ADD_RESULT"
   exit 1
 fi
 
-# Wait briefly for the item to be indexed
-sleep 2
-
-# Get the item ID for the newly added issue with validation
-ITEM_ID=$(gh project item-list "$PROJECT_NUM" --owner "$OWNER" --format json 2>&1 \
-  | jq -r ".items[] | select(.content.number == $ISSUE_NUM) | .id")
+ITEM_ID=$(echo "$ADD_RESULT" | jq -r '.id')
 
 if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
-  echo "❌ ERROR: Could not retrieve item ID for newly created issue #$ISSUE_NUM"
+  echo "❌ ERROR: Could not retrieve item ID from project item-add response"
+  echo "Response: $ADD_RESULT"
   exit 1
 fi
 
