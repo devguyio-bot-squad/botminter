@@ -141,7 +141,7 @@ views:
     also_include: ["done", "error"]
   - name: "Bug"
     prefixes: ["bug"]
-    also_include: ["done", "error"]
+    also_include: ["arch:review", "arch:refine", "po:plan-review", "qe:verify", "done", "error"]
   - name: "Lead"
     prefixes: ["lead"]
     also_include: ["done", "error"]

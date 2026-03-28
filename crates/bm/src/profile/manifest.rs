@@ -216,6 +216,45 @@ mod tests {
         assert_eq!(filter, "status:arch:design,arch:plan,done");
     }
 
+    #[test]
+    fn bug_view_includes_cross_role_statuses() {
+        let statuses = vec![
+            StatusDef { name: "bug:investigate".into(), description: "".into() },
+            StatusDef { name: "bug:breakdown".into(), description: "".into() },
+            StatusDef { name: "bug:in-progress".into(), description: "".into() },
+            StatusDef { name: "arch:review".into(), description: "".into() },
+            StatusDef { name: "arch:refine".into(), description: "".into() },
+            StatusDef { name: "po:plan-review".into(), description: "".into() },
+            StatusDef { name: "qe:verify".into(), description: "".into() },
+            StatusDef { name: "done".into(), description: "".into() },
+            StatusDef { name: "error".into(), description: "".into() },
+        ];
+        let view = ViewDef {
+            name: "Bug".into(),
+            prefixes: vec!["bug".into()],
+            also_include: vec![
+                "arch:review".into(),
+                "arch:refine".into(),
+                "po:plan-review".into(),
+                "qe:verify".into(),
+                "done".into(),
+                "error".into(),
+            ],
+        };
+        let resolved = view.resolve_statuses(&statuses);
+        // Must include all bug workflow statuses from both simple and complex tracks
+        for expected in &[
+            "bug:investigate", "bug:breakdown", "bug:in-progress",
+            "arch:review", "arch:refine", "po:plan-review", "qe:verify",
+            "done", "error",
+        ] {
+            assert!(
+                resolved.contains(&expected.to_string()),
+                "Bug view should include {expected}, got: {resolved:?}"
+            );
+        }
+    }
+
     // ── BridgeDef / ProfileManifest.bridges tests ───────────────
 
     #[test]

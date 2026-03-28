@@ -227,6 +227,7 @@ fn color_for_status(name: &str) -> &'static str {
         "lead" => "ORANGE",
         "sre" => "GRAY",
         "cw" => "ORANGE",
+        "bug" => "RED",
         "mgr" => "PURPLE",
         "error" => "RED",
         "done" => "GREEN",

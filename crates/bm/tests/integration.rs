@@ -2184,6 +2184,45 @@ fn profile_views_parse_correctly() {
     );
 }
 
+// ── Bug view integration test ──────────────────────────────────────
+
+#[test]
+fn bug_view_includes_all_bug_workflow_statuses() {
+    let tmp = tempfile::tempdir().unwrap();
+    let team_repo = setup_team(tmp.path(), "bug-view-team", "scrum-compact");
+
+    let content = fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
+    let manifest: profile::ProfileManifest = serde_yml::from_str(&content).unwrap();
+
+    let bug_view = manifest
+        .views
+        .iter()
+        .find(|v| v.name == "Bug")
+        .expect("should have a Bug view");
+
+    let resolved = bug_view.resolve_statuses(&manifest.statuses);
+
+    // Bug-prefixed statuses (from prefix match)
+    assert!(resolved.iter().any(|s| s == "bug:investigate"), "should include bug:investigate");
+    assert!(resolved.iter().any(|s| s == "bug:breakdown"), "should include bug:breakdown");
+    assert!(resolved.iter().any(|s| s == "bug:in-progress"), "should include bug:in-progress");
+
+    // Cross-role statuses (from also_include)
+    assert!(resolved.iter().any(|s| s == "arch:review"), "should include arch:review");
+    assert!(resolved.iter().any(|s| s == "arch:refine"), "should include arch:refine");
+    assert!(resolved.iter().any(|s| s == "po:plan-review"), "should include po:plan-review");
+    assert!(resolved.iter().any(|s| s == "qe:verify"), "should include qe:verify");
+
+    // Terminal statuses
+    assert!(resolved.iter().any(|s| s == "done"), "should include done");
+    assert!(resolved.iter().any(|s| s == "error"), "should include error");
+
+    // Filter string should contain all of them
+    let filter = bug_view.filter_string(&manifest.statuses);
+    assert!(filter.contains("arch:review"), "filter should contain arch:review, got: {}", filter);
+    assert!(filter.contains("qe:verify"), "filter should contain qe:verify, got: {}", filter);
+}
+
 // ── Teams list enrichment tests ──────────────────────────────────────
 
 #[test]
