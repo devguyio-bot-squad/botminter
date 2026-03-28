@@ -1,6 +1,6 @@
 # human-assistant — Team Member Context
 
-This file provides context for operating as the human-assistant team member. Read `team/context.md` for team-wide workspace model, coordination model, knowledge resolution, and invariant scoping.
+This file provides context for operating as the human-assistant team member. Read `team/CLAUDE.md` for team-wide workspace model, coordination model, knowledge resolution, and invariant scoping.
 
 ## A. Project Context
 
@@ -82,6 +82,6 @@ Note: The `always-confirm` invariant is SUSPENDED in Sprint 2 (no HIL available)
 
 ### Reference Files
 
-- Team context: `team/context.md`
+- Team context: `team/CLAUDE.md`
 - Process conventions: `team/PROCESS.md`
 - Work objective: see `PROMPT.md`
