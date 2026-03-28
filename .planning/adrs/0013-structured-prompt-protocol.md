@@ -36,7 +36,7 @@ This creates two problems:
 
 ### Two-part protocol: Structured Launch Documents + Structured `bm-agent` Responses
 
-The protocol formalizes the boundary between deterministic CLI work and AI reasoning, inspired by [GSD's CLI-agent interaction model](../../../team/knowledge/research/gsd-interaction-protocol.md). In GSD, slash commands are structured markdown documents injected into the user's coding agent session, and `gsd-tools.cjs` provides deterministic state operations that agents call during execution. BotMinter adopts the same pattern with its own domain.
+The protocol formalizes the boundary between deterministic CLI work and AI reasoning: the CLI assembles structured documents and handles state; agents reason within the frame those documents provide and call back to the CLI for state queries.
 
 ### Part 1: Structured Launch Documents
 
@@ -203,19 +203,9 @@ sequenceDiagram
 
 **Step 7 — Verification via `bm-agent`.** After acting, the agent can re-query state to verify its work succeeded. The CLI provides deterministic verification — the agent doesn't need to interpret raw command output.
 
-### How this maps to GSD
+### Prior Art
 
-| GSD Concept | BotMinter Equivalent |
-|------------|---------------------|
-| `/gsd:*` command (`.md` file injected into conversation) | Structured launch document from `bm` |
-| Command YAML frontmatter (name, description, allowed-tools) | Document YAML frontmatter (type, member, team, role, formation) |
-| Workflow `.md` body (instructions for the agent) | Document markdown body (identity, capabilities, context, constraints) |
-| `gsd-tools.cjs init` (returns deterministic JSON context) | `bm-agent context/env/status` commands (return structured JSON) |
-| `gsd-tools.cjs state update/commit` (deterministic state changes) | `bm-agent inbox write`, `bm-agent loop start` |
-| Agent definitions (`agents/*.md` — role, constraints, output format) | Embedded in the document body (hats, skills, guardrails) |
-| Tool scoping per agent role | Coding agent tool permissions (future: scoped per session type) |
-
-Both systems follow the same principle: **structured markdown documents are the protocol boundary between deterministic CLI tooling and AI agents.** The CLI never reasons. The agent never manages state. Structured documents are how they communicate.
+The structured-document-as-protocol-boundary pattern is established in [GSD (Get Shit Done)](https://github.com/gsd-build/get-shit-done), where slash commands are markdown files with YAML frontmatter injected into agent sessions, and a deterministic CLI (`gsd-tools.cjs`) handles state queries and mutations. See [GSD interaction protocol research](../../../team/knowledge/research/gsd-interaction-protocol.md) for details.
 
 ## Rejected Alternatives
 
