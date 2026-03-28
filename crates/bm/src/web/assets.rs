@@ -7,6 +7,11 @@ use rust_embed::Embed;
 #[allow_missing = true]
 struct ConsoleAssets;
 
+/// Returns true if console assets are embedded (index.html exists).
+pub fn has_console_assets() -> bool {
+    ConsoleAssets::get("index.html").is_some()
+}
+
 /// Axum fallback handler that serves embedded frontend assets.
 ///
 /// - Exact file matches are served with correct Content-Type and cache headers.
