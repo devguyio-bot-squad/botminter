@@ -61,7 +61,9 @@ See `team/PROCESS.md` for issue format, status transitions, comment attribution,
 
 ### GitHub Access
 
-All GitHub operations use the `github-project` skill. The team repo is auto-detected from `team/`'s git remote.
+**NEVER use `gh` CLI directly.** All GitHub operations — issues, projects, PRs, milestones, comments, labels, status transitions — MUST go through the `github-project` skill scripts. If a script doesn't exist for an operation, create one or extend an existing script. Do NOT fall back to raw `gh` commands. Bypassing the skill corrupts the board state cache and wastes API quota.
+
+The team repo is auto-detected from `team/`'s git remote.
 
 ### Reference Files
 
