@@ -107,7 +107,7 @@ From a workspace, access team repo content through `team/` and the `gh` skill:
 | Project knowledge | `team/projects/<project>/knowledge/` |
 | Project invariants | `team/projects/<project>/invariants/` |
 | Process conventions | `team/PROCESS.md` |
-| Team context | `team/context.md` |
+| Team context | `team/CLAUDE.md` |
 
 The team repo (`$TEAM_REPO`) is auto-detected from `team/`'s git remote.
 

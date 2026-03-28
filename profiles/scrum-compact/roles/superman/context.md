@@ -1,6 +1,6 @@
 # Superman — Team Member Context
 
-This file provides context for operating as the superman team member. Read `team/context.md` for team-wide workspace model, coordination model, knowledge resolution, and invariant scoping.
+This file provides context for operating as the superman team member. Read `team/CLAUDE.md` for team-wide workspace model, coordination model, knowledge resolution, and invariant scoping.
 
 ## A. Project Context
 
@@ -104,6 +104,6 @@ At these gates, the system checks for human response comments containing approva
 
 ### Reference Files
 
-- Team context: `team/context.md`
+- Team context: `team/CLAUDE.md`
 - Process conventions: `team/PROCESS.md`
 - Work objective: see `PROMPT.md`
