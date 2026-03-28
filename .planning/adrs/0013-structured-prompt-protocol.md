@@ -105,7 +105,6 @@ New `bm-agent` subcommands that agents call during execution. Each returns struc
 bm-agent context team [--json]
 bm-agent context member [--json]
 bm-agent env check [--json]
-bm-agent board scan [--json]
 bm-agent status report [--json]
 ```
 
@@ -114,7 +113,6 @@ bm-agent status report [--json]
 | `context team` | Team metadata query | `{name, org, repo, formation, members: [{name, role, status}], projects: [{name, repo}]}` |
 | `context member` | Current member's context | `{name, role, team, hats: [name], workspace, projects: [name]}` |
 | `env check` | Formation environment verification | `{formation, platform, deps: [{name, status, message}], passed, failed, total}` |
-| `board scan` | Actionable issues for this member | `{project, actionable: [{number, title, status, type}], blocked: [{number, reason}]}` |
 | `status report` | Runtime state | `{daemon: {pid, port}, members: [{name, pid, brain_mode, uptime}]}` |
 
 All new commands follow ADR-0010's conventions:
@@ -122,6 +120,26 @@ All new commands follow ADR-0010's conventions:
 - Default to `--json` output (machine-readable for agents)
 - Support human-readable output without `--json` for debugging
 - Error on missing workspace (these are agent commands, not hooks)
+
+#### What belongs in `bm-agent` vs skills
+
+`bm-agent` commands handle BotMinter-internal concerns that are the same regardless of profile: team metadata, member context, formation environment, and runtime state. These are platform-invariant — every BotMinter installation has them.
+
+Profile-specific and external-system operations belong in **skills**, not in `bm-agent`:
+
+| Concern | Where It Lives | Why |
+|---------|---------------|-----|
+| Board scanning (GitHub Projects, Jira, Linear) | Skill | Profile-specific — one profile uses GitHub, another uses Jira |
+| Issue management (create, transition, query) | Skill | Tied to the project management tool, abstracted per profile |
+| Infrastructure operations (kubectl, terraform) | Skill | Formation-specific and environment-specific |
+| PR/MR operations | Skill | Tied to the git hosting platform |
+| CI/CD operations | Skill | Tied to the CI/CD platform |
+| Team metadata, member context | `bm-agent` | BotMinter-internal, same for every profile |
+| Formation environment checks | `bm-agent` | BotMinter-internal, same for every formation |
+| Runtime state (daemon, members) | `bm-agent` | BotMinter-internal |
+| Inbox messaging (brain ↔ loop) | `bm-agent` | BotMinter-internal |
+
+This boundary keeps `bm-agent` lean and platform-agnostic. As the project management layer gets abstracted, skills are the extension point — not `bm-agent`.
 
 #### Existing commands (unchanged)
 
@@ -155,11 +173,11 @@ sequenceDiagram
     Agent->>Op: Greet, ask for context, propose plan
     Op->>Agent: Confirm, clarify, approve
 
-    Note over Agent,BA: 5. Execution via bm-agent
+    Note over Agent,BA: 5. Query state via bm-agent
     Agent->>BA: bm-agent env check --json
     BA-->>Agent: Structured response (JSON)
     Agent->>Agent: Reason about gaps, plan actions
-    Agent->>BA: bm-agent context team --json
+    Agent->>BA: bm-agent context member --json
     BA-->>Agent: Structured response (JSON)
 
     Note over Agent,BA: 6. State changes via bm-agent
@@ -192,7 +210,7 @@ sequenceDiagram
 | `/gsd:*` command (`.md` file injected into conversation) | Structured launch document from `bm` |
 | Command YAML frontmatter (name, description, allowed-tools) | Document YAML frontmatter (type, member, team, role, formation) |
 | Workflow `.md` body (instructions for the agent) | Document markdown body (identity, capabilities, context, constraints) |
-| `gsd-tools.cjs init` (returns deterministic JSON context) | `bm-agent context/board/env` commands (return structured JSON) |
+| `gsd-tools.cjs init` (returns deterministic JSON context) | `bm-agent context/env/status` commands (return structured JSON) |
 | `gsd-tools.cjs state update/commit` (deterministic state changes) | `bm-agent inbox write`, `bm-agent loop start` |
 | Agent definitions (`agents/*.md` — role, constraints, output format) | Embedded in the document body (hats, skills, guardrails) |
 | Tool scoping per agent role | Coding agent tool permissions (future: scoped per session type) |
@@ -224,8 +242,8 @@ Rejected because: introduces a server dependency. `bm-agent` commands run as sim
 ## Consequences
 
 * One structured document format for all agent launch points — brain, chat, Minty, and future skill sessions
-* `bm-agent` gains query commands (`context`, `env`, `board`, `status`) that return structured JSON
-* Agents stop shelling out to `gh` for state queries — they use `bm-agent` commands instead
+* `bm-agent` gains query commands (`context`, `env`, `status`) that return structured JSON for BotMinter-internal concerns
+* Profile-specific operations (board scanning, issue management, CI/CD) remain in skills — not in `bm-agent`
 * The formation manager (ADR-0012) becomes the first consumer of `skill-session` type documents and `bm-agent env check`
 * Launch documents are human-inspectable — operators can read what their agent received
 * Migration is incremental — existing brain/chat/minty flows work during the transition
@@ -239,4 +257,5 @@ Rejected because: introduces a server dependency. `bm-agent` commands run as sim
 * **Do NOT** return prose from `bm-agent` query commands — return structured JSON. Agents should parse data, not interpret sentences.
 * **Do NOT** create separate document formats per session type — use the same YAML frontmatter + markdown body format. Session types differ in content, not structure.
 * **Do NOT** break the `bm` / `bm-agent` boundary — operator commands stay in `bm`, agent commands stay in `bm-agent`. Cross-contamination creates confusion (ADR-0010).
-* **Do NOT** make `bm-agent` query commands depend on the daemon — they should work by reading local config and calling `gh` CLI directly. The daemon is for member lifecycle, not state queries.
+* **Do NOT** make `bm-agent` query commands depend on the daemon — they should work by reading local config. The daemon is for member lifecycle, not state queries.
+* **Do NOT** put profile-specific or external-system operations in `bm-agent` — board scanning, issue management, CI/CD, and infrastructure operations belong in skills. `bm-agent` is for BotMinter-internal concerns only. One profile uses GitHub Projects, another uses Jira — `bm-agent` must not pick a side.
