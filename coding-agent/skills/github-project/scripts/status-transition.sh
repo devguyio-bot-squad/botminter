@@ -56,22 +56,25 @@ if [ -z "$OPTION_ID" ] || [ "$OPTION_ID" = "null" ]; then
   exit 1
 fi
 
-# Get item ID for the issue with validation
-ITEM_ID=$(gh project item-list "$PROJECT_NUM" --owner "$OWNER" --format json 2>&1 \
-  | jq -r ".items[] | select(.content.number == $ISSUE_NUM) | .id")
+# Try to resolve ITEM_ID from board cache first (avoids item-list API call)
+BOARD_CACHE=$(_board_cache_path)
+ITEM_ID=""
+if [ -f "$BOARD_CACHE" ]; then
+  ITEM_ID=$(jq -r ".items[] | select(.content.number == $ISSUE_NUM) | .id" "$BOARD_CACHE" 2>/dev/null || true)
+fi
+
+# Fallback: fetch from API if not in cache
+if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
+  ITEM_ID=$(gh project item-list "$PROJECT_NUM" --owner "$OWNER" --format json \
+    | jq -r ".items[] | select(.content.number == $ISSUE_NUM) | .id")
+fi
 
 if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
-  echo "❌ ERROR: Issue #$ISSUE_NUM not found in project #$PROJECT_NUM"
-  echo "Issue may not be added to the project. Adding it now..."
+  echo "❌ Issue #$ISSUE_NUM not found in project. Adding it now..." >&2
 
-  # Try to add the issue to the project
   ISSUE_URL="https://github.com/$TEAM_REPO/issues/$ISSUE_NUM"
-  gh project item-add "$PROJECT_NUM" --owner "$OWNER" --url "$ISSUE_URL" 2>&1
-
-  # Retry getting the item ID
-  sleep 2
-  ITEM_ID=$(gh project item-list "$PROJECT_NUM" --owner "$OWNER" --format json 2>&1 \
-    | jq -r ".items[] | select(.content.number == $ISSUE_NUM) | .id")
+  ADD_RESULT=$(gh project item-add "$PROJECT_NUM" --owner "$OWNER" --url "$ISSUE_URL" --format json 2>&1)
+  ITEM_ID=$(echo "$ADD_RESULT" | jq -r '.id' 2>/dev/null || true)
 
   if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
     echo "❌ ERROR: Could not add issue to project or retrieve item ID"
@@ -119,11 +122,21 @@ if [ "$CURRENT_STATUS" != "$TO_STATUS" ]; then
   echo "Expected: $TO_STATUS"
   echo "Actual: $CURRENT_STATUS"
   echo "The gh project item-edit command appeared to succeed but the status did not change."
-  echo "This may indicate a permissions issue or an API error."
+  echo "This may indicate a permissions issue, a human raced this change, or an API error."
+  # Invalidate board cache — state is uncertain
+  rm -f "$BOARD_CACHE" 2>/dev/null || true
   exit 1
 fi
 
 echo "✓ Status verified: issue #$ISSUE_NUM is now '$CURRENT_STATUS'"
+
+# Write-through: update the item's status in board cache
+if [ -f "$BOARD_CACHE" ]; then
+  jq --arg item_id "$ITEM_ID" --arg new_status "$TO_STATUS" \
+    '.items = [.items[] | if .id == $item_id then .status = $new_status else . end]' \
+    "$BOARD_CACHE" > "${BOARD_CACHE}.tmp" \
+    && mv "${BOARD_CACHE}.tmp" "$BOARD_CACHE" 2>/dev/null || true
+fi
 
 # Add attribution comment documenting the transition
 TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)

@@ -68,8 +68,8 @@ case "$ACTION" in
       exit 1
     fi
 
-    # Get repo ID (cached — immutable)
-    REPO_ID=$(_cache_get "$CACHE_DIR/repo_id" "$TTL_IMMUTABLE" 2>/dev/null || true)
+    # Get repo ID (persisted — immutable)
+    REPO_ID=$(_meta_get "repo_id" 2>/dev/null || true)
     if [ -z "$REPO_ID" ] || [ "$REPO_ID" = "null" ]; then
       echo "Fetching repository ID..." >&2
       REPO_ID=$(gh api graphql \
@@ -82,7 +82,7 @@ case "$ACTION" in
         echo "Error: Could not fetch repository ID" >&2
         exit 1
       fi
-      _cache_set "$CACHE_DIR/repo_id" "$REPO_ID"
+      _meta_set "repo_id" "$REPO_ID"
     fi
 
     # Get parent issue node ID (not cached — different parents each call)
@@ -100,8 +100,8 @@ case "$ACTION" in
       exit 1
     fi
 
-    # Get issue type ID by name (cached — rarely changes)
-    ISSUE_TYPES_JSON=$(_cache_get "$CACHE_DIR/issue_types" "$TTL_IMMUTABLE" 2>/dev/null || true)
+    # Get issue type IDs (persisted — rarely changes)
+    ISSUE_TYPES_JSON=$(_meta_get "issue_types" 2>/dev/null || true)
     if [ -z "$ISSUE_TYPES_JSON" ]; then
       echo "Fetching issue types..." >&2
       ISSUE_TYPES_JSON=$(gh api graphql \
@@ -119,7 +119,7 @@ case "$ACTION" in
         echo "Error: Could not fetch issue types" >&2
         exit 1
       fi
-      _cache_set "$CACHE_DIR/issue_types" "$ISSUE_TYPES_JSON"
+      _meta_set "issue_types" "$ISSUE_TYPES_JSON"
     fi
 
     TYPE_ID=$(echo "$ISSUE_TYPES_JSON" | jq -r ".[] | select(.name == \"$TYPE\") | .id")

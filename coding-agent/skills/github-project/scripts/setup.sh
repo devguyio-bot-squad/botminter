@@ -4,74 +4,45 @@
 
 set -euo pipefail
 
-# ── Cache helpers ─────────────────────────────────────────────────────────────
-# File-based cache with TTL. Degrades gracefully — on any failure, falls back
-# to a fresh API call.
+# ── Persistent config helpers ────────────────────────────────────────────────
+# Project metadata is resolved once and persisted. No TTLs — mutating
+# operations (e.g., process-evolution) update the files when they change
+# upstream state. Delete the directory to force a full re-resolve.
 
-_gh_cache_dir() {
-  local repo_slug
-  repo_slug=$(echo "$1" | tr '/' '-')
-  local dir="/tmp/gh-project-cache-${repo_slug}"
-  mkdir -p "$dir" 2>/dev/null
-  echo "$dir"
-}
+METADATA_DIR="$HOME/.botminter/cache/github-project"
 
-# Returns 0 if the cache file exists and is younger than $ttl_seconds.
-_cache_fresh() {
-  local file="$1" ttl_seconds="$2"
-  [ -f "$file" ] || return 1
-  local age=$(( $(date +%s) - $(stat -c %Y "$file" 2>/dev/null || echo 0) ))
-  [ "$age" -lt "$ttl_seconds" ]
-}
-
-# Read a cached value. Returns 1 if missing or stale.
-_cache_get() {
-  local file="$1" ttl_seconds="$2"
-  if _cache_fresh "$file" "$ttl_seconds"; then
-    cat "$file"
-    return 0
-  fi
+_meta_get() {
+  local file="$METADATA_DIR/$1"
+  [ -f "$file" ] && cat "$file" && return 0
   return 1
 }
 
-# Write a value to cache.
-_cache_set() {
-  local file="$1" value="$2"
-  echo "$value" > "$file" 2>/dev/null || true
+_meta_set() {
+  mkdir -p "$METADATA_DIR" 2>/dev/null
+  echo "$2" > "$METADATA_DIR/$1" 2>/dev/null || true
 }
 
-# ── TTL constants (seconds) ──────────────────────────────────────────────────
-TTL_SCOPE=3600      # 1 hour  — token scope doesn't change mid-session
-TTL_PROJECT=14400   # 4 hours — project ID, field schema
-TTL_IMMUTABLE=86400 # 24 hours — repo ID, issue type IDs
+# Board state cache — volatile, per-repo, written by board-view.sh
+_board_cache_path() {
+  echo "$METADATA_DIR/board-state.json"
+}
 
 # ── Detect team repo ─────────────────────────────────────────────────────────
-# Uses git remote directly — no API call needed.
+# Uses git remote directly — no API call.
 
-TEAM_REPO=$(cd team && git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||')
-
+TEAM_REPO=$(_meta_get "team_repo" 2>/dev/null || true)
 if [ -z "$TEAM_REPO" ]; then
-  echo "❌ ERROR: Could not detect team repository from git remote"
-  exit 1
+  TEAM_REPO=$(cd team && git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||')
+  if [ -z "$TEAM_REPO" ]; then
+    echo "❌ ERROR: Could not detect team repository from git remote"
+    exit 1
+  fi
+  _meta_set "team_repo" "$TEAM_REPO"
 fi
 
 OWNER=$(echo "$TEAM_REPO" | cut -d/ -f1)
-CACHE_DIR=$(_gh_cache_dir "$TEAM_REPO")
 
-# ── Scope check (cached) ─────────────────────────────────────────────────────
-# Uses REST API (separate rate limit from GraphQL) to check token scopes.
-
-if ! _cache_fresh "$CACHE_DIR/scope_ok" "$TTL_SCOPE"; then
-  TOKEN_SCOPES=$(gh api -i user 2>/dev/null | grep -i "x-oauth-scopes:" || true)
-  if [ -n "$TOKEN_SCOPES" ] && ! echo "$TOKEN_SCOPES" | grep -qi "project"; then
-    echo "❌ ERROR: Missing 'project' scope on GH_TOKEN"
-    echo "Run: gh auth refresh -s project -h github.com"
-    exit 1
-  fi
-  _cache_set "$CACHE_DIR/scope_ok" "1"
-fi
-
-# ── Member identity (needed by minimal mode too, for attributed comments) ─────
+# ── Member identity ─────────────────────────────────────────────────────────
 
 if [ -f .botminter.yml ]; then
   ROLE=$(grep '^role:' .botminter.yml | awk '{print $2}')
@@ -84,10 +55,23 @@ fi
 # Minimal mode: only detect team repo, owner, and identity
 # (for scripts that don't need project IDs or field data)
 if [ "${SETUP_MODE:-}" = "minimal" ]; then
-  export TEAM_REPO OWNER ROLE EMOJI CACHE_DIR TTL_IMMUTABLE
-  # Export cache helpers so scripts can use them
-  export -f _gh_cache_dir _cache_fresh _cache_get _cache_set
+  export TEAM_REPO OWNER ROLE EMOJI METADATA_DIR
+  export -f _meta_get _meta_set _board_cache_path
   return 0 2>/dev/null || exit 0
+fi
+
+# ── Scope check (persisted) ─────────────────────────────────────────────────
+# Checked once and saved. Uses REST API (separate rate limit from GraphQL).
+# Delete ~/.botminter/cache/github-project/scope_ok to force re-check.
+
+if ! _meta_get "scope_ok" &>/dev/null; then
+  TOKEN_SCOPES=$(gh api -i user 2>/dev/null | grep -i "x-oauth-scopes:" || true)
+  if [ -n "$TOKEN_SCOPES" ] && ! echo "$TOKEN_SCOPES" | grep -qi "project"; then
+    echo "❌ ERROR: Missing 'project' scope on GH_TOKEN"
+    echo "Run: gh auth refresh -s project -h github.com"
+    exit 1
+  fi
+  _meta_set "scope_ok" "1"
 fi
 
 # ── Project number (from config) ─────────────────────────────────────────────
@@ -109,21 +93,22 @@ if [ -z "$PROJECT_NUM" ]; then
   exit 1
 fi
 
-# ── Project ID (cached) ──────────────────────────────────────────────────────
+# ── Project ID (persisted) ───────────────────────────────────────────────────
 
-PROJECT_ID=$(_cache_get "$CACHE_DIR/project_id" "$TTL_PROJECT" 2>/dev/null || true)
+PROJECT_ID=$(_meta_get "project_id" 2>/dev/null || true)
 if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "null" ]; then
   PROJECT_ID=$(gh project view "$PROJECT_NUM" --owner "$OWNER" --format json 2>&1 | jq -r '.id')
   if [ -z "$PROJECT_ID" ] || [ "$PROJECT_ID" = "null" ]; then
     echo "❌ ERROR: Could not get project ID for project #$PROJECT_NUM"
     exit 1
   fi
-  _cache_set "$CACHE_DIR/project_id" "$PROJECT_ID"
+  _meta_set "project_id" "$PROJECT_ID"
 fi
 
-# ── Field data (cached) ──────────────────────────────────────────────────────
+# ── Field data (persisted) ───────────────────────────────────────────────────
+# Updated by process-evolution skill when status options change.
 
-FIELD_DATA=$(_cache_get "$CACHE_DIR/field_data" "$TTL_PROJECT" 2>/dev/null || true)
+FIELD_DATA=$(_meta_get "field_data" 2>/dev/null || true)
 if [ -z "$FIELD_DATA" ]; then
   if ! FIELD_DATA=$(gh project field-list "$PROJECT_NUM" --owner "$OWNER" --format json 2>&1); then
     echo "❌ ERROR: Could not fetch project field list"
@@ -134,7 +119,7 @@ if [ -z "$FIELD_DATA" ]; then
     echo "❌ ERROR: Empty response from project field list"
     exit 1
   fi
-  _cache_set "$CACHE_DIR/field_data" "$FIELD_DATA"
+  _meta_set "field_data" "$FIELD_DATA"
 fi
 
 # Extract Status field ID with validation
@@ -146,9 +131,20 @@ if [ -z "$STATUS_FIELD_ID" ] || [ "$STATUS_FIELD_ID" = "null" ]; then
   exit 1
 fi
 
+# ── Repo ID (persisted — immutable) ──────────────────────────────────────────
+
+REPO_ID=$(_meta_get "repo_id" 2>/dev/null || true)
+# Exported for scripts that need it (create-issue, subtask-ops)
+# Resolved lazily — only fetched when a script actually uses it.
+
+# ── Issue type IDs (persisted — rarely changes) ──────────────────────────────
+
+ISSUE_TYPES_JSON=$(_meta_get "issue_types" 2>/dev/null || true)
+# Same as repo_id — exported for create-issue.sh and subtask-ops.sh
+
 echo "✓ Setup complete: $TEAM_REPO, project #$PROJECT_NUM"
 
 # Export variables for use in calling scripts
 export TEAM_REPO OWNER PROJECT_NUM PROJECT_ID FIELD_DATA STATUS_FIELD_ID ROLE EMOJI
-export CACHE_DIR TTL_IMMUTABLE
-export -f _gh_cache_dir _cache_fresh _cache_get _cache_set
+export METADATA_DIR REPO_ID ISSUE_TYPES_JSON
+export -f _meta_get _meta_set _board_cache_path

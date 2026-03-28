@@ -84,8 +84,7 @@ esac
 OWNER_NAME=$(echo "$TEAM_REPO" | cut -d/ -f1)
 REPO_NAME=$(echo "$TEAM_REPO" | cut -d/ -f2)
 
-# Get repo ID (cached — immutable)
-REPO_ID=$(_cache_get "$CACHE_DIR/repo_id" "$TTL_IMMUTABLE" 2>/dev/null || true)
+# Get repo ID (persisted — immutable)
 if [ -z "$REPO_ID" ] || [ "$REPO_ID" = "null" ]; then
   echo "→ Fetching repository ID..." >&2
   REPO_ID=$(gh api graphql \
@@ -98,11 +97,10 @@ if [ -z "$REPO_ID" ] || [ "$REPO_ID" = "null" ]; then
     echo "❌ ERROR: Could not fetch repository ID" >&2
     exit 1
   fi
-  _cache_set "$CACHE_DIR/repo_id" "$REPO_ID"
+  _meta_set "repo_id" "$REPO_ID"
 fi
 
-# Get issue type ID (cached — rarely changes)
-ISSUE_TYPES_JSON=$(_cache_get "$CACHE_DIR/issue_types" "$TTL_IMMUTABLE" 2>/dev/null || true)
+# Get issue type IDs (persisted — rarely changes)
 if [ -z "$ISSUE_TYPES_JSON" ]; then
   echo "→ Fetching issue types..." >&2
   ISSUE_TYPES_JSON=$(gh api graphql \
@@ -120,7 +118,7 @@ if [ -z "$ISSUE_TYPES_JSON" ]; then
     echo "❌ ERROR: Could not fetch issue types" >&2
     exit 1
   fi
-  _cache_set "$CACHE_DIR/issue_types" "$ISSUE_TYPES_JSON"
+  _meta_set "issue_types" "$ISSUE_TYPES_JSON"
 fi
 
 ISSUE_TYPE_ID=$(echo "$ISSUE_TYPES_JSON" | jq -r ".[] | select(.name == \"$ISSUE_TYPE_NAME\") | .id")
@@ -247,6 +245,21 @@ gh issue comment "$ISSUE_NUM" --repo "$TEAM_REPO" \
 Created $KIND: $TITLE"
 
 echo "✓ Attribution comment added"
+
+# Write-through: add new item to board state cache
+BOARD_CACHE=$(_board_cache_path)
+if [ -f "$BOARD_CACHE" ]; then
+  NEW_ITEM=$(jq -n \
+    --arg id "$ITEM_ID" \
+    --arg title "$TITLE" \
+    --argjson number "$ISSUE_NUM" \
+    --arg status "$INITIAL_STATUS" \
+    --arg kind "$KIND" \
+    '{id: $id, content: {number: $number, title: $title, type: "Issue"}, status: $status, kind: $kind}')
+  jq --argjson item "$NEW_ITEM" '.items += [$item]' "$BOARD_CACHE" > "${BOARD_CACHE}.tmp" \
+    && mv "${BOARD_CACHE}.tmp" "$BOARD_CACHE" 2>/dev/null || true
+fi
+
 echo ""
 echo "Issue #$ISSUE_NUM created successfully"
 echo "URL: $ISSUE_URL"
