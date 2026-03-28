@@ -69,8 +69,14 @@ case "$QUERY_TYPE" in
       exit 1
     fi
 
-    gh project item-list "$PROJECT_NUM" --owner "$OWNER" --format json \
-      --jq ".items[] | select(.status == \"$STATUS\")"
+    # Read from board cache if available (avoids API call within a cycle)
+    BOARD_CACHE=$(_board_cache_path)
+    if [ -f "$BOARD_CACHE" ]; then
+      jq --arg s "$STATUS" '.items[] | select(.status == $s)' "$BOARD_CACHE"
+    else
+      gh project item-list "$PROJECT_NUM" --owner "$OWNER" --format json \
+        | jq --arg s "$STATUS" '.items[] | select(.status == $s)'
+    fi
     ;;
 
   milestone)

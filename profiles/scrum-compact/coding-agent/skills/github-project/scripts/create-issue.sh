@@ -84,32 +84,44 @@ esac
 OWNER_NAME=$(echo "$TEAM_REPO" | cut -d/ -f1)
 REPO_NAME=$(echo "$TEAM_REPO" | cut -d/ -f2)
 
-# Get repo ID
-echo "→ Fetching repository ID..." >&2
-REPO_ID=$(gh api graphql \
-  -f owner="$OWNER_NAME" -f repo="$REPO_NAME" \
-  -f query='query($owner: String!, $repo: String!) {
-    repository(owner: $owner, name: $repo) { id }
-  }' -q .data.repository.id)
-
+# Get repo ID (persisted — immutable)
 if [ -z "$REPO_ID" ] || [ "$REPO_ID" = "null" ]; then
-  echo "❌ ERROR: Could not fetch repository ID" >&2
-  exit 1
+  echo "→ Fetching repository ID..." >&2
+  REPO_ID=$(gh api graphql \
+    -f owner="$OWNER_NAME" -f repo="$REPO_NAME" \
+    -f query='query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) { id }
+    }' -q .data.repository.id)
+
+  if [ -z "$REPO_ID" ] || [ "$REPO_ID" = "null" ]; then
+    echo "❌ ERROR: Could not fetch repository ID" >&2
+    exit 1
+  fi
+  _meta_set "repo_id" "$REPO_ID"
 fi
 
-# Get issue type ID
-echo "→ Resolving issue type '$ISSUE_TYPE_NAME'..." >&2
-ISSUE_TYPE_ID=$(gh api graphql \
-  -f owner="$OWNER_NAME" -f repo="$REPO_NAME" \
-  -H "GraphQL-Features: issue_types" \
-  -f query='query($owner: String!, $repo: String!) {
-    repository(owner: $owner, name: $repo) {
-      issueTypes(first: 20) {
-        nodes { id name }
+# Get issue type IDs (persisted — rarely changes)
+if [ -z "$ISSUE_TYPES_JSON" ]; then
+  echo "→ Fetching issue types..." >&2
+  ISSUE_TYPES_JSON=$(gh api graphql \
+    -f owner="$OWNER_NAME" -f repo="$REPO_NAME" \
+    -H "GraphQL-Features: issue_types" \
+    -f query='query($owner: String!, $repo: String!) {
+      repository(owner: $owner, name: $repo) {
+        issueTypes(first: 20) {
+          nodes { id name }
+        }
       }
-    }
-  }' -q ".data.repository.issueTypes.nodes[] | select(.name == \"$ISSUE_TYPE_NAME\") | .id")
+    }' -q '.data.repository.issueTypes.nodes')
 
+  if [ -z "$ISSUE_TYPES_JSON" ] || [ "$ISSUE_TYPES_JSON" = "null" ]; then
+    echo "❌ ERROR: Could not fetch issue types" >&2
+    exit 1
+  fi
+  _meta_set "issue_types" "$ISSUE_TYPES_JSON"
+fi
+
+ISSUE_TYPE_ID=$(echo "$ISSUE_TYPES_JSON" | jq -r ".[] | select(.name == \"$ISSUE_TYPE_NAME\") | .id")
 if [ -z "$ISSUE_TYPE_ID" ] || [ "$ISSUE_TYPE_ID" = "null" ]; then
   echo "❌ ERROR: '$ISSUE_TYPE_NAME' issue type not found on this repository" >&2
   exit 1
@@ -184,23 +196,19 @@ if [ -n "$ASSIGNEE" ]; then
     echo "⚠️  WARNING: Could not assign '$ASSIGNEE'"
 fi
 
-# Add issue to project with error checking
-ADD_OUTPUT=$(gh project item-add "$PROJECT_NUM" --owner "$OWNER" --url "$ISSUE_URL" 2>&1)
+# Add issue to project and capture the item ID directly from the response
+ADD_RESULT=$(gh project item-add "$PROJECT_NUM" --owner "$OWNER" --url "$ISSUE_URL" --format json 2>&1)
 if [ $? -ne 0 ]; then
   echo "❌ ERROR: Failed to add issue to project"
-  echo "Output: $ADD_OUTPUT"
+  echo "Output: $ADD_RESULT"
   exit 1
 fi
 
-# Wait briefly for the item to be indexed
-sleep 2
-
-# Get the item ID for the newly added issue with validation
-ITEM_ID=$(gh project item-list "$PROJECT_NUM" --owner "$OWNER" --format json 2>&1 \
-  | jq -r ".items[] | select(.content.number == $ISSUE_NUM) | .id")
+ITEM_ID=$(echo "$ADD_RESULT" | jq -r '.id')
 
 if [ -z "$ITEM_ID" ] || [ "$ITEM_ID" = "null" ]; then
-  echo "❌ ERROR: Could not retrieve item ID for newly created issue #$ISSUE_NUM"
+  echo "❌ ERROR: Could not retrieve item ID from project item-add response"
+  echo "Response: $ADD_RESULT"
   exit 1
 fi
 
@@ -237,6 +245,21 @@ gh issue comment "$ISSUE_NUM" --repo "$TEAM_REPO" \
 Created $KIND: $TITLE"
 
 echo "✓ Attribution comment added"
+
+# Write-through: add new item to board state cache
+BOARD_CACHE=$(_board_cache_path)
+if [ -f "$BOARD_CACHE" ]; then
+  NEW_ITEM=$(jq -n \
+    --arg id "$ITEM_ID" \
+    --arg title "$TITLE" \
+    --argjson number "$ISSUE_NUM" \
+    --arg status "$INITIAL_STATUS" \
+    --arg kind "$KIND" \
+    '{id: $id, content: {number: $number, title: $title, type: "Issue"}, status: $status, kind: $kind}')
+  jq --argjson item "$NEW_ITEM" '.items += [$item]' "$BOARD_CACHE" > "${BOARD_CACHE}.tmp" \
+    && mv "${BOARD_CACHE}.tmp" "$BOARD_CACHE" 2>/dev/null || true
+fi
+
 echo ""
 echo "Issue #$ISSUE_NUM created successfully"
 echo "URL: $ISSUE_URL"
