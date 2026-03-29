@@ -566,4 +566,83 @@ mod tests {
         assert!(ws.join("CLAUDE.md").exists());
         assert!(ws.join("ralph.yml").exists());
     }
+
+    #[test]
+    fn sync_injects_workspace_context() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Add botminter.yml to the team submodule member dir
+        let member_dir = ws.join("team/members").join(&member);
+        fs::write(
+            member_dir.join("botminter.yml"),
+            "name: Arch One\nrole: architect\n",
+        )
+        .unwrap();
+
+        sync_workspace(
+            &ws,
+            &member,
+            &agent,
+            false,
+            false,
+            Some(99),
+            Some("testorg/test-team"),
+        )
+        .unwrap();
+
+        // Verify CLAUDE.md contains injected context
+        let claude_content = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
+        assert!(
+            claude_content.contains("<!-- BM:WORKSPACE_CONTEXT -->"),
+            "CLAUDE.md should contain context start marker after sync"
+        );
+        assert!(
+            claude_content.contains("| Team repo | `testorg/test-team` |"),
+            "CLAUDE.md should contain team repo after sync"
+        );
+        assert!(
+            claude_content.contains("| Project number | `99` |"),
+            "CLAUDE.md should contain project number after sync"
+        );
+        assert!(
+            claude_content.contains("| Member | `Arch One` |"),
+            "CLAUDE.md should contain member name after sync"
+        );
+
+        // Verify .botminter.workspace has KV pairs
+        let marker = fs::read_to_string(ws.join(".botminter.workspace")).unwrap();
+        assert!(
+            marker.contains("team_repo: testorg/test-team"),
+            ".botminter.workspace should contain team_repo after sync"
+        );
+        assert!(
+            marker.contains("project_number: 99"),
+            ".botminter.workspace should contain project_number after sync"
+        );
+    }
+
+    #[test]
+    fn sync_context_injection_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Run sync twice with context params
+        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo")).unwrap();
+        let claude_1 = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
+
+        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo")).unwrap();
+        let claude_2 = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
+
+        assert_eq!(
+            claude_1, claude_2,
+            "Context injection should be idempotent across syncs"
+        );
+        // Only one set of markers
+        assert_eq!(
+            claude_2.matches("<!-- BM:WORKSPACE_CONTEXT -->").count(),
+            1,
+            "Should have exactly one start marker after multiple syncs"
+        );
+    }
 }

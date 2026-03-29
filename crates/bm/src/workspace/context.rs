@@ -283,4 +283,187 @@ mod tests {
         assert_eq!(lines.len(), 3);
         assert_eq!(lines[2], "team_repo: new/repo");
     }
+
+    #[test]
+    fn extend_workspace_marker_adds_all_kv_pairs() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join(".botminter.workspace"), "member: arch-01\n").unwrap();
+
+        extend_workspace_marker(tmp.path(), Some("myorg/my-team"), Some(42)).unwrap();
+
+        let content = fs::read_to_string(tmp.path().join(".botminter.workspace")).unwrap();
+        assert!(content.contains("team_repo: myorg/my-team"));
+        assert!(content.contains("gh_org: myorg"));
+        assert!(content.contains("project_number: 42"));
+        assert!(content.contains("member: arch-01"));
+    }
+
+    #[test]
+    fn extend_workspace_marker_skips_none_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join(".botminter.workspace"), "member: arch-01\n").unwrap();
+
+        extend_workspace_marker(tmp.path(), None, None).unwrap();
+
+        let content = fs::read_to_string(tmp.path().join(".botminter.workspace")).unwrap();
+        assert!(!content.contains("team_repo:"));
+        assert!(!content.contains("gh_org:"));
+        assert!(!content.contains("project_number:"));
+        assert!(content.contains("member: arch-01"));
+    }
+
+    #[test]
+    fn extend_workspace_marker_missing_file_noop() {
+        let tmp = tempfile::tempdir().unwrap();
+        // No .botminter.workspace file exists
+        let result = extend_workspace_marker(tmp.path(), Some("org/repo"), Some(99));
+        assert!(
+            result.is_ok(),
+            "Should return Ok when .botminter.workspace doesn't exist"
+        );
+    }
+
+    #[test]
+    fn extend_workspace_marker_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        fs::write(tmp.path().join(".botminter.workspace"), "member: arch-01\n").unwrap();
+
+        extend_workspace_marker(tmp.path(), Some("org/repo"), Some(42)).unwrap();
+        let first = fs::read_to_string(tmp.path().join(".botminter.workspace")).unwrap();
+
+        extend_workspace_marker(tmp.path(), Some("org/repo"), Some(42)).unwrap();
+        let second = fs::read_to_string(tmp.path().join(".botminter.workspace")).unwrap();
+
+        assert_eq!(
+            first, second,
+            "Running extend twice should produce identical content"
+        );
+    }
+
+    #[test]
+    fn inject_workspace_context_full_integration() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws_root = tmp.path();
+
+        // Set up team/ member dir with botminter.yml
+        let member_dir = ws_root.join("team/members/superman-bob");
+        fs::create_dir_all(&member_dir).unwrap();
+        fs::write(
+            member_dir.join("botminter.yml"),
+            "name: Superman Bob\nrole: superman\n",
+        )
+        .unwrap();
+
+        // Create context file and workspace marker
+        fs::write(ws_root.join("CLAUDE.md"), "# My Context\n\nSome content.\n").unwrap();
+        fs::write(ws_root.join(".botminter.workspace"), "member: superman-bob\n").unwrap();
+
+        inject_workspace_context(
+            ws_root,
+            "superman-bob",
+            "CLAUDE.md",
+            Some("myorg/my-team"),
+            Some(42),
+            &["botminter", "hypershift"],
+        )
+        .unwrap();
+
+        // Verify CLAUDE.md has injected context
+        let claude_content = fs::read_to_string(ws_root.join("CLAUDE.md")).unwrap();
+        assert!(claude_content.contains(CONTEXT_START_MARKER));
+        assert!(claude_content.contains(CONTEXT_END_MARKER));
+        assert!(claude_content.contains("| Team repo | `myorg/my-team` |"));
+        assert!(claude_content.contains("| GitHub org | `myorg` |"));
+        assert!(claude_content.contains("| Project number | `42` |"));
+        assert!(claude_content.contains("`botminter`, `hypershift`"));
+        assert!(claude_content.contains("| Member | `Superman Bob` |"));
+        assert!(claude_content.contains("| Role | `superman` |"));
+        // Original content preserved
+        assert!(claude_content.contains("# My Context"));
+        assert!(claude_content.contains("Some content."));
+
+        // Verify .botminter.workspace has KV pairs
+        let marker = fs::read_to_string(ws_root.join(".botminter.workspace")).unwrap();
+        assert!(marker.contains("team_repo: myorg/my-team"));
+        assert!(marker.contains("gh_org: myorg"));
+        assert!(marker.contains("project_number: 42"));
+    }
+
+    #[test]
+    fn inject_workspace_context_idempotent_full() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws_root = tmp.path();
+
+        let member_dir = ws_root.join("team/members/arch-01");
+        fs::create_dir_all(&member_dir).unwrap();
+
+        fs::write(ws_root.join("CLAUDE.md"), "# C\n").unwrap();
+        fs::write(ws_root.join(".botminter.workspace"), "member: arch-01\n").unwrap();
+
+        let run = || {
+            inject_workspace_context(
+                ws_root,
+                "arch-01",
+                "CLAUDE.md",
+                Some("org/repo"),
+                Some(7),
+                &["proj"],
+            )
+            .unwrap();
+            (
+                fs::read_to_string(ws_root.join("CLAUDE.md")).unwrap(),
+                fs::read_to_string(ws_root.join(".botminter.workspace")).unwrap(),
+            )
+        };
+
+        let (claude_1, marker_1) = run();
+        let (claude_2, marker_2) = run();
+
+        assert_eq!(claude_1, claude_2, "CLAUDE.md should be identical after re-injection");
+        assert_eq!(
+            marker_1, marker_2,
+            ".botminter.workspace should be identical after re-injection"
+        );
+    }
+
+    #[test]
+    fn inject_workspace_context_missing_context_file_noop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws_root = tmp.path();
+
+        // No CLAUDE.md, no .botminter.workspace — should still succeed
+        let result = inject_workspace_context(
+            ws_root,
+            "nobody",
+            "CLAUDE.md",
+            Some("org/repo"),
+            Some(1),
+            &[],
+        );
+        assert!(
+            result.is_ok(),
+            "Should succeed even without context file or workspace marker"
+        );
+    }
+
+    #[test]
+    fn generate_context_section_project_number_none_only() {
+        // Other fields present, only project_number is None
+        let section = generate_context_section(
+            Some("myorg/my-team"),
+            None,
+            &["botminter"],
+            "superman-bob",
+            "superman",
+        );
+        assert!(section.contains("| Team repo | `myorg/my-team` |"));
+        assert!(section.contains("| GitHub org | `myorg` |"));
+        assert!(
+            !section.contains("Project number"),
+            "project_number=None should omit that row"
+        );
+        assert!(section.contains("`botminter`"));
+        assert!(section.contains("| Member | `superman-bob` |"));
+        assert!(section.contains("| Role | `superman` |"));
+    }
 }

@@ -703,6 +703,73 @@ pub(super) mod tests {
         );
     }
 
+    // ── Context injection (workspace context) ──────────────────────────
+
+    #[test]
+    fn workspace_repo_context_injection_with_params() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+
+        // Add botminter.yml to team repo so inject_workspace_context reads it
+        let member_cfg = team_repo.join("members/arch-01");
+        fs::write(
+            member_cfg.join("botminter.yml"),
+            "name: Arch One\nrole: architect\n",
+        )
+        .unwrap();
+        git_cmd(&team_repo, &["add", "-A"]).unwrap();
+        git_cmd(&team_repo, &["commit", "-m", "add botminter.yml"]).unwrap();
+
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+
+        let agent = claude_code_agent();
+        let mut params = test_ws_params(&team_repo, &workspace_base, "arch-01", &[], &agent);
+        params.github_repo = Some("testorg/test-team");
+        params.project_number = Some(55);
+        create_workspace_repo(&params).unwrap();
+
+        let ws = workspace_base.join("arch-01");
+
+        // Verify CLAUDE.md contains injected context with all fields
+        let claude_content = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
+        assert!(
+            claude_content.contains("<!-- BM:WORKSPACE_CONTEXT -->"),
+            "CLAUDE.md should contain context start marker"
+        );
+        assert!(
+            claude_content.contains("| Team repo | `testorg/test-team` |"),
+            "CLAUDE.md should contain team repo"
+        );
+        assert!(
+            claude_content.contains("| Project number | `55` |"),
+            "CLAUDE.md should contain project number"
+        );
+        assert!(
+            claude_content.contains("| Member | `Arch One` |"),
+            "CLAUDE.md should contain member name from botminter.yml"
+        );
+        assert!(
+            claude_content.contains("| Role | `architect` |"),
+            "CLAUDE.md should contain role from botminter.yml"
+        );
+
+        // Verify .botminter.workspace has KV pairs
+        let marker = fs::read_to_string(ws.join(".botminter.workspace")).unwrap();
+        assert!(
+            marker.contains("team_repo: testorg/test-team"),
+            ".botminter.workspace should contain team_repo"
+        );
+        assert!(
+            marker.contains("gh_org: testorg"),
+            ".botminter.workspace should contain gh_org"
+        );
+        assert!(
+            marker.contains("project_number: 55"),
+            ".botminter.workspace should contain project_number"
+        );
+    }
+
     // ── Context assembly (submodule model) ────────────────────────────
 
     #[test]
