@@ -199,7 +199,7 @@ BotMinter's invariant system is a standout feature. It creates a constitution fo
 
 ### 5.1 BotMinter: Event-Driven Role Switching
 
-**Roles** define team positions. In the `scrum` profile, roles include architect, dev, QE, PO, team-manager, and human-assistant — each backed by a separate agent instance. In the `scrum-compact` profile, a single agent fills all roles by switching **hats**.
+**Roles** define team positions. In the `scrum` profile, roles include architect, dev, QE, PO, chief-of-staff, and human-assistant — each backed by a separate agent instance. In the `scrum-compact` profile, a single agent fills all roles by switching **hats**.
 
 **Hats** are Ralph Orchestrator's mechanism for behavioral context switching within a single agent. Each hat is defined by:
 

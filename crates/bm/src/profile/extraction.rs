@@ -447,11 +447,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let skill_path = output.path().join("coding-agent/skills/retrospective/SKILL.md");
             assert!(skill_path.exists(), "{profile}: retrospective/SKILL.md should exist after member extraction");
@@ -464,15 +464,15 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let ralph_yml_path = output.path().join("ralph.yml");
             let content = std::fs::read_to_string(&ralph_yml_path)
-                .unwrap_or_else(|_| panic!("{profile}: team-manager ralph.yml should exist"));
+                .unwrap_or_else(|_| panic!("{profile}: chief-of-staff ralph.yml should exist"));
             let yaml: serde_yml::Value = serde_yml::from_str(&content).unwrap();
             let dirs = yaml.get("skills")
                 .and_then(|s| s.get("dirs"))
@@ -481,11 +481,11 @@ mod tests {
 
             let has_skill_dir = dirs.iter().any(|d| {
                 d.as_str().map_or(false, |s| {
-                    s.contains("team-manager/coding-agent/skills")
+                    s.contains("chief-of-staff/coding-agent/skills")
                         || s.contains("{{member_dir}}/coding-agent/skills")
                 })
             });
-            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
+            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills");
         }
     }
 
@@ -495,11 +495,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/retrospective/SKILL.md")
@@ -538,11 +538,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/retrospective/SKILL.md")
@@ -562,11 +562,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/retrospective/SKILL.md")
@@ -589,11 +589,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/retrospective/SKILL.md")
@@ -613,11 +613,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/retrospective/SKILL.md")
@@ -634,11 +634,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let readme_path = output.path().join("coding-agent/skills/retrospective/README.md");
             assert!(!readme_path.exists(), "{profile}: retrospective/ should NOT have a README.md");
@@ -653,11 +653,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let skill_path = output.path().join("coding-agent/skills/role-management/SKILL.md");
             assert!(skill_path.exists(), "{profile}: role-management/SKILL.md should exist after member extraction");
@@ -670,15 +670,15 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let ralph_yml_path = output.path().join("ralph.yml");
             let content = std::fs::read_to_string(&ralph_yml_path)
-                .unwrap_or_else(|_| panic!("{profile}: team-manager ralph.yml should exist"));
+                .unwrap_or_else(|_| panic!("{profile}: chief-of-staff ralph.yml should exist"));
             let yaml: serde_yml::Value = serde_yml::from_str(&content).unwrap();
             let dirs = yaml.get("skills")
                 .and_then(|s| s.get("dirs"))
@@ -687,11 +687,11 @@ mod tests {
 
             let has_skill_dir = dirs.iter().any(|d| {
                 d.as_str().map_or(false, |s| {
-                    s.contains("team-manager/coding-agent/skills")
+                    s.contains("chief-of-staff/coding-agent/skills")
                         || s.contains("{{member_dir}}/coding-agent/skills")
                 })
             });
-            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
+            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills");
         }
     }
 
@@ -701,11 +701,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/role-management/SKILL.md")
@@ -743,11 +743,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/role-management/SKILL.md")
@@ -766,11 +766,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/role-management/SKILL.md")
@@ -790,11 +790,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/role-management/SKILL.md")
@@ -814,11 +814,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/role-management/SKILL.md")
@@ -834,11 +834,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let readme_path = output.path().join("coding-agent/skills/role-management/README.md");
             assert!(!readme_path.exists(), "{profile}: role-management/ should NOT have a README.md");
@@ -853,11 +853,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let skill_path = output.path().join("coding-agent/skills/member-tuning/SKILL.md");
             assert!(skill_path.exists(), "{profile}: member-tuning/SKILL.md should exist after member extraction");
@@ -870,15 +870,15 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let ralph_yml_path = output.path().join("ralph.yml");
             let content = std::fs::read_to_string(&ralph_yml_path)
-                .unwrap_or_else(|_| panic!("{profile}: team-manager ralph.yml should exist"));
+                .unwrap_or_else(|_| panic!("{profile}: chief-of-staff ralph.yml should exist"));
             let yaml: serde_yml::Value = serde_yml::from_str(&content).unwrap();
             let dirs = yaml.get("skills")
                 .and_then(|s| s.get("dirs"))
@@ -887,11 +887,11 @@ mod tests {
 
             let has_skill_dir = dirs.iter().any(|d| {
                 d.as_str().map_or(false, |s| {
-                    s.contains("team-manager/coding-agent/skills")
+                    s.contains("chief-of-staff/coding-agent/skills")
                         || s.contains("{{member_dir}}/coding-agent/skills")
                 })
             });
-            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
+            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills");
         }
     }
 
@@ -901,11 +901,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/member-tuning/SKILL.md")
@@ -943,11 +943,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/member-tuning/SKILL.md")
@@ -966,11 +966,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/member-tuning/SKILL.md")
@@ -990,11 +990,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/member-tuning/SKILL.md")
@@ -1018,11 +1018,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/member-tuning/SKILL.md")
@@ -1043,11 +1043,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let readme_path = output.path().join("coding-agent/skills/member-tuning/README.md");
             assert!(!readme_path.exists(), "{profile}: member-tuning/ should NOT have a README.md");
@@ -1062,11 +1062,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let skill_path = output.path().join("coding-agent/skills/process-evolution/SKILL.md");
             assert!(skill_path.exists(), "{profile}: process-evolution/SKILL.md should exist after member extraction");
@@ -1079,18 +1079,18 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let ralph_yml = std::fs::read_to_string(output.path().join("ralph.yml")).unwrap();
             let has_skill_dir = ralph_yml.lines().any(|line| {
                 let trimmed = line.trim().trim_start_matches("- ");
-                trimmed.contains("skills") && (trimmed.contains("team-manager") || trimmed.contains("coding-agent/skills"))
+                trimmed.contains("skills") && (trimmed.contains("chief-of-staff") || trimmed.contains("coding-agent/skills"))
             });
-            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
+            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills");
         }
     }
 
@@ -1100,11 +1100,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
@@ -1128,11 +1128,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
@@ -1149,11 +1149,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
@@ -1171,11 +1171,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
@@ -1193,11 +1193,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
@@ -1212,11 +1212,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let readme_path = output.path().join("coding-agent/skills/process-evolution/README.md");
             assert!(!readme_path.exists(), "{profile}: process-evolution/ should NOT have a README.md");
@@ -1231,11 +1231,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let skill_path = output.path().join("coding-agent/skills/team-design/SKILL.md");
             assert!(skill_path.exists(), "{profile}: team-design/SKILL.md should exist after member extraction");
@@ -1248,18 +1248,18 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let ralph_yml = std::fs::read_to_string(output.path().join("ralph.yml")).unwrap();
             let has_skill_dir = ralph_yml.lines().any(|line| {
                 let trimmed = line.trim().trim_start_matches("- ");
-                trimmed.contains("skills") && (trimmed.contains("team-manager") || trimmed.contains("coding-agent/skills"))
+                trimmed.contains("skills") && (trimmed.contains("chief-of-staff") || trimmed.contains("coding-agent/skills"))
             });
-            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover team-manager skills");
+            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills");
         }
     }
 
@@ -1269,11 +1269,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/team-design/SKILL.md"),
@@ -1297,11 +1297,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let readme_path = output.path().join("coding-agent/skills/team-design/README.md");
             assert!(!readme_path.exists(), "{profile}: team-design/ should NOT have a README.md");
@@ -1314,11 +1314,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/team-design/SKILL.md"),
@@ -1335,11 +1335,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/team-design/SKILL.md"),
@@ -1358,11 +1358,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/team-design/SKILL.md"),
@@ -1380,11 +1380,11 @@ mod tests {
 
         for profile in crate::profile::list_profiles_from(&base).unwrap() {
             let roles = crate::profile::list_roles_from(&profile, &base).unwrap();
-            if !roles.contains(&"team-manager".to_string()) {
+            if !roles.contains(&"chief-of-staff".to_string()) {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "team-manager", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
 
             let content = std::fs::read_to_string(
                 output.path().join("coding-agent/skills/team-design/SKILL.md"),
@@ -1493,12 +1493,12 @@ mod tests {
     }
 
     #[test]
-    fn minty_profile_design_skill_defers_to_team_manager() {
+    fn minty_profile_design_skill_defers_to_chief_of_staff() {
         let content = std::fs::read_to_string(minty_skill_path()).unwrap();
 
         assert!(
-            content.contains("bm chat team-manager"),
-            "should reference `bm chat team-manager` for live team changes"
+            content.contains("bm chat chief-of-staff"),
+            "should reference `bm chat chief-of-staff` for live team changes"
         );
     }
 }

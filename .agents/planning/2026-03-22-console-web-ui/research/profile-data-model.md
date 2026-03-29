@@ -53,8 +53,8 @@ Epic: po:triage -> po:backlog -> arch:design -> lead:design-review -> po:design-
 Story: dev:ready -> qe:test-design -> dev:implement -> dev:code-review -> qe:verify -> arch:sign-off -> po:merge -> done
 
 ### Profile Variations
-- **scrum**: architect (4 hats), human-assistant (0 hats), team-manager (1 hat + 6 skills)
-- **scrum-compact**: superman (14 hats), team-manager (1 hat + 6 skills)
+- **scrum**: architect (4 hats), human-assistant (0 hats), chief-of-staff (1 hat + 6 skills)
+- **scrum-compact**: superman (14 hats), chief-of-staff (1 hat + 6 skills)
 
 ### Knowledge Resolution (5 additive levels)
 1. Team: knowledge/

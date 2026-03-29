@@ -354,7 +354,7 @@ bash scripts/pr-ops.sh --action list
 
 **Parameters:**
 - `--type` (required) - `label`, `status`, `milestone`, `assignee`, `single`, or `issue-type`
-- `--label` (for label/issue-type query) - Label name or issue type name (e.g., `role/team-manager`, `Epic`)
+- `--label` (for label/issue-type query) - Label name or issue type name (e.g., `role/chief-of-staff`, `Epic`)
 - `--status` (for status query) - Status value (e.g., `arch:design`)
 - `--milestone` (for milestone query) - Milestone title
 - `--assignee` (for assignee query) - GitHub username
@@ -365,7 +365,7 @@ bash scripts/pr-ops.sh --action list
 Claude will run:
 ```bash
 # By label
-bash scripts/query-issues.sh --type label --label "role/team-manager"
+bash scripts/query-issues.sh --type label --label "role/chief-of-staff"
 
 # By status
 bash scripts/query-issues.sh --type status --status "arch:design"

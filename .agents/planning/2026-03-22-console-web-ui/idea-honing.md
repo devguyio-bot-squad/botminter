@@ -29,7 +29,7 @@ Concretely:
 - **Role view:** For each role, show the workflow from that role's perspective — what statuses it owns, what triggers it, what it hands off to.
 - **Role details:** Show the prompts, behavior rules, communication patterns, and verification criteria associated with each role. This lives in the hats (hat collections) and CLAUDE.md content.
 
-The dashboard is a **process design introspection tool** — helping a team manager understand "what does my team's methodology look like?" before worrying about "what are they working on right now?"
+The dashboard is a **process design introspection tool** — helping a chief of staff understand "what does my team's methodology look like?" before worrying about "what are they working on right now?"
 
 ---
 

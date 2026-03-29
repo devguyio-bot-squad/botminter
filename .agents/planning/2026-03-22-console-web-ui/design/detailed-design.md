@@ -632,7 +632,7 @@ interface MemberDetail {
 
 ### 7.1 Backend (Rust)
 
-- **Unit tests:** Test API handler functions using real fixtures from `fixture-gen/fixtures/team-repo/` (copy into a tempdir per test). These are artifacts from a real `bm init` + `bm hire` + `bm teams sync` run — 3 members (superman-alice, superman-bob, team-manager-mgr), 14 hats on superman, team-level knowledge/invariants/skills.
+- **Unit tests:** Test API handler functions using real fixtures from `fixture-gen/fixtures/team-repo/` (copy into a tempdir per test). These are artifacts from a real `bm init` + `bm hire` + `bm teams sync` run — 3 members (superman-alice, superman-bob, chief-of-staff-mgr), 14 hats on superman, team-level knowledge/invariants/skills.
 - **Integration tests:** Start the Axum server, hit endpoints with reqwest, verify JSON responses against the fixture team repo.
 - **Path traversal tests:** Verify `..` and absolute paths are rejected.
 

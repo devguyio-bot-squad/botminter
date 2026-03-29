@@ -200,7 +200,7 @@
 			lead: 'Lead',
 			sre: 'SRE',
 			cw: 'Content Writer',
-			mgr: 'Manager',
+			cos: 'Chief of Staff',
 			done: 'Done'
 		};
 
@@ -290,7 +290,7 @@
 		lead: 'Lead Review',
 		sre: 'SRE Infrastructure',
 		cw: 'Content Writing',
-		mgr: 'Manager'
+		cos: 'Chief of Staff'
 	};
 
 	const HUMAN_GATES = ['po:design-review', 'po:plan-review', 'po:accept'];

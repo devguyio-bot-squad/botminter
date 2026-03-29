@@ -134,9 +134,9 @@ generate: preflight
     OUT=$($BM hire superman --name bob 2>&1)
     if echo "$OUT" | grep -q "Hired"; then pass "F7" "Hired superman-bob"; else fail "F7" "Hire bob" "$OUT"; fi
 
-    # 8. Hire team-manager
-    OUT=$($BM hire team-manager --name mgr 2>&1)
-    if echo "$OUT" | grep -q "Hired"; then pass "F8" "Hired team-mgr-mgr"; else fail "F8" "Hire team-manager" "$OUT"; fi
+    # 8. Hire chief-of-staff
+    OUT=$($BM hire chief-of-staff --name mgr 2>&1)
+    if echo "$OUT" | grep -q "Hired"; then pass "F8" "Hired chief-of-staff-mgr"; else fail "F8" "Hire chief-of-staff" "$OUT"; fi
 
     # 9. Verify member configs
     ALICE_DIR="$TEAM_REPO/members/superman-alice"

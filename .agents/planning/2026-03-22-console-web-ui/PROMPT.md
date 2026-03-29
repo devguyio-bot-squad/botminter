@@ -156,7 +156,7 @@ fixtures/
     members/
       superman-alice/            # Superman role (ralph.yml with 14 hats, CLAUDE.md, PROMPT.md)
       superman-bob/              # Same role, different member
-      team-manager-mgr/          # Team-manager role (ralph.yml with 1 hat + 6 skills)
+      chief-of-staff-mgr/          # Chief-of-staff role (ralph.yml with 1 hat + 6 skills)
     coding-agent/skills/         # Team-level skills (gh, board-scanner, status-workflow)
     bridges/                     # Bridge configs (telegram, tuwunel, rocketchat)
     formations/                  # Formation configs (local, k8s)

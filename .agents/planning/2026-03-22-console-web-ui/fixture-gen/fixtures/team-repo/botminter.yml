@@ -31,7 +31,7 @@ bridges:
 roles:
   - name: superman
     description: "All-in-one member — PO, architect, dev, QE, SRE, content writer"
-  - name: team-manager
+  - name: chief-of-staff
     description: "Process improvement and team coordination"
 
 labels:
@@ -46,9 +46,9 @@ labels:
     color: "0075CA"
     description: "Documentation story, routed to content writer hats"
   # Role labels
-  - name: "role/team-manager"
+  - name: "role/chief-of-staff"
     color: "5319E7"
-    description: "Assigned to team manager"
+    description: "Assigned to chief of staff"
 
 statuses:
   # Epic statuses (tracked via GitHub Projects v2 Status field)
@@ -105,13 +105,13 @@ statuses:
   - name: "cw:review"
     description: "Content writer reviewing"
 
-  # Team Manager statuses
+  # Chief of Staff statuses
   - name: "mgr:todo"
-    description: "Task awaiting team manager"
+    description: "Task awaiting chief of staff"
   - name: "mgr:in-progress"
-    description: "Team manager working on task"
+    description: "Chief of staff working on task"
   - name: "mgr:done"
-    description: "Task completed by team manager"
+    description: "Task completed by chief of staff"
 
   # Error status
   - name: "error"
@@ -136,6 +136,6 @@ views:
   - name: "Specialist"
     prefixes: ["sre", "cw"]
     also_include: ["done", "error"]
-  - name: "Manager"
-    prefixes: ["mgr"]
+  - name: "Chief of Staff"
+    prefixes: ["cos"]
     also_include: ["done", "error"]

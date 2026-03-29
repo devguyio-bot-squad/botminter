@@ -14,11 +14,11 @@ const { mockOverview } = vi.hoisted(() => {
 		default_coding_agent: 'Claude Code',
 		roles: [
 			{ name: 'superman', description: 'All-in-one member' },
-			{ name: 'team-manager', description: 'Process improvement' }
+			{ name: 'chief-of-staff', description: 'Process improvement' }
 		],
 		members: [
 			{ name: 'superman-alice', role: 'superman', comment_emoji: '\u{1f9b8}', hat_count: 14 },
-			{ name: 'team-manager-mgr', role: 'team-manager', comment_emoji: '\u{1f4cb}', hat_count: 1 }
+			{ name: 'chief-of-staff-mgr', role: 'chief-of-staff', comment_emoji: '\u{1f4cb}', hat_count: 1 }
 		],
 		status_count: 25,
 		label_count: 4,
@@ -86,7 +86,7 @@ describe('Overview Page', () => {
 			expect(screen.getByText('superman-alice')).toBeInTheDocument();
 		});
 		expect(screen.getByText('14 hats')).toBeInTheDocument();
-		expect(screen.getByText('team-manager-mgr')).toBeInTheDocument();
+		expect(screen.getByText('chief-of-staff-mgr')).toBeInTheDocument();
 		expect(screen.getByText('1 hat')).toBeInTheDocument();
 		expect(screen.getByText('2 hired')).toBeInTheDocument();
 	});
