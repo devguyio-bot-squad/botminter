@@ -12,6 +12,25 @@ fn main() {
     let profiles_src = manifest_dir.join("../../profiles");
     let profile = std::env::var("PROFILE").unwrap(); // "debug" or "release"
 
+    // When the `console` feature is enabled, warn if console assets are missing.
+    // This does NOT fail the build — developers without Node.js can still build
+    // (the `#[allow_missing = true]` on ConsoleAssets handles that at compile time).
+    if std::env::var("CARGO_FEATURE_CONSOLE").is_ok() {
+        let console_build = manifest_dir.join("../../console/build");
+        let has_assets = console_build.is_dir()
+            && fs::read_dir(&console_build)
+                .map(|mut entries| entries.next().is_some())
+                .unwrap_or(false);
+        if !has_assets {
+            println!(
+                "cargo:warning=Console feature is enabled but console/build/ is missing or empty. \
+                 The web console will not be available at runtime. \
+                 Run 'npm ci && npm run build' in console/ to build assets."
+            );
+        }
+        println!("cargo:rerun-if-changed=../../console/build");
+    }
+
     let profiles_dir = if profile == "release" {
         let staging = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("profiles-staging");
         stage_release_profiles(&profiles_src, &staging);
