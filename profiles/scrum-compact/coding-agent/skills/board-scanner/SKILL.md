@@ -3,11 +3,12 @@ name: board-scanner
 description: >-
   Board scanning and dispatch procedure for GitHub Projects v2.
   Scans the project board for actionable issues, handles auto-advance
-  transitions, and dispatches work to specialized hats via priority tables.
+  transitions, pre-fetches issue data into Ralph Tasks, and dispatches
+  work to specialized hats via priority tables.
   Auto-injected into coordinator prompts.
 metadata:
   author: botminter
-  version: 1.0.0
+  version: 2.0.0
 ---
 
 # Board Scanner
@@ -15,6 +16,9 @@ metadata:
 This skill defines your PLAN step when coordinating. Scan the GitHub
 Projects v2 board, handle auto-advance transitions, then DELEGATE by
 publishing exactly one event to the appropriate hat.
+
+**NEVER use `gh` CLI directly.** All GitHub operations MUST go through
+the `github-project` skill.
 
 ## Scan Procedure
 
@@ -30,37 +34,16 @@ hat activations.
 git -C team pull --ff-only 2>/dev/null || true
 ```
 
-### 3. Auto-detect the team repo
+### 3. Fetch the board
 
-```bash
-TEAM_REPO=$(cd team && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null)
-```
+Load the `github-project` skill and use its **board-view** operation to fetch
+all project items with their Status field values. The board-view operation
+handles repo detection, project ID caching, and item retrieval internally.
 
-If `gh repo view` fails (e.g., remote is a local path), extract from git remote:
+Use the results to identify each item's issue number and current status
+for dispatch.
 
-```bash
-TEAM_REPO=$(cd team && git remote get-url origin | sed 's|.*github.com[:/]||;s|\.git$||')
-```
-
-### 4. Cache project IDs (once per scan cycle)
-
-```bash
-OWNER=$(echo "$TEAM_REPO" | cut -d/ -f1)
-PROJECT_NUM=$(gh project list --owner "$OWNER" --format json --jq '.projects[0].number')
-PROJECT_ID=$(gh project view "$PROJECT_NUM" --owner "$OWNER" --format json --jq '.id')
-FIELD_DATA=$(gh project field-list "$PROJECT_NUM" --owner "$OWNER" --format json)
-STATUS_FIELD_ID=$(echo "$FIELD_DATA" | jq -r '.fields[] | select(.name=="Status") | .id')
-```
-
-### 5. Query the project board
-
-```bash
-gh project item-list "$PROJECT_NUM" --owner "$OWNER" --format json
-```
-
-Parse the JSON to extract items with their Status field values.
-
-### 6. Log to poll-log.txt
+### 4. Log to poll-log.txt
 
 Use `$(date -u +%Y-%m-%dT%H:%M:%SZ)` for all timestamps.
 
@@ -70,23 +53,18 @@ Use `$(date -u +%Y-%m-%dT%H:%M:%SZ)` for all timestamps.
 2026-03-02T10:15:01Z — board.scan — END
 ```
 
-### 7. Auto-advance
+### 5. Auto-advance
 
-Before dispatching, handle auto-advance statuses. Use the cached IDs to
-transition statuses via `gh project item-edit`:
-
-```bash
-ITEM_ID=$(gh project item-list "$PROJECT_NUM" --owner "$OWNER" --format json \
-  --jq ".items[] | select(.content.number == $ISSUE_NUM) | .id")
-OPTION_ID=$(echo "$FIELD_DATA" | jq -r '.fields[] | select(.name=="Status") | .options[] | select(.name=="<target-status>") | .id')
-gh project item-edit --project-id "$PROJECT_ID" --id "$ITEM_ID" \
-  --field-id "$STATUS_FIELD_ID" --single-select-option-id "$OPTION_ID"
-```
+Before dispatching, handle auto-advance statuses using the `github-project`
+skill's operations:
 
 Transitions:
 
-- `arch:sign-off` → set status to `po:merge`, comment, log.
-- `po:merge` → set status to `done`, close the issue via `gh issue close`, comment, log.
+- `arch:sign-off` → Use the **status-transition** operation to set status to
+  `po:merge`. Use the **add-comment** operation to document the transition. Log.
+- `po:merge` → Use the **status-transition** operation to set status to `done`.
+  Use the **close-reopen** operation to close the issue. Use the **add-comment**
+  operation to document the transition. Log.
 
 Comment format for auto-advance:
 
@@ -99,7 +77,25 @@ Auto-advance: arch:sign-off → po:merge
 After auto-advancing all eligible issues, continue to dispatch with the
 updated board state.
 
-### 8. Dispatch
+### 6. Pre-fetch issue data
+
+After identifying the highest-priority issue to dispatch (step 7), but
+before publishing the event, pre-fetch the issue data and cache it as a
+Ralph Task:
+
+1. Use the `github-project` skill's **query-issues** operation
+   (`--type single --issue <number>`) to fetch full issue data including
+   comments, sub-issues, labels, and issue type.
+2. Create a Ralph Task using `TaskCreate` with:
+   - **subject**: `issue-cache:#<number>`
+   - **description**: the full issue JSON response from query-issues
+3. Record the task ID for inclusion in the event payload (step 7).
+
+This pre-fetch eliminates redundant GitHub API calls — each hat reads
+the cached data from the task instead of re-querying GitHub. See the
+`issue-cache` skill for the data format and consumer instructions.
+
+### 7. Dispatch
 
 Dispatch based on the highest-priority project status found. Process one
 item at a time. Match each item's status against the tables below in order:
@@ -108,7 +104,7 @@ Epic → Story → Bug → Content. The first match wins.
 The tables are organized by workflow phase, not by issue type. The scanner
 does NOT need to query the issue type — it dispatches purely by status.
 Hats that handle shared statuses (e.g., `po:plan-review`, `qe:verify`)
-are responsible for querying the issue type themselves.
+read the issue type from the cached data.
 
 **Epic priority (highest first):**
 
@@ -132,10 +128,10 @@ are responsible for querying the issue type themselves.
 
 | # | Status | Event |
 |---|--------|-------|
-| 1 | `qe:test-design` | `qe.test_design` |
-| 2 | `dev:implement` | `dev.implement` |
-| 3 | `qe:verify` | `qe.verify` |
-| 4 | `dev:code-review` | `dev.code_review` |
+| 1 | `qe:verify` | `qe.verify` |
+| 2 | `dev:code-review` | `dev.code_review` |
+| 3 | `dev:implement` | `dev.implement` |
+| 4 | `qe:test-design` | `qe.test_design` |
 | 5 | `sre:infra-setup` | `sre.setup` |
 
 **Bug priority:**
@@ -149,7 +145,7 @@ are responsible for querying the issue type themselves.
 | 5 | `bug:in-progress` | `bug.in_progress` |
 | 6 | `qe:verify` | `qe.verify` |
 
-Note: `po:plan-review` and `qe:verify` are shared with Epic/Story tables. Bugs at these statuses are dispatched to the same hats, which query the issue type to determine the correct path.
+Note: `po:plan-review` and `qe:verify` are shared with Epic/Story tables. Bugs at these statuses are dispatched to the same hats, which read the issue type from the cached data to determine the correct path.
 
 **Content priority:**
 
@@ -165,16 +161,17 @@ No work found → emit `LOOP_COMPLETE`.
 Before dispatching, verify the issue is not already at the target output
 status. If it is, skip it and check the next issue.
 
-Include the issue number in the published event context so downstream hats
-know which issue to work on.
+Include the issue number and the task reference (`task: <task-id>`) in
+the published event context so downstream hats can read the cached data.
 
 ## Failed Processing Escalation
 
 Before dispatching, count comments matching `Processing failed:` on the issue.
 
 - Count < 3 → dispatch normally.
-- Count >= 3 → set the issue's project status to `error` (via item-edit),
-  skip dispatch, add a comment:
+- Count >= 3 → use the `github-project` skill's **status-transition** operation
+  to set the issue's project status to `error`, skip dispatch, use the
+  **add-comment** operation to post:
   `"Issue #N failed 3 times: [last error]. Status set to error. Please investigate."`
   If RObot is enabled, also send a `ralph tools interact progress` notification.
 
@@ -182,10 +179,10 @@ Skip items with Status `error` during dispatch.
 
 ## Error Handling
 
-If any `gh` command fails during the scan:
+If any `github-project` skill operation fails during the scan:
 
 1. Log the error to `errors-log.txt` with the full command and output.
-2. If the failure is on a specific issue (item-edit, issue comment), skip
+2. If the failure is on a specific issue (status-transition, add-comment), skip
    that issue and continue scanning the rest.
 3. If the failure is systemic (project not found, auth failure), emit
    `LOOP_COMPLETE` and log the reason.
@@ -212,3 +209,4 @@ issues — always dispatch them.
 - ALWAYS log to poll-log.txt before publishing.
 - Publish exactly ONE event per scan cycle to dispatch work.
 - When no work is found, emit `LOOP_COMPLETE`.
+- ALWAYS pre-fetch issue data and include the task reference in the event.

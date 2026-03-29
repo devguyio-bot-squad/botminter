@@ -36,8 +36,17 @@ hats:
 
       Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### For `po:triage` issues:
-      1. Read the epic issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. **Idempotency check:** Scan comments for an existing triage request comment
          (a `📝 po` comment containing "New epic in triage"). If one already exists, skip to step 4.
       3. Add ONE triage request comment using the `github-project` skill's add-comment operation:
@@ -114,9 +123,18 @@ hats:
 
       Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### General workflow (applies to all review statuses):
 
-      1. Read the issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. **Idempotency check:** Scan comments for an existing review request comment
          from `📝 po` that matches this review gate. Only add ONE review request per gate.
       3. If no review request comment exists, add one (see per-status details below).
@@ -147,9 +165,8 @@ hats:
 
       ### For `po:plan-review`:
 
-      This status is shared between epics and complex bugs. **Query the issue type first**
-      using the `github-project` skill's query-issues operation (`--type single --issue <N>`).
-      The response includes `issueType.name` (Epic or Bug).
+      This status is shared between epics and complex bugs. **Check `issueType.name`**
+      from the cached issue data (Epic or Bug).
 
       **Review request comment** (if not already present):
       ```
@@ -234,9 +251,18 @@ hats:
 
       Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the current issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. Determine the review type from the issue's current project status:
          - `lead:design-review` → reviewing design doc
          - `lead:plan-review` → reviewing story breakdown
@@ -301,9 +327,18 @@ hats:
       If rejection feedback exists, read it carefully and address all concerns in the
       revised design. Overwrite the previous design doc with the revised version.
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the epic issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. **Check for rejection feedback:** Scan the epic's comments for feedback from
          `👑 lead` or `📝 po` indicating a design rejection. If found, note the
          concerns and address them in the revised design.
@@ -365,6 +400,14 @@ hats:
 
       Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Rejection-Awareness
 
       Before starting a new breakdown, scan the epic's comments for rejection feedback
@@ -374,7 +417,8 @@ hats:
 
       ### Workflow:
 
-      1. Read the epic issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. Find the linked design doc — the designer hat appends a comment with the path,
          typically `team/projects/<project>/knowledge/designs/epic-<number>.md`.
          Read the design doc.
@@ -415,7 +459,7 @@ hats:
       - arch.breakdown
     publishes:
       - lead.review
-      - bug.in_progress
+      - task.resume
       - arch.breakdown.failed
     instructions: |
       ## Breakdown Executor
@@ -438,12 +482,17 @@ hats:
 
       **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
 
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
       1. Load the `github-project` skill.
-      2. Read the parent issue using the query-issues operation (`--type single --issue <number>`).
-         The response includes `issueType.name`.
-      3. Check `issueType.name` from the response:
+      2. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the query-issues operation (`--type single --issue <number>`).
+         The data includes `issueType.name`.
+      3. Check `issueType.name` from the data:
          - If type is `Epic` → **Epic breakdown** (create stories as sub-issues)
          - If type is `Bug` → **Bug breakdown** (create subtasks as sub-issues)
       4. Find the LATEST breakdown comment from `🏗️ architect`.
@@ -465,7 +514,8 @@ hats:
       6. Use the status-transition operation to set each subtask to `dev:implement`.
       7. Use the add-comment operation to comment on the bug listing all created subtask numbers.
       8. Use the status-transition operation to set the bug to `bug:in-progress`.
-      9. Publish `bug.in_progress` (monitor will track subtask completion).
+      9. Publish `task.resume` (returns to board scanner for priority-based dispatch;
+         scanner will prioritize dev:implement subtasks over bug:in-progress monitoring).
 
       ### Backpressure
 
@@ -512,10 +562,19 @@ hats:
 
       Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the epic issue using the `github-project` skill's query-issues operation.
-      2. Check child story status using the `github-project` skill's sub-issue status operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
+      2. Check child story status using the `github-project` skill's sub-issue status operation (fresh query — do not use cached data for completion status).
          - If `all_complete` is true (all sub-issues closed), proceed to step 3.
          - If sub-issues are still open, return control (re-check on next cycle).
       3. Append a comment to the epic using the `github-project` skill's add-comment operation:
@@ -556,9 +615,18 @@ hats:
 
       Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the story issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. Read the parent epic's design doc for architectural context.
       3. Read the story's acceptance criteria (Given-When-Then from breakdown).
       4. For bugs: reproduce the issue first, document reproduction steps.
@@ -567,8 +635,13 @@ hats:
          - How to test (test approach, tools)
          - Expected results
       6. Write test stubs/skeletons in the project repo (`./`) if applicable.
-      7. Set the story's project status to `dev:implement` via item-edit.
-      8. Publish `dev.implement` (direct chain to dev_implementer).
+      7. **Create branch and draft PR** (if test stubs were written):
+         - Create branch: `feature/story-<issue-number>-<description>`
+         - Commit test stubs to the branch
+         - Push the branch and open a draft PR:
+           `gh pr create --draft --title "[#<issue-number>] <description>" --body "Refs #<issue-number>"`
+      8. Set the story's project status to `dev:implement` via item-edit.
+      9. Publish `dev.implement` (direct chain to dev_implementer).
 
       ### Comment Format
       Use `### 🧪 qe — <ISO-timestamp>` for all comments.
@@ -606,16 +679,29 @@ hats:
       feedback (comments from `💻 dev` code reviewer or `🧪 qe` verifier). If rejection feedback
       exists, read it carefully and address all concerns before proceeding.
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the story issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. Read the test plan comment (from QE test designer).
       3. Read the parent epic's design doc for architectural context.
       4. **Check for rejection feedback:** Look for comments from `💻 dev` (code reviewer) or
          `🧪 qe` (QE verifier) with feedback. Address all concerns.
       5. Implement the story in the project repo (`./`).
       6. Ensure tests pass (run test suite).
-      7. Create a branch, commit changes.
+      7. **Branch and PR handling:**
+         - If a draft PR already exists (from QE test designer): push commits to the existing branch.
+         - If no PR exists: create branch `feature/story-<issue-number>-<description>`, commit, push,
+           and open a PR: `gh pr create --title "[#<issue-number>] <description>" --body "Refs #<issue-number>"`
+         - Mark any draft PR as ready: `gh pr ready`
       8. Set the story's project status to `dev:code-review` (use the `status-workflow` skill).
       9. Publish `dev.code_review` (direct chain to dev_code_reviewer).
 
@@ -657,22 +743,33 @@ hats:
       - Member: `team/members/{{member_dir}}/knowledge/`
       - Hat: `team/members/{{member_dir}}/hats/dev_code_reviewer/knowledge/`
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the story issue using the `github-project` skill's query-issues operation.
-      2. Review the implementation changes (git diff, read modified files).
-      3. Check compliance with:
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
+      2. **Find the PR:** Use `gh pr list --search "<issue-number>"` or check issue comments for a linked PR.
+      3. **Review the PR changes:** Use `gh pr diff <pr-number>` to review the diff.
+         Read modified files for deeper understanding if needed.
+      4. Check compliance with:
          - Team invariants (`team/invariants/`)
          - Project invariants (`team/projects/<project>/invariants/`)
          - Member invariants (`team/members/{{member_dir}}/invariants/`)
          - Code style and patterns
-      4. **If approved:**
+      5. **If approved:**
+         - Approve the PR: `gh pr review <pr-number> --approve --body "<review summary>"`
          - Set the story's project status to `qe:verify` (use the `status-workflow` skill).
-         - Append approval comment using the `github-project` skill's add-comment operation.
          - Publish `dev.approved` (direct chain to qe_verifier).
-      5. **If rejected:**
+      6. **If rejected:**
+         - Request changes on the PR: `gh pr review <pr-number> --request-changes --body "<feedback>"`
          - Set the story's project status to `dev:implement` via item-edit.
-         - Append detailed feedback comment using the `github-project` skill's add-comment operation.
          - Publish `dev.rejected` (routes to dev_implementer).
 
       ### Comment Format
@@ -706,33 +803,48 @@ hats:
       - Member: `team/members/{{member_dir}}/knowledge/`
       - Hat: `team/members/{{member_dir}}/hats/qe_verifier/knowledge/`
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
       1. Load the `github-project` skill.
-      2. Read the issue using the query-issues operation (`--type single --issue <N>`).
-         The response includes `issueType.name` and `subIssues.nodes`.
+      2. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the query-issues operation (`--type single --issue <N>`).
+         The data includes `issueType.name` and `subIssues.nodes`.
       3. **Check the issue type** to determine the verification path:
          - Task (story) → standard story verification
          - Bug with no sub-issues → simple bug verification
          - Bug with sub-issues → complex bug verification
       4. Read the test plan comment (from QE test designer, if present).
-      5. Run tests, check coverage.
-      6. Verify the implementation against each acceptance criterion.
+      5. **Verify PR exists and is approved:**
+         - Find the PR: `gh pr list --search "<issue-number>"` or check issue comments for a linked PR.
+         - Confirm the PR review state is APPROVED: `gh pr view <pr-number> --json reviewDecision`.
+         - If no PR exists or the PR is not approved, verification fails — status stays at `qe:verify`.
+      6. Run tests, check coverage (on the PR branch if applicable).
+      7. Verify the implementation against each acceptance criterion.
 
       ### If verification passes (by issue type):
 
       **Task (story):**
+      - Confirm PR is ready for merge (approved, tests pass, no conflicts).
       - Set status to `arch:sign-off` (auto-advances: `arch:sign-off` → `po:merge` → `done`).
-      - Append verification report comment. Publish `qe.approved`.
+      - Append verification report comment (include PR number and approval state). Publish `qe.approved`.
 
       **Bug:**
+      - Confirm PR exists and is approved before advancing.
       - Set status to `done`. Close the issue using the close-reopen operation.
-      - Append verification report comment. Publish `qe.approved`.
+      - Append verification report comment (include PR number and approval state). Publish `qe.approved`.
 
       ### If verification fails (by issue type):
 
       **Task (story):**
-      - Set status to `dev:implement`. Append feedback. Publish `qe.rejected`.
+      - Set status to `dev:implement`. Append feedback (include PR issues if any). Publish `qe.rejected`.
 
       **Bug (simple — no sub-issues):**
       - Set status to `bug:investigate`. Append feedback. Publish `qe.rejected`.
@@ -766,9 +878,18 @@ hats:
       - Project: `team/projects/<project>/knowledge/`
       - Member: `team/members/{{member_dir}}/knowledge/`
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the requesting issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. Determine what infrastructure is needed.
       3. Set up test clusters, configure E2E test environments as needed.
       4. Document infrastructure state using the `github-project` skill's add-comment operation on the requesting issue.
@@ -810,9 +931,18 @@ hats:
       (comments from `✍️ cw` reviewer). If rejection feedback exists, read it carefully and
       address all concerns in the revised documentation.
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the story issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. Read the parent epic's design doc for context.
       3. Write the documentation in the project repo (`./`).
       4. Append a comment to the story using the `github-project` skill's add-comment operation linking to the documentation.
@@ -848,9 +978,18 @@ hats:
       - Member: `team/members/{{member_dir}}/knowledge/`
       - Hat: `team/members/{{member_dir}}/hats/cw_reviewer/knowledge/`
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the story issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. Read the documentation produced by the content writer.
       3. Review for:
          - Accuracy and completeness
@@ -899,9 +1038,18 @@ hats:
 
       Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the bug issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. **Reproduce the bug:**
          - Follow reproduction steps if provided in the issue
          - Document actual vs expected behavior
@@ -920,7 +1068,8 @@ hats:
       5. **For SIMPLE bugs:**
          - Implement the fix in the project repo (`./`)
          - Run tests to verify fix
-         - Commit to a feature branch
+         - Create branch `feature/bug-<issue-number>-<description>`, commit, push
+         - Open a PR: `gh pr create --title "[#<issue-number>] <description>" --body "Fixes #<issue-number>"`
          - Add comment documenting reproduction + fix
          - Set status to `arch:review` via item-edit
          - Publish `arch.review`
@@ -1014,20 +1163,31 @@ hats:
 
       Use the `status-workflow` skill for all project status transitions (`ralph tools skill load status-workflow`).
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the bug issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. Find QE's investigation comment (contains "Bug investigation: SIMPLE")
-      3. Review the fix implementation:
-         - Read the changed files (check out the feature branch if needed)
+      3. **Find the PR:** Use `gh pr list --search "<issue-number>"` or check issue comments for a linked PR.
+      4. **Review the fix via PR:**
+         - Review the PR diff: `gh pr diff <pr-number>`
          - Check code quality, patterns, edge cases
          - Verify simple bug criteria still apply
          - Check for potential side effects
-      4. **If approved:**
-         - Add approval comment
+      5. **If approved:**
+         - Approve the PR: `gh pr review <pr-number> --approve --body "<review summary>"`
          - Set status to `qe:verify` via item-edit
          - Publish `qe.verify`
-      5. **If too complex (escalate):**
+      6. **If too complex (escalate):**
+         - Request changes on the PR: `gh pr review <pr-number> --request-changes --body "<escalation reason>"`
          - Add escalation comment explaining why
          - Set status to `arch:refine` via item-edit
          - Publish `arch.refine`
@@ -1097,9 +1257,18 @@ hats:
 
       If from PO rejection, address the feedback in your refinement.
 
+      ### Important
+
+      **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
+
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
-      1. Read the bug issue using the `github-project` skill's query-issues operation.
+      1. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the `github-project` skill's query-issues operation.
       2. Find the latest proposal:
          - QE's complex investigation comment, OR
          - Arch's escalation comment with context, OR
@@ -1176,11 +1345,16 @@ hats:
 
       **NEVER use `gh` CLI directly.** All GitHub operations MUST go through the `github-project` skill.
 
+      **Issue data is pre-fetched.** Load the `issue-cache` skill and read
+      cached data before querying GitHub. See the skill for data format and
+      fallback rules.
+
       ### Workflow:
 
       1. Load the `github-project` skill.
-      2. Read the bug issue using the query-issues operation.
-      3. Check subtask completion using the sub-issue status operation (returns total, closed, all_complete).
+      2. Load the `issue-cache` skill. Read the pre-fetched issue data for this issue.
+         Fallback: if no cached data, use the query-issues operation.
+      3. Check subtask completion using the sub-issue status operation (fresh query — do not use cached data for completion status).
       4. If `all_complete` is `false` → return control (check again next cycle).
       5. **When all subtasks complete:**
          - Use the add-comment operation to post a completion comment.
