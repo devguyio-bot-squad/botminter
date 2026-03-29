@@ -11,6 +11,8 @@ coding_agents:
     context_file: "CLAUDE.md"
     agent_dir: ".claude"
     binary: "claude"
+    system_prompt_flag: "--append-system-prompt-file"
+    skip_permissions_flag: "--dangerously-skip-permissions"
 
 default_coding_agent: claude-code
 

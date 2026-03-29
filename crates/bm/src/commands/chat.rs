@@ -81,9 +81,17 @@ pub fn run(
 
     // Build command arguments for the coding agent
     let tmp_path_str = tmp_path.to_str().context("Temp path is not valid UTF-8")?;
-    let mut args: Vec<&str> = vec!["--append-system-prompt-file", tmp_path_str];
+    let prompt_flag = coding_agent.system_prompt_flag.as_deref().with_context(|| {
+        format!(
+            "Coding agent '{}' ({}) does not define a system_prompt_flag",
+            coding_agent.display_name, coding_agent.binary
+        )
+    })?;
+    let mut args: Vec<&str> = vec![prompt_flag, tmp_path_str];
     if autonomous {
-        args.push("--dangerously-skip-permissions");
+        if let Some(flag) = coding_agent.skip_permissions_flag.as_deref() {
+            args.push(flag);
+        }
     }
 
     // Resolve formation: v2 teams delegate through formation.exec_in(),
@@ -102,10 +110,12 @@ pub fn run(
         use std::os::unix::process::CommandExt;
         let mut cmd = std::process::Command::new(&coding_agent.binary);
         cmd.current_dir(&session.ws_path)
-            .arg("--append-system-prompt-file")
+            .arg(prompt_flag)
             .arg(&tmp_path);
         if autonomous {
-            cmd.arg("--dangerously-skip-permissions");
+            if let Some(flag) = coding_agent.skip_permissions_flag.as_deref() {
+                cmd.arg(flag);
+            }
         }
         let err = cmd.exec();
         bail!("Failed to launch {}: {}", coding_agent.binary, err);

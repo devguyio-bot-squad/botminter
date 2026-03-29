@@ -391,6 +391,8 @@ pub(crate) mod test_support {
             context_file: "CLAUDE.md".into(),
             agent_dir: ".claude".into(),
             binary: "claude".into(),
+            system_prompt_flag: Some("--append-system-prompt-file".into()),
+            skip_permissions_flag: Some("--dangerously-skip-permissions".into()),
         }
     }
 

@@ -4,6 +4,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::config;
 use crate::profile;
+use crate::profile::CodingAgentDef;
 
 /// Handles `bm minty [-t team] [-a]`.
 ///
@@ -22,7 +23,7 @@ pub fn run(team_flag: Option<&str>, autonomous: bool) -> Result<()> {
         );
     }
 
-    let binary = resolve_coding_agent(team_flag)?;
+    let agent = resolve_coding_agent(team_flag)?;
 
     if team_flag.is_none() && config::load().is_err() {
         eprintln!(
@@ -32,22 +33,31 @@ pub fn run(team_flag: Option<&str>, autonomous: bool) -> Result<()> {
         );
     }
 
+    let prompt_flag = agent.system_prompt_flag.as_deref().with_context(|| {
+        format!(
+            "Coding agent '{}' ({}) does not define a system_prompt_flag",
+            agent.display_name, agent.binary
+        )
+    })?;
+
     // Launch coding agent via exec (replaces this process)
     use std::os::unix::process::CommandExt;
-    let mut cmd = std::process::Command::new(&binary);
+    let mut cmd = std::process::Command::new(&agent.binary);
     cmd.current_dir(&minty_dir)
-        .arg("--append-system-prompt-file")
+        .arg(prompt_flag)
         .arg(&prompt_path);
     if autonomous {
-        cmd.arg("--dangerously-skip-permissions");
+        if let Some(flag) = agent.skip_permissions_flag.as_deref() {
+            cmd.arg(flag);
+        }
     }
     let err = cmd.exec();
 
-    bail!("Failed to launch {}: {}", binary, err);
+    bail!("Failed to launch {}: {}", agent.binary, err);
 }
 
-/// Resolves the coding agent binary name from team config or profile defaults.
-fn resolve_coding_agent(team_flag: Option<&str>) -> Result<String> {
+/// Resolves the coding agent definition from team config or profile defaults.
+fn resolve_coding_agent(team_flag: Option<&str>) -> Result<CodingAgentDef> {
     if let Some(team_name) = team_flag {
         let cfg = config::load()?;
         let team = config::resolve_team(&cfg, Some(team_name))?;
@@ -57,7 +67,7 @@ fn resolve_coding_agent(team_flag: Option<&str>) -> Result<String> {
         let manifest: profile::ProfileManifest =
             serde_yml::from_str(&contents).context("Failed to parse team botminter.yml")?;
         let agent = profile::resolve_coding_agent(team, &manifest)?;
-        Ok(agent.binary.clone())
+        Ok(agent.clone())
     } else {
         super::ensure_profiles(false)?;
         profile::resolve_agent_from_profiles()

@@ -89,6 +89,12 @@ pub struct CodingAgentDef {
     pub context_file: String,
     pub agent_dir: String,
     pub binary: String,
+    /// CLI flag to append a system prompt file (e.g. "--append-system-prompt-file")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_prompt_flag: Option<String>,
+    /// CLI flag to skip permission prompts (e.g. "--dangerously-skip-permissions")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skip_permissions_flag: Option<String>,
 }
 
 /// Defines a role-based view for the GitHub Project board.

@@ -408,6 +408,8 @@ mod tests {
             context_file: "GEMINI.md".into(),
             agent_dir: ".gemini".into(),
             binary: "gemini".into(),
+            system_prompt_flag: None,
+            skip_permissions_flag: None,
         };
         let (_profiles_tmp, base) = setup_disk_profiles();
         let output = tempfile::tempdir().unwrap();
@@ -429,6 +431,8 @@ mod tests {
             context_file: "GEMINI.md".into(),
             agent_dir: ".gemini".into(),
             binary: "gemini".into(),
+            system_prompt_flag: None,
+            skip_permissions_flag: None,
         };
         let (_profiles_tmp, base) = setup_disk_profiles();
         let output = tempfile::tempdir().unwrap();
