@@ -43,6 +43,7 @@ uuid = { version = "1", features = ["v4"] }
 rust-embed = { version = "8", optional = true }
 
 [features]
+default = ["console"]
 e2e = []
 console = ["rust-embed"]
 
