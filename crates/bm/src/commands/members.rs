@@ -130,7 +130,12 @@ mod tests {
 
     #[test]
     fn infer_role_multiple_hyphens() {
-        assert_eq!(profile::infer_role_from_dir("po-bob-senior"), "po");
+        assert_eq!(profile::infer_role_from_dir("po-bob-senior"), "po-bob");
+    }
+
+    #[test]
+    fn infer_role_hyphenated_role() {
+        assert_eq!(profile::infer_role_from_dir("chief-of-staff-bob"), "chief-of-staff");
     }
 
     #[test]

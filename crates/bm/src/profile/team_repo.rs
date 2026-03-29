@@ -147,13 +147,17 @@ pub fn read_member_role(members_dir: &Path, member_dir_name: &str) -> String {
     infer_role_from_dir(member_dir_name)
 }
 
-/// Infers the role from a member dir name by taking everything before the first '-'.
+/// Infers the role from a member dir name by stripping the last `-segment`
+/// (the member name given at hire time). The dir format is `{role}-{name}`,
+/// where the role itself may contain hyphens (e.g., `chief-of-staff-bob`
+/// → role `chief-of-staff`, name `bob`).
+///
+/// Falls back to the first segment if the dir has only one hyphen or none.
 pub fn infer_role_from_dir(dir_name: &str) -> String {
-    dir_name
-        .split('-')
-        .next()
-        .unwrap_or("unknown")
-        .to_string()
+    match dir_name.rsplit_once('-') {
+        Some((role, _name)) if !role.is_empty() => role.to_string(),
+        _ => dir_name.to_string(),
+    }
 }
 
 /// Validates that a path points to a knowledge or invariant file within the team repo.
@@ -367,7 +371,12 @@ mod tests {
 
     #[test]
     fn infer_role_multiple_hyphens() {
-        assert_eq!(infer_role_from_dir("po-bob-senior"), "po");
+        assert_eq!(infer_role_from_dir("po-bob-senior"), "po-bob");
+    }
+
+    #[test]
+    fn infer_role_hyphenated_role() {
+        assert_eq!(infer_role_from_dir("chief-of-staff-bob"), "chief-of-staff");
     }
 
     #[test]

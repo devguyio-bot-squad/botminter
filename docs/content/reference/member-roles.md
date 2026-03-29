@@ -1,6 +1,6 @@
 # Member Roles
 
-This reference documents the member roles defined in BotMinter profiles, including their hat models, event dispatch, and responsibilities. The `team-manager` role is available in both `scrum-compact` and `scrum` profiles. The `human-assistant` and `architect` roles are defined in the `scrum` profile (in development, not yet shipping in release builds).
+This reference documents the member roles defined in BotMinter profiles, including their hat models, event dispatch, and responsibilities. The `chief-of-staff` role is available in both `scrum-compact` and `scrum` profiles. The `human-assistant` and `architect` roles are defined in the `scrum` profile (in development, not yet shipping in release builds).
 
 ## human-assistant
 
@@ -111,31 +111,31 @@ Before transitioning to `status/po:ready`:
 
 ---
 
-## team-manager
+## chief-of-staff
 
-Process improvement and team coordination. The team-manager handles operational tasks — process audits, retrospective actions, tooling improvements, and ad-hoc coordination work. It operates as a persistent Ralph loop with a single work hat.
+Process improvement and team coordination. The chief-of-staff handles operational tasks — process audits, retrospective actions, tooling improvements, and ad-hoc coordination work. It operates as a persistent Ralph loop with a single work hat.
 
 ### Hat model
 
 | Hat | Triggers | Responsibility | Transitions to |
 |-----|----------|----------------|---------------|
-| `executor` | `mgr.work` | Pick up `mgr:todo` tasks, execute them, report results | `mgr:done` |
+| `executor` | `cos.execute` | Pick up `cos:todo` tasks, execute them, report results | `cos:done` |
 
-Board scanning is handled by the **board-scanner skill** (auto-injected into the coordinator via `skills.overrides`). The coordinator scans for `status/mgr:*` issues and dispatches to the executor hat.
+Board scanning is handled by the **board-scanner skill** (auto-injected into the coordinator via `skills.overrides`). The coordinator scans for `cos:*` issues and dispatches to the executor hat.
 
 ### Event dispatch
 
 | Status label | Event | Hat activated |
 |-------------|-------|--------------|
-| `status/mgr:todo` | `mgr.work` | executor |
+| `cos:todo` | `cos.execute` | executor |
 
-**Priority**: Only one status triggers work (`mgr:todo`). The executor transitions through `mgr:in-progress` while working and to `mgr:done` on completion.
+**Priority**: Only one status triggers work (`cos:todo`). The executor transitions through `cos:in-progress` while working and to `cos:done` on completion.
 
 One issue is processed per scan cycle.
 
 ### Interactive sessions
 
-The team-manager is the first role designed with the **role-as-skill pattern** in mind. In addition to running autonomously in a Ralph loop, any hired team-manager member can be invoked interactively via [`bm chat`](cli.md#bm-chat):
+The chief-of-staff is the first role designed with the **role-as-skill pattern** in mind. In addition to running autonomously in a Ralph loop, any hired chief-of-staff member can be invoked interactively via [`bm chat`](cli.md#bm-chat):
 
 - `bm chat <member>` — hatless mode: agent has awareness of all hats, human drives the workflow
 - `bm chat <member> --hat executor` — hat-specific mode: agent is in character as the executor hat
@@ -145,7 +145,7 @@ See [Coordination Model — Role-as-skill](../concepts/coordination-model.md#rol
 ### Constraints
 
 - Always update `team/` submodule before scanning
-- Always use PROCESS.md comment format: `### 📋 team-manager — <ISO-timestamp>`
+- Always use PROCESS.md comment format: `### 📋 chief-of-staff — <ISO-timestamp>`
 - Always follow knowledge and invariant scoping defined in hat instructions
 
 ---
