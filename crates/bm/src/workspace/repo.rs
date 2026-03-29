@@ -300,6 +300,8 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
         params.member_dir_name,
         &project_names,
         params.coding_agent,
+        params.github_repo,
+        params.project_number,
     )?;
 
     // Commit workspace files (idempotent — skips if nothing changed)
@@ -333,6 +335,8 @@ pub fn assemble_workspace_repo_context(
     member_dir_name: &str,
     project_names: &[&str],
     coding_agent: &CodingAgentDef,
+    github_repo: Option<&str>,
+    project_number: Option<u64>,
 ) -> Result<()> {
     let team_sub = ws_root.join("team");
     let member_src = team_sub.join("members").join(member_dir_name);
@@ -361,6 +365,16 @@ pub fn assemble_workspace_repo_context(
 
     // Write .botminter.workspace marker
     write_workspace_marker(ws_root, member_dir_name)?;
+
+    // Inject workspace context into context file and .botminter.workspace
+    super::context::inject_workspace_context(
+        ws_root,
+        member_dir_name,
+        &coding_agent.context_file,
+        github_repo,
+        project_number,
+        project_names,
+    )?;
 
     Ok(())
 }
@@ -719,8 +733,10 @@ pub(super) mod tests {
             "PROMPT.md should be a copy, not a symlink"
         );
 
-        // Verify content matches source
-        assert_eq!(fs::read_to_string(ws.join("CLAUDE.md")).unwrap(), "# C");
+        // Verify content: CLAUDE.md has original content plus injected workspace context
+        let claude_content = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
+        assert!(claude_content.starts_with("# C"), "CLAUDE.md should start with original content");
+        assert!(claude_content.contains("<!-- BM:WORKSPACE_CONTEXT -->"), "CLAUDE.md should have injected context");
         assert_eq!(fs::read_to_string(ws.join("PROMPT.md")).unwrap(), "# P");
         assert_eq!(fs::read_to_string(ws.join("ralph.yml")).unwrap(), "v: 1");
     }
