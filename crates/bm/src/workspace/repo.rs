@@ -139,6 +139,7 @@ pub struct WorkspaceRepoParams<'a> {
     pub team_name: &'a str,
     pub projects: &'a [(&'a str, &'a str)], // [(project_name, fork_url)]
     pub github_repo: Option<&'a str>,
+    pub project_number: Option<u64>,
     pub push: bool,
     pub coding_agent: &'a CodingAgentDef,
     /// Remote repo operations. Required when `push` is true.
@@ -568,6 +569,7 @@ pub(super) mod tests {
             team_name: "my-team",
             projects,
             github_repo: None,
+            project_number: None,
             push: false,
             coding_agent,
             remote_ops: None,
@@ -1099,6 +1101,7 @@ pub(super) mod tests {
             team_name: "my-team",
             projects: &[],
             github_repo: Some("myorg/my-team"),
+            project_number: None,
             push: true,
             coding_agent,
             remote_ops: Some(remote_ops),
