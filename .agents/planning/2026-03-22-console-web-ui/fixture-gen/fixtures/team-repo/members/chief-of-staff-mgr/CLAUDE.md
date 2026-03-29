@@ -1,6 +1,6 @@
-# Team Manager — Team Member Context
+# Chief of Staff — Team Member Context
 
-This file provides context for operating as the team manager. Read `team/context.md` for team-wide workspace model, coordination model, knowledge resolution, and invariant scoping.
+This file provides context for operating as the chief of staff. Read `team/context.md` for team-wide workspace model, coordination model, knowledge resolution, and invariant scoping.
 
 ## A. Project Context
 
@@ -12,7 +12,7 @@ Your workspace has the team repo cloned into `team/`. All your work happens insi
 
 - **Knowledge and invariants**: Read from `team/knowledge/` and `team/invariants/`
 - **Process conventions**: Follow `team/PROCESS.md`
-- **Member config**: Your config lives in `team/members/team-manager-*/`
+- **Member config**: Your config lives in `team/members/chief-of-staff-*/`
 - **Committing changes**: Commit and push within `team/` — this is a submodule, not the workspace root
 
 ## B. Team Member Skills & Capabilities
@@ -28,10 +28,10 @@ Board scanning is handled by an auto-inject skill, not a hat.
 ### Workspace Layout
 
 ```
-team-manager-workspace/              # Workspace (CWD)
+chief-of-staff-workspace/              # Workspace (CWD)
   team/                              # Team repo clone (submodule)
     knowledge/, invariants/          # Team-level
-    members/team-manager-*/          # Member config
+    members/chief-of-staff-*/          # Member config
     projects/<project>/              # Project-specific
   PROMPT.md
   CLAUDE.md
@@ -43,15 +43,15 @@ team-manager-workspace/              # Workspace (CWD)
 | Level | Path |
 |-------|------|
 | Team knowledge | `team/knowledge/` |
-| Member knowledge | `team/members/team-manager-*/knowledge/` |
-| Hat knowledge (executor) | `team/members/team-manager-*/hats/executor/knowledge/` |
+| Member knowledge | `team/members/chief-of-staff-*/knowledge/` |
+| Hat knowledge (executor) | `team/members/chief-of-staff-*/hats/executor/knowledge/` |
 
 ### Invariant Compliance
 
 | Level | Path |
 |-------|------|
 | Team invariants | `team/invariants/` |
-| Member invariants | `team/members/team-manager-*/invariants/` |
+| Member invariants | `team/members/chief-of-staff-*/invariants/` |
 
 ### Coordination Conventions
 

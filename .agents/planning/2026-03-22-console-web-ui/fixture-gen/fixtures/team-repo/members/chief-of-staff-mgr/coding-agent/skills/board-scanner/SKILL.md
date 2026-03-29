@@ -10,7 +10,7 @@ metadata:
   version: 1.0.0
 ---
 
-# Board Scanner (Team Manager Scope)
+# Board Scanner (Chief of Staff Scope)
 
 This skill defines your PLAN step when coordinating. Scan the GitHub
 Projects v2 board for `mgr:*` statuses, then DELEGATE by publishing
@@ -118,7 +118,7 @@ If any `gh` command fails during the scan:
 All board scanner comments use:
 
 ```
-### 📋 team-manager — $(date -u +%Y-%m-%dT%H:%M:%SZ)
+### 📋 chief-of-staff — $(date -u +%Y-%m-%dT%H:%M:%SZ)
 ```
 
 ## Rules

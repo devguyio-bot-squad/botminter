@@ -72,9 +72,9 @@ The rejecting member appends feedback as a standard comment.
 
 | Status | Role | Description |
 |--------|------|-------------|
-| `status/mgr:todo` | chief-of-staff | Task awaiting chief of staff |
-| `status/mgr:in-progress` | chief-of-staff | Chief of staff working on task |
-| `status/mgr:done` | chief-of-staff | Task completed by chief of staff |
+| `status/cos:todo` | chief-of-staff | Task awaiting chief of staff |
+| `status/cos:in-progress` | chief-of-staff | Chief of staff working on task |
+| `status/cos:done` | chief-of-staff | Task completed by chief of staff |
 
 ### Story statuses
 

@@ -73,13 +73,14 @@ pub fn read_member_info(member_dir: &Path, member_name: &str) -> Result<(String,
     }
 }
 
-/// Infers a role name from a member directory name (e.g., "architect-01" -> "architect").
+/// Infers a role name from a member directory name by stripping the last
+/// `-segment` (the member name). Handles multi-hyphen roles like
+/// `chief-of-staff-bob` → `chief-of-staff`.
 pub fn infer_role(member_name: &str) -> String {
-    member_name
-        .split('-')
-        .next()
-        .unwrap_or("unknown")
-        .to_string()
+    match member_name.rsplit_once('-') {
+        Some((role, _name)) if !role.is_empty() => role.to_string(),
+        _ => member_name.to_string(),
+    }
 }
 
 #[cfg(test)]
@@ -89,7 +90,7 @@ mod tests {
     #[test]
     fn infer_role_from_member_name() {
         assert_eq!(infer_role("architect-01"), "architect");
-        assert_eq!(infer_role("chief-of-staff-bob"), "chief");
+        assert_eq!(infer_role("chief-of-staff-bob"), "chief-of-staff");
         assert_eq!(infer_role("superman"), "superman");
     }
 

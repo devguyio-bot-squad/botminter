@@ -31,7 +31,7 @@ Board scanning is handled by an auto-inject skill, not a hat.
 chief-of-staff-workspace/              # Workspace (CWD)
   team/                              # Team repo clone (submodule)
     knowledge/, invariants/          # Team-level
-    members/{{member_dir}}//        # Member config
+    members/<role>-<member-name>/        # Member config
     projects/<project>/              # Project-specific
   PROMPT.md
 <!-- +agent:claude-code -->

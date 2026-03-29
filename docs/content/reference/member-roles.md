@@ -119,17 +119,17 @@ Process improvement and team coordination. The chief-of-staff handles operationa
 
 | Hat | Triggers | Responsibility | Transitions to |
 |-----|----------|----------------|---------------|
-| `executor` | `mgr.work` | Pick up `mgr:todo` tasks, execute them, report results | `mgr:done` |
+| `executor` | `cos.execute` | Pick up `cos:todo` tasks, execute them, report results | `cos:done` |
 
-Board scanning is handled by the **board-scanner skill** (auto-injected into the coordinator via `skills.overrides`). The coordinator scans for `status/mgr:*` issues and dispatches to the executor hat.
+Board scanning is handled by the **board-scanner skill** (auto-injected into the coordinator via `skills.overrides`). The coordinator scans for `cos:*` issues and dispatches to the executor hat.
 
 ### Event dispatch
 
 | Status label | Event | Hat activated |
 |-------------|-------|--------------|
-| `status/mgr:todo` | `mgr.work` | executor |
+| `cos:todo` | `cos.execute` | executor |
 
-**Priority**: Only one status triggers work (`mgr:todo`). The executor transitions through `mgr:in-progress` while working and to `mgr:done` on completion.
+**Priority**: Only one status triggers work (`cos:todo`). The executor transitions through `cos:in-progress` while working and to `cos:done` on completion.
 
 One issue is processed per scan cycle.
 

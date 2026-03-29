@@ -83,7 +83,7 @@ One issue is processed per scan cycle. After processing, the board rescans.
     **human-assistant priority** (highest to lowest):
     `po:triage` > `po:design-review` > `po:plan-review` > `po:accept` > `po:backlog` > `po:ready`
 
-    **chief-of-staff**: Single status — `mgr:todo` dispatches to the executor hat.
+    **chief-of-staff**: Single status — `cos:todo` dispatches to the executor hat.
 
 ## Role-as-skill pattern
 

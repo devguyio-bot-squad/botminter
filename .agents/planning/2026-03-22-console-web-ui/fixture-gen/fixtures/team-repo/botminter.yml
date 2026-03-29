@@ -31,8 +31,8 @@ bridges:
 roles:
   - name: superman
     description: "All-in-one member — PO, architect, dev, QE, SRE, content writer"
-  - name: team-manager
-    description: "Process improvement and team coordination"
+  - name: chief-of-staff
+    description: "Strategic coordination, process improvement, and team oversight"
 
 labels:
   # Kind labels (tracked as GitHub labels)
@@ -46,9 +46,9 @@ labels:
     color: "0075CA"
     description: "Documentation story, routed to content writer hats"
   # Role labels
-  - name: "role/team-manager"
+  - name: "role/chief-of-staff"
     color: "5319E7"
-    description: "Assigned to team manager"
+    description: "Assigned to chief of staff"
 
 statuses:
   # Epic statuses (tracked via GitHub Projects v2 Status field)

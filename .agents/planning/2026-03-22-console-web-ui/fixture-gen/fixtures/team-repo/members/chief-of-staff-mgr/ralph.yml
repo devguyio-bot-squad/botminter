@@ -9,7 +9,7 @@ cli:
 
 core:
   guardrails:
-    - "Comply with all invariants in team/invariants/ and team/members/team-manager-*/invariants/"
+    - "Comply with all invariants in team/invariants/ and team/members/chief-of-staff-*/invariants/"
     - "All issue operations use the gh skill — no write-locks needed"
 
 hats:
@@ -24,14 +24,14 @@ hats:
     instructions: |
       ## Executor
 
-      You are the team manager's executor hat. Pick up team management tasks and execute them.
+      You are the chief of staff's executor hat. Pick up team management tasks and execute them.
 
       ### Knowledge
 
       Reference these when working — consult as needed, not all upfront:
       - Team: `team/knowledge/`
-      - Member: `team/members/team-manager-*/knowledge/`
-      - Hat: `team/members/team-manager-*/hats/executor/knowledge/`
+      - Member: `team/members/chief-of-staff-*/knowledge/`
+      - Hat: `team/members/chief-of-staff-*/hats/executor/knowledge/`
 
       ### Status Transitions
 
@@ -53,7 +53,7 @@ hats:
       All executor comments use:
 
       ```
-      ### 📋 team-manager — $(date -u +%Y-%m-%dT%H:%M:%SZ)
+      ### 📋 chief-of-staff — $(date -u +%Y-%m-%dT%H:%M:%SZ)
       ```
 
       ### Backpressure
@@ -83,7 +83,7 @@ skills:
   dirs:
     - team/coding-agent/skills
     - team/projects/<project>/coding-agent/skills
-    - team/members/team-manager/coding-agent/skills
+    - team/members/chief-of-staff/coding-agent/skills
   overrides:
     board-scanner:
       auto_inject: true
