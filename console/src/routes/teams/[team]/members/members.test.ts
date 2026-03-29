@@ -20,8 +20,8 @@ const { mockMembers } = vi.hoisted(() => {
 			hat_count: 14
 		},
 		{
-			name: 'team-manager-mgr',
-			role: 'team-manager',
+			name: 'chief-of-staff-mgr',
+			role: 'chief-of-staff',
 			comment_emoji: '\u{1f4cb}',
 			has_ralph_yml: true,
 			hat_count: 1
@@ -53,7 +53,7 @@ describe('Members List Page', () => {
 		await waitFor(() => {
 			expect(screen.getByText('superman-alice')).toBeInTheDocument();
 			expect(screen.getByText('superman-bob')).toBeInTheDocument();
-			expect(screen.getByText('team-manager-mgr')).toBeInTheDocument();
+			expect(screen.getByText('chief-of-staff-mgr')).toBeInTheDocument();
 		});
 	});
 
@@ -83,7 +83,7 @@ describe('Members List Page', () => {
 		await waitFor(() => {
 			const supermanBadges = screen.getAllByText('superman');
 			expect(supermanBadges.length).toBe(2);
-			expect(screen.getByText('team-manager')).toBeInTheDocument();
+			expect(screen.getByText('chief-of-staff')).toBeInTheDocument();
 		});
 	});
 

@@ -3757,16 +3757,16 @@ fn daemon_console_api_e2e_with_fixtures() {
             .collect();
         assert!(member_names.contains(&"superman-alice"));
         assert!(member_names.contains(&"superman-bob"));
-        assert!(member_names.contains(&"team-manager-mgr"));
+        assert!(member_names.contains(&"chief-of-staff-mgr"));
 
-        // Roles — fixture has 2 (superman, team-manager)
+        // Roles — fixture has 2 (superman, chief-of-staff)
         let roles = body["roles"].as_array().expect("roles array");
         assert_eq!(roles.len(), 2, "fixture has 2 roles");
         let role_names: Vec<&str> = roles.iter()
             .map(|r| r["name"].as_str().unwrap())
             .collect();
         assert!(role_names.contains(&"superman"));
-        assert!(role_names.contains(&"team-manager"));
+        assert!(role_names.contains(&"chief-of-staff"));
 
         // Knowledge files — fixture has 3
         let knowledge = body["knowledge_files"].as_array().expect("knowledge_files");
@@ -3797,9 +3797,9 @@ fn daemon_console_api_e2e_with_fixtures() {
 
         // Find mgr and verify
         let mgr = members.iter()
-            .find(|m| m["name"] == "team-manager-mgr")
+            .find(|m| m["name"] == "chief-of-staff-mgr")
             .expect("mgr should exist");
-        assert_eq!(mgr["role"], "team-manager");
+        assert_eq!(mgr["role"], "chief-of-staff");
         assert_eq!(mgr["hat_count"], 1, "mgr has 1 hat");
     }
 

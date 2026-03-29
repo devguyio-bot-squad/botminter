@@ -89,7 +89,7 @@ mod tests {
     #[test]
     fn infer_role_from_member_name() {
         assert_eq!(infer_role("architect-01"), "architect");
-        assert_eq!(infer_role("team-manager-bob"), "team");
+        assert_eq!(infer_role("chief-of-staff-bob"), "chief");
         assert_eq!(infer_role("superman"), "superman");
     }
 

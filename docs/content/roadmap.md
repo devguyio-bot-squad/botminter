@@ -14,7 +14,7 @@ BotMinter is developed through incremental milestones. Each milestone builds on 
 | Architect + First Epic | **Complete** | Second member, epic lifecycle, two-member coordination |
 | GitHub Integration | **Complete** | Replaced file-based coordination with real GitHub via `gh` CLI |
 | `bm` CLI | **Complete** | Rust CLI, single operator interface, workzone model |
-| Minty and Friends | **Complete** | Team Manager role, profile externalization, Minty assistant |
+| Minty and Friends | **Complete** | Chief of Staff role, profile externalization, Minty assistant |
 | Team Bridge | **Complete** | Bridge plugin system, Matrix (default) + Telegram + Rocket.Chat bridges |
 | Full Team + First Story | Future | Dev, QE, reviewer members, full story kanban, TDD flow |
 | Eval/Confidence System | Future | Formalized eval framework, scored confidence, HIL graduation |
@@ -84,7 +84,7 @@ Replaced Justfile-based tooling with a Rust CLI binary (`bm`):
 
 Multiple UX enhancements to improve the operator experience:
 
-- **Team Manager role** — a new team-scoped role for process improvement tasks, operating independently from dev workflow
+- **Chief of Staff role** — a new team-scoped role for process improvement tasks, operating independently from dev workflow
 - **Profile externalization** — profiles extracted to disk on first use, editable and customizable without rebuilding the binary
 - **Workspace repository model** — dedicated git repo per agent with submodules for team repo and project forks, replacing the earlier embedded workspace model
 - **Minty** — BotMinter's interactive assistant persona with composable skills

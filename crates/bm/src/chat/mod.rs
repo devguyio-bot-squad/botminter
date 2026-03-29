@@ -273,7 +273,7 @@ mod tests {
         let (guardrails, hats, prompt_md) = sample_params();
         let params = MetaPromptParams {
             member_name: "bob",
-            role_name: "team-manager",
+            role_name: "chief-of-staff",
             role_description: "Test role description",
             team_name: "my-team",
             guardrails: &guardrails,
@@ -294,7 +294,7 @@ mod tests {
         );
         assert!(result.contains("Your name is bob."), "Missing name");
         assert!(
-            result.contains("Your role is called team-manager."),
+            result.contains("Your role is called chief-of-staff."),
             "Missing role"
         );
     }
@@ -331,7 +331,7 @@ mod tests {
         let (guardrails, hats, prompt_md) = sample_params();
         let params = MetaPromptParams {
             member_name: "bob",
-            role_name: "team-manager",
+            role_name: "chief-of-staff",
             role_description: "Test role description",
             team_name: "my-team",
             guardrails: &guardrails,
@@ -357,7 +357,7 @@ mod tests {
         let (guardrails, hats, prompt_md) = sample_params();
         let params = MetaPromptParams {
             member_name: "bob",
-            role_name: "team-manager",
+            role_name: "chief-of-staff",
             role_description: "Test role description",
             team_name: "my-team",
             guardrails: &guardrails,
@@ -391,7 +391,7 @@ mod tests {
         let (guardrails, hats, prompt_md) = sample_params();
         let params = MetaPromptParams {
             member_name: "bob",
-            role_name: "team-manager",
+            role_name: "chief-of-staff",
             role_description: "Test role description",
             team_name: "my-team",
             guardrails: &guardrails,
@@ -417,7 +417,7 @@ mod tests {
         let (guardrails, hats, prompt_md) = sample_params();
         let params = MetaPromptParams {
             member_name: "bob",
-            role_name: "team-manager",
+            role_name: "chief-of-staff",
             role_description: "Test role description",
             team_name: "my-team",
             guardrails: &guardrails,
@@ -447,7 +447,7 @@ mod tests {
         let (guardrails, hats, prompt_md) = sample_params();
         let params = MetaPromptParams {
             member_name: "bob",
-            role_name: "team-manager",
+            role_name: "chief-of-staff",
             role_description: "Test role description",
             team_name: "my-team",
             guardrails: &guardrails,
@@ -504,7 +504,7 @@ mod tests {
         let (guardrails, hats, prompt_md) = sample_params();
         let params = MetaPromptParams {
             member_name: "bob",
-            role_name: "team-manager",
+            role_name: "chief-of-staff",
             role_description: "Test role description",
             team_name: "my-team",
             guardrails: &guardrails,
@@ -583,7 +583,7 @@ mod tests {
         ];
         let params = MetaPromptParams {
             member_name: "bob",
-            role_name: "team-manager",
+            role_name: "chief-of-staff",
             role_description: "",
             team_name: "my-team",
             guardrails: &guardrails,
@@ -640,7 +640,7 @@ mod tests {
         let (guardrails, hats, prompt_md) = sample_params();
         let params = MetaPromptParams {
             member_name: "bob",
-            role_name: "team-manager",
+            role_name: "chief-of-staff",
             role_description: "",
             team_name: "my-team",
             guardrails: &guardrails,
@@ -662,7 +662,7 @@ mod tests {
         let (guardrails, hats, prompt_md) = sample_params();
         let params = MetaPromptParams {
             member_name: "bob",
-            role_name: "team-manager",
+            role_name: "chief-of-staff",
             role_description: "Test role description",
             team_name: "my-team",
             guardrails: &guardrails,

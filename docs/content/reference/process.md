@@ -68,13 +68,13 @@ At any review gate, the human can reject and send the epic back:
 
 The rejecting member appends feedback as a standard comment.
 
-### Team Manager statuses
+### Chief of Staff statuses
 
 | Status | Role | Description |
 |--------|------|-------------|
-| `status/mgr:todo` | team-manager | Task awaiting team manager |
-| `status/mgr:in-progress` | team-manager | Team manager working on task |
-| `status/mgr:done` | team-manager | Task completed by team manager |
+| `status/mgr:todo` | chief-of-staff | Task awaiting chief of staff |
+| `status/mgr:in-progress` | chief-of-staff | Chief of staff working on task |
+| `status/mgr:done` | chief-of-staff | Task completed by chief of staff |
 
 ### Story statuses
 
@@ -121,7 +121,7 @@ The emoji and role are read from the member's `.botminter.yml` file.
 | qe | `🧪` | `### 🧪 qe — 2026-01-15T10:30:00Z` |
 | sre | `🛠️` | `### 🛠️ sre — 2026-01-15T10:30:00Z` |
 | cw | `✍️` | `### ✍️ cw — 2026-01-15T10:30:00Z` |
-| team-manager | `📋` | `### 📋 team-manager — 2026-01-15T10:30:00Z` |
+| chief-of-staff | `📋` | `### 📋 chief-of-staff — 2026-01-15T10:30:00Z` |
 | lead | `👑` | `### 👑 lead — 2026-01-15T10:30:00Z` |
 
 Comments are append-only. Never edit or delete existing comments.

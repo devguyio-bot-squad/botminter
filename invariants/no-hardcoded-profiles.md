@@ -11,7 +11,7 @@ Tests that need profile data **MUST** use fixtures generated from the current pr
 When testing profile-related functionality:
 1. **Read profile data dynamically** — use the profile API (`list_profiles`, `read_manifest`, `list_roles`, etc.) to discover available profiles and their contents at test time.
 2. **Use generated fixtures** when dynamic reads are impractical — fixtures that are derived from profiles and updated alongside them, not hand-written string literals.
-3. **Test behavior, not content** — assert that "all profiles have at least one role" rather than "scrum has architect, human-assistant, and team-manager."
+3. **Test behavior, not content** — assert that "all profiles have at least one role" rather than "scrum has architect, human-assistant, and chief-of-staff."
 
 ## Applies To
 

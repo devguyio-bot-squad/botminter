@@ -18,17 +18,17 @@ metadata:
 
 Designs, customizes, and troubleshoots BotMinter profiles at the template level. Profiles are methodology templates that `bm init` extracts into team repos. This skill works before any team exists or when a team is broken and needs fixes from outside.
 
-For live team changes on a working team, suggest `bm chat team-manager` instead.
+For live team changes on a working team, suggest `bm chat chief-of-staff` instead.
 
-## When to Use This vs Team Manager
+## When to Use This vs Chief of Staff
 
-| Situation | Use This Skill | Use Team Manager |
+| Situation | Use This Skill | Use Chief of Staff |
 |-----------|---------------|-----------------|
 | No team exists yet | Yes | No |
 | Team is broken / won't start | Yes | No |
 | Designing a new profile from scratch | Yes | No |
 | Forking an existing profile | Yes | No |
-| Tweaking a live team's process | No | Yes (`bm chat team-manager`) |
+| Tweaking a live team's process | No | Yes (`bm chat chief-of-staff`) |
 | Running a retrospective | No | Yes |
 | Tuning a member's behavior | No | Yes |
 
@@ -62,7 +62,7 @@ Show the full structure of a profile: roles, statuses, hats, skills, process, an
 | Role | Hats | Skills |
 |------|------|--------|
 | superman | 15 | 0 |
-| team-manager | 2 | 5 |
+| chief-of-staff | 2 | 5 |
 
 ### Status Lifecycle
 <status list from botminter.yml>
@@ -255,5 +255,5 @@ Run after any design change. Report each check as PASS or FAIL.
 | List profiles | `bm profiles list` |
 | Describe a profile | `bm profiles describe <name>` |
 | Initialize profiles | `bm profiles init` |
-| Chat with team manager | `bm chat team-manager` |
+| Chat with team manager | `bm chat chief-of-staff` |
 | Show team status | `bm status -t <team>` |
