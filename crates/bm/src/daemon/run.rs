@@ -166,6 +166,23 @@ async fn run_daemon_async(
         &format!("Console available at http://{}:{}", bind, port),
     );
 
+    // Warn at startup if the console feature is enabled but no assets are embedded.
+    // This happens when `cargo build --features console` runs without a prior
+    // `npm run build` in console/ — the binary compiles fine due to
+    // #[allow_missing = true] but serves "Console not built" on every route.
+    #[cfg(feature = "console")]
+    {
+        use crate::web::assets::console_has_assets;
+        if !console_has_assets() {
+            daemon_log(
+                &paths,
+                "WARN",
+                "Console assets not embedded — console will return 'Console not built'. \
+                 Run 'cd console && npm install && npm run build' and rebuild.",
+            );
+        }
+    }
+
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("Failed to bind to {}", addr))?;

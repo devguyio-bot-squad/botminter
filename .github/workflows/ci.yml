@@ -1,0 +1,135 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  console-e2e:
+    name: Console E2E Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry and build
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build console frontend
+        run: cd console && npm ci && npm run build
+
+      - name: Build bm binary with console feature
+        run: cargo build -p bm --features console
+
+      - name: Install Playwright browsers
+        run: cd console && npx playwright install --with-deps chromium
+
+      - name: Start daemon and run Playwright e2e
+        run: |
+          # Start the daemon in the background on a free port
+          # Use port 0 to let the OS assign an available port
+          cargo run -p bm -- daemon-run --team ci-test --port 18484 --bind 127.0.0.1 --mode poll --interval 3600 &
+          DAEMON_PID=$!
+
+          # Wait for the daemon to be ready
+          for i in $(seq 1 30); do
+            if curl -sf http://127.0.0.1:18484/api/health > /dev/null 2>&1; then
+              echo "Daemon ready on port 18484"
+              break
+            fi
+            if [ $i -eq 30 ]; then
+              echo "Daemon failed to start within 30 seconds"
+              kill $DAEMON_PID 2>/dev/null || true
+              exit 1
+            fi
+            sleep 1
+          done
+
+          # Run Playwright tests
+          cd console
+          CONSOLE_BASE_URL=http://127.0.0.1:18484 npx playwright test
+          TEST_EXIT=$?
+
+          # Cleanup
+          kill $DAEMON_PID 2>/dev/null || true
+          wait $DAEMON_PID 2>/dev/null || true
+          exit $TEST_EXIT
+
+      - name: Upload Playwright report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playwright-report
+          path: console/playwright-report/
+          retention-days: 7
+
+  console-unit:
+    name: Console Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install dependencies
+        run: cd console && npm ci
+
+      - name: Run Vitest unit tests
+        run: cd console && npm test
+
+      - name: Run svelte-check
+        run: cd console && npm run check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-
+
+      - name: Build console (needed for clippy with console feature)
+        run: cd console && npm ci && npm run build
+
+      - name: Run clippy
+        run: cargo clippy -p bm --features console -- -D warnings

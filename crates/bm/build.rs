@@ -12,6 +12,9 @@ fn main() {
     let profiles_src = manifest_dir.join("../../profiles");
     let profile = std::env::var("PROFILE").unwrap(); // "debug" or "release"
 
+    // Check console build directory when the console feature is enabled
+    check_console_build(&manifest_dir);
+
     let profiles_dir = if profile == "release" {
         let staging = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("profiles-staging");
         stage_release_profiles(&profiles_src, &staging);
@@ -92,6 +95,35 @@ fn strip_bridges(manifest_path: &Path) {
     };
     fs::write(manifest_path, output)
         .unwrap_or_else(|e| panic!("Failed to write {:?}: {}", manifest_path, e));
+}
+
+/// Warns (but does not fail) when the console feature is enabled but
+/// `console/build/` is missing or empty. This gives visibility into
+/// "the Rust build succeeded but no frontend assets will be embedded"
+/// without breaking dev builds where Node.js may not be installed.
+fn check_console_build(manifest_dir: &Path) {
+    // Only relevant when the console feature is enabled
+    if std::env::var("CARGO_FEATURE_CONSOLE").is_err() {
+        return;
+    }
+
+    let console_build = manifest_dir.join("../../console/build");
+    println!("cargo:rerun-if-changed=../../console/build");
+
+    if !console_build.exists() {
+        println!(
+            "cargo:warning=Console feature enabled but console/build/ does not exist. \
+             Run 'cd console && npm install && npm run build' to build the frontend, \
+             or use --no-default-features to skip console embedding."
+        );
+    } else if console_build.join("index.html").exists() {
+        // Build directory exists and has content — good
+    } else {
+        println!(
+            "cargo:warning=Console feature enabled but console/build/ appears empty \
+             (no index.html found). Run 'cd console && npm run build' to rebuild."
+        );
+    }
 }
 
 fn copy_dir_recursive(src: &Path, dst: &Path) {

@@ -89,6 +89,10 @@ dev:
     trap "kill $DAEMON_PID 2>/dev/null; wait $DAEMON_PID 2>/dev/null" EXIT
     cd console && npm run dev
 
+# Run Playwright e2e tests against the running daemon (requires daemon to be started)
+console-e2e:
+    cd {{ generator_root }}/console && npx playwright test
+
 # Build console for production (static SPA output to console/build/)
 console-build:
     cd {{ generator_root }}/console && npm run build
@@ -179,7 +183,7 @@ release-notes tag notes_file="release-notes.md":
     echo "Release notes updated for ${TAG}"
 
 # Build locally and attach binary to an existing release (fallback if CI fails)
-release-build-local tag:
+release-build-local tag: console-build
     #!/usr/bin/env bash
     set -euo pipefail
     TAG="{{ tag }}"

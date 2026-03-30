@@ -23,7 +23,9 @@
     "tailwindcss": "^4.0.0",
     "typescript": "^5.0.0",
     "vite": "^6.0.0",
-    "vitest": "^3.0.0"
+    "vitest": "^3.0.0",
+    "@playwright/test": "^1.58.0",
+    "playwright": "^1.58.2"
   },
   "dependencies": {
     "@codemirror/lang-json": "^6.0.2",
@@ -33,7 +35,6 @@
     "@codemirror/view": "^6.40.0",
     "codemirror": "^6.0.2",
     "marked": "^17.0.5",
-    "mermaid": "^11.13.0",
-    "playwright": "^1.58.2"
+    "mermaid": "^11.13.0"
   }
 }
