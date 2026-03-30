@@ -31,6 +31,21 @@ pub fn run_git(dir: &Path, args: &[&str]) -> Result<()> {
     Ok(())
 }
 
+/// Runs a git command and returns stdout as a String.
+pub fn run_git_output(dir: &Path, args: &[&str]) -> Result<String> {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(dir)
+        .output()
+        .with_context(|| format!("Failed to run git {}", args.join(" ")))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("git {} failed: {}", args.join(" "), stderr.trim());
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

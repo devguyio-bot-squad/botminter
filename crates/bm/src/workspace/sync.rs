@@ -22,6 +22,7 @@ pub enum SyncEvent {
     BranchCreated(String),
     WorkspaceBranchReconciled { from: String, to: String },
     WorkspaceDirtyCommitted(String),
+    PushFailed(String),
 }
 
 /// Result of a workspace sync operation.
@@ -208,12 +209,31 @@ pub fn sync_workspace(
             result.events.push(SyncEvent::ChangesCommitted);
         }
         if push {
-            git_cmd(ws_root, &["push"]).with_context(|| {
-                "Failed to push workspace changes. \
-                 Ensure the workspace repo has a remote configured."
-            })?;
-            if verbose {
-                result.events.push(SyncEvent::PushedToRemote);
+            let branch = git_cmd_output(ws_root, &["rev-parse", "--abbrev-ref", "HEAD"])
+                .unwrap_or_default();
+            let branch = branch.trim();
+
+            let has_upstream = git_cmd_output(
+                ws_root,
+                &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+            )
+            .is_ok();
+
+            let push_result = if has_upstream {
+                git_cmd(ws_root, &["push"])
+            } else {
+                git_cmd(ws_root, &["push", "-u", "origin", branch])
+            };
+
+            match push_result {
+                Ok(()) => {
+                    if verbose {
+                        result.events.push(SyncEvent::PushedToRemote);
+                    }
+                }
+                Err(e) => {
+                    result.events.push(SyncEvent::PushFailed(format!("{:#}", e)));
+                }
             }
         }
     } else if verbose {

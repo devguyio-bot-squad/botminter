@@ -100,6 +100,7 @@ fn display_sync_event(event: &TeamSyncEvent) {
         TeamSyncEvent::WorkspaceCreateFailed { name, error } => eprintln!("Error: {}: {}", name, error),
         TeamSyncEvent::RobotInjected { member, enabled } => println!("  RObot.enabled = {} for {}", enabled, member),
         TeamSyncEvent::BrainPromptSurfaced { member } => println!("  Brain prompt surfaced for {}", member),
+        TeamSyncEvent::GitPushFailed(reason) => eprintln!("Warning: team repo push failed: {}", reason),
     }
 }
 
@@ -117,6 +118,9 @@ fn display_workspace_event(e: &workspace::SyncEvent) {
         workspace::SyncEvent::BranchCreated(b) => println!("    Branch: {} (created)", b),
         workspace::SyncEvent::WorkspaceBranchReconciled { from, to } => {
             println!("  Reconciled branch: {} → {}", from, to);
+        }
+        workspace::SyncEvent::PushFailed(reason) => {
+            eprintln!("  Warning: push failed: {}", reason);
         }
         workspace::SyncEvent::WorkspaceDirtyCommitted(branch) => {
             println!("  Committed dirty files on {} before switching", branch);

@@ -51,6 +51,7 @@ pub enum TeamSyncEvent {
     WorkspaceCreateFailed { name: String, error: String },
     RobotInjected { member: String, enabled: bool },
     BrainPromptSurfaced { member: String },
+    GitPushFailed(String),
 }
 
 // ── Sync orchestration ──────────────────────────────────────────────
@@ -64,8 +65,29 @@ pub fn sync_team_workspaces(params: &TeamSyncParams) -> Result<TeamSyncResult> {
 
     // Optional git push (--repos flag)
     if params.repos {
-        crate::git::run_git(params.team_repo, &["push"])?;
-        events.push(TeamSyncEvent::GitPush);
+        let branch = crate::git::run_git_output(
+            params.team_repo,
+            &["rev-parse", "--abbrev-ref", "HEAD"],
+        )
+        .unwrap_or_default();
+        let branch = branch.trim().to_string();
+
+        let has_upstream = crate::git::run_git_output(
+            params.team_repo,
+            &["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"],
+        )
+        .is_ok();
+
+        let push_result = if has_upstream {
+            crate::git::run_git(params.team_repo, &["push"])
+        } else {
+            crate::git::run_git(params.team_repo, &["push", "-u", "origin", &branch])
+        };
+
+        match push_result {
+            Ok(()) => events.push(TeamSyncEvent::GitPush),
+            Err(e) => events.push(TeamSyncEvent::GitPushFailed(format!("{:#}", e))),
+        }
     }
 
     // Bridge provisioning (--bridge flag)
