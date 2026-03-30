@@ -115,5 +115,11 @@ fn display_workspace_event(e: &workspace::SyncEvent) {
         workspace::SyncEvent::BranchAlreadyOnIt(b) => println!("    Branch: {} (already on it)", b),
         workspace::SyncEvent::BranchCheckedOut(b) => println!("    Branch: {} (checked out)", b),
         workspace::SyncEvent::BranchCreated(b) => println!("    Branch: {} (created)", b),
+        workspace::SyncEvent::WorkspaceBranchReconciled { from, to } => {
+            println!("  Reconciled branch: {} → {}", from, to);
+        }
+        workspace::SyncEvent::WorkspaceDirtyCommitted(branch) => {
+            println!("  Committed dirty files on {} before switching", branch);
+        }
     }
 }

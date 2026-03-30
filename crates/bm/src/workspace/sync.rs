@@ -20,6 +20,8 @@ pub enum SyncEvent {
     BranchAlreadyOnIt(String),
     BranchCheckedOut(String),
     BranchCreated(String),
+    WorkspaceBranchReconciled { from: String, to: String },
+    WorkspaceDirtyCommitted(String),
 }
 
 /// Result of a workspace sync operation.
@@ -88,6 +90,10 @@ pub fn sync_workspace(
     push: bool,
 ) -> Result<SyncResult> {
     let mut result = SyncResult::default();
+
+    // Reconcile workspace branch FIRST — ensure all sync operations run on the member branch
+    reconcile_workspace_branch(ws_root, member_dir_name, verbose, &mut result)?;
+
     let team_dir = ws_root.join("team");
 
     // Update submodules to latest remote content
@@ -215,6 +221,53 @@ pub fn sync_workspace(
     }
 
     Ok(result)
+}
+
+/// Reconciles the workspace repo onto the member branch before sync operations.
+///
+/// If the workspace is on a feature branch (e.g., from autonomous agent work),
+/// this function commits any dirty files to that branch (preserving the work),
+/// then switches to the member branch so all sync operations land on the correct branch.
+/// The feature branch is preserved for operator access.
+fn reconcile_workspace_branch(
+    ws_root: &Path,
+    member_dir_name: &str,
+    verbose: bool,
+    result: &mut SyncResult,
+) -> Result<()> {
+    let current = git_cmd_output(ws_root, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .unwrap_or_default();
+    let current = current.trim();
+
+    if current == member_dir_name {
+        return Ok(());
+    }
+
+    // On a different branch — commit dirty files to preserve work before switching
+    git_cmd(ws_root, &["add", "-A"])?;
+    let has_staged = git_cmd(ws_root, &["diff", "--cached", "--quiet"]).is_err();
+    if has_staged {
+        git_cmd(ws_root, &[
+            "commit", "-m", "WIP: preserve workspace state before sync",
+        ])?;
+        if verbose {
+            result
+                .events
+                .push(SyncEvent::WorkspaceDirtyCommitted(current.to_string()));
+        }
+    }
+
+    // Switch to member branch (create if needed)
+    if git_cmd(ws_root, &["checkout", member_dir_name]).is_err() {
+        git_cmd(ws_root, &["checkout", "-b", member_dir_name])?;
+    }
+
+    result.events.push(SyncEvent::WorkspaceBranchReconciled {
+        from: current.to_string(),
+        to: member_dir_name.to_string(),
+    });
+
+    Ok(())
 }
 
 /// Checks out the member branch in a submodule, creating it if needed.
