@@ -29,6 +29,8 @@ bridges:
     type: local
 
 roles:
+  - name: chief-of-staff
+    description: "Process improvement and team coordination"
   - name: superman
     description: "All-in-one member — PO, architect, dev, QE, SRE, content writer"
   - name: team-manager

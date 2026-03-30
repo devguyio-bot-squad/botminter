@@ -31,6 +31,8 @@ bridges:
 roles:
   - name: architect
     description: "Design and technical planning"
+  - name: chief-of-staff
+    description: "Process improvement and team coordination"
   - name: human-assistant
     description: "Human's proxy — board scanning and HIL"
   - name: team-manager

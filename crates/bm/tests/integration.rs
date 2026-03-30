@@ -3747,22 +3747,24 @@ fn daemon_console_api_e2e_with_fixtures() {
         assert_eq!(body["profile"], "scrum-compact");
         assert_eq!(body["name"], team_name);
 
-        // Members — fixture has 3
+        // Members — fixture has 4
         let members = body["members"].as_array().expect("members array");
-        assert_eq!(members.len(), 3, "fixture has 3 members");
+        assert_eq!(members.len(), 4, "fixture has 4 members");
         let member_names: Vec<&str> = members.iter()
             .map(|m| m["name"].as_str().unwrap())
             .collect();
+        assert!(member_names.contains(&"chief-of-staff-mgr"));
         assert!(member_names.contains(&"superman-alice"));
         assert!(member_names.contains(&"superman-bob"));
         assert!(member_names.contains(&"team-manager-mgr"));
 
-        // Roles — fixture has 2 (superman, team-manager)
+        // Roles — fixture has 3 (chief-of-staff, superman, team-manager)
         let roles = body["roles"].as_array().expect("roles array");
-        assert_eq!(roles.len(), 2, "fixture has 2 roles");
+        assert_eq!(roles.len(), 3, "fixture has 3 roles");
         let role_names: Vec<&str> = roles.iter()
             .map(|r| r["name"].as_str().unwrap())
             .collect();
+        assert!(role_names.contains(&"chief-of-staff"));
         assert!(role_names.contains(&"superman"));
         assert!(role_names.contains(&"team-manager"));
 
@@ -3784,7 +3786,7 @@ fn daemon_console_api_e2e_with_fixtures() {
         assert_eq!(resp.status().as_u16(), 200, "members should return 200");
         let body: serde_json::Value = resp.json().unwrap();
         let members = body.as_array().expect("members array");
-        assert_eq!(members.len(), 3, "fixture has 3 members");
+        assert_eq!(members.len(), 4, "fixture has 4 members");
 
         // Find alice and verify her fields
         let alice = members.iter()
