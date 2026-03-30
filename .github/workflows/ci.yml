@@ -47,8 +47,7 @@ jobs:
 
       - name: Start daemon and run Playwright e2e
         run: |
-          # Start the daemon in the background on a free port
-          # Use port 0 to let the OS assign an available port
+          # Start the daemon in the background on a fixed port for Playwright
           cargo run -p bm -- daemon-run --team ci-test --port 18484 --bind 127.0.0.1 --mode poll --interval 3600 &
           DAEMON_PID=$!
 
