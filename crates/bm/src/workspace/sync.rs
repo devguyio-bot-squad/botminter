@@ -627,4 +627,287 @@ mod tests {
         assert!(ws.join("CLAUDE.md").exists());
         assert!(ws.join("ralph.yml").exists());
     }
+
+    // ── Branch reconciliation tests ────────────────────────────────
+
+    /// Helper: put workspace on a feature branch with an initial commit.
+    fn switch_to_feature_branch(ws: &Path, branch_name: &str) {
+        git_cmd(ws, &["checkout", "-b", branch_name]).unwrap();
+        // Create a commit so the feature branch is a proper branch
+        fs::write(ws.join("feature-work.txt"), "feature work").unwrap();
+        git_cmd(ws, &["add", "feature-work.txt"]).unwrap();
+        git_cmd(ws, &["commit", "-m", "feature work on branch"]).unwrap();
+    }
+
+    #[test]
+    fn sync_reconciles_feature_branch_to_member_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Put workspace on a feature branch
+        switch_to_feature_branch(&ws, "fix/some-bug");
+
+        let branch = git_cmd_output(&ws, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(branch.trim(), "fix/some-bug");
+
+        // Sync should reconcile back to the member branch
+        let result = sync_workspace(&ws, &member, &agent, true, false).unwrap();
+
+        let branch = git_cmd_output(&ws, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch.trim(),
+            member,
+            "After sync, workspace should be on the member branch"
+        );
+
+        // Should have emitted WorkspaceBranchReconciled event
+        let reconciled = result.events.iter().any(|e| matches!(
+            e,
+            SyncEvent::WorkspaceBranchReconciled { from, to }
+            if from == "fix/some-bug" && to == &member
+        ));
+        assert!(reconciled, "Should emit WorkspaceBranchReconciled event");
+    }
+
+    #[test]
+    fn sync_commits_dirty_files_to_feature_branch_before_switch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Put workspace on a feature branch
+        git_cmd(&ws, &["checkout", "-b", "feat/wip"]).unwrap();
+
+        // Create dirty (uncommitted) files on the feature branch
+        fs::write(ws.join("uncommitted.txt"), "dirty work").unwrap();
+
+        // Sync should commit dirty files to the feature branch before switching
+        let result = sync_workspace(&ws, &member, &agent, true, false).unwrap();
+
+        // Should now be on member branch
+        let branch = git_cmd_output(&ws, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(branch.trim(), member);
+
+        // The dirty commit should be on the feature branch with WIP message
+        let log = git_cmd_output(
+            &ws,
+            &["log", "feat/wip", "--oneline", "-1"],
+        )
+        .unwrap();
+        assert!(
+            log.contains("WIP: preserve workspace state before sync"),
+            "Dirty files should be committed with WIP message, got: {}",
+            log
+        );
+
+        // Verify the file is on the feature branch
+        let show = git_cmd_output(
+            &ws,
+            &["show", "feat/wip:uncommitted.txt"],
+        )
+        .unwrap();
+        assert_eq!(show, "dirty work");
+
+        // Should have emitted WorkspaceDirtyCommitted event
+        let dirty_committed = result.events.iter().any(|e| matches!(
+            e,
+            SyncEvent::WorkspaceDirtyCommitted(branch) if branch == "feat/wip"
+        ));
+        assert!(dirty_committed, "Should emit WorkspaceDirtyCommitted event");
+    }
+
+    #[test]
+    fn sync_clean_feature_branch_switches_without_empty_commit() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Put workspace on a clean feature branch (committed work, no dirty files)
+        switch_to_feature_branch(&ws, "feat/clean");
+
+        let feature_commit_count = git_cmd_output(
+            &ws,
+            &["rev-list", "--count", "feat/clean"],
+        )
+        .unwrap();
+
+        // Sync should switch without creating an extra commit on the feature branch
+        let result = sync_workspace(&ws, &member, &agent, true, false).unwrap();
+
+        let branch = git_cmd_output(&ws, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(branch.trim(), member);
+
+        // Feature branch commit count should be unchanged (no empty WIP commit)
+        let after_count = git_cmd_output(
+            &ws,
+            &["rev-list", "--count", "feat/clean"],
+        )
+        .unwrap();
+        assert_eq!(
+            feature_commit_count.trim(),
+            after_count.trim(),
+            "No extra commit should be created on a clean feature branch"
+        );
+
+        // Should NOT have emitted WorkspaceDirtyCommitted event
+        let dirty_committed = result.events.iter().any(|e| matches!(
+            e,
+            SyncEvent::WorkspaceDirtyCommitted(_)
+        ));
+        assert!(
+            !dirty_committed,
+            "Should NOT emit WorkspaceDirtyCommitted for clean branch"
+        );
+    }
+
+    #[test]
+    fn sync_feature_branch_preserved_after_reconciliation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Create feature branch with committed work
+        switch_to_feature_branch(&ws, "feat/preserved");
+        let feature_sha = git_cmd_output(&ws, &["rev-parse", "HEAD"]).unwrap();
+
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+
+        // Feature branch should still exist and point to the same commit
+        let preserved_sha = git_cmd_output(
+            &ws,
+            &["rev-parse", "feat/preserved"],
+        )
+        .unwrap();
+        assert_eq!(
+            feature_sha.trim(),
+            preserved_sha.trim(),
+            "Feature branch should be preserved after reconciliation"
+        );
+
+        // Feature branch content should be accessible
+        let show = git_cmd_output(
+            &ws,
+            &["show", "feat/preserved:feature-work.txt"],
+        )
+        .unwrap();
+        assert_eq!(show, "feature work");
+    }
+
+    #[test]
+    fn sync_push_with_no_upstream_sets_upstream() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Create a bare remote so push can succeed
+        let bare_remote = tmp.path().join("remote.git");
+        git_cmd(tmp.path(), &["init", "--bare", bare_remote.to_str().unwrap()]).unwrap();
+        git_cmd(&ws, &["remote", "add", "origin", bare_remote.to_str().unwrap()]).unwrap();
+
+        // Modify something so there's a change to commit+push
+        let source = ws.join("team/members").join(&member).join("ralph.yml");
+        fs::write(&source, "v: 2").unwrap();
+        let now = filetime::FileTime::from_unix_time(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64 + 2,
+            0,
+        );
+        filetime::set_file_mtime(&source, now).unwrap();
+
+        // push=true, no upstream yet
+        let result = sync_workspace(&ws, &member, &agent, true, true).unwrap();
+
+        // Should have pushed successfully (PushedToRemote event in verbose mode)
+        let pushed = result.events.iter().any(|e| matches!(e, SyncEvent::PushedToRemote));
+        assert!(pushed, "Should emit PushedToRemote after pushing with -u");
+
+        // No PushFailed event
+        let failed = result.events.iter().any(|e| matches!(e, SyncEvent::PushFailed(_)));
+        assert!(!failed, "Should NOT emit PushFailed on successful push");
+    }
+
+    #[test]
+    fn sync_push_failure_is_non_fatal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Add a remote that doesn't exist (push will fail)
+        git_cmd(
+            &ws,
+            &["remote", "add", "origin", "/nonexistent/remote.git"],
+        )
+        .unwrap();
+
+        // Modify ralph.yml in the team submodule and commit it
+        // (simulating an upstream change arriving via submodule update)
+        let team_sub = ws.join("team");
+        let source = team_sub.join("members").join(&member).join("ralph.yml");
+        fs::write(&source, "v: 2").unwrap();
+        git_cmd(&team_sub, &["add", "-A"]).unwrap();
+        git_cmd(&team_sub, &["commit", "-m", "upstream change"]).unwrap();
+
+        // Ensure source is newer than workspace copy
+        let now = filetime::FileTime::from_unix_time(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_secs() as i64 + 2,
+            0,
+        );
+        filetime::set_file_mtime(&source, now).unwrap();
+
+        // push=true — push will fail but sync should complete
+        let result = sync_workspace(&ws, &member, &agent, false, true).unwrap();
+
+        // Should have PushFailed event
+        let push_failed = result.events.iter().any(|e| matches!(e, SyncEvent::PushFailed(_)));
+        assert!(push_failed, "Should emit PushFailed when push fails");
+
+        // Workspace should still be valid (sync completed despite push failure)
+        assert!(ws.join("PROMPT.md").exists());
+        assert!(ws.join("ralph.yml").exists());
+        assert_eq!(
+            fs::read_to_string(ws.join("ralph.yml")).unwrap(),
+            "v: 2",
+            "File should be updated even though push failed"
+        );
+    }
+
+    #[test]
+    fn sync_idempotent_after_branch_reconciliation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Put workspace on a feature branch with dirty files
+        git_cmd(&ws, &["checkout", "-b", "feat/idempotent"]).unwrap();
+        fs::write(ws.join("scratch.txt"), "wip").unwrap();
+
+        // First sync: reconciles from feature branch
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+
+        let branch = git_cmd_output(&ws, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(branch.trim(), member);
+
+        let commits_after_first = git_cmd_output(
+            &ws,
+            &["rev-list", "--count", "HEAD"],
+        )
+        .unwrap();
+
+        // Second sync: should be a no-op (already on member branch, no changes)
+        sync_workspace(&ws, &member, &agent, false, false).unwrap();
+
+        let branch = git_cmd_output(&ws, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(branch.trim(), member);
+
+        let commits_after_second = git_cmd_output(
+            &ws,
+            &["rev-list", "--count", "HEAD"],
+        )
+        .unwrap();
+
+        assert_eq!(
+            commits_after_first.trim(),
+            commits_after_second.trim(),
+            "Second sync should not create additional commits"
+        );
+    }
 }
