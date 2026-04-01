@@ -5,6 +5,7 @@ use anyhow::Result;
 
 use super::env_var_suffix;
 use super::manifest::{load_state, save_state, BridgeIdentity};
+use crate::keyring_backend;
 
 // ── CredentialStore trait + implementations ──────────────────────────
 
@@ -94,225 +95,28 @@ impl LocalCredentialStore {
         self.collection = collection;
         self
     }
-
-    /// Run a closure with `BM_KEYRING_DBUS` as `DBUS_SESSION_BUS_ADDRESS` if set.
-    ///
-    /// This allows keyring operations to use an isolated D-Bus session while
-    /// the process-wide `DBUS_SESSION_BUS_ADDRESS` points to the real system bus
-    /// (needed by podman). Since `bm` is single-threaded, this is safe.
-    fn with_keyring_dbus<T, F: FnOnce() -> T>(&self, f: F) -> T {
-        if let Ok(dbus) = std::env::var("BM_KEYRING_DBUS") {
-            let original = std::env::var("DBUS_SESSION_BUS_ADDRESS").ok();
-            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &dbus);
-            let result = f();
-            match original {
-                Some(v) => std::env::set_var("DBUS_SESSION_BUS_ADDRESS", v),
-                None => std::env::remove_var("DBUS_SESSION_BUS_ADDRESS"),
-            }
-            result
-        } else {
-            f()
-        }
-    }
-}
-
-/// Connects to Secret Service and finds a collection by label.
-/// Returns the collection, or creates it if it doesn't exist.
-#[cfg(target_os = "linux")]
-fn get_or_create_collection<'a>(
-    ss: &'a dbus_secret_service::SecretService,
-    name: &str,
-) -> Result<dbus_secret_service::Collection<'a>> {
-    // Search existing collections by label
-    if let Ok(collections) = ss.get_all_collections() {
-        for c in collections {
-            if let Ok(label) = c.get_label() {
-                if label == name {
-                    return Ok(c);
-                }
-            }
-        }
-    }
-
-    // Create the collection (empty alias = no alias)
-    ss.create_collection(name, "")
-        .map_err(|e| anyhow::anyhow!("Failed to create keyring collection '{}': {}", name, e))
-}
-
-#[cfg(target_os = "linux")]
-fn connect_secret_service() -> Result<dbus_secret_service::SecretService> {
-    dbus_secret_service::SecretService::connect(dbus_secret_service::EncryptionType::Plain).map_err(
-        |e| {
-            anyhow::anyhow!(
-                "Cannot connect to Secret Service (D-Bus). \
-             Install a Secret Service provider (e.g., gnome-keyring) \
-             or set BM_BRIDGE_TOKEN_* environment variables instead. ({})",
-                e
-            )
-        },
-    )
-}
-
-/// Checks if the keyring collection is unlocked.
-/// When `collection_name` is Some, checks that specific collection.
-/// Otherwise checks the default collection.
-#[cfg(target_os = "linux")]
-pub fn check_keyring_unlocked_for(collection_name: Option<&str>) -> Result<()> {
-    let ss = connect_secret_service()?;
-
-    let collection = if let Some(name) = collection_name {
-        get_or_create_collection(&ss, name)?
-    } else {
-        ss.get_default_collection().map_err(|e| {
-            anyhow::anyhow!(
-                "No default keyring collection found. \
-                 Run `seahorse` or `gnome-keyring-daemon` to create one. ({})",
-                e
-            )
-        })?
-    };
-
-    let locked = collection
-        .is_locked()
-        .map_err(|e| anyhow::anyhow!("Cannot check keyring lock state: {}", e))?;
-
-    if locked {
-        anyhow::bail!(
-            "System keyring is locked. Unlock it before storing credentials.\n\
-             On GNOME: the keyring unlocks automatically on login.\n\
-             On headless systems: run `gnome-keyring-daemon --unlock` or \
-             set BM_BRIDGE_TOKEN_* environment variables instead."
-        );
-    }
-
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-pub fn check_keyring_unlocked_for(collection_name: Option<&str>) -> Result<()> {
-    if collection_name.is_some() {
-        anyhow::bail!("Custom keyring collections are only supported on Linux")
-    }
-    Ok(())
 }
 
 /// Checks if the default keyring is unlocked (backward compat).
 pub fn check_keyring_unlocked() -> Result<()> {
-    check_keyring_unlocked_for(None)
+    keyring_backend::check_keyring_unlocked()
 }
 
-/// Store a secret in a named collection using dbus-secret-service directly.
-#[cfg(target_os = "linux")]
-fn dss_store(service: &str, member_name: &str, token: &str, collection_name: &str) -> Result<()> {
-    let ss = connect_secret_service()?;
-    let collection = get_or_create_collection(&ss, collection_name)?;
-    collection
-        .ensure_unlocked()
-        .map_err(|e| anyhow::anyhow!("Failed to unlock collection '{}': {}", collection_name, e))?;
-
-    let mut attrs = std::collections::HashMap::new();
-    attrs.insert("service", service);
-    attrs.insert("username", member_name);
-
-    collection
-        .create_item(
-            &format!("{} — {}", service, member_name),
-            attrs,
-            token.as_bytes(),
-            true, // replace existing
-            "text/plain",
-        )
-        .map_err(|e| anyhow::anyhow!("Failed to store credential: {}", e))?;
-
-    Ok(())
-}
-
-/// Retrieve a secret from a named collection using dbus-secret-service directly.
-#[cfg(target_os = "linux")]
-fn dss_retrieve(service: &str, member_name: &str, collection_name: &str) -> Result<Option<String>> {
-    let ss = connect_secret_service()?;
-    let collection = match get_or_create_collection(&ss, collection_name) {
-        Ok(c) => c,
-        Err(_) => return Ok(None),
-    };
-    if collection.is_locked().unwrap_or(true) {
-        return Ok(None);
-    }
-
-    let mut attrs = std::collections::HashMap::new();
-    attrs.insert("service", service);
-    attrs.insert("username", member_name);
-
-    let items = collection
-        .search_items(attrs)
-        .map_err(|e| anyhow::anyhow!("Failed to search keyring: {}", e))?;
-
-    if let Some(item) = items.first() {
-        let secret = item
-            .get_secret()
-            .map_err(|e| anyhow::anyhow!("Failed to read secret: {}", e))?;
-        Ok(Some(String::from_utf8_lossy(&secret).to_string()))
-    } else {
-        Ok(None)
-    }
-}
-
-/// Delete a secret from a named collection using dbus-secret-service directly.
-#[cfg(target_os = "linux")]
-fn dss_delete(service: &str, member_name: &str, collection_name: &str) -> Result<()> {
-    let ss = connect_secret_service()?;
-    let collection = match get_or_create_collection(&ss, collection_name) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
-
-    let mut attrs = std::collections::HashMap::new();
-    attrs.insert("service", service);
-    attrs.insert("username", member_name);
-
-    if let Ok(items) = collection.search_items(attrs) {
-        for item in items {
-            let _ = item.delete();
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn dss_store(
-    _service: &str,
-    _member_name: &str,
-    _token: &str,
-    collection_name: &str,
-) -> Result<()> {
-    anyhow::bail!(
-        "Custom keyring collections are only supported on Linux (requested '{}')",
-        collection_name
-    )
-}
-
-#[cfg(not(target_os = "linux"))]
-fn dss_retrieve(
-    _service: &str,
-    _member_name: &str,
-    _collection_name: &str,
-) -> Result<Option<String>> {
-    Ok(None)
-}
-
-#[cfg(not(target_os = "linux"))]
-fn dss_delete(_service: &str, _member_name: &str, _collection_name: &str) -> Result<()> {
-    Ok(())
+/// Checks if a keyring collection is unlocked.
+/// When `collection_name` is Some, checks that specific collection.
+/// Otherwise checks the default collection.
+pub fn check_keyring_unlocked_for(collection_name: Option<&str>) -> Result<()> {
+    keyring_backend::check_keyring_unlocked_for(collection_name)
 }
 
 impl CredentialStore for LocalCredentialStore {
     fn store(&self, member_name: &str, token: &str) -> Result<()> {
-        self.with_keyring_dbus(|| {
+        keyring_backend::with_keyring_dbus(|| {
             if let Some(ref coll) = self.collection {
                 // Custom collection via dbus-secret-service
-                dss_store(&self.service, member_name, token, coll)?;
+                keyring_backend::dss_store(&self.service, member_name, token, coll)?;
             } else {
-                // Default: keyring::Entry → login collection
+                // Default: keyring::Entry -> login collection
                 check_keyring_unlocked()?;
 
                 match keyring::Entry::new(&self.service, member_name) {
@@ -358,15 +162,15 @@ impl CredentialStore for LocalCredentialStore {
     }
 
     fn retrieve(&self, member_name: &str) -> Result<Option<String>> {
-        self.with_keyring_dbus(|| {
+        keyring_backend::with_keyring_dbus(|| {
             if let Some(ref coll) = self.collection {
-                return dss_retrieve(&self.service, member_name, coll);
+                return keyring_backend::dss_retrieve(&self.service, member_name, coll);
             }
 
             let entry = match keyring::Entry::new(&self.service, member_name) {
                 Ok(e) => e,
                 Err(_) => {
-                    // Keyring not available — fall back to env var resolution
+                    // Keyring not available -- fall back to env var resolution
                     return Ok(None);
                 }
             };
@@ -374,7 +178,7 @@ impl CredentialStore for LocalCredentialStore {
                 Ok(password) => Ok(Some(password)),
                 Err(keyring::Error::NoEntry) => Ok(None),
                 Err(_) => {
-                    // Keyring error — fall back to env var resolution.
+                    // Keyring error -- fall back to env var resolution.
                     // Caller can check BM_BRIDGE_TOKEN_{name} env var.
                     Ok(None)
                 }
@@ -383,9 +187,9 @@ impl CredentialStore for LocalCredentialStore {
     }
 
     fn remove(&self, member_name: &str) -> Result<()> {
-        self.with_keyring_dbus(|| {
+        keyring_backend::with_keyring_dbus(|| {
             if let Some(ref coll) = self.collection {
-                dss_delete(&self.service, member_name, coll)?;
+                keyring_backend::dss_delete(&self.service, member_name, coll)?;
             } else if let Ok(entry) = keyring::Entry::new(&self.service, member_name) {
                 match entry.delete_credential() {
                     Ok(()) => {}

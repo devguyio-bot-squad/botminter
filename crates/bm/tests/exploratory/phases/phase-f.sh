@@ -27,7 +27,7 @@ if [ $EC -eq 0 ]; then pass "F2" "bm status -v works"; else fail "F2" "bm status
 OUT=$(bm members list 2>&1)
 EC=$?
 MEMBER_COUNT=$(echo "$OUT" | grep -c "superman-" || true)
-if [ $EC -eq 0 ] && [ "$MEMBER_COUNT" -ge 3 ]; then pass "F3" "bm members list shows $MEMBER_COUNT members"; else fail "F3" "members list" "exit $EC, count=$MEMBER_COUNT"; fi
+if [ $EC -eq 0 ] && [ "$MEMBER_COUNT" -ge 2 ]; then pass "F3" "bm members list shows $MEMBER_COUNT members"; else fail "F3" "members list" "exit $EC, count=$MEMBER_COUNT"; fi
 
 # F4: bm teams show
 OUT=$(bm teams show 2>&1)

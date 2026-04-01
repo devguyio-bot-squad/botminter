@@ -12,6 +12,10 @@ use crate::formation::{
 use super::{common, credential::LocalKeyValueCredentialStore};
 
 /// macOS local formation — runs members as local processes on the operator's machine.
+///
+/// Currently delegates entirely to `common::*`. Kept separate from
+/// `LinuxLocalFormation` because the credential backend will diverge:
+/// macOS will use native Keychain instead of dbus-secret-service.
 pub struct MacosLocalFormation {
     team_name: String,
 }

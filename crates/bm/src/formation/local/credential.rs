@@ -3,10 +3,12 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::formation::KeyValueCredentialStore;
+use crate::keyring_backend;
 
-#[cfg(target_os = "linux")]
-use std::collections::HashMap;
+// ── Key tracking ─────────────────────────────────────────────────────
 
+/// Loads the set of known keys from a JSON tracking file.
+/// Returns an empty set if the file doesn't exist.
 fn load_tracked_keys(path: &Path) -> Result<Vec<String>> {
     if !path.exists() {
         return Ok(Vec::new());
@@ -16,6 +18,7 @@ fn load_tracked_keys(path: &Path) -> Result<Vec<String>> {
     Ok(keys)
 }
 
+/// Saves the set of known keys to a JSON tracking file.
 fn save_tracked_keys(path: &Path, keys: &[String]) -> Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
@@ -25,171 +28,16 @@ fn save_tracked_keys(path: &Path, keys: &[String]) -> Result<()> {
     Ok(())
 }
 
-#[cfg(target_os = "linux")]
-fn connect_secret_service() -> Result<dbus_secret_service::SecretService> {
-    dbus_secret_service::SecretService::connect(dbus_secret_service::EncryptionType::Plain).map_err(
-        |e| {
-            anyhow::anyhow!(
-                "Cannot connect to Secret Service (D-Bus). \
-                 Install a Secret Service provider (e.g., gnome-keyring) \
-                 or use environment variable overrides instead. ({})",
-                e
-            )
-        },
-    )
-}
+// ── LocalKeyValueCredentialStore ─────────────────────────────────────
 
-#[cfg(target_os = "linux")]
-fn get_or_create_collection<'a>(
-    ss: &'a dbus_secret_service::SecretService,
-    name: &str,
-) -> Result<dbus_secret_service::Collection<'a>> {
-    if let Ok(collections) = ss.get_all_collections() {
-        for c in collections {
-            if let Ok(label) = c.get_label() {
-                if label == name {
-                    return Ok(c);
-                }
-            }
-        }
-    }
-
-    ss.create_collection(name, "")
-        .map_err(|e| anyhow::anyhow!("Failed to create keyring collection '{}': {}", name, e))
-}
-
-#[cfg(target_os = "linux")]
-fn dss_store(service: &str, key: &str, value: &str, collection_name: &str) -> Result<()> {
-    let ss = connect_secret_service()?;
-    let collection = get_or_create_collection(&ss, collection_name)?;
-    collection
-        .ensure_unlocked()
-        .map_err(|e| anyhow::anyhow!("Failed to unlock collection '{}': {}", collection_name, e))?;
-
-    let mut attrs = HashMap::new();
-    attrs.insert("service", service);
-    attrs.insert("username", key);
-
-    collection
-        .create_item(
-            &format!("{} — {}", service, key),
-            attrs,
-            value.as_bytes(),
-            true,
-            "text/plain",
-        )
-        .map_err(|e| anyhow::anyhow!("Failed to store credential: {}", e))?;
-
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn dss_store(_service: &str, _key: &str, _value: &str, collection_name: &str) -> Result<()> {
-    anyhow::bail!(
-        "Custom keyring collections are only supported on Linux (requested '{}')",
-        collection_name
-    )
-}
-
-#[cfg(target_os = "linux")]
-fn dss_retrieve(service: &str, key: &str, collection_name: &str) -> Result<Option<String>> {
-    let ss = connect_secret_service()?;
-    let collection = match get_or_create_collection(&ss, collection_name) {
-        Ok(c) => c,
-        Err(_) => return Ok(None),
-    };
-    if collection.is_locked().unwrap_or(true) {
-        return Ok(None);
-    }
-
-    let mut attrs = HashMap::new();
-    attrs.insert("service", service);
-    attrs.insert("username", key);
-
-    let items = collection
-        .search_items(attrs)
-        .map_err(|e| anyhow::anyhow!("Failed to search keyring: {}", e))?;
-
-    if let Some(item) = items.first() {
-        let secret = item
-            .get_secret()
-            .map_err(|e| anyhow::anyhow!("Failed to read secret: {}", e))?;
-        Ok(Some(String::from_utf8_lossy(&secret).to_string()))
-    } else {
-        Ok(None)
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-fn dss_retrieve(_service: &str, _key: &str, _collection_name: &str) -> Result<Option<String>> {
-    Ok(None)
-}
-
-#[cfg(target_os = "linux")]
-fn dss_delete(service: &str, key: &str, collection_name: &str) -> Result<()> {
-    let ss = connect_secret_service()?;
-    let collection = match get_or_create_collection(&ss, collection_name) {
-        Ok(c) => c,
-        Err(_) => return Ok(()),
-    };
-
-    let mut attrs = HashMap::new();
-    attrs.insert("service", service);
-    attrs.insert("username", key);
-
-    if let Ok(items) = collection.search_items(attrs) {
-        for item in items {
-            let _ = item.delete();
-        }
-    }
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn dss_delete(_service: &str, _key: &str, _collection_name: &str) -> Result<()> {
-    Ok(())
-}
-
-#[cfg(target_os = "linux")]
-fn check_keyring_unlocked_for(collection_name: Option<&str>) -> Result<()> {
-    let ss = connect_secret_service()?;
-
-    let collection = if let Some(name) = collection_name {
-        get_or_create_collection(&ss, name)?
-    } else {
-        ss.get_default_collection().map_err(|e| {
-            anyhow::anyhow!(
-                "No default keyring collection found. \
-                 Run `seahorse` or `gnome-keyring-daemon` to create one. ({})",
-                e
-            )
-        })?
-    };
-
-    let locked = collection
-        .is_locked()
-        .map_err(|e| anyhow::anyhow!("Cannot check keyring lock state: {}", e))?;
-
-    if locked {
-        anyhow::bail!(
-            "System keyring is locked. Unlock it before storing credentials.\n\
-             On GNOME: the keyring unlocks automatically on login.\n\
-             On headless systems: run `gnome-keyring-daemon --unlock` or \
-             use environment variable overrides instead."
-        );
-    }
-
-    Ok(())
-}
-
-#[cfg(not(target_os = "linux"))]
-fn check_keyring_unlocked_for(collection_name: Option<&str>) -> Result<()> {
-    if collection_name.is_some() {
-        anyhow::bail!("Custom keyring collections are only supported on Linux")
-    }
-    Ok(())
-}
-
+/// Key-value credential store backed by the system keyring.
+///
+/// Uses `keyring::Entry` for secret storage (or `dbus-secret-service` when
+/// a custom collection is configured). Since keyring doesn't support
+/// enumeration, a JSON file tracks known keys for `list_keys()`.
+///
+/// This store is formation-neutral — no bridge-state.json involvement.
+/// Bridge-specific metadata is managed by the bridge module independently.
 pub struct LocalKeyValueCredentialStore {
     service: String,
     keys_path: PathBuf,
@@ -205,25 +53,12 @@ impl LocalKeyValueCredentialStore {
         }
     }
 
+    /// Set a custom Secret Service collection name.
+    /// When set, bypasses `keyring::Entry` and uses `dbus-secret-service` directly.
     #[allow(dead_code)]
     pub fn with_collection(mut self, collection: Option<String>) -> Self {
         self.collection = collection;
         self
-    }
-
-    fn with_keyring_dbus<T, F: FnOnce() -> T>(&self, f: F) -> T {
-        if let Ok(dbus) = std::env::var("BM_KEYRING_DBUS") {
-            let original = std::env::var("DBUS_SESSION_BUS_ADDRESS").ok();
-            std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &dbus);
-            let result = f();
-            match original {
-                Some(v) => std::env::set_var("DBUS_SESSION_BUS_ADDRESS", v),
-                None => std::env::remove_var("DBUS_SESSION_BUS_ADDRESS"),
-            }
-            result
-        } else {
-            f()
-        }
     }
 
     fn track_key(&self, key: &str) -> Result<()> {
@@ -246,11 +81,11 @@ impl LocalKeyValueCredentialStore {
 
 impl KeyValueCredentialStore for LocalKeyValueCredentialStore {
     fn store(&self, key: &str, value: &str) -> Result<()> {
-        self.with_keyring_dbus(|| {
+        keyring_backend::with_keyring_dbus(|| {
             if let Some(ref collection) = self.collection {
-                dss_store(&self.service, key, value, collection)?;
+                keyring_backend::dss_store(&self.service, key, value, collection)?;
             } else {
-                check_keyring_unlocked_for(None)?;
+                keyring_backend::check_keyring_unlocked_for(None)?;
                 let entry = keyring::Entry::new(&self.service, key).map_err(|e| {
                     anyhow::anyhow!("Failed to create keyring entry for key '{}'. ({})", key, e)
                 })?;
@@ -269,9 +104,9 @@ impl KeyValueCredentialStore for LocalKeyValueCredentialStore {
     }
 
     fn retrieve(&self, key: &str) -> Result<Option<String>> {
-        self.with_keyring_dbus(|| {
+        keyring_backend::with_keyring_dbus(|| {
             if let Some(ref collection) = self.collection {
-                return dss_retrieve(&self.service, key, collection);
+                return keyring_backend::dss_retrieve(&self.service, key, collection);
             }
 
             let entry = match keyring::Entry::new(&self.service, key) {
@@ -287,9 +122,9 @@ impl KeyValueCredentialStore for LocalKeyValueCredentialStore {
     }
 
     fn remove(&self, key: &str) -> Result<()> {
-        self.with_keyring_dbus(|| {
+        keyring_backend::with_keyring_dbus(|| {
             if let Some(ref collection) = self.collection {
-                dss_delete(&self.service, key, collection)?;
+                keyring_backend::dss_delete(&self.service, key, collection)?;
             } else if let Ok(entry) = keyring::Entry::new(&self.service, key) {
                 match entry.delete_credential() {
                     Ok(()) => {}

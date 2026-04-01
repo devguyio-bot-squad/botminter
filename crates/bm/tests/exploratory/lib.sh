@@ -6,6 +6,13 @@
 #   - Reporting: pass(), fail(), note(), header()
 #   - Keyring isolation: ensure_keyring(), stop_isolated_keyring()
 #   - Command wrappers: bm(), bm_agent(), secret_tool()
+#   - Platform detection: is_macos(), is_linux()
+
+# ── Platform detection ────────────────────────────────────────
+OS_KERNEL="$(uname -s)"
+
+is_macos() { [ "$OS_KERNEL" = "Darwin" ]; }
+is_linux() { [ "$OS_KERNEL" = "Linux" ]; }
 
 # ── Reporting ──────────────────────────────────────────────────
 
@@ -42,6 +49,12 @@ header() {
 DBUS_STATE_FILE="/tmp/bm-exploratory-dbus.env"
 
 start_isolated_keyring() {
+    if is_macos; then
+        # macOS: Keychain is always available, no isolation needed
+        echo "  ✓ macOS Keychain (no isolation required)"
+        return 0
+    fi
+
     # Check for existing (possibly stale) state
     if [ -f "$DBUS_STATE_FILE" ]; then
         # shellcheck source=/dev/null
@@ -110,6 +123,11 @@ EOF
 }
 
 load_isolated_keyring() {
+    if is_macos; then
+        # macOS: Keychain is always available
+        return 0
+    fi
+
     if [ ! -f "$DBUS_STATE_FILE" ]; then
         return 1
     fi
@@ -132,6 +150,8 @@ ensure_keyring() {
 }
 
 stop_isolated_keyring() {
+    if is_macos; then return 0; fi
+
     if [ -f "$DBUS_STATE_FILE" ]; then
         # shellcheck source=/dev/null
         source "$DBUS_STATE_FILE"
@@ -147,7 +167,12 @@ stop_isolated_keyring() {
 # See credential.rs:103-119 for the BM_KEYRING_DBUS mechanism.
 
 bm() {
-    BM_KEYRING_DBUS="${ISOLATED_DBUS_ADDR:-}" "$BM" "$@"
+    if is_macos; then
+        # macOS: no D-Bus isolation needed — Keychain is native
+        "$BM" "$@"
+    else
+        BM_KEYRING_DBUS="${ISOLATED_DBUS_ADDR:-}" "$BM" "$@"
+    fi
 }
 
 bm_agent() {
@@ -156,8 +181,38 @@ bm_agent() {
 
 # secret-tool doesn't know about BM_KEYRING_DBUS, so we set
 # DBUS_SESSION_BUS_ADDRESS per-command (never exported globally).
+# On macOS, secret-tool is not available — use `security` instead.
 secret_tool() {
+    if is_macos; then
+        echo "secret-tool is not available on macOS — use 'security' command" >&2
+        return 1
+    fi
     DBUS_SESSION_BUS_ADDRESS="${ISOLATED_DBUS_ADDR:-}" secret-tool "$@"
+}
+
+# ── Port checking (cross-platform) ───────────────────────────
+# Check if a port is in use. Returns 0 if port is in use, 1 if free.
+port_in_use() {
+    local port="${1:?port required}"
+    if is_macos; then
+        lsof -iTCP:"$port" -sTCP:LISTEN -t >/dev/null 2>&1
+    else
+        ss -tlnp sport = :"$port" 2>/dev/null | grep -q LISTEN
+    fi
+}
+
+# Kill process listening on a port.
+kill_port_holder() {
+    local port="${1:?port required}"
+    if is_macos; then
+        local pids
+        pids=$(lsof -iTCP:"$port" -sTCP:LISTEN -t 2>/dev/null || true)
+        for pid in $pids; do kill "$pid" 2>/dev/null || true; done
+    else
+        local pid
+        pid=$(ss -tlnp sport = :"$port" 2>/dev/null | grep -oP 'pid=\K[0-9]+' || true)
+        [ -n "$pid" ] && kill "$pid" 2>/dev/null || true
+    fi
 }
 
 # ── GH_TOKEN ──────────────────────────────────────────────────

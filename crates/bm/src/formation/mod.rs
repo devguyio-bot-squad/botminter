@@ -40,8 +40,8 @@ use crate::config::{BotminterConfig, TeamEntry};
 /// credential delivery, and member lifecycle. Internal to the team — never
 /// exposed to operators.
 ///
-/// Implementations: `LinuxLocalFormation` (local processes, system keyring),
-/// `MacosLocalFormation` (local processes, macOS Keychain), `LimaFormation` (VM-based, future).
+/// Implementations: `LinuxLocalFormation` (local processes, dbus-secret-service keyring),
+/// `MacosLocalFormation` (local processes, macOS Keychain — planned), `LimaFormation` (VM-based, future).
 pub trait Formation {
     /// Returns the formation name (e.g., "local", "lima", "k8s").
     fn name(&self) -> &str;

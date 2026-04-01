@@ -59,7 +59,14 @@ pub(crate) fn setup_token_delivery(workspace: &Path, bot_user: &str) -> Result<(
     let hosts_content = format!(
         "github.com:\n    user: {bot_user}\n    oauth_token: placeholder\n    git_protocol: https\n"
     );
-    fs::write(&hosts_yml, &hosts_content)
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .mode(0o600)
+        .open(&hosts_yml)
+        .with_context(|| format!("Failed to create {}", hosts_yml.display()))?
+        .write_all(hosts_content.as_bytes())
         .with_context(|| format!("Failed to write {}", hosts_yml.display()))?;
 
     let git_config = workspace.join(".git").join("config");
@@ -253,22 +260,54 @@ fn github_credential_block(helper: &str) -> String {
 }
 
 pub(crate) fn normalize_github_credential_helper(existing: &str, helper: &str) -> String {
-    let old_helpers = [
-        "!/usr/bin/gh auth git-credential",
-        "!gh auth git-credential",
-    ];
+    let mut result = String::new();
+    let mut in_github_credential_block = false;
+    let mut found_block = false;
+    let mut helper_written = false;
 
-    let mut updated = existing.to_string();
-    for old_helper in old_helpers {
-        updated = updated.replace(old_helper, helper);
+    for line in existing.lines() {
+        let trimmed = line.trim();
+
+        if trimmed == "[credential \"https://github.com\"]" {
+            in_github_credential_block = true;
+            found_block = true;
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+
+        // Detect start of a new section (exits the credential block)
+        if in_github_credential_block && trimmed.starts_with('[') {
+            in_github_credential_block = false;
+        }
+
+        if in_github_credential_block && trimmed.starts_with("helper = !") {
+            // Replace any previous gh auth helper (any path format) with the new one
+            if trimmed.contains("auth git-credential") {
+                if !helper_written {
+                    result.push_str(&format!("\thelper = {helper}\n"));
+                    helper_written = true;
+                }
+                // Skip duplicate stale helper lines
+                continue;
+            }
+        }
+
+        result.push_str(line);
+        result.push('\n');
     }
 
-    if updated.contains("[credential \"https://github.com\"]") {
-        return updated;
+    // Strip trailing newline added by loop, restore original trailing state
+    if !existing.ends_with('\n') && result.ends_with('\n') {
+        result.pop();
     }
 
-    updated.push_str(&github_credential_block(helper));
-    updated
+    if found_block {
+        return result;
+    }
+
+    result.push_str(&github_credential_block(helper));
+    result
 }
 
 #[cfg(test)]
@@ -411,5 +450,57 @@ mod tests {
         let updated = normalize_github_credential_helper(config, "!gh auth git-credential");
         assert!(updated.contains("[credential \"https://github.com\"]"));
         assert!(updated.contains("!gh auth git-credential"));
+    }
+
+    #[test]
+    fn normalize_replaces_legacy_usr_bin_gh_helper() {
+        let config = "[credential \"https://github.com\"]\n\thelper = \n\thelper = !/usr/bin/gh auth git-credential\n";
+        let updated = normalize_github_credential_helper(
+            config,
+            "!'/opt/homebrew/bin/gh' auth git-credential",
+        );
+        assert!(!updated.contains("!/usr/bin/gh auth git-credential"));
+        assert!(updated.contains("!'/opt/homebrew/bin/gh' auth git-credential"));
+    }
+
+    #[test]
+    fn normalize_replaces_quoted_path_gh_helper() {
+        let config = "[credential \"https://github.com\"]\n\thelper = \n\thelper = !'/usr/bin/gh' auth git-credential\n";
+        let updated = normalize_github_credential_helper(
+            config,
+            "!'/opt/homebrew/bin/gh' auth git-credential",
+        );
+        assert!(!updated.contains("!'/usr/bin/gh' auth git-credential"));
+        assert!(updated.contains("!'/opt/homebrew/bin/gh' auth git-credential"));
+    }
+
+    #[test]
+    fn normalize_replaces_plain_gh_helper() {
+        let config = "[credential \"https://github.com\"]\n\thelper = \n\thelper = !gh auth git-credential\n";
+        let updated = normalize_github_credential_helper(
+            config,
+            "!'/opt/homebrew/bin/gh' auth git-credential",
+        );
+        assert!(!updated.contains("\thelper = !gh auth git-credential\n"));
+        assert!(updated.contains("!'/opt/homebrew/bin/gh' auth git-credential"));
+    }
+
+    #[test]
+    fn normalize_is_idempotent() {
+        let config = "[core]\n\tbare = false\n";
+        let helper = "!'/opt/homebrew/bin/gh' auth git-credential";
+        let first = normalize_github_credential_helper(config, helper);
+        let second = normalize_github_credential_helper(&first, helper);
+        assert_eq!(first, second);
+    }
+
+    #[test]
+    fn normalize_preserves_empty_helper_line() {
+        let config = "[credential \"https://github.com\"]\n\thelper = \n\thelper = !gh auth git-credential\n";
+        let updated = normalize_github_credential_helper(
+            config,
+            "!'/opt/homebrew/bin/gh' auth git-credential",
+        );
+        assert!(updated.contains("\thelper = \n"));
     }
 }

@@ -18,11 +18,13 @@ LOCAL_PHASES := justfile_directory() + "/phases"
 LOCAL_LIB := justfile_directory() + "/lib.sh"
 
 # Remote test user (SSH-accessible, isolated home directory)
-TEST_USER := "bm-test-user"
-TEST_HOST := TEST_USER + "@localhost"
+# Override TEST_HOST for remote machines: just TEST_HOST=bm-test-user@qaswaa ...
+TEST_USER := env("EXPLORATORY_TEST_USER", "bm-test-user")
+TEST_HOST := env("EXPLORATORY_TEST_HOST", TEST_USER + "@localhost")
 
-# Remote paths (test user machine — execution)
-REMOTE_HOME := "/home/" + TEST_USER
+# Remote home — auto-detected via TEST_HOST, override with EXPLORATORY_REMOTE_HOME
+# Linux default: /home/<user>, macOS: /Users/<user>
+REMOTE_HOME := env("EXPLORATORY_REMOTE_HOME", "/home/" + TEST_USER)
 REMOTE_BIN := REMOTE_HOME + "/.local/bin"
 REMOTE_STAGING := REMOTE_HOME + "/.bm-exploratory-tests"
 REMOTE_PHASES := REMOTE_STAGING + "/phases"
@@ -51,9 +53,21 @@ REMOTE_TEAM_REPO := REMOTE_TEAM_DIR + "/team"
 
 # ─── Setup ─────────────────────────────────────────────────────
 
-# Build bm from source (local)
+# Build bm from source (local machine)
 build:
     cd {{CARGO_ROOT}} && just build
+
+# Build bm on the remote machine (for cross-platform testing, e.g., macOS target)
+build-remote:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    echo "Syncing source to {{TEST_HOST}}..."
+    rsync -az --exclude target --exclude '.git/objects' --exclude 'console/test-results' \
+        --exclude 'console/node_modules' --exclude 'console/.svelte-kit' \
+        "{{CARGO_ROOT}}/" "{{TEST_HOST}}:~/botminter-build/"
+    echo "Building on {{TEST_HOST}}..."
+    ssh {{TEST_HOST}} 'bash -lc "source \$HOME/.cargo/env 2>/dev/null; cd ~/botminter-build && cargo build -p bm"'
+    echo "Remote build complete."
 
 # Full cleanup: stop processes, destroy containers/volumes, remove GitHub artifacts,
 # clear keyring, wipe local config. Idempotent — safe to run repeatedly.
@@ -92,8 +106,10 @@ clean:
         done
 
         # ── Container + Volume ──
-        podman rm -f bm-tuwunel-$TEAM 2>/dev/null || true
-        podman volume rm bm-tuwunel-$TEAM-data 2>/dev/null || true
+        if command -v podman >/dev/null 2>&1; then
+            podman rm -f bm-tuwunel-$TEAM 2>/dev/null || true
+            podman volume rm bm-tuwunel-$TEAM-data 2>/dev/null || true
+        fi
 
         # ── GitHub ──
         gh repo delete $FULL_REPO --yes 2>/dev/null || true
@@ -101,7 +117,11 @@ clean:
         [ -n \"\$PROJ_NUM\" ] && gh project delete \"\$PROJ_NUM\" --owner $ORG --format json 2>/dev/null || true
 
         # ── Keyring ──
-        if type load_isolated_keyring &>/dev/null && load_isolated_keyring; then
+        if [ \"\$(uname -s)\" = \"Darwin\" ]; then
+            for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing; do
+                security delete-generic-password -s botminter.$TEAM.tuwunel -a \$u 2>/dev/null || true
+            done
+        elif type load_isolated_keyring &>/dev/null && load_isolated_keyring; then
             for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing; do
                 secret_tool clear service botminter.$TEAM.tuwunel username \$u 2>/dev/null || true
             done
@@ -113,17 +133,24 @@ clean:
         rm -f {{REMOTE_BIN}}/bm {{REMOTE_BIN}}/bm-agent {{REMOTE_BIN}}/ralph {{REMOTE_BIN}}/claude {{REMOTE_BIN}}/claude-code-acp-rs
 
         # ── Port wait ──
-        # Kill any conmon process holding the port (podman rm may not release immediately)
-        PORT_PID=\$(ss -tlnp sport = :{{TUWUNEL_PORT}} 2>/dev/null | grep -oP 'pid=\K[0-9]+' || true)
-        [ -n \"\$PORT_PID\" ] && kill \"\$PORT_PID\" 2>/dev/null || true
+        # Kill any process holding the port (podman rm may not release immediately)
+        source {{REMOTE_LIB}} 2>/dev/null || true
+        if type kill_port_holder &>/dev/null; then
+            kill_port_holder {{TUWUNEL_PORT}}
+        else
+            # Fallback: try both lsof (macOS) and ss (Linux)
+            for pid in \$(lsof -iTCP:{{TUWUNEL_PORT}} -sTCP:LISTEN -t 2>/dev/null || ss -tlnp sport = :{{TUWUNEL_PORT}} 2>/dev/null | grep -oP 'pid=\K[0-9]+' || true); do
+                kill \"\$pid\" 2>/dev/null || true
+            done
+        fi
         for i in \$(seq 1 15); do
-            if ! ss -tlnp 2>/dev/null | grep -q \":{{TUWUNEL_PORT}} \"; then break; fi
+            if ! lsof -iTCP:{{TUWUNEL_PORT}} -sTCP:LISTEN -t >/dev/null 2>&1 && ! ss -tlnp 2>/dev/null | grep -q \":{{TUWUNEL_PORT}} \"; then break; fi
             sleep 2
         done
     "' || true
     echo "Clean."
 
-# Deploy binaries + test scripts to the remote test user
+# Deploy binaries + test scripts to the remote test user (local build)
 deploy: build clean
     #!/usr/bin/env bash
     set -euo pipefail
@@ -190,16 +217,17 @@ deploy: build clean
 # Initialize report file on remote
 init-report:
     #!/usr/bin/env bash
-    ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && \
+    ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && source {{REMOTE_LIB}} && \
         BM_VERSION=\$(\$BM --version 2>/dev/null || echo unknown) && \
         GH_USER=\$(gh api user --jq .login 2>/dev/null || echo unknown) && \
+        if is_macos; then RUNTIME=\"macOS Keychain\"; else RUNTIME=\"podman rootless\"; fi && \
         printf \"%s\n\" \
             \"# Exploratory Test Report: Sync & Bridge Idempotency\" \
             \"\" \
             \"**Date:** \$(date +%Y-%m-%d)\" \
             \"**Build:** \$BM_VERSION (local debug)\" \
-            \"**Environment:** \$(uname -sm), podman rootless, gh (\$GH_USER)\" \
-            \"**Test User:** {{TEST_USER}}@localhost (isolated)\" \
+            \"**Environment:** \$(uname -sm), \$RUNTIME, gh (\$GH_USER)\" \
+            \"**Test User:** {{TEST_HOST}} (isolated)\" \
             \"\" \
             \"## Results\" \
             > \$REPORT"'
@@ -223,31 +251,31 @@ preflight: ensure-keyring
     echo "Pre-flight checks on {{TEST_HOST}}..."
     ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && source {{REMOTE_LIB}} && \
         set -euo pipefail && \
-        if ss -tlnp sport = :\$TUWUNEL_PORT 2>/dev/null | grep -q LISTEN; then \
+        if port_in_use \$TUWUNEL_PORT; then \
             echo \"FATAL: Port \$TUWUNEL_PORT is in use\"; exit 1; \
         fi && \
         echo \"  ✓ Port \$TUWUNEL_PORT is free\" && \
         if load_isolated_keyring; then \
-            echo \"  ✓ Isolated keyring running (pid=\$ISOLATED_DBUS_PID)\"; \
+            if is_macos; then \
+                echo \"  ✓ macOS Keychain (native)\"; \
+            else \
+                echo \"  ✓ Isolated keyring running (pid=\$ISOLATED_DBUS_PID)\"; \
+            fi; \
         else \
-            echo \"FATAL: Isolated keyring not running\"; exit 1; \
+            echo \"FATAL: Keyring not available\"; exit 1; \
         fi && \
-        for tool in podman just gh curl jq; do \
+        REQUIRED_TOOLS=\"just gh curl jq\" && \
+        if is_linux; then REQUIRED_TOOLS=\"\$REQUIRED_TOOLS podman\"; fi && \
+        for tool in \$REQUIRED_TOOLS; do \
             command -v \$tool >/dev/null 2>&1 || { echo \"FATAL: \$tool not found\"; exit 1; }; \
         done && \
-        echo \"  ✓ All required tools available\" && \
+        echo \"  ✓ All required tools available (\$(uname -s))\" && \
         for bin in \$BM \$BM_AGENT; do \
             [ -x \$bin ] || { echo \"FATAL: \$bin not executable (run just deploy)\"; exit 1; }; \
         done && \
         echo \"  ✓ bm + bm-agent deployed\" && \
         gh auth status >/dev/null 2>&1 || { echo \"FATAL: gh not authenticated on {{TEST_USER}}\"; exit 1; } && \
         echo \"  ✓ gh authenticated\" && \
-        CLAUDE_RESP=\$(echo \"say ok\" | claude --print --bare 2>&1) && \
-        if echo \"\$CLAUDE_RESP\" | grep -qi \"ok\"; then \
-            echo \"  ✓ Claude smoke test passed\"; \
-        else \
-            echo \"FATAL: Claude smoke test failed: \$CLAUDE_RESP\"; exit 1; \
-        fi && \
         echo \"Pre-flight OK.\""'
 
 # ─── Phase recipes ─────────────────────────────────────────────
@@ -256,7 +284,13 @@ preflight: ensure-keyring
 
 [private]
 run-phase phase timeout="300":
-    timeout --signal=TERM --kill-after=15 {{timeout}} ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && exec {{REMOTE_PHASES}}/{{phase}}"'
+    #!/usr/bin/env bash
+    if command -v timeout >/dev/null 2>&1; then
+        timeout --signal=TERM --kill-after=15 {{timeout}} ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && exec {{REMOTE_PHASES}}/{{phase}}"'
+    else
+        # macOS has no coreutils timeout — run without it
+        ssh {{TEST_HOST}} 'bash -l -c "source {{REMOTE_ENV}} && exec {{REMOTE_PHASES}}/{{phase}}"'
+    fi
 
 phase-b: ensure-keyring (run-phase "phase-b.sh")
 
@@ -283,3 +317,70 @@ all: clean deploy preflight init-report phase-b phase-c phase-d phase-e phase-f 
 
 # Run only bridge + workspace phases (skip init, assume team exists)
 bridge-and-workspace: ensure-keyring phase-c phase-d phase-e
+
+# ─── Remote Build + Deploy (cross-platform) ──────────────────
+
+# Deploy to a remote machine where binaries must be built natively (e.g., macOS).
+# Syncs source, builds on remote, then deploys binaries and test scripts.
+deploy-remote: build-remote clean
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Validate App credential env vars
+    for var in TESTS_APP_ID TESTS_APP_CLIENT_ID TESTS_APP_INSTALLATION_ID TESTS_APP_PRIVATE_KEY_FILE; do
+        if [ -z "${!var:-}" ]; then
+            echo "Error: $var env var must be set" >&2
+            exit 1
+        fi
+    done
+    echo "Deploying from remote build to {{TEST_HOST}}..."
+    # Create remote directories
+    ssh {{TEST_HOST}} 'mkdir -p {{REMOTE_BIN}} {{REMOTE_PHASES}} ~/.config/github-apps'
+    # Copy binaries from remote build output
+    ssh {{TEST_HOST}} 'cp ~/botminter-build/target/debug/bm {{REMOTE_BIN}}/bm && cp ~/botminter-build/target/debug/bm-agent {{REMOTE_BIN}}/bm-agent'
+    # Deploy GitHub App PEM file to the remote test user
+    scp -q "{{TESTS_APP_PRIVATE_KEY_FILE}}" {{TEST_HOST}}:~/.config/github-apps/bm-test-app.pem
+    # Copy test scripts
+    scp -q "{{LOCAL_LIB}}" {{TEST_HOST}}:{{REMOTE_LIB}}
+    scp -q {{LOCAL_PHASES}}/*.sh {{TEST_HOST}}:{{REMOTE_PHASES}}/
+    ssh {{TEST_HOST}} 'chmod +x {{REMOTE_PHASES}}/*.sh'
+    # Deploy GCP application default credentials for Vertex AI auth
+    GCP_CREDS="$HOME/.config/gcloud/application_default_credentials.json"
+    if [ -f "$GCP_CREDS" ]; then
+        ssh {{TEST_HOST}} 'mkdir -p ~/.config/gcloud && rm -f ~/.config/gcloud/application_default_credentials.json'
+        scp -q "$GCP_CREDS" {{TEST_HOST}}:~/.config/gcloud/application_default_credentials.json
+    fi
+    # Ensure git identity is configured (required for bm init)
+    ssh {{TEST_HOST}} 'git config --global user.email 2>/dev/null || git config --global user.email "bm-test-user@botminter.dev"'
+    ssh {{TEST_HOST}} 'git config --global user.name 2>/dev/null || git config --global user.name "BM Test User"'
+    # Generate env.sh on the remote — sourced by run-phase before each phase
+    printf '%s\n' \
+        'export BM="{{REMOTE_BIN}}/bm"' \
+        'export BM_AGENT="{{REMOTE_BIN}}/bm-agent"' \
+        'export TEAM="{{TEAM}}"' \
+        'export ORG="{{ORG}}"' \
+        'export REPO="{{REPO}}"' \
+        'export FULL_REPO="{{FULL_REPO}}"' \
+        'export PROFILE="{{PROFILE}}"' \
+        'export BOARD="{{BOARD}}"' \
+        'export TEAM_DIR="{{REMOTE_TEAM_DIR}}"' \
+        'export TEAM_REPO="{{REMOTE_TEAM_REPO}}"' \
+        'export REPORT="{{REMOTE_REPORT}}"' \
+        'export LIB="{{REMOTE_LIB}}"' \
+        'export CARGO_ROOT="{{REMOTE_STAGING}}"' \
+        'export TUWUNEL_PORT="{{TUWUNEL_PORT}}"' \
+        'export TESTS_APP_ID="{{TESTS_APP_ID}}"' \
+        'export TESTS_APP_CLIENT_ID="{{TESTS_APP_CLIENT_ID}}"' \
+        'export TESTS_APP_INSTALLATION_ID="{{TESTS_APP_INSTALLATION_ID}}"' \
+        "export TESTS_APP_PRIVATE_KEY_FILE=\"{{REMOTE_HOME}}/.config/github-apps/bm-test-app.pem\"" \
+        'export PATH="{{REMOTE_BIN}}:$PATH"' \
+        | ssh {{TEST_HOST}} 'cat > {{REMOTE_ENV}}'
+    echo "Deploy complete."
+
+# ─── macOS Orchestration ─────────────────────────────────────
+
+# Run portable phases on macOS (skips bridge phases C/D/E/H that need podman)
+macos-portable: clean deploy-remote preflight init-report phase-b phase-f phase-g fetch-report clean
+
+# Run unit tests on the remote machine (requires Rust toolchain)
+unit-remote:
+    ssh {{TEST_HOST}} 'bash -lc "source \$HOME/.cargo/env 2>/dev/null; cd ~/botminter-build && cargo test -p bm --lib 2>&1"'

@@ -69,6 +69,27 @@ exploratory-test-full:
 exploratory-test-clean:
     just -f crates/bm/tests/exploratory/Justfile clean
 
+# ─── macOS remote testing ─────────────────────────────────────
+# Recipes for testing on a remote macOS machine.
+# Requires SSH access and EXPLORATORY_TEST_HOST / EXPLORATORY_REMOTE_HOME env vars.
+# Example: EXPLORATORY_TEST_HOST=bm-test-user@qaswaa EXPLORATORY_REMOTE_HOME=/Users/bm-test-user just mac-unit
+
+# Run unit tests on remote macOS via SSH (builds on remote)
+mac-unit:
+    just -f crates/bm/tests/exploratory/Justfile unit-remote
+
+# Run portable exploratory tests on macOS (skips bridge phases needing podman/dbus)
+mac-exploratory-test:
+    just -f crates/bm/tests/exploratory/Justfile macos-portable
+
+# Clean up macOS test artifacts
+mac-exploratory-test-clean:
+    just -f crates/bm/tests/exploratory/Justfile clean
+
+# Build on remote macOS (sync source + cargo build)
+mac-build:
+    just -f crates/bm/tests/exploratory/Justfile build-remote
+
 # Run console (frontend) tests and type checking
 console-test:
     cd {{ generator_root }}/console && npm test && npm run check
