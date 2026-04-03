@@ -41,7 +41,7 @@ jobs:
           fi
 
           # Verify all check suites passed (not just the CI workflow)
-          FAILING=$(gh pr checks "$PR" --repo "$REPO" --json state --jq '[.[] | select(.state != "SUCCESS" and .state != "SKIPPING")] | length')
+          FAILING=$(gh pr checks "$PR" --repo "$REPO" --json state --jq '[.[] | select(.state != "SUCCESS" and .state != "SKIPPED")] | length')
 
           if [ "$FAILING" != "0" ]; then
             echo "PR #$PR has $FAILING non-passing checks — skipping merge"
