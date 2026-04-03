@@ -104,7 +104,7 @@ All secrets must be configured in the GitHub repository settings.
 
 ## Branch Protection Configuration
 
-To enable auto-merge, branch protection must be configured on `main`:
+Branch protection is recommended as a safety net for manual merges and direct pushes, though it is **not required** for the auto-merge workflow (which performs its own check verification). To configure:
 
 ```bash
 # Enable branch protection with required status checks
@@ -125,15 +125,19 @@ gh api repos/devguyio-bot-squad/botminter/branches/main/protection \
 
 ## Auto-Merge Strategy
 
-### Label-Based Approach
+### Label-Based Approach (Direct Merge)
 
-The auto-merge workflow uses a simple label-based trigger:
+The auto-merge workflow uses a `workflow_run` trigger — it only runs after the CI workflow completes successfully:
 
 1. Agent creates a PR
 2. Agent (or operator) adds the `auto-merge` label
-3. CI runs all checks
-4. When all required checks pass, `auto-merge.yml` enables GitHub's auto-merge (`gh pr merge --auto --squash`)
-5. GitHub merges the PR once branch protection requirements are satisfied
+3. CI workflow runs all checks (Lint, Test, E2E)
+4. When CI completes successfully, `auto-merge.yml` fires via `workflow_run`
+5. The workflow finds the PR by commit SHA, verifies the `auto-merge` label is present
+6. The workflow independently verifies all check suites passed (`gh pr checks`)
+7. The workflow **directly merges** the PR (`gh pr merge --squash --delete-branch`)
+
+**Important:** This is a direct merge, not GitHub's auto-merge feature (`--auto`). The workflow itself acts as the merge gate — it checks all statuses before merging. This means branch protection is **not required** for auto-merge to function, though it is still recommended as a safety net for manual merges.
 
 **Why label-based over actor-based:**
 - Simpler to implement and maintain
@@ -141,6 +145,11 @@ The auto-merge workflow uses a simple label-based trigger:
 - Easy to opt out (remove the label)
 - No need to maintain an actor allowlist
 - Operators can selectively enable auto-merge on specific PRs
+
+**Why `workflow_run` over label events:**
+- Label events fire immediately — CI may not have completed yet
+- `workflow_run` guarantees CI has finished before attempting merge
+- Prevents race conditions where merge is attempted with pending checks
 
 ### Agent Integration
 
@@ -196,15 +205,15 @@ If a self-hosted runner with the required infrastructure (podman, keyring, Lima)
 2. Re-run CI to verify E2E tests pass
 3. Monitor first few E2E runs for flakiness
 
-### Phase 3: Branch Protection
-1. Enable branch protection on `main` with required status checks
+### Phase 3: Auto-Merge Activation
+1. ~~Create the `auto-merge` label in the repository~~ (already created)
+2. Test auto-merge end-to-end: create a trivial PR with the `auto-merge` label, verify it merges after CI passes
+3. Configure agents to add the label to their PRs
+
+### Phase 4: Branch Protection (Optional)
+1. Enable branch protection on `main` with required status checks (recommended safety net)
 2. Require `Lint` and `Test` checks to pass
 3. Make `E2E Tests` required but allow skipping (for fork PRs)
-
-### Phase 4: Auto-Merge Activation
-1. Create the `auto-merge` label in the repository
-2. Test auto-merge with a trivial PR
-3. Configure agents to add the label to their PRs
 
 ## Open Questions
 
