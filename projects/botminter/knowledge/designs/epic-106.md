@@ -3,21 +3,8 @@
 **Epic:** #106
 **Author:** bob (superman)
 **Date:** 2026-04-03
-**Status:** Draft (Revision 3 — addressing 6-point PR #107 rejection feedback)
+**Status:** Draft
 **Reference:** [OpenAI Harness Engineering (Feb 2026)](https://openai.com/index/harness-engineering/)
-
----
-
-## Rejection Feedback Addressed
-
-This revision directly addresses the 6 rejection points from PR #107:
-
-1. **Planning history corrected** — Phase 1 used `ralph plan` with AgentSOP framework, not ad-hoc development. Planning methodology was in place from the start; what's messy is the artifact trail, not the process itself.
-2. **Scope explicitly defined** — Changes are BotMinter product features, delivered through the profile system. The current team dogfoods them. No ad-hoc team-repo edits.
-3. **Existing ADRs integrated** — All 11 ADRs in `.planning/adrs/` are referenced where relevant. New decisions follow ADR-0001 format.
-4. **Planning artifact mess addressed** — Section 5 proposes canonical artifact organization for the profile system.
-5. **Knowledge directory purpose clarified** — Knowledge remains on-demand context. Designs, plans, and ADRs get their own profile-level directories.
-6. **No upstream changes** — All configuration goes through `botminter.yml` (profile manifest) and profile directory structure. Zero changes to Ralph Orchestrator or `ralph.yml`.
 
 ---
 
@@ -391,7 +378,7 @@ team/projects/<project>/
 | ADRs (architecture decisions) | Project repo `.planning/adrs/` | ADRs belong with the codebase they govern (per ADR-0001) |
 | Team agreements (decisions, retros, norms) | `agreements/` | Team-level governance (per team-agreements convention) |
 
-**Why knowledge/ is correct for designs:** Designs are reference context that hats load on demand during implementation. They are not governance documents (that's `invariants/`) or execution state (that's `plans/`). The operator's concern that knowledge was meant for "on demand context extras" is exactly what designs are — context loaded by the architect, planner, and implementer hats as needed.
+**Why knowledge/ is correct for designs:** Designs are reference context that hats load on demand during implementation. They are not governance documents (that's `invariants/`) or execution state (that's `plans/`). Knowledge is defined as on-demand context extras — designs fit this definition precisely, as context loaded by the architect, planner, and implementer hats as needed.
 
 **Why ADRs stay in the project repo:** ADRs document *codebase* decisions. They live with the code in `.planning/adrs/` following the established ADR-0001 format. They don't belong in the team repo because they're project-specific architectural artifacts, not team governance.
 
