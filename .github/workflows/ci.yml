@@ -1,0 +1,155 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: console/package-lock.json
+
+      - name: Build console assets
+        run: cd console && npm ci && npm run build
+
+      - name: Clippy
+        run: cargo clippy -p bm --features console -- -D warnings
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: console/package-lock.json
+
+      - name: Build console assets
+        run: cd console && npm ci && npm run build
+
+      - name: Unit tests
+        run: cargo test -p bm --features console
+
+      - name: Conformance tests
+        run: cargo test -p bm --test conformance
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    # Skip on fork PRs (secrets unavailable) and when secrets are not configured
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'pull_request' &&
+       github.event.pull_request.head.repo.full_name == github.repository)
+    # E2E tests share GitHub resources — only one instance at a time
+    concurrency:
+      group: e2e-tests
+      cancel-in-progress: false
+    env:
+      TESTS_GH_TOKEN: ${{ secrets.TESTS_GH_TOKEN }}
+      TESTS_GH_ORG: ${{ secrets.TESTS_GH_ORG }}
+      TESTS_APP_ID: ${{ secrets.TESTS_APP_ID }}
+      TESTS_APP_CLIENT_ID: ${{ secrets.TESTS_APP_CLIENT_ID }}
+      TESTS_APP_INSTALLATION_ID: ${{ secrets.TESTS_APP_INSTALLATION_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check secrets availability
+        id: secrets-check
+        run: |
+          if [ -z "$TESTS_GH_TOKEN" ] || [ -z "$TESTS_GH_ORG" ] || \
+             [ -z "$TESTS_APP_ID" ] || [ -z "$TESTS_APP_CLIENT_ID" ] || \
+             [ -z "$TESTS_APP_INSTALLATION_ID" ] || \
+             [ -z "${{ secrets.TESTS_APP_PRIVATE_KEY }}" ]; then
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::E2E secrets not configured — skipping E2E tests"
+          else
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install system dependencies
+        if: steps.secrets-check.outputs.available == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            pkg-config \
+            libdbus-1-dev \
+            dbus \
+            gnome-keyring
+
+      - name: Install Rust
+        if: steps.secrets-check.outputs.available == 'true'
+        uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        if: steps.secrets-check.outputs.available == 'true'
+
+      - name: Setup Node.js
+        if: steps.secrets-check.outputs.available == 'true'
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: console/package-lock.json
+
+      - name: Build console assets
+        if: steps.secrets-check.outputs.available == 'true'
+        run: cd console && npm ci && npm run build
+
+      - name: Write App private key to file
+        if: steps.secrets-check.outputs.available == 'true'
+        run: |
+          echo "${{ secrets.TESTS_APP_PRIVATE_KEY }}" > "$RUNNER_TEMP/app-private-key.pem"
+          chmod 600 "$RUNNER_TEMP/app-private-key.pem"
+
+      - name: Authenticate gh CLI
+        if: steps.secrets-check.outputs.available == 'true'
+        run: echo "$TESTS_GH_TOKEN" | gh auth login --with-token
+
+      - name: Run E2E tests
+        if: steps.secrets-check.outputs.available == 'true'
+        run: |
+          cargo test -p bm --features e2e --test e2e -- \
+            --gh-token "$TESTS_GH_TOKEN" \
+            --gh-org "$TESTS_GH_ORG" \
+            --app-id "$TESTS_APP_ID" \
+            --app-client-id "$TESTS_APP_CLIENT_ID" \
+            --app-installation-id "$TESTS_APP_INSTALLATION_ID" \
+            --app-private-key-file "$RUNNER_TEMP/app-private-key.pem" \
+            --test-threads=1

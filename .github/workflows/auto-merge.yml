@@ -1,0 +1,47 @@
+name: Auto-merge
+
+on:
+  pull_request:
+    types: [labeled]
+  check_suite:
+    types: [completed]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    name: Enable auto-merge
+    runs-on: ubuntu-latest
+    # Only run when the CI workflow completes successfully or a label is added
+    if: >-
+      (github.event_name == 'pull_request' &&
+       contains(github.event.pull_request.labels.*.name, 'auto-merge')) ||
+      (github.event_name == 'check_suite' &&
+       github.event.check_suite.conclusion == 'success') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success')
+    steps:
+      - name: Find PRs to auto-merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+
+          # Get open PRs with the auto-merge label
+          PRS=$(gh pr list --repo "$REPO" --label "auto-merge" --state open --json number,headRefName --jq '.[].number')
+
+          if [ -z "$PRS" ]; then
+            echo "No open PRs with auto-merge label"
+            exit 0
+          fi
+
+          for PR in $PRS; do
+            echo "Enabling auto-merge for PR #$PR"
+            gh pr merge "$PR" --repo "$REPO" --auto --squash || \
+              echo "::warning::Failed to enable auto-merge for PR #$PR (checks may still be pending)"
+          done
