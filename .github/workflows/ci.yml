@@ -74,10 +74,12 @@ jobs:
       - name: Unit tests
         run: cargo test -p bm --features console -- --test-threads=1
         env:
+          RUST_BACKTRACE: "1"
           GIT_AUTHOR_NAME: "CI Bot"
           GIT_AUTHOR_EMAIL: "ci@botminter.dev"
           GIT_COMMITTER_NAME: "CI Bot"
           GIT_COMMITTER_EMAIL: "ci@botminter.dev"
+          XDG_CONFIG_HOME: ""
 
       - name: Conformance tests
         run: cargo test -p bm --test conformance
