@@ -1,10 +1,7 @@
 name: Auto-merge
 
 on:
-  pull_request:
-    types: [labeled]
-  check_suite:
-    types: [completed]
+  # Only trigger after CI completes — never on label events alone
   workflow_run:
     workflows: [CI]
     types: [completed]
@@ -17,31 +14,40 @@ jobs:
   auto-merge:
     name: Enable auto-merge
     runs-on: ubuntu-latest
-    # Only run when the CI workflow completes successfully or a label is added
-    if: >-
-      (github.event_name == 'pull_request' &&
-       contains(github.event.pull_request.labels.*.name, 'auto-merge')) ||
-      (github.event_name == 'check_suite' &&
-       github.event.check_suite.conclusion == 'success') ||
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.conclusion == 'success')
+    # Only run when CI succeeds
+    if: github.event.workflow_run.conclusion == 'success'
     steps:
-      - name: Find PRs to auto-merge
+      - name: Find and merge labeled PRs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           REPO="${{ github.repository }}"
+          HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
 
-          # Get open PRs with the auto-merge label
-          PRS=$(gh pr list --repo "$REPO" --label "auto-merge" --state open --json number,headRefName --jq '.[].number')
+          # Find the PR associated with this CI run
+          PR=$(gh api "repos/$REPO/commits/$HEAD_SHA/pulls" --jq '.[0].number // empty' 2>/dev/null)
 
-          if [ -z "$PRS" ]; then
-            echo "No open PRs with auto-merge label"
+          if [ -z "$PR" ]; then
+            echo "No PR found for commit $HEAD_SHA"
             exit 0
           fi
 
-          for PR in $PRS; do
-            echo "Enabling auto-merge for PR #$PR"
-            gh pr merge "$PR" --repo "$REPO" --auto --squash || \
-              echo "::warning::Failed to enable auto-merge for PR #$PR (checks may still be pending)"
-          done
+          # Check if this PR has the auto-merge label
+          HAS_LABEL=$(gh pr view "$PR" --repo "$REPO" --json labels --jq '[.labels[].name] | any(. == "auto-merge")')
+
+          if [ "$HAS_LABEL" != "true" ]; then
+            echo "PR #$PR does not have auto-merge label — skipping"
+            exit 0
+          fi
+
+          # Verify all check suites passed (not just the CI workflow)
+          FAILING=$(gh pr checks "$PR" --repo "$REPO" --json state --jq '[.[] | select(.state != "SUCCESS" and .state != "SKIPPING")] | length')
+
+          if [ "$FAILING" != "0" ]; then
+            echo "PR #$PR has $FAILING non-passing checks — skipping merge"
+            exit 0
+          fi
+
+          echo "All checks passed for PR #$PR with auto-merge label — merging"
+          gh pr merge "$PR" --repo "$REPO" --squash --delete-branch || \
+            echo "::warning::Failed to merge PR #$PR"
