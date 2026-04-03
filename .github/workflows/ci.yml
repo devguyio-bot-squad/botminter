@@ -53,6 +53,9 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libdbus-1-dev
 
+      - name: Install just
+        uses: extractions/setup-just@v2
+
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
@@ -70,6 +73,11 @@ jobs:
 
       - name: Unit tests
         run: cargo test -p bm --features console -- --test-threads=1
+        env:
+          GIT_AUTHOR_NAME: "CI Bot"
+          GIT_AUTHOR_EMAIL: "ci@botminter.dev"
+          GIT_COMMITTER_NAME: "CI Bot"
+          GIT_COMMITTER_EMAIL: "ci@botminter.dev"
 
       - name: Conformance tests
         run: cargo test -p bm --test conformance
