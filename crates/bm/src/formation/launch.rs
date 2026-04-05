@@ -98,6 +98,9 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
     // Members without App creds rely on the host's `gh auth` session.
     if let Some(config_dir) = config.gh_config_dir {
         cmd.env("GH_CONFIG_DIR", config_dir);
+        // Remove GH_TOKEN so gh uses the App token from hosts.yml
+        // instead of the operator's PAT.
+        cmd.env_remove("GH_TOKEN");
     }
 
     if let Some(token) = config.member_token {
@@ -145,8 +148,10 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
 
     let child = cmd.spawn().with_context(|| {
         format!(
-            "Failed to spawn brain in {}",
-            config.workspace.display()
+            "Failed to spawn brain in {}\n  binary: {}\n  system_prompt: {}",
+            config.workspace.display(),
+            bm_binary.display(),
+            config.system_prompt_path.display(),
         )
     })?;
 
