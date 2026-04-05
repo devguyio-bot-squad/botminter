@@ -110,7 +110,6 @@ mod tests {
                     }],
                     errors: vec![],
                     no_members_running: false,
-                    bridge: None,
                     topology_removed: false,
                 })),
             }
