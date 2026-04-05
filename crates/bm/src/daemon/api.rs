@@ -473,7 +473,6 @@ pub(super) async fn stop_members_handler(
             &cfg,
             req.member.as_deref(),
             req.force,
-            false, // bridge_flag — daemon doesn't auto-stop bridge
         )
     })
     .await;

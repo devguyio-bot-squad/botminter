@@ -71,6 +71,10 @@ impl Bridge {
                             .invoke_recipe(verify_recipe, &[member.name.as_str()])
                             .is_ok();
                         if verify_ok {
+                            // Reconcile mutable fields from current member list.
+                            if let Some(identity) = self.state.identities.get_mut(&member.name) {
+                                identity.is_operator = member.is_operator;
+                            }
                             results.push((
                                 member.name.clone(),
                                 ProvisionMemberResult::AlreadyProvisioned,
@@ -86,12 +90,9 @@ impl Bridge {
                         self.state.identities.remove(&member.name);
                         // Fall through to re-onboard below
                     } else {
-                        // No verify recipe — trust local state (legacy behavior).
-                        results.push((
-                            member.name.clone(),
-                            ProvisionMemberResult::AlreadyProvisioned,
-                        ));
-                        continue;
+                        // No verify recipe — cannot confirm identity is valid.
+                        // Remove stale identity and re-onboard.
+                        self.state.identities.remove(&member.name);
                     }
                 } else {
                     // No credential in keyring — remove stale identity.

@@ -267,7 +267,6 @@ impl Formation for LinuxLocalFormation {
             params.config,
             params.member_filter,
             params.force,
-            false, // bridge handled at command layer
         )
     }
 

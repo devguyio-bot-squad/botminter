@@ -78,20 +78,6 @@ pub fn run(team_flag: Option<&str>, force: bool, member_filter: Option<&str>, br
         }
     }
 
-    // Also display bridge from result (for legacy code paths)
-    match &result.bridge {
-        Some(formation::BridgeStopOutcome::Stopped(name)) => {
-            println!("Bridge '{}' stopped.", name);
-        }
-        Some(formation::BridgeStopOutcome::LeftRunning(name)) => {
-            println!(
-                "Bridge '{}' left running. Use `bm stop --bridge` to stop it.",
-                name
-            );
-        }
-        None => {}
-    }
-
     // If --all, also stop the daemon
     if stop_all {
         match daemon::query_status(&team.name)? {

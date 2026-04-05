@@ -5,7 +5,6 @@ use std::time::Duration;
 
 use anyhow::{bail, Result};
 
-use crate::bridge::{self, BridgeStopResult};
 use crate::config::{BotminterConfig, TeamEntry};
 use crate::state;
 use crate::topology;
@@ -21,7 +20,6 @@ pub struct StopResult {
     pub stopped: Vec<MemberStopped>,
     pub errors: Vec<MemberFailed>,
     pub no_members_running: bool,
-    pub bridge: Option<BridgeStopOutcome>,
     pub topology_removed: bool,
 }
 
@@ -50,7 +48,6 @@ pub fn stop_local_members(
     cfg: &BotminterConfig,
     member_filter: Option<&str>,
     force: bool,
-    bridge_flag: bool,
 ) -> Result<StopResult> {
     let team_name = &team.name;
     let mut runtime_state = state::load()?;
@@ -79,7 +76,6 @@ pub fn stop_local_members(
         stopped: Vec::new(),
         errors: Vec::new(),
         no_members_running: running.is_empty(),
-        bridge: None,
         topology_removed: false,
     };
 
@@ -143,10 +139,8 @@ pub fn stop_local_members(
         }
     }
 
-    // Bridge lifecycle and topology cleanup — skip when stopping a single member
+    // Topology cleanup — skip when stopping a single member
     if member_filter.is_none() {
-        result.bridge = stop_bridge(team, cfg, bridge_flag)?;
-
         let topo_path = topology::topology_path(&cfg.workzone, team_name);
         if topo_path.exists() {
             topology::remove(&topo_path)?;
@@ -225,44 +219,6 @@ fn force_stop(pid: u32) {
     thread::sleep(Duration::from_millis(500));
 }
 
-/// Handle bridge stop lifecycle.
-fn stop_bridge(
-    team: &TeamEntry,
-    cfg: &BotminterConfig,
-    bridge_flag: bool,
-) -> Result<Option<BridgeStopOutcome>> {
-    let team_name = &team.name;
-    let should_stop = bridge_flag || team.bridge_lifecycle.stop_on_down;
-    let team_repo = team.path.join("team");
-
-    let bridge_dir = match bridge::discover(&team_repo, team_name)? {
-        Some(d) => d,
-        None => return Ok(None),
-    };
-
-    let state_path = bridge::state_path(&cfg.workzone, team_name);
-    let mut b = bridge::Bridge::new(bridge_dir, state_path, team_name.to_string())?;
-
-    if should_stop {
-        if b.is_local() && b.is_running() && which::which("just").is_ok() {
-            let bridge_name = b.bridge_name().to_string();
-            match b.stop()? {
-                BridgeStopResult::Stopped => {
-                    b.save()?;
-                    return Ok(Some(BridgeStopOutcome::Stopped(bridge_name)));
-                }
-                BridgeStopResult::External => {}
-            }
-        }
-    } else if b.is_local() && b.is_running() {
-        return Ok(Some(BridgeStopOutcome::LeftRunning(
-            b.bridge_name().to_string(),
-        )));
-    }
-
-    Ok(None)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,7 +240,6 @@ mod tests {
             ],
             errors: vec![],
             no_members_running: false,
-            bridge: Some(BridgeStopOutcome::Stopped("tuwunel".to_string())),
             topology_removed: true,
         };
 
@@ -302,7 +257,6 @@ mod tests {
             stopped: Vec::new(),
             errors: Vec::new(),
             no_members_running: true,
-            bridge: None,
             topology_removed: false,
         };
 
