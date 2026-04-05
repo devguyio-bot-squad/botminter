@@ -296,8 +296,8 @@ pub enum Command {
         #[arg(long)]
         system_prompt: String,
 
-        /// ACP agent binary (default: claude-code-acp-rs)
-        #[arg(long, default_value = "claude-code-acp-rs")]
+        /// ACP agent binary (default: claude-agent-acp)
+        #[arg(long, default_value = "claude-agent-acp")]
         acp_binary: String,
     },
 

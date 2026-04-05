@@ -47,6 +47,14 @@ pub fn surface_brain_prompt(
     fs::write(&output_path, rendered)
         .with_context(|| format!("Failed to write brain prompt to {}", output_path.display()))?;
 
+    // Copy envelope template if present
+    let envelope_src = team_repo.join("brain").join("envelope.md");
+    if envelope_src.exists() {
+        let envelope_dst = ws_root.join("brain-envelope.md");
+        fs::copy(&envelope_src, &envelope_dst)
+            .with_context(|| format!("Failed to copy brain envelope to {}", envelope_dst.display()))?;
+    }
+
     Ok(true)
 }
 

@@ -1,11 +1,12 @@
 use std::path::PathBuf;
 
 use tokio::sync::mpsc;
+use tokio::time::Instant;
 
 use crate::acp::{AcpClient, AcpConfig, AcpError, AcpEvent};
 
 use super::queue::PromptQueue;
-use super::types::{BrainMessage, BridgeOutput};
+use super::types::{BrainMessage, BridgeOutput, MessageEnvelopes, Priority};
 
 /// Configuration for the brain multiplexer.
 #[derive(Debug, Clone)]
@@ -20,20 +21,10 @@ pub struct MultiplexerConfig {
     pub env_vars: Vec<(String, String)>,
 }
 
-/// System reminder appended to every prompt sent to the ACP session.
-///
-/// Reinforces the chat-first responsiveness principle on every turn so the
-/// LLM never blocks the session with long-running synchronous operations.
-/// This is more reliable than the system prompt alone, which can lose
-/// salience after many turns.
-const CHAT_FIRST_REMINDER: &str = "\n\n<system-reminder>\
-BACKGROUND EXECUTION PROTOCOL (mandatory):\
-\n1. Every Bash call MUST use run_in_background=true. No exceptions.\
-\n2. After starting a background command, respond with text immediately.\
-\n3. End your turn. Do NOT call BashOutput — it is disabled.\
-\n4. Redirect output to a file (e.g. > /tmp/result.out 2>&1) to check later.\
-\n5. Keep responses SHORT for heartbeats and status checks.\
-</system-reminder>";
+/// Heartbeat suppression window: skip heartbeats that arrive within this many
+/// seconds after the last turn completed. Prevents "just checking" spam right
+/// after a conversation exchange.
+const HEARTBEAT_SUPPRESSION_SECS: u64 = 30;
 
 /// The brain multiplexer merges input streams and routes them through
 /// an ACP session, streaming responses back to the bridge.
@@ -58,6 +49,8 @@ pub struct Multiplexer {
     output_tx: mpsc::Sender<BridgeOutput>,
     /// Receives shutdown signal.
     shutdown_rx: mpsc::Receiver<()>,
+    /// Timestamp of the last TurnComplete, used for heartbeat suppression.
+    last_turn_completed: Option<Instant>,
 }
 
 /// Handle for sending messages into the multiplexer.
@@ -161,6 +154,7 @@ impl Multiplexer {
             input_rx,
             output_tx,
             shutdown_rx,
+            last_turn_completed: None,
         };
 
         let input = MultiplexerInput { tx: input_tx };
@@ -214,6 +208,10 @@ impl Multiplexer {
 
         tracing::info!(session_id = %session_id, "Brain multiplexer session started");
 
+        // Load envelope template once at startup
+        let envelope_path = self.config.cwd.join("brain-envelope.md");
+        let envelopes = MessageEnvelopes::load(&envelope_path);
+
         let mut queue = PromptQueue::new();
         let mut prompt_in_flight = false;
 
@@ -234,6 +232,20 @@ impl Multiplexer {
                 msg = self.input_rx.recv() => {
                     match msg {
                         Some(message) => {
+                            // Suppress heartbeats that arrive too soon after a turn
+                            if message.priority == Priority::Heartbeat {
+                                if let Some(last) = self.last_turn_completed {
+                                    let elapsed = last.elapsed();
+                                    if elapsed.as_secs() < HEARTBEAT_SUPPRESSION_SECS {
+                                        tracing::debug!(
+                                            elapsed_secs = elapsed.as_secs(),
+                                            "Suppressing heartbeat — too soon after last turn"
+                                        );
+                                        continue;
+                                    }
+                                }
+                            }
+
                             if prompt_in_flight {
                                 // Queue the message while a prompt is in-flight
                                 tracing::debug!(
@@ -243,7 +255,7 @@ impl Multiplexer {
                                 queue.push(message);
                             } else {
                                 // Send immediately
-                                let prompt = format!("{}{CHAT_FIRST_REMINDER}", message.to_prompt());
+                                let prompt = message.to_prompt_with_envelope(&envelopes);
                                 tracing::info!(
                                     priority = %message.priority,
                                     prompt_len = prompt.len(),
@@ -279,10 +291,11 @@ impl Multiplexer {
                             );
                             let _ = self.output_tx.send(BridgeOutput::TurnComplete).await;
                             prompt_in_flight = false;
+                            self.last_turn_completed = Some(Instant::now());
 
                             // Drain the queue by priority
                             if let Some(next_msg) = queue.pop() {
-                                let prompt = format!("{}{CHAT_FIRST_REMINDER}", next_msg.to_prompt());
+                                let prompt = next_msg.to_prompt_with_envelope(&envelopes);
                                 tracing::debug!(
                                     priority = %next_msg.priority,
                                     "Draining queue, sending next prompt"
@@ -398,8 +411,8 @@ mod tests {
             .collect();
 
         assert_eq!(prompts.len(), 3);
-        assert!(prompts[0].starts_with("[Human on bridge]:"));
-        assert!(prompts[1].starts_with("[Loop loop-1 event]:"));
-        assert!(prompts[2].starts_with("[Heartbeat]:"));
+        assert!(prompts[0].contains("<bm-context type=\"human\""));
+        assert!(prompts[1].contains("<bm-context type=\"loop-event\""));
+        assert!(prompts[2].contains("<bm-context type=\"heartbeat\""));
     }
 }

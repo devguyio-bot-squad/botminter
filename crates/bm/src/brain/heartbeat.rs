@@ -286,9 +286,9 @@ mod tests {
             .expect("channel should not be closed");
 
         assert_eq!(msg.priority, super::super::types::Priority::Heartbeat);
-        assert_eq!(
-            msg.to_prompt(),
-            "[Heartbeat]: Check your loops. Check the board. Pick up new work if idle."
+        assert!(
+            msg.to_prompt().contains("<bm-context type=\"heartbeat\" channel=\"matrix\">"),
+            "heartbeat prompt should use envelope format"
         );
 
         shutdown.shutdown().await;
