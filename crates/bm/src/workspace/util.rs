@@ -37,6 +37,43 @@ pub(super) fn symlink_md_files(src_dir: &Path, dst_dir: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Symlinks all subdirectories from `src_dir` into `dst_dir` using relative paths.
+/// Used for skills and commands — each is a directory.
+/// Silently returns Ok if `src_dir` does not exist.
+pub(super) fn symlink_subdirs(src_dir: &Path, dst_dir: &Path) -> Result<()> {
+    if !src_dir.is_dir() {
+        return Ok(());
+    }
+
+    let canonical_src = fs::canonicalize(src_dir)
+        .with_context(|| format!("Failed to canonicalize {}", src_dir.display()))?;
+    let canonical_dst = fs::canonicalize(dst_dir)
+        .with_context(|| format!("Failed to canonicalize {}", dst_dir.display()))?;
+    let rel = relative_path(&canonical_dst, &canonical_src);
+
+    for entry in fs::read_dir(&canonical_src)? {
+        let entry = entry?;
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let dir_name = entry.file_name();
+        let dst = dst_dir.join(&dir_name);
+        if dst.symlink_metadata().is_ok() {
+            if dst.is_dir() && !dst.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+                fs::remove_dir_all(&dst).ok();
+            } else {
+                fs::remove_file(&dst).ok();
+            }
+        }
+        let rel_target = rel.join(&dir_name);
+        unix_fs::symlink(&rel_target, &dst).with_context(|| {
+            format!("Failed to symlink {} → {}", dst.display(), rel_target.display())
+        })?;
+    }
+
+    Ok(())
+}
+
 /// Computes a relative path from `from_dir` to `to_path`.
 /// Both paths must be absolute (canonicalized).
 /// Example: relative_path("/a/b/c", "/a/b/d/e") → "../d/e"

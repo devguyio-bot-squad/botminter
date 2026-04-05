@@ -7,7 +7,8 @@ use sacp::schema::{
     RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
     TextContent,
 };
-use sacp::{ClientToAgent, JrConnectionCx};
+use sacp::role::acp::{Agent, Client};
+use sacp::ConnectionTo;
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::task::JoinHandle;
@@ -229,10 +230,10 @@ impl AcpClient {
 
         let event_tx_for_notif = event_tx.clone();
 
-        let result = ClientToAgent::builder()
+        let result = Client.builder()
             .name("botminter")
             .on_receive_notification(
-                async move |notification: SessionNotification, _cx| {
+                async move |notification: SessionNotification, _cx: ConnectionTo<Agent>| {
                     let event = match notification.update {
                         SessionUpdate::AgentMessageChunk(ContentChunk {
                             content: ContentBlock::Text(text),
@@ -250,7 +251,7 @@ impl AcpClient {
             .on_receive_request(
                 async move |request: RequestPermissionRequest,
                             request_cx,
-                            _cx: JrConnectionCx<ClientToAgent>| {
+                            _cx: ConnectionTo<Agent>| {
                     let response = match permission_handler {
                         PermissionHandler::AutoApprove => {
                             let option_id =
@@ -274,7 +275,7 @@ impl AcpClient {
                 },
                 sacp::on_receive_request!(),
             )
-            .run_until(transport, |cx: JrConnectionCx<ClientToAgent>| async move {
+            .connect_with(transport, async |cx: ConnectionTo<Agent>| {
                 // Step 1: Initialize handshake
                 let _init_response = cx
                     .send_request(InitializeRequest::new(ProtocolVersion::LATEST))

@@ -313,7 +313,11 @@ fn truncate(s: &str, max_len: usize) -> String {
     if normalized.len() <= max_len {
         normalized
     } else {
-        format!("{}...", &normalized[..max_len])
+        let mut end = max_len;
+        while end > 0 && !normalized.is_char_boundary(end) {
+            end -= 1;
+        }
+        format!("{}[...]", &normalized[..end])
     }
 }
 
@@ -352,7 +356,7 @@ mod tests {
 
     #[test]
     fn truncate_long_string() {
-        assert_eq!(truncate("hello world foo", 10), "hello worl...");
+        assert_eq!(truncate("hello world foo", 10), "hello worl[...]");
     }
 
     #[test]

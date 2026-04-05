@@ -6,7 +6,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::profile::CodingAgentDef;
 use super::sync::write_workspace_marker;
-use super::util::{git_cmd, git_submodule_add, symlink_md_files};
+use super::util::{git_cmd, git_submodule_add, symlink_md_files, symlink_subdirs};
 
 // ── Remote repo abstraction ─────────────────────────────────────────
 
@@ -413,7 +413,45 @@ pub(super) fn assemble_agent_dir_submodule(
         &agents_subdir,
     )?;
 
-    // 4. Copy settings.local.json if present (member-level)
+    // 4. Skills (team → .claude/skills/)
+    let skills_subdir = ws_root.join(&coding_agent.agent_dir).join("skills");
+    if skills_subdir.exists() {
+        fs::remove_dir_all(&skills_subdir).ok();
+    }
+    fs::create_dir_all(&skills_subdir)
+        .with_context(|| format!("Failed to create {}/skills/", coding_agent.agent_dir))?;
+    symlink_subdirs(&team_sub.join("coding-agent").join("skills"), &skills_subdir)?;
+    for project in project_names {
+        symlink_subdirs(
+            &team_sub.join("projects").join(project).join("coding-agent").join("skills"),
+            &skills_subdir,
+        )?;
+    }
+    symlink_subdirs(
+        &team_sub.join("members").join(member_dir_name).join("coding-agent").join("skills"),
+        &skills_subdir,
+    )?;
+
+    // 5. Commands (team → .claude/commands/)
+    let commands_subdir = ws_root.join(&coding_agent.agent_dir).join("commands");
+    if commands_subdir.exists() {
+        fs::remove_dir_all(&commands_subdir).ok();
+    }
+    fs::create_dir_all(&commands_subdir)
+        .with_context(|| format!("Failed to create {}/commands/", coding_agent.agent_dir))?;
+    symlink_subdirs(&team_sub.join("coding-agent").join("commands"), &commands_subdir)?;
+    for project in project_names {
+        symlink_subdirs(
+            &team_sub.join("projects").join(project).join("coding-agent").join("commands"),
+            &commands_subdir,
+        )?;
+    }
+    symlink_subdirs(
+        &team_sub.join("members").join(member_dir_name).join("coding-agent").join("commands"),
+        &commands_subdir,
+    )?;
+
+    // 6. Copy settings.local.json if present (member-level)
     let settings_src = team_sub
         .join("members")
         .join(member_dir_name)
@@ -426,7 +464,7 @@ pub(super) fn assemble_agent_dir_submodule(
         fs::copy(&settings_src, &dst).context("Failed to copy settings.local.json")?;
     }
 
-    // 5. Copy settings.json if present (team-level — shared hooks for all members)
+    // 7. Copy settings.json if present (team-level — shared hooks for all members)
     let team_settings_src = team_sub
         .join("coding-agent")
         .join("settings.json");

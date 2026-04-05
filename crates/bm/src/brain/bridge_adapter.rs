@@ -6,6 +6,42 @@ use tokio::sync::mpsc;
 use super::multiplexer::MultiplexerOutput;
 use super::types::{BrainMessage, BridgeOutput};
 
+/// Converts markdown text to HTML for Matrix `formatted_body`.
+/// Enables GFM extensions (tables, strikethrough, task lists) since
+/// LLM responses commonly use these.
+fn markdown_to_html(md: &str) -> String {
+    use pulldown_cmark::Options;
+    let mut options = Options::empty();
+    options.insert(Options::ENABLE_TABLES);
+    options.insert(Options::ENABLE_STRIKETHROUGH);
+    options.insert(Options::ENABLE_TASKLISTS);
+    let parser = pulldown_cmark::Parser::new_ext(md, options);
+    let mut html = String::new();
+    pulldown_cmark::html::push_html(&mut html, parser);
+    html
+}
+
+/// Extracts the operator-facing chat content from a brain response.
+///
+/// Parses `<bm-chat>...</bm-chat>` from the accumulated text.
+/// Returns None if tags not found or content is empty.
+/// No fallback — if the LLM does not use the tags, nothing is forwarded.
+pub(crate) fn extract_chat_content(text: &str) -> Option<String> {
+    let start_tag = "<bm-chat>";
+    let end_tag = "</bm-chat>";
+
+    let start = text.find(start_tag)?;
+    let after = &text[start + start_tag.len()..];
+    let end = after.find(end_tag)?;
+    let content = after[..end].trim();
+
+    if content.is_empty() {
+        None
+    } else {
+        Some(content.to_string())
+    }
+}
+
 /// Configuration for connecting to a Matrix homeserver.
 #[derive(Debug, Clone)]
 pub struct MatrixBridgeConfig {
@@ -409,23 +445,37 @@ impl MatrixBridgeWriter {
         }
     }
 
-    /// Run the writer loop. Reads from `MultiplexerOutput`, accumulates
-    /// text chunks, and sends a single message to the Matrix room on
-    /// `TurnComplete`. Stops when the output channel closes.
+    /// Run the writer loop. Reads from `MultiplexerOutput` and sends
+    /// text to the Matrix room using debounced streaming with `<bm-chat>` parsing.
     pub async fn run(self, mut output: MultiplexerOutput) {
         let mut buffer = String::new();
+        let debounce = tokio::time::Duration::from_millis(500);
 
         loop {
-            match output.recv().await {
+            let event = if !buffer.is_empty() {
+                match tokio::time::timeout(debounce, output.recv()).await {
+                    Ok(event) => event,
+                    Err(_) => {
+                        // Debounce expired — only flush if we have complete tags
+                        if buffer.contains("</bm-chat>") {
+                            let text = std::mem::take(&mut buffer);
+                            self.flush_chat_content(&text).await;
+                        }
+                        continue;
+                    }
+                }
+            } else {
+                output.recv().await
+            };
+
+            match event {
                 Some(BridgeOutput::Text(chunk)) => {
                     buffer.push_str(&chunk);
                 }
                 Some(BridgeOutput::TurnComplete) => {
                     if !buffer.is_empty() {
                         let text = std::mem::take(&mut buffer);
-                        if let Err(e) = self.send_message(&text).await {
-                            tracing::error!(error = %e, "Failed to send message to Matrix room");
-                        }
+                        self.flush_chat_content(&text).await;
                     }
                 }
                 Some(BridgeOutput::Error(err)) => {
@@ -436,15 +486,26 @@ impl MatrixBridgeWriter {
                     buffer.clear();
                 }
                 None => {
-                    // Multiplexer shut down — send any remaining buffered text
                     if !buffer.is_empty() {
-                        if let Err(e) = self.send_message(&buffer).await {
-                            tracing::error!(error = %e, "Failed to send final buffer to Matrix room");
-                        }
+                        self.flush_chat_content(&buffer).await;
                     }
                     tracing::info!("Bridge writer stopping (multiplexer shut down)");
                     return;
                 }
+            }
+        }
+    }
+
+    /// Extract `<bm-chat>` content and send to Matrix.
+    async fn flush_chat_content(&self, text: &str) {
+        match extract_chat_content(text) {
+            Some(msg) => {
+                if let Err(e) = self.send_message(&msg).await {
+                    tracing::error!(error = %e, "Failed to send chat message to Matrix");
+                }
+            }
+            None => {
+                tracing::debug!("No <bm-chat> content to forward to operator");
             }
         }
     }
@@ -479,7 +540,9 @@ impl MatrixBridgeWriter {
 
         let payload = serde_json::json!({
             "msgtype": "m.text",
-            "body": body
+            "body": body,
+            "format": "org.matrix.custom.html",
+            "formatted_body": markdown_to_html(body)
         });
 
         let mut backoff_secs: u64 = 1;
@@ -981,5 +1044,41 @@ mod tests {
                 invite: None,
             }),
         }
+    }
+
+    #[test]
+    fn extract_chat_content_returns_trimmed() {
+        let text = "<bm-response>\n<bm-chat>\nHello operator!\n</bm-chat>\n</bm-response>";
+        assert_eq!(extract_chat_content(text), Some("Hello operator!".into()));
+    }
+
+    #[test]
+    fn extract_chat_content_empty_tags() {
+        let text = "<bm-response><bm-chat>  </bm-chat></bm-response>";
+        assert_eq!(extract_chat_content(text), None);
+    }
+
+    #[test]
+    fn extract_chat_content_no_tags() {
+        let text = "Just some plain text without any tags";
+        assert_eq!(extract_chat_content(text), None);
+    }
+
+    #[test]
+    fn extract_chat_content_missing_end_tag() {
+        let text = "<bm-chat>partial content";
+        assert_eq!(extract_chat_content(text), None);
+    }
+
+    #[test]
+    fn extract_chat_content_multiline() {
+        let text = "<bm-chat>\nLine 1\nLine 2\nLine 3\n</bm-chat>";
+        assert_eq!(extract_chat_content(text), Some("Line 1\nLine 2\nLine 3".into()));
+    }
+
+    #[test]
+    fn extract_chat_content_ignores_surrounding() {
+        let text = "internal stuff <bm-response><bm-chat>visible</bm-chat></bm-response> more internal";
+        assert_eq!(extract_chat_content(text), Some("visible".into()));
     }
 }
