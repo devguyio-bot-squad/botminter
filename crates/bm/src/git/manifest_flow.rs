@@ -223,30 +223,36 @@ pub fn validate_is_org(owner: &str) -> Result<()> {
 
 /// Ensures the App installation has access to the given repos.
 ///
-/// For each repo, checks `GET /repos/{owner}/{repo}/installation`. If the
-/// App is already installed (200), skips. If not (404), adds it via
-/// `PUT /user/installations/{installation_id}/repositories/{repo_id}`.
+/// For each repo, checks `GET /repos/{owner}/{repo}/installation` using an
+/// App JWT (this endpoint requires App-level auth, not a user PAT).
 ///
-/// This is idempotent: calling it multiple times is safe. Uses the
-/// operator's `gh auth` session (not the App's installation token),
-/// because the `/user/installations/` endpoint requires user-level auth.
+/// This is idempotent: calling it multiple times is safe.
 pub fn ensure_app_on_repos(
     installation_id: &str,
+    client_id: &str,
+    private_key: &str,
     repos: &[&str],
 ) -> Result<()> {
-    let detected_token = super::detect_token();
+    let jwt = super::app_auth::generate_jwt(client_id, private_key)
+        .context("Failed to generate JWT for repo installation check")?;
     for repo in repos {
         if repo.is_empty() {
             continue;
         }
-        match check_repo_installation(repo, detected_token.as_deref()) {
+        match check_repo_installation(repo, &jwt) {
             RepoInstallationStatus::Installed => {
                 eprintln!("  App already has access to {repo}");
             }
             RepoInstallationStatus::NotInstalled => {
-                let repo_id = get_repo_id(repo, detected_token.as_deref())?;
-                add_repo_to_installation(installation_id, repo_id, detected_token.as_deref())?;
-                eprintln!("  Added {repo} to App installation");
+                // TODO: Programmatic repo addition requires the browser-based
+                // GitHub App installation flow (interactive manifest flow).
+                // Until that's implemented, the operator must install the App
+                // on the repo manually via the GitHub UI.
+                eprintln!(
+                    "  Warning: App is not installed on {repo}.\n\
+                     \x20 Install it manually: https://github.com/organizations/{org}/settings/installations/{installation_id}",
+                    org = repo.split('/').next().unwrap_or("UNKNOWN"),
+                );
             }
             RepoInstallationStatus::CheckFailed(e) => {
                 eprintln!("  Warning: could not check installation status for {repo}: {e}");
@@ -263,16 +269,19 @@ enum RepoInstallationStatus {
 }
 
 /// Checks whether the App is installed on a specific repo.
-fn check_repo_installation(repo: &str, gh_token: Option<&str>) -> RepoInstallationStatus {
+///
+/// Uses the App's JWT for authentication via `-H Authorization: Bearer` header,
+/// which overrides any `GH_TOKEN` env var. The `GET /repos/{owner}/{repo}/installation`
+/// endpoint requires App-level auth and cannot be called with a user PAT.
+fn check_repo_installation(repo: &str, jwt: &str) -> RepoInstallationStatus {
+    let auth_header = format!("Authorization: Bearer {jwt}");
     let mut cmd = std::process::Command::new("gh");
     cmd.args([
         "api",
         &format!("repos/{repo}/installation"),
+        "-H", &auth_header,
         "--silent",
     ]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
     cmd.stdout(std::process::Stdio::null());
     cmd.stderr(std::process::Stdio::piped());
 
@@ -291,66 +300,6 @@ fn check_repo_installation(repo: &str, gh_token: Option<&str>) -> RepoInstallati
         }
         Err(e) => RepoInstallationStatus::CheckFailed(e.to_string()),
     }
-}
-
-/// Gets the numeric repository ID for a given owner/repo.
-fn get_repo_id(repo: &str, gh_token: Option<&str>) -> Result<u64> {
-    let mut cmd = std::process::Command::new("gh");
-    cmd.args(["api", &format!("repos/{repo}"), "--jq", ".id"]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
-
-    let output = cmd
-        .output()
-        .with_context(|| format!("Failed to get repo ID for {repo}"))?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!("Failed to get repo ID for {repo}: {}", stderr.trim());
-    }
-
-    let id_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    id_str
-        .parse::<u64>()
-        .with_context(|| format!("Invalid repo ID '{id_str}' for {repo}"))
-}
-
-/// Adds a repository to an App installation.
-///
-/// Uses `PUT /user/installations/{installation_id}/repositories/{repository_id}`.
-/// This endpoint requires the operator's user-level auth (PAT or OAuth),
-/// not the App's installation token.
-fn add_repo_to_installation(
-    installation_id: &str,
-    repo_id: u64,
-    gh_token: Option<&str>,
-) -> Result<()> {
-    let mut cmd = std::process::Command::new("gh");
-    cmd.args([
-        "api",
-        "--method",
-        "PUT",
-        &format!("user/installations/{installation_id}/repositories/{repo_id}"),
-        "--silent",
-    ]);
-    if let Some(token) = gh_token {
-        cmd.env("GH_TOKEN", token);
-    }
-
-    let output = cmd
-        .output()
-        .context("Failed to add repo to installation")?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "Failed to add repo (ID {repo_id}) to installation {installation_id}: {}",
-            stderr.trim()
-        );
-    }
-
-    Ok(())
 }
 
 /// Collects all repos that a member's App should have access to:

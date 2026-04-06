@@ -1080,6 +1080,75 @@ fn inbox_resync_preserves_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send 
     }
 }
 
+fn fire_member_fn(
+    gh_token: String,
+    app_id: String,
+    app_client_id: String,
+    app_installation_id: String,
+    app_private_key_file: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let workzone = env.home.join("workspaces");
+        let team_dir = workzone.join(TEAM_NAME);
+        let team_repo = team_dir.join("team");
+
+        // Re-hire the member first (was stopped/cleaned by earlier tests)
+        if !team_repo.join("members").join(MEMBER_DIR).is_dir() {
+            env.command("bm")
+                .args([
+                    "hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME,
+                    "--reuse-app",
+                    "--app-id", &app_id,
+                    "--client-id", &app_client_id,
+                    "--private-key-file", &app_private_key_file,
+                    "--installation-id", &app_installation_id,
+                ])
+                .run();
+        }
+
+        // Verify member exists before fire
+        assert!(
+            team_repo.join("members").join(MEMBER_DIR).is_dir(),
+            "member dir should exist before fire"
+        );
+
+        // Fire with --yes (skip confirmation) — don't delete repo in E2E
+        // to avoid orphaning the workspace repo (cleanup handles it)
+        let output = env.command("bm")
+            .args(["fire", MEMBER_DIR, "-t", TEAM_NAME, "--yes"])
+            .output();
+        assert!(
+            output.status.success(),
+            "bm fire failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        assert!(stdout.contains("Fired"), "should print 'Fired', got: {}", stdout);
+
+        // Verify cleanup
+        assert!(
+            !team_repo.join("members").join(MEMBER_DIR).is_dir(),
+            "member dir should be removed after fire"
+        );
+        assert!(
+            !team_dir.join(MEMBER_DIR).is_dir(),
+            "workspace should be removed after fire"
+        );
+
+        // Re-hire for subsequent tests (second pass needs the member)
+        env.command("bm")
+            .args([
+                "hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME,
+                "--reuse-app",
+                "--app-id", &app_id,
+                "--client-id", &app_client_id,
+                "--private-key-file", &app_private_key_file,
+                "--installation-id", &app_installation_id,
+            ])
+            .run();
+    }
+}
+
 // ── Scenario construction ────────────────────────────────────────────
 
 fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSuite {
@@ -1149,6 +1218,7 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("daemon_already_running_fresh", daemon_already_running_fn(gh_token.clone()))
         .case("daemon_crashed_detection_fresh", daemon_crashed_detection_fn(gh_token.clone()))
         .case("bridge_stop_fresh", bridge_stop_fn(gh_token.clone()))
+        .case("fire_member_fresh", fire_member_fn(gh_token.clone(), app_id.clone(), app_client_id.clone(), app_installation_id.clone(), app_private_key_file.clone()))
         // ── Reset HOME ───────────────────────────────────────────────
         .case("reset_home", |env: &mut TestEnv| {
             eprintln!("Wiping HOME for second pass...");
@@ -1238,6 +1308,7 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("daemon_already_running_existing", daemon_already_running_fn(gh_token.clone()))
         .case("daemon_crashed_detection_existing", daemon_crashed_detection_fn(gh_token.clone()))
         .case("bridge_stop_existing", bridge_stop_fn(gh_token.clone()))
+        .case("fire_member_existing", fire_member_fn(gh_token.clone(), app_id.clone(), app_client_id.clone(), app_installation_id.clone(), app_private_key_file.clone()))
         // ── Cleanup ──────────────────────────────────────────────────
         .case("cleanup", {
             let gh_org_c = gh_org.clone();

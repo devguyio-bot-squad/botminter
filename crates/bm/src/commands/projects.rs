@@ -136,8 +136,32 @@ fn install_member_apps_on_repo(
             }
         };
 
+        let client_id = match cred_store.retrieve(&credential_keys::client_id(member)) {
+            Ok(Some(id)) => id,
+            Ok(None) => {
+                eprintln!("Warning: no client ID for member '{member}', skipping App installation on {owner_repo}");
+                continue;
+            }
+            Err(e) => {
+                eprintln!("Warning: could not read client ID for {member}: {e}");
+                continue;
+            }
+        };
+
+        let private_key = match cred_store.retrieve(&credential_keys::private_key(member)) {
+            Ok(Some(key)) => key,
+            Ok(None) => {
+                eprintln!("Warning: no private key for member '{member}', skipping App installation on {owner_repo}");
+                continue;
+            }
+            Err(e) => {
+                eprintln!("Warning: could not read private key for {member}: {e}");
+                continue;
+            }
+        };
+
         eprintln!("Installing {member}'s App on {owner_repo}...");
-        if let Err(e) = manifest_flow::ensure_app_on_repos(&installation_id, &[owner_repo]) {
+        if let Err(e) = manifest_flow::ensure_app_on_repos(&installation_id, &client_id, &private_key, &[owner_repo]) {
             eprintln!("Warning: failed to install {member}'s App on {owner_repo}: {e}");
         }
     }

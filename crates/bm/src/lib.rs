@@ -10,6 +10,7 @@ pub mod config;
 pub mod daemon;
 pub mod formation;
 pub mod git;
+pub mod member_lifecycle;
 pub mod profile;
 pub mod session;
 pub mod state;
