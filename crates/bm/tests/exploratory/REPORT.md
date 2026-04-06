@@ -1,6 +1,6 @@
 # Exploratory Test Report: Sync & Bridge Idempotency
 
-**Date:** 2026-03-26
+**Date:** 2026-04-06
 **Build:** bm 0.2.0-pre-alpha (local debug)
 **Environment:** Linux x86_64, podman rootless, gh (devguyio)
 **Test User:** bm-test-user@localhost (isolated)
@@ -21,7 +21,7 @@
 | B8 | Hired alice (--reuse-app) | **PASS** |
 | B9 | Hired bob (--reuse-app) | **PASS** |
 | B10 | Member dirs exist (superman-alice, superman-bob) | **PASS** |
-| B11 | Hire duplicate alice | **NOTE** — Correctly rejects: 'already exists' |
+| B11 | Hire duplicate | **FAIL** — Should have failed |
 
 ### Phase C: Bridge Lifecycle (Tuwunel)
 
@@ -34,7 +34,7 @@
 | C5 | Passwords file has 3 entries | **PASS** |
 | C6 | Keyring has credentials for alice + bob | **PASS** |
 | C7 | Admin can login to Matrix | **PASS** |
-| C8 | Room exploratory-test-general exists (!XoP4UZOBnGPgZpIoEx:localhost) | **PASS** |
+| C8 | Room exploratory-test-general exists (!BjoSqn4sOsupjb5Gsv:localhost) | **PASS** |
 | C9 | Sync --bridge again (idempotent) | **PASS** |
 | C10 | Container still running | **PASS** |
 | C11 | Bridge state unchanged | **PASS** |
@@ -70,7 +70,7 @@
 | D3 | Team submodule present | **PASS** |
 | D4 | Agent dir assembled | **PASS** |
 | D5 | Git repo clean | **PASS** |
-| D6 | Git log | **NOTE** — 6440f30 Sync workspace with team repo |
+| D6 | Git log | **NOTE** — 509cc7c Sync workspace with team repo |
 | D7 | Sync again (no changes) | **PASS** |
 | D8 | Context files still present after re-sync | **PASS** |
 | D9 | Third sync still clean | **PASS** |
@@ -139,34 +139,32 @@
 | H23 | Cleaned DM room state for discovery test | **PASS** |
 | H24 | Cleaned previous state for lifecycle test | **PASS** |
 | H25 | bm start executed (brain mode detected) | **PASS** |
-| H26 | Brain started in DM discovery mode (PID 4126628) | **PASS** |
+| H26 | Brain started in DM discovery mode (PID 3050551) | **PASS** |
 | H27 | bm status shows brain label during lifecycle | **PASS** |
-| H28 | Operator DM created and greeting sent (!3CNonyQ7WjRIEhOv5m:localhost, $qy32DZ4rgRROW3YTNqfncs4Pw1qHjnSXNGaje0NGjfM) | **PASS** |
-| H28b | Brain discovered DM room (!3CNonyQ7WjRIEhOv5m:localhost via dm-room.json) | **PASS** |
-| H29 | Work request sent to room while brain running ($42ZawCrmr-Xw2tZD80Dv-KfuFGmH1ckzywOpWDEyQt0) | **PASS** |
+| H28 | Operator DM created and greeting sent (!Bb9SDxSnY5itOAIrHD:localhost, $bILPDup91_Um38cNNnPMsRCRo4hr8--Ihbj0BWwSLi0) | **PASS** |
+| H28b | Brain discovered DM room (!Bb9SDxSnY5itOAIrHD:localhost via dm-room.json) | **PASS** |
+| H29 | Work request sent to room while brain running ($1pHNffXVrbvQtDMj6gmHsZ4_nlDaI86J7HOvm8N95C4) | **PASS** |
 | H30 | Follow-up question sent (multi-turn simulation) | **PASS** |
 | H31 | Brain survived malformed/empty message (edge case) | **PASS** |
-| H32 | Brain responded with meaningful content (response: Hi! I'm **alice**, your autonomous team member on **exploratory-test**. My role is **superman** — ...) | **PASS** |
-| H29b | Brain response addresses work request (mentions project/status/tools) | **PASS** |
-| H33 | User messages visible in room history (5 total messages) | **PASS** |
+| H32 | Brain response | **FAIL** — brain is alive but did not respond within 30s |
+| H29b | Work request response | **FAIL** — no brain response to evaluate |
+| H33 | User messages visible in room history (4 total messages) | **PASS** |
 | H34 | DM privacy | **NOTE** — bob can read alice's DM room (may be due to server config) |
 | H35 | Brain survived all interaction (normal + malformed + cross-member messages) | **PASS** |
 | H36 | bm stop executed cleanly (exit 0) | **PASS** |
 | H37 | All brain processes terminated after stop | **PASS** |
 | H38 | Brain restarted successfully (recovery scenario) | **PASS** |
-| H39 | Message delivered after brain restart (recovery proof, $nnF1bVNGXp2B-kX9JpRl6RMiEL9eSBu475r-N-mNhW0) | **PASS** |
-| H40 | Brain responded after recovery! NEW response detected (pre: 1, post: 2, body: Yes, I'm operational! Just came back online.
-
-Let me quickly check my current st...) | **PASS** |
+| H39 | Message delivered after brain restart (recovery proof, $jMQyOSu_Xy9AwDL_M37YZOOzplAt_OrHfEQ45bGSmFA) | **PASS** |
+| H40 | Recovery response | **FAIL** — brain alive after restart but did not respond within 90s (stderr: 2026-04-06T18:29:50.357841Z  INFO bm::commands::brain_run: Brain multiplexer starting workspace=/home/bm-test-user/.botminter/workspaces/exploratory-test/superman-alice acp_binary=claude-agent-acp 2026-04-06T18:29:50.359800Z  INFO bm::commands::brain_run: Bridge adapter enabled — spawning reader and writer room_id=Some("!Bb9SDxSnY5itOAIrHD:localhost") own_user_id=@superman-alice:localhost mode="locked" 2026-04-06T18:29:50.391611Z  INFO bm::brain::bridge_adapter: Joined Matrix room room_id=!Bb9SDxSnY5itOAIrHD:localhost 2026-04-06T18:29:50.396309Z  INFO bm::brain::bridge_adapter: Bridge reader initial sync complete 2026-04-06T18:29:50.413883Z  INFO bm::brain::heartbeat: Heartbeat timer started interval_secs=60 2026-04-06T18:30:16.431342Z  INFO bm::brain::bridge_adapter: Injected bridge message into multiplexer sender=@bmadmin:localhost body_len=75 2026-04-06T18:31:50.414938Z ERROR bm::brain::multiplexer: ACP session creation timed out after 120s 2026-04-06T18:31:50.415262Z  INFO bm::brain::heartbeat: Heartbeat timer shutting down 2026-04-06T18:31:50.415259Z  INFO bm::brain::bridge_adapter: Bridge writer stopping (multiplexer shut down) 2026-04-06T18:31:50.415296Z  INFO bm::brain::event_watcher: Event watcher shutting down 2026-04-06T18:31:50.415340Z  INFO bm::brain::bridge_adapter: Bridge reader shutting down 2026-04-06T18:31:50.415392Z ERROR bm::commands::brain_run: Brain multiplexer error: ACP error: ACP initialization failed: session creation timed out after 120s Error: Brain multiplexer failed: ACP error: ACP initialization failed: session creation timed out after 120s ) |
 | H41 | Recovery start-stop cycle clean (brain lifecycle idempotent) | **PASS** |
 | H42 | Status inquiry sent after brain lifecycle | **PASS** |
-| H43 | All messages persist in DM room history (8 total) | **PASS** |
-| H44 | dm-room.json persisted correctly (!3CNonyQ7WjRIEhOv5m:localhost) | **PASS** |
+| H43 | All messages persist in DM room history (6 total) | **PASS** |
+| H44 | dm-room.json persisted correctly (!Bb9SDxSnY5itOAIrHD:localhost) | **PASS** |
 | H46 | Created GitHub issue #1 for brain to discover | **PASS** |
-| H47 | Brain started for task execution journey (PID 4149328) | **PASS** |
-| H48 | Board check request sent to brain ($Gg1CdLTc1rQUwTMhNT0slkigPyGmaV1UdmJI_utGVeE) | **PASS** |
-| H49 | Brain acknowledged board/issue in response! (body: I'll check the GitHub board now for pending issues.Let me use the GitHub CLI to check the board. I'l...) | **PASS** |
-| H50 | Brain survived task execution request (PID 4149328 still alive) | **PASS** |
+| H47 | Brain started for task execution journey (PID 3080519) | **PASS** |
+| H48 | Board check request sent to brain ($AkWr_CFgmUI6DPiCDT_Ize5YW8ItxSJWAWEmPVEGYi4) | **PASS** |
+| H49 | Task response | **NOTE** — brain alive, prompt sent to ACP, but LLM did not respond within 300s (expected for complex tool-use) |
+| H50 | Brain survived task execution request (PID 3080519 still alive) | **PASS** |
 | H51 | Task execution journey cleaned up | **PASS** |
 | H52 | Cleaned up all brain lifecycle test artifacts | **PASS** |
 
@@ -186,6 +184,6 @@ Let me quickly check my current st...) | **PASS** |
 
 ## Summary
 
-- **PASS:** 134
-- **FAIL:** 0
+- **PASS:** 130
+- **FAIL:** 4
 - **NOTE:** 4

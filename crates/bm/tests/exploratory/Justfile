@@ -39,6 +39,9 @@ PROFILE := "scrum-compact"
 BOARD := "Exploratory Test Board"
 TUWUNEL_PORT := env("TUWUNEL_PORT", "8008")
 
+# GitHub credentials
+TESTS_GH_TOKEN := env("TESTS_GH_TOKEN", "")
+
 # GitHub App credentials (pre-provisioned bm-test-app)
 TESTS_APP_ID := env("TESTS_APP_ID", "")
 TESTS_APP_CLIENT_ID := env("TESTS_APP_CLIENT_ID", "")
@@ -127,8 +130,8 @@ clean:
 deploy: build clean
     #!/usr/bin/env bash
     set -euo pipefail
-    # Validate App credential env vars
-    for var in TESTS_APP_ID TESTS_APP_CLIENT_ID TESTS_APP_INSTALLATION_ID TESTS_APP_PRIVATE_KEY_FILE; do
+    # Validate required env vars
+    for var in TESTS_GH_TOKEN TESTS_APP_ID TESTS_APP_CLIENT_ID TESTS_APP_INSTALLATION_ID TESTS_APP_PRIVATE_KEY_FILE; do
         if [ -z "${!var:-}" ]; then
             echo "Error: $var env var must be set" >&2
             exit 1
@@ -141,7 +144,7 @@ deploy: build clean
     scp -q {{CARGO_ROOT}}/target/debug/bm {{TEST_HOST}}:{{REMOTE_BIN}}/bm
     scp -q {{CARGO_ROOT}}/target/debug/bm-agent {{TEST_HOST}}:{{REMOTE_BIN}}/bm-agent
     # Deploy ralph, claude, and claude-code-acp-rs from operator's PATH
-    for bin in ralph claude claude-code-acp-rs; do
+    for bin in ralph claude claude-code-acp-rs claude-agent-acp; do
         LOCAL_BIN=$(which "$bin" 2>/dev/null || true)
         if [ -n "$LOCAL_BIN" ]; then
             scp -q "$LOCAL_BIN" {{TEST_HOST}}:{{REMOTE_BIN}}/"$bin"
@@ -162,6 +165,10 @@ deploy: build clean
     # Ensure git identity is configured (required for bm init)
     ssh {{TEST_HOST}} 'git config --global user.email 2>/dev/null || git config --global user.email "bm-test-user@botminter.dev"'
     ssh {{TEST_HOST}} 'git config --global user.name 2>/dev/null || git config --global user.name "BM Test User"'
+    # Authenticate gh on the test user (clean wipes stale tokens).
+    # Pipe the token via stdin to avoid exposing it in process args.
+    # setup-git wires the credential helper so git push uses gh for HTTPS auth.
+    echo "$TESTS_GH_TOKEN" | ssh {{TEST_HOST}} 'gh auth login --with-token && gh auth setup-git'
     # Generate env.sh on the remote — sourced by run-phase before each phase
     printf '%s\n' \
         'export BM="{{REMOTE_BIN}}/bm"' \
