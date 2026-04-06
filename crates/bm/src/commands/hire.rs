@@ -1,12 +1,11 @@
 use std::fs;
 use std::io::IsTerminal;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 
 use crate::bridge::{self, CredentialStore};
 use crate::config;
-use crate::member_lifecycle::{self, AppCredentials};
-use crate::profile;
+use crate::member_lifecycle::{self, AppCredentials, HireParams};
 
 /// GitHub App credential flags from the CLI.
 pub struct AppCredentialFlags<'a> {
@@ -28,42 +27,50 @@ pub fn run(
     super::ensure_profiles(false)?;
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
-    let team_repo = team.path.join("team");
 
-    // Read and validate manifest
-    let manifest: profile::ProfileManifest = {
-        let contents = fs::read_to_string(team_repo.join("botminter.yml"))
-            .context("Failed to read team repo's botminter.yml")?;
-        serde_yml::from_str(&contents).context("Failed to parse botminter.yml")?
+    // Resolve App credentials from CLI flags (if --reuse-app)
+    let app_credentials = if app_flags.reuse_app {
+        let app_id = app_flags.app_id.context("--reuse-app requires --app-id")?;
+        let client_id = app_flags.client_id.context("--reuse-app requires --client-id")?;
+        let key_file = app_flags.private_key_file.context("--reuse-app requires --private-key-file")?;
+        let installation_id = app_flags.installation_id.context("--reuse-app requires --installation-id")?;
+        let private_key = fs::read_to_string(key_file)
+            .with_context(|| format!("Failed to read private key file: {key_file}"))?;
+        Some(AppCredentials {
+            app_id: app_id.to_string(),
+            client_id: client_id.to_string(),
+            private_key,
+            installation_id: installation_id.to_string(),
+        })
+    } else {
+        None
     };
-    profile::check_schema_version(&team.profile, &manifest.schema_version)?;
-    let coding_agent = profile::resolve_coding_agent(team, &manifest)?;
 
-    // Hire the member (domain operation — creates dir, renders placeholders)
-    let result = profile::hire_member(&team_repo, &team.profile, role, name, coding_agent)?;
+    // ── Domain call ───────────────────────────────────────────────
+    let result = member_lifecycle::hire_member(&HireParams {
+        team,
+        role,
+        name,
+        app_credentials,
+        save_credentials_path: app_flags.save_credentials,
+    })?;
 
+    // ── Display ───────────────────────────────────────────────────
     if result.already_existed {
-        if app_flags.reuse_app {
-            println!(
-                "Member {} already exists in team '{}'. Storing App credentials.",
-                result.member_dir_name, team.name
-            );
-            store_app_credentials(team, &result.member_dir_name, &app_flags)?;
-            return Ok(());
-        }
-        bail!(
-            "Member '{}' already exists. Use --reuse-app to attach App credentials \
-             to an existing member, or choose a different --name.",
-            result.member_dir_name
+        println!(
+            "Member {} already exists in team '{}'. Storing App credentials.",
+            result.member_dir_name, team.name
         );
+    } else {
+        println!("Hired {} as {} in team '{}'.", role, result.member_name, team.name);
     }
 
-    println!("Hired {} as {} in team '{}'.", role, result.member_name, team.name);
-
-    // GitHub App credential storage
-    if app_flags.reuse_app {
-        store_app_credentials(team, &result.member_dir_name, &app_flags)?;
-    } else if !team.github_repo.is_empty() {
+    if result.app_credentials_stored {
+        println!("GitHub App credentials stored for {}.", result.member_dir_name);
+        if !result.repos_checked.is_empty() {
+            eprintln!("Ensuring App installation has access to repos...");
+        }
+    } else if !team.github_repo.is_empty() && !app_flags.reuse_app {
         eprintln!(
             "Note: GitHub App credentials not configured for {}.\n\
              Use --reuse-app with --app-id, --client-id, --private-key-file, \
@@ -72,47 +79,12 @@ pub fn run(
         );
     }
 
-    // Prompt for bridge token if team has an external bridge configured
-    prompt_bridge_token(&team_repo, team, &cfg, &result.member_dir_name)?;
-
-    Ok(())
-}
-
-/// Resolves CLI flags into domain call for App credential setup.
-fn store_app_credentials(
-    team: &config::TeamEntry,
-    member_name: &str,
-    flags: &AppCredentialFlags<'_>,
-) -> Result<()> {
-    let app_id = flags.app_id.context("--reuse-app requires --app-id")?;
-    let client_id = flags.client_id.context("--reuse-app requires --client-id")?;
-    let key_file = flags.private_key_file.context("--reuse-app requires --private-key-file")?;
-    let installation_id = flags.installation_id.context("--reuse-app requires --installation-id")?;
-
-    let private_key = fs::read_to_string(key_file)
-        .with_context(|| format!("Failed to read private key file: {key_file}"))?;
-
-    let creds = AppCredentials {
-        app_id: app_id.to_string(),
-        client_id: client_id.to_string(),
-        private_key,
-        installation_id: installation_id.to_string(),
-    };
-
-    let result = member_lifecycle::setup_app_credentials(
-        team,
-        member_name,
-        &creds,
-        flags.save_credentials,
-    )?;
-
-    println!("GitHub App credentials stored for {}.", member_name);
-    if !result.repos_checked.is_empty() {
-        eprintln!("Ensuring App installation has access to repos...");
-    }
     if let Some(path) = &result.credentials_saved_to {
         println!("Credentials saved to {path}");
     }
+
+    // Prompt for bridge token if team has an external bridge configured
+    prompt_bridge_token(&team.path.join("team"), team, &cfg, &result.member_dir_name)?;
 
     Ok(())
 }

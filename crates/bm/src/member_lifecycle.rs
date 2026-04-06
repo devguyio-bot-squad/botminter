@@ -1,20 +1,97 @@
-//! Member lifecycle domain operations: hire post-processing and fire teardown.
+//! Member lifecycle domain operations: hire and fire.
 //!
-//! Hire's core operation (directory creation, placeholder rendering) lives in
-//! `profile::hire_member()`. This module handles the post-hire infrastructure
-//! setup (App credentials, repo access) and the multi-domain fire teardown.
+//! Single entry point for adding and removing members from a team.
+//! Composes profile extraction, credential management, bridge identity,
+//! and GitHub repo operations into cohesive lifecycle methods.
 
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
 
 use crate::bridge;
 use crate::config::{BotminterConfig, TeamEntry};
 use crate::formation::{self, CredentialDomain, Formation};
 use crate::git::{self, app_auth, manifest_flow};
+use crate::profile;
 
-// ── Hire: App credential setup ──────────────────────────────────────
+// ── Hire ─────────────────────────────────────────────────────────────
+
+/// Parameters for hiring a member.
+pub struct HireParams<'a> {
+    pub team: &'a TeamEntry,
+    pub role: &'a str,
+    pub name: Option<&'a str>,
+    pub app_credentials: Option<AppCredentials>,
+    pub save_credentials_path: Option<&'a str>,
+}
+
+/// Result of hiring a member.
+pub struct HireResult {
+    pub member_dir_name: String,
+    pub member_name: String,
+    pub already_existed: bool,
+    pub app_credentials_stored: bool,
+    pub repos_checked: Vec<String>,
+    pub credentials_saved_to: Option<String>,
+}
+
+/// Hires a member: extracts profile skeleton, stores App credentials if provided.
+pub fn hire_member(params: &HireParams) -> Result<HireResult> {
+    let team_repo = params.team.path.join("team");
+
+    // Read and validate manifest
+    let manifest: profile::ProfileManifest = {
+        let contents = fs::read_to_string(team_repo.join("botminter.yml"))
+            .context("Failed to read team repo's botminter.yml")?;
+        serde_yml::from_str(&contents).context("Failed to parse botminter.yml")?
+    };
+    profile::check_schema_version(&params.team.profile, &manifest.schema_version)?;
+    let coding_agent = profile::resolve_coding_agent(params.team, &manifest)?;
+
+    // Profile extraction (creates member dir, renders placeholders)
+    let profile_result = profile::hire_member(
+        &team_repo,
+        &params.team.profile,
+        params.role,
+        params.name,
+        coding_agent,
+    )?;
+
+    if profile_result.already_existed && params.app_credentials.is_none() {
+        bail!(
+            "Member '{}' already exists. Use --reuse-app to attach App credentials \
+             to an existing member, or choose a different --name.",
+            profile_result.member_dir_name
+        );
+    }
+
+    // App credential setup (if provided)
+    let mut app_credentials_stored = false;
+    let mut repos_checked = Vec::new();
+    let mut credentials_saved_to = None;
+
+    if let Some(ref creds) = params.app_credentials {
+        let app_result = setup_app_credentials(
+            params.team,
+            &profile_result.member_dir_name,
+            creds,
+            params.save_credentials_path,
+        )?;
+        app_credentials_stored = app_result.credentials_stored;
+        repos_checked = app_result.repos_checked;
+        credentials_saved_to = app_result.credentials_saved_to;
+    }
+
+    Ok(HireResult {
+        member_dir_name: profile_result.member_dir_name,
+        member_name: profile_result.member_name,
+        already_existed: profile_result.already_existed,
+        app_credentials_stored,
+        repos_checked,
+        credentials_saved_to,
+    })
+}
 
 /// Pre-generated GitHub App credentials for `--reuse-app` hire flow.
 pub struct AppCredentials {
@@ -25,15 +102,15 @@ pub struct AppCredentials {
 }
 
 /// Result of setting up GitHub App credentials for a hired member.
-pub struct AppSetupResult {
-    pub credentials_stored: bool,
-    pub repos_checked: Vec<String>,
-    pub credentials_saved_to: Option<String>,
+struct AppSetupResult {
+    credentials_stored: bool,
+    repos_checked: Vec<String>,
+    credentials_saved_to: Option<String>,
 }
 
 /// Stores pre-generated GitHub App credentials for a member and ensures the
 /// App has access to all team + project repos.
-pub fn setup_app_credentials(
+fn setup_app_credentials(
     team: &TeamEntry,
     member_name: &str,
     creds: &AppCredentials,
