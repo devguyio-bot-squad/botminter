@@ -200,6 +200,18 @@ async fn run_daemon_async(
         .await
         .context("Server error")?;
 
+    // Clean up: stop all running members before exiting.
+    // Members are fire-and-forget (PIDs in state.json), so the daemon must
+    // actively terminate them on shutdown.
+    daemon_log(&paths, "INFO", "Stopping members before exit...");
+    let cleanup_team = team_name.to_string();
+    let cleanup_cfg = app_config::load().ok();
+    if let Some(cfg) = cleanup_cfg {
+        if let Ok(team) = app_config::resolve_team(&cfg, Some(&cleanup_team)) {
+            let _ = crate::formation::stop_local_members(team, &cfg, None, false);
+        }
+    }
+
     daemon_log(&paths, "INFO", "Daemon stopped");
     Ok(())
 }

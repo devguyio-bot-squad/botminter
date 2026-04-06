@@ -390,7 +390,7 @@ pub struct AppCredentialsCached {
 /// Resolves App credentials from keyring, exchanges JWT for installation token,
 /// sets up token delivery, and writes the initial token. Returns the GH_CONFIG_DIR
 /// path if App credentials were found, or None if the member has no App creds.
-fn resolve_app_credentials_and_deliver(
+pub(crate) fn resolve_app_credentials_and_deliver(
     store: &dyn formation::KeyValueCredentialStore,
     formation: &dyn formation::Formation,
     member_name: &str,

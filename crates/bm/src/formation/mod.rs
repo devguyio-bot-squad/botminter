@@ -9,7 +9,9 @@ pub mod stop_members;
 
 pub use self::init::{register_team, setup_new_team_repo};
 pub use self::local::create_local_formation;
-pub use self::launch::{
+// Low-level process spawners — internal to the formation module.
+// The public entry point for member launch is `start_local_members`.
+pub(crate) use self::launch::{
     check_robot_enabled_mismatch, is_brain_member, launch_brain, BrainLaunchConfig, launch_ralph,
 };
 pub use self::local_topology::write_local_topology;

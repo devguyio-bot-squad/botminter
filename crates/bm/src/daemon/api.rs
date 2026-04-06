@@ -737,6 +737,27 @@ fn start_loop_blocking(
     std::fs::write(&prompt_file, &req.prompt)
         .with_context(|| format!("Failed to write loop prompt to {}", prompt_file.display()))?;
 
+    // Resolve App credentials for the member (same path as member start)
+    let local_formation = crate::formation::local::create_local_formation(team_name)?;
+    let app_cred_store = local_formation.credential_store(
+        crate::formation::CredentialDomain::GitHubApp {
+            team_name: team_name.to_string(),
+            member_name: String::new(),
+        },
+    )?;
+    let gh_config_dir = match crate::formation::start_members::resolve_app_credentials_and_deliver(
+        app_cred_store.as_ref(),
+        local_formation.as_ref(),
+        &member_name,
+        &ws,
+    ) {
+        Ok(dir) => dir,
+        Err(e) => {
+            tracing::warn!(member = %member_name, error = %e, "App credential setup failed for loop, falling back to ambient auth");
+            None
+        }
+    };
+
     // Spawn ralph run with the prompt
     let mut cmd = std::process::Command::new("ralph");
     cmd.args(["run", "-p"])
@@ -746,6 +767,12 @@ fn start_loop_blocking(
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+
+    if let Some(config_dir) = gh_config_dir {
+        cmd.env("GH_CONFIG_DIR", config_dir);
+        cmd.env_remove("GH_TOKEN");
+        cmd.env_remove("GITHUB_TOKEN");
+    }
 
     let child = cmd.spawn().with_context(|| {
         format!("Failed to spawn ralph loop in {}", ws.display())

@@ -206,6 +206,7 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
                 }
                 remote.delete_repo(&ws_repo_name)?;
                 remote.create_repo(&ws_repo_name)?;
+                wait_for_repo(remote, &ws_repo_name)?;
                 remote.clone_repo(&ws_repo_name, &member_ws, false)?;
             }
             RemoteRepoState::NotFound => {
@@ -214,6 +215,7 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
                     fs::remove_dir_all(&member_ws).ok();
                 }
                 remote.create_repo(&ws_repo_name)?;
+                wait_for_repo(remote, &ws_repo_name)?;
                 remote.clone_repo(&ws_repo_name, &member_ws, false)?;
             }
         }
@@ -318,6 +320,27 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
         }
     }
 
+    Ok(())
+}
+
+/// Polls `repo_state()` until the repo is visible (not `NotFound`).
+/// GitHub repo creation has a propagation delay — the repo may not be
+/// immediately available for git operations after `gh repo create` returns.
+fn wait_for_repo(remote: &dyn RemoteRepoOps, repo_name: &str) -> Result<()> {
+    for attempt in 1..=30 {
+        match remote.repo_state(repo_name)? {
+            RemoteRepoState::NotFound => {
+                if attempt == 30 {
+                    bail!(
+                        "Repo '{}' not available after 15s. GitHub may be experiencing delays.",
+                        repo_name
+                    );
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            _ => return Ok(()),
+        }
+    }
     Ok(())
 }
 
@@ -1099,8 +1122,8 @@ pub(super) mod tests {
         let calls = mock.calls();
         assert_eq!(
             calls,
-            vec!["repo_state", "create_repo", "clone_repo", "push_repo"],
-            "fresh repo should: check state, create, clone, push"
+            vec!["repo_state", "create_repo", "repo_state", "clone_repo", "push_repo"],
+            "fresh repo should: check state, create, wait for availability, clone, push"
         );
 
         // Workspace should have all context files
@@ -1152,8 +1175,8 @@ pub(super) mod tests {
         let calls = mock.calls();
         assert_eq!(
             calls,
-            vec!["repo_state", "delete_repo", "create_repo", "clone_repo", "push_repo"],
-            "Empty repo should: check, delete, create, clone, push"
+            vec!["repo_state", "delete_repo", "create_repo", "repo_state", "clone_repo", "push_repo"],
+            "Empty repo should: check, delete, create, wait for availability, clone, push"
         );
 
         // Workspace should have all context files
