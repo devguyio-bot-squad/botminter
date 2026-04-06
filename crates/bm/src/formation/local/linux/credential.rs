@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use tracing::debug;
 
 use crate::formation::KeyValueCredentialStore;
 
@@ -281,12 +282,24 @@ impl KeyValueCredentialStore for LocalKeyValueCredentialStore {
 
             let entry = match keyring::Entry::new(&self.service, key) {
                 Ok(e) => e,
-                Err(_) => return Ok(None),
+                Err(e) => {
+                    debug!(service = %self.service, key, error = ?e, "keyring Entry::new failed");
+                    return Ok(None);
+                }
             };
             match entry.get_password() {
-                Ok(password) => Ok(Some(password)),
-                Err(keyring::Error::NoEntry) => Ok(None),
-                Err(_) => Ok(None),
+                Ok(password) => {
+                    debug!(key, len = password.len(), "keyring credential retrieved");
+                    Ok(Some(password))
+                }
+                Err(keyring::Error::NoEntry) => {
+                    debug!(service = %self.service, key, "keyring entry not found");
+                    Ok(None)
+                }
+                Err(e) => {
+                    debug!(service = %self.service, key, error = ?e, "keyring get_password failed");
+                    Ok(None)
+                }
             }
         })
     }

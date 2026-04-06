@@ -266,20 +266,21 @@ pub fn delete_repo(repo_name: &str) -> Result<()> {
 }
 
 /// Creates a GitHub repo from a local git directory and pushes.
+///
+/// Uses a two-phase approach to avoid GitHub's repo propagation race:
+/// `gh repo create --source .` (creates repo + adds remote), then waits
+/// for the repo to be visible before pushing.
 pub fn create_repo_and_push(
     local_repo: &Path,
     repo_name: &str,
 ) -> Result<()> {
+    // Phase 1: Create repo and set up remote (no push yet).
+    // `--source .` tells gh to add the `origin` remote pointing at the new repo.
     let mut cmd = Command::new("gh");
-    cmd.args([
-        "repo", "create", repo_name, "--private", "--source", ".", "--push",
-    ])
-    .current_dir(local_repo);
-
+    cmd.args(["repo", "create", repo_name, "--private", "--source", "."])
+        .current_dir(local_repo);
     apply_detected_token(&mut cmd);
-
     let output = cmd.output().context("Failed to run `gh repo create`")?;
-
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
@@ -295,6 +296,39 @@ pub fn create_repo_and_push(
     // user's git_protocol config, which breaks token-based auth in VMs.
     let https_url = format!("https://github.com/{}.git", repo_name);
     super::run_git(local_repo, &["remote", "set-url", "origin", &https_url])?;
+
+    // Phase 2: Wait for the repo to be available before pushing.
+    // GitHub API returns success before the repo is fully propagated to
+    // git infrastructure — pushing immediately fails with "not found".
+    for attempt in 1..=30 {
+        if repo_exists(repo_name)? {
+            break;
+        }
+        if attempt == 30 {
+            bail!(
+                "Repo '{}' not available after 15s. GitHub may be experiencing delays.",
+                repo_name,
+            );
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+
+    // Phase 3: Push.
+    let push = Command::new("git")
+        .args(["push", "-u", "origin", "HEAD"])
+        .current_dir(local_repo)
+        .output()
+        .context("Failed to push to GitHub")?;
+    if !push.status.success() {
+        let stderr = String::from_utf8_lossy(&push.stderr);
+        bail!(
+            "git push failed after repo creation: {}\n\n\
+             To fix, run manually:\n  \
+             cd {} && git push -u origin HEAD",
+            stderr.trim(),
+            local_repo.display(),
+        );
+    }
 
     Ok(())
 }

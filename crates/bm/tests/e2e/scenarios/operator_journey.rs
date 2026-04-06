@@ -204,10 +204,8 @@ fn projects_add_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEnv) +
 
             let full_name = format!("{}/bm-e2e-project-{}", gh_org,
                 std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
-            env.command("gh")
-                .args(["repo", "create", &full_name, "--private", "--source", ".", "--push"])
-                .current_dir(&fork)
-                .run();
+            bm::git::create_repo_and_push(&fork, &full_name)
+                .expect("failed to create project repo on GitHub");
             format!("https://github.com/{}.git", full_name)
         };
 

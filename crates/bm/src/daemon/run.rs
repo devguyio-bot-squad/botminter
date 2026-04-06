@@ -53,6 +53,17 @@ pub fn run_daemon(
     interval: u64,
     bind: &str,
 ) -> Result<()> {
+    // Resolve the isolated keyring D-Bus address BEFORE creating the tokio
+    // runtime. `with_keyring_dbus` in credential.rs swaps DBUS_SESSION_BUS_ADDRESS
+    // via `std::env::set_var`, which is unsound in multi-threaded processes.
+    // By setting DBUS_SESSION_BUS_ADDRESS here and removing BM_KEYRING_DBUS,
+    // `with_keyring_dbus` becomes a no-op and the keyring uses the right
+    // D-Bus session without any env var mutation during runtime.
+    if let Ok(dbus) = std::env::var("BM_KEYRING_DBUS") {
+        std::env::set_var("DBUS_SESSION_BUS_ADDRESS", &dbus);
+        std::env::remove_var("BM_KEYRING_DBUS");
+    }
+
     let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
     rt.block_on(run_daemon_async(team_name, mode, port, interval, bind))
 }
@@ -66,9 +77,9 @@ async fn run_daemon_async(
 ) -> Result<()> {
     // NOTE: Do NOT set SIGCHLD=SIG_IGN here. While it prevents zombie children,
     // it also breaks Command::output() (used by gh api in poll mode) because
-    // the auto-reaped child causes waitpid to return ECHILD. Instead, fire-and-forget
-    // child processes (launch_ralph) use pre_exec(setsid) to become session leaders
-    // that are reaped by init when they exit.
+    // the auto-reaped child causes waitpid to return ECHILD. Fire-and-forget
+    // children are tracked by PID in state.json and killed on daemon shutdown
+    // via stop_local_members(force=true).
 
     let paths = Arc::new(DaemonPaths::new(team_name)?);
     let shutdown = Arc::new(AtomicBool::new(false));
@@ -202,13 +213,16 @@ async fn run_daemon_async(
 
     // Clean up: stop all running members before exiting.
     // Members are fire-and-forget (PIDs in state.json), so the daemon must
-    // actively terminate them on shutdown.
+    // actively terminate them on shutdown. Use force=true to stay within the
+    // 30s budget that stop_daemon() allows before SIGKILL'ing us.
     daemon_log(&paths, "INFO", "Stopping members before exit...");
     let cleanup_team = team_name.to_string();
     let cleanup_cfg = app_config::load().ok();
     if let Some(cfg) = cleanup_cfg {
         if let Ok(team) = app_config::resolve_team(&cfg, Some(&cleanup_team)) {
-            let _ = crate::formation::stop_local_members(team, &cfg, None, false);
+            if let Err(e) = crate::formation::stop_local_members(team, &cfg, None, true) {
+                daemon_log(&paths, "WARN", &format!("Member cleanup error: {e}"));
+            }
         }
     }
 

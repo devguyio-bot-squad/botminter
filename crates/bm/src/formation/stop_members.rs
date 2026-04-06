@@ -155,12 +155,9 @@ pub fn stop_local_members(
 // Private helpers
 // ---------------------------------------------------------------------------
 
-/// Graceful stop for brain members: send SIGTERM, then poll for exit.
-///
-/// The brain multiplexer registers a SIGTERM handler that cancels any in-flight
-/// ACP prompt, shuts down the event watcher and heartbeat, then exits cleanly.
+/// Graceful stop for brain members: send SIGTERM, then poll for exit,
+/// escalating to SIGKILL if the process does not terminate.
 fn graceful_stop_brain(pid: u32) -> Result<()> {
-    // Send SIGTERM to the brain multiplexer process
     unsafe {
         libc::kill(pid as i32, libc::SIGTERM);
     }
@@ -172,14 +169,13 @@ fn graceful_stop_brain(pid: u32) -> Result<()> {
         thread::sleep(Duration::from_secs(1));
     }
 
-    bail!(
-        "Brain process {} did not exit after {}s. Use `bm stop -f` to force-kill.",
-        pid,
-        GRACEFUL_TIMEOUT_SECS
-    );
+    // Process ignored SIGTERM — escalate to SIGKILL.
+    kill_escalate(pid);
+    Ok(())
 }
 
-/// Graceful stop: run `ralph loops stop` in the workspace, then poll for exit.
+/// Graceful stop: run `ralph loops stop` in the workspace, then poll for exit,
+/// escalating through SIGTERM and SIGKILL if needed.
 fn graceful_stop(workspace: &Path, pid: u32) -> Result<()> {
     let output = Command::new("ralph")
         .args(["loops", "stop"])
@@ -204,19 +200,36 @@ fn graceful_stop(workspace: &Path, pid: u32) -> Result<()> {
         thread::sleep(Duration::from_secs(1));
     }
 
-    bail!(
-        "Process {} did not exit after {}s. Use `bm stop -f` to force-kill.",
-        pid,
-        GRACEFUL_TIMEOUT_SECS
-    );
+    // Process ignored graceful stop — escalate to SIGKILL.
+    kill_escalate(pid);
+    Ok(())
 }
 
-/// Force stop: send SIGTERM to the process.
+/// Force stop: SIGTERM, brief wait, escalate to SIGKILL if needed.
+const FORCE_STOP_GRACE_SECS: u64 = 5;
+
 fn force_stop(pid: u32) {
     unsafe {
         libc::kill(pid as i32, libc::SIGTERM);
     }
-    thread::sleep(Duration::from_millis(500));
+    for _ in 0..FORCE_STOP_GRACE_SECS {
+        if !state::is_alive(pid) {
+            return;
+        }
+        thread::sleep(Duration::from_secs(1));
+    }
+    if state::is_alive(pid) {
+        kill_escalate(pid);
+    }
+}
+
+/// Send SIGKILL and wait briefly for the process to die.
+fn kill_escalate(pid: u32) {
+    unsafe {
+        libc::kill(pid as i32, libc::SIGKILL);
+    }
+    // SIGKILL is unconditional — brief wait for the kernel to reap.
+    thread::sleep(Duration::from_millis(200));
 }
 
 #[cfg(test)]

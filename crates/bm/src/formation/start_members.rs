@@ -165,7 +165,7 @@ pub fn start_local_members(
             Ok(None) => None, // No App creds — fall back to GH_TOKEN
             Err(e) => {
                 eprintln!(
-                    "Warning: App credential setup failed for {}, falling back to GH_TOKEN: {}",
+                    "Warning: App credential setup failed for {}, falling back to GH_TOKEN: {:#}",
                     member_dir_name, e
                 );
                 None
