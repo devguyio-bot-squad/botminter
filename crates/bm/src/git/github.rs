@@ -250,6 +250,21 @@ pub fn repo_exists(repo_name: &str) -> Result<bool> {
     Ok(output.status.success())
 }
 
+/// Deletes a GitHub repo.
+pub fn delete_repo(repo_name: &str) -> Result<()> {
+    let mut cmd = Command::new("gh");
+    cmd.args(["repo", "delete", repo_name, "--yes"]);
+    apply_detected_token(&mut cmd);
+    let output = cmd.output().context("Failed to run `gh repo delete`")?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        bail!("Failed to delete repo '{}': {}", repo_name, stderr.trim());
+    }
+
+    Ok(())
+}
+
 /// Creates a GitHub repo from a local git directory and pushes.
 pub fn create_repo_and_push(
     local_repo: &Path,

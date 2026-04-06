@@ -5,9 +5,9 @@ mod project;
 
 pub use github::{
     bootstrap_labels, clone_repo, create_github_label, create_project, create_repo_and_push,
-    derive_project_name, detect_token, detect_token_non_interactive, find_project_number,
-    get_user_login, list_projects, list_repos, list_user_orgs, mask_token, repo_exists,
-    sync_project_status_field, validate_token, verify_fork_url, TokenInfo,
+    delete_repo, derive_project_name, detect_token, detect_token_non_interactive,
+    find_project_number, get_user_login, list_projects, list_repos, list_user_orgs, mask_token,
+    repo_exists, sync_project_status_field, validate_token, verify_fork_url, TokenInfo,
 };
 pub use project::{add_project, sync_project_board, ProjectSyncResult, ViewDisplay};
 

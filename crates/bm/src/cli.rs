@@ -108,6 +108,14 @@ pub enum Command {
         /// Preserve the GitHub App installation for reuse
         #[arg(long)]
         keep_app: bool,
+
+        /// Skip interactive confirmation
+        #[arg(short, long)]
+        yes: bool,
+
+        /// Also delete the member's GitHub workspace repo
+        #[arg(long)]
+        delete_repo: bool,
     },
 
     /// Start members (all, or a specific one)

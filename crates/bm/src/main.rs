@@ -92,8 +92,10 @@ fn main() -> Result<()> {
             member,
             team,
             keep_app,
+            yes,
+            delete_repo,
         } => {
-            commands::fire::run(&member, team.as_deref(), keep_app)?;
+            commands::fire::run(&member, team.as_deref(), keep_app, yes, delete_repo)?;
         }
 
         Command::Members { command } => match command {
