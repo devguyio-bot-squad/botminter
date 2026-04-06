@@ -238,11 +238,18 @@ pub fn fire_member(params: &FireParams, formation: &dyn Formation) -> Result<Fir
         }),
     }
 
-    // Step 5: Remove member directory from team repo
+    // Step 5: Remove member directory from team repo and commit
     let member_dir = team_repo.join("members").join(params.member);
     if member_dir.is_dir() {
         match fs::remove_dir_all(&member_dir) {
-            Ok(()) => result.member_dir_removed = true,
+            Ok(()) => {
+                // Commit the removal so the team repo stays consistent
+                let member_rel = format!("members/{}/", params.member);
+                let _ = crate::git::run_git(&team_repo, &["add", &member_rel]);
+                let commit_msg = format!("feat: fire {}", params.member);
+                let _ = crate::git::run_git(&team_repo, &["commit", "-m", &commit_msg]);
+                result.member_dir_removed = true;
+            }
             Err(e) => result.errors.push(FireError {
                 step: "remove_member_dir",
                 error: format!("{e}"),

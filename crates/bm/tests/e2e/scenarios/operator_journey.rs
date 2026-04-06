@@ -1081,7 +1081,7 @@ fn inbox_resync_preserves_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send 
 }
 
 fn fire_member_fn(
-    gh_token: String,
+    _gh_token: String,
     app_id: String,
     app_client_id: String,
     app_installation_id: String,
@@ -1112,17 +1112,18 @@ fn fire_member_fn(
             "member dir should exist before fire"
         );
 
-        // Fire with --yes (skip confirmation) — don't delete repo in E2E
-        // to avoid orphaning the workspace repo (cleanup handles it)
+        // Fire with --yes (skip confirmation) and --keep-app (shared test App).
+        // Don't delete repo — cleanup handles it.
         let output = env.command("bm")
-            .args(["fire", MEMBER_DIR, "-t", TEAM_NAME, "--yes"])
+            .args(["fire", MEMBER_DIR, "-t", TEAM_NAME, "--yes", "--keep-app"])
             .output();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         assert!(
             output.status.success(),
-            "bm fire failed: {}",
-            String::from_utf8_lossy(&output.stderr)
+            "bm fire failed:\nstdout: {}\nstderr: {}",
+            stdout, stderr
         );
-        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
         assert!(stdout.contains("Fired"), "should print 'Fired', got: {}", stdout);
 
         // Verify cleanup

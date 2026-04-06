@@ -122,13 +122,29 @@ pub fn wait_for_port(port: u16, timeout: Duration) {
 }
 
 pub fn preflight_gh_auth() {
+    // Check GH_TOKEN first — it takes priority over `gh auth login` sessions.
+    // `gh auth status` returns non-zero if ANY configured account is invalid,
+    // even when GH_TOKEN provides a valid session. Validate GH_TOKEN directly.
+    if std::env::var("GH_TOKEN").map(|t| !t.is_empty()).unwrap_or(false) {
+        let output = Command::new("gh")
+            .args(["api", "user", "--jq", ".login"])
+            .output()
+            .expect("failed to run `gh api user` — is gh installed?");
+        assert!(
+            output.status.success(),
+            "GH_TOKEN is set but invalid. Check your token.\nstderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
     let output = Command::new("gh")
         .args(["auth", "status"])
         .output()
         .expect("failed to run `gh auth status` — is gh installed?");
     assert!(
         output.status.success(),
-        "GitHub CLI is not authenticated. Run `gh auth login` first.\nstderr: {}",
+        "GitHub CLI is not authenticated. Run `gh auth login` or set GH_TOKEN.\nstderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
 }

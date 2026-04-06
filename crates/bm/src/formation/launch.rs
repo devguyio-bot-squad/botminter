@@ -26,6 +26,10 @@ pub fn launch_ralph(
     // Members without App creds rely on the host's `gh auth` session.
     if let Some(config_dir) = gh_config_dir {
         cmd.env("GH_CONFIG_DIR", config_dir);
+        // Remove token env vars so gh uses the App token from hosts.yml
+        // instead of the operator's PAT.
+        cmd.env_remove("GH_TOKEN");
+        cmd.env_remove("GITHUB_TOKEN");
     }
 
     if let Some(token) = member_token {
