@@ -42,6 +42,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 fs2 = "0.4"
 reqwest = { version = "0.12", features = ["json", "blocking"] }
 uuid = { version = "1", features = ["v4"] }
+open = "5"
 rust-embed = { version = "8", optional = true }
 
 [features]
@@ -55,6 +56,7 @@ filetime = "0.2"
 reqwest = { version = "0.12", features = ["blocking"] }
 libtest-mimic = "0.8"
 dbus-secret-service = { version = "4.1.0", features = ["vendored"] }
+oauth2-test-server = { git = "https://github.com/botminter/oauth2-test-server", branch = "main" }
 
 [[bin]]
 name = "bm-agent"

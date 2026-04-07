@@ -374,17 +374,17 @@ fn hire_unknown_role_errors() {
 }
 
 #[test]
-fn hire_duplicate_name_errors() {
+fn hire_duplicate_name_succeeds_for_app_replacement() {
+    // Per design doc idempotency table: existing member + no creds = keep member dir,
+    // allow App replacement. Without a github_repo, no manifest flow triggers.
     let tmp = tempfile::tempdir().unwrap();
-    setup_team(tmp.path(), "test-team", "scrum");
+    let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
     bm_hire(tmp.path(), "architect", "bob", "test-team");
-    let stderr = bm_run_fail(tmp.path(), &["hire", "architect", "--name", "bob"]);
-    assert!(stderr.contains("already exists"), "Should error on duplicate: {stderr}");
-    assert!(
-        stderr.contains("--reuse-app"),
-        "Error should suggest --reuse-app for credential attachment: {stderr}"
-    );
+    bm_run(tmp.path(), &["hire", "architect", "--name", "bob"]);
+
+    // Member dir still exists
+    assert!(team_repo.join("members/architect-bob").is_dir());
 }
 
 // ── Projects tests ───────────────────────────────────────────────────

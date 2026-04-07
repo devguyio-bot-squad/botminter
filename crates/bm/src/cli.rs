@@ -304,7 +304,7 @@ pub enum Command {
         #[arg(long)]
         system_prompt: String,
 
-        /// ACP agent binary (default: claude-agent-acp)
+        /// ACP agent binary
         #[arg(long, default_value = "claude-agent-acp")]
         acp_binary: String,
     },
@@ -334,6 +334,7 @@ pub enum Command {
         #[command(subcommand)]
         command: DebugCommand,
     },
+
 
     /// Generate dynamic shell completions
     ///

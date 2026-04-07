@@ -7,7 +7,7 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 
 use crate::bridge;
 use crate::config::{BotminterConfig, TeamEntry};
@@ -58,13 +58,8 @@ pub fn hire_member(params: &HireParams) -> Result<HireResult> {
         coding_agent,
     )?;
 
-    if profile_result.already_existed && params.app_credentials.is_none() {
-        bail!(
-            "Member '{}' already exists. Use --reuse-app to attach App credentials \
-             to an existing member, or choose a different --name.",
-            profile_result.member_dir_name
-        );
-    }
+    // When member already exists and no credentials provided, return early.
+    // The caller (commands/hire.rs) will run the manifest flow afterward if needed.
 
     // App credential setup (if provided)
     let mut app_credentials_stored = false;
@@ -102,15 +97,15 @@ pub struct AppCredentials {
 }
 
 /// Result of setting up GitHub App credentials for a hired member.
-struct AppSetupResult {
-    credentials_stored: bool,
-    repos_checked: Vec<String>,
-    credentials_saved_to: Option<String>,
+pub struct AppSetupResult {
+    pub credentials_stored: bool,
+    pub repos_checked: Vec<String>,
+    pub credentials_saved_to: Option<String>,
 }
 
-/// Stores pre-generated GitHub App credentials for a member and ensures the
+/// Stores GitHub App credentials for a member and ensures the
 /// App has access to all team + project repos.
-fn setup_app_credentials(
+pub fn setup_app_credentials(
     team: &TeamEntry,
     member_name: &str,
     creds: &AppCredentials,

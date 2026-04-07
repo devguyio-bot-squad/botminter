@@ -14,6 +14,7 @@ mod test_env;
 
 mod bootstrap;
 mod github;
+mod github_mock;
 mod rocketchat;
 mod telegram;
 mod tuwunel;

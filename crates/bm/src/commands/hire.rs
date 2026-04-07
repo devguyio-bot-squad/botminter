@@ -1,10 +1,11 @@
 use std::fs;
-use std::io::IsTerminal;
+use std::io::IsTerminal as _;
 
 use anyhow::{Context, Result};
 
 use crate::bridge::{self, CredentialStore};
 use crate::config;
+use crate::git::manifest_flow;
 use crate::member_lifecycle::{self, AppCredentials, HireParams};
 
 /// GitHub App credential flags from the CLI.
@@ -67,16 +68,9 @@ pub fn run(
 
     if result.app_credentials_stored {
         println!("GitHub App credentials stored for {}.", result.member_dir_name);
-        if !result.repos_checked.is_empty() {
-            eprintln!("Ensuring App installation has access to repos...");
-        }
     } else if !team.github_repo.is_empty() && !app_flags.reuse_app {
-        eprintln!(
-            "Note: GitHub App credentials not configured for {}.\n\
-             Use --reuse-app with --app-id, --client-id, --private-key-file, \
-             and --installation-id to provide App credentials.",
-            result.member_name
-        );
+        // No --reuse-app and team has a GitHub repo: run the interactive manifest flow
+        run_manifest_flow_for_member(team, &result.member_dir_name, app_flags.save_credentials)?;
     }
 
     if let Some(path) = &result.credentials_saved_to {
@@ -85,6 +79,136 @@ pub fn run(
 
     // Prompt for bridge token if team has an external bridge configured
     prompt_bridge_token(&team.path.join("team"), team, &cfg, &result.member_dir_name)?;
+
+    Ok(())
+}
+
+/// Runs the interactive manifest flow to create a GitHub App for a member,
+/// then stores the resulting credentials.
+fn run_manifest_flow_for_member(
+    team: &config::TeamEntry,
+    member_name: &str,
+    save_credentials: Option<&str>,
+) -> Result<()> {
+    let org = manifest_flow::resolve_org_from_repo(&team.github_repo)?;
+    let app_name = format!("{}-{}", team.name, member_name);
+    let slug = manifest_flow::app_name_to_slug(&app_name);
+
+    // Check for name collision before starting the browser flow
+    match manifest_flow::check_name_collision(&slug) {
+        Ok(true) => {
+            anyhow::bail!(
+                "A GitHub App named '{}' already exists.\n\
+                 Try hiring with a different --name, or use --reuse-app to attach an existing App.",
+                slug,
+            );
+        }
+        Ok(false) => {}
+        Err(e) => {
+            eprintln!("Warning: could not check App name availability: {e}");
+        }
+    }
+
+    // ── Context and instructions ─────────────────────────────────
+    let is_tty = std::io::stdin().is_terminal();
+
+    if is_tty {
+        cliclack::log::info(format!(
+            "GitHub App Setup for {member_name}\n\
+             \n\
+             Each team member gets its own GitHub App identity.\n\
+             This creates '{app_name}[bot]' — a distinct bot account\n\
+             for managing issues, PRs, and project boards.\n\
+             \n\
+             Two clicks needed:\n\
+               1. Create the App on GitHub\n\
+               2. Install it on your organization"
+        ))?;
+    }
+
+    let browser_available = if is_tty {
+        cliclack::confirm("Is a browser available on this machine?")
+            .initial_value(true)
+            .interact()?
+    } else {
+        // Non-interactive (piped stdin) — use browser path, BM_NO_BROWSER controls opening
+        true
+    };
+
+    let team_repo_url = format!("https://github.com/{}", team.github_repo);
+
+    let mut server = manifest_flow::prepare_manifest_flow(&manifest_flow::ManifestFlowParams {
+        app_name: app_name.clone(),
+        org,
+        team_repo_url,
+        github_api_base: std::env::var("BM_GITHUB_API_BASE").ok(),
+        github_web_base: std::env::var("BM_GITHUB_WEB_BASE").ok(),
+    })?;
+
+    let flow_result = if browser_available {
+        // ── Browser path ─────────────────────────────────────────
+        if is_tty {
+            cliclack::log::info(format!(
+                "Opening browser...\n\
+                 If it doesn't open, visit:\n\
+                 {}", server.start_url,
+            ))?;
+        } else {
+            eprintln!("If the browser doesn't open, visit this URL manually:");
+            eprintln!("  {}\n", server.start_url);
+        }
+        server.run()?
+    } else {
+        // ── Headless path ────────────────────────────────────────
+        server.open_browser = false;
+        server.stdin_fallback = true;
+
+        let port = server.start_url
+            .strip_prefix("http://127.0.0.1:")
+            .and_then(|s| s.split('/').next())
+            .unwrap_or("PORT");
+
+        cliclack::log::info(format!(
+            "Open this URL in any browser:\n\
+             \n\
+               {}\n\
+             \n\
+             After creating and installing the App, GitHub will redirect\n\
+             your browser to a URL starting with:\n\
+             \n\
+               http://127.0.0.1:{port}/callback?code=...\n\
+             \n\
+             If the page doesn't load, that's expected — copy the full\n\
+             URL from your browser's address bar and paste it here.",
+            server.start_url,
+        ))?;
+
+        eprint!("  Paste redirect URL: ");
+        server.run()?
+    };
+
+    eprintln!();
+    cliclack::log::success("GitHub App created and installed successfully!")?;
+
+    // Store the credentials
+    let creds = AppCredentials {
+        app_id: flow_result.app_id,
+        client_id: flow_result.client_id,
+        private_key: flow_result.private_key,
+        installation_id: flow_result.installation_id,
+    };
+
+    let setup_result = member_lifecycle::setup_app_credentials(
+        team,
+        member_name,
+        &creds,
+        save_credentials,
+    )?;
+
+    println!("GitHub App credentials stored for {}.", member_name);
+    if let Some(path) = &setup_result.credentials_saved_to {
+        println!("Credentials saved to {path}");
+    }
 
     Ok(())
 }

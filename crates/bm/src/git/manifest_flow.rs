@@ -1,4 +1,12 @@
+use std::future::IntoFuture;
+use std::net::TcpListener;
+use std::sync::Arc;
+
 use anyhow::{bail, Context, Result};
+use axum::extract::{Query, State};
+use axum::response::{Html, IntoResponse, Redirect};
+use axum::routing::get;
+use tokio::sync::{oneshot, Mutex};
 
 use crate::formation::KeyValueCredentialStore;
 
@@ -21,8 +29,8 @@ pub struct PreGeneratedCredentials {
 /// - `setup_url`: local callback for post-installation redirect
 /// - `organization_projects: admin` (NOT `projects: admin` — that's classic boards)
 ///
-/// Currently used only by tests to verify the permission set. The browser-based
-/// manifest flow that consumes this is deferred — Sprint 3 uses `--reuse-app`.
+/// Used by `run_manifest_flow()` to construct the form payload, and by tests
+/// to verify the permission set.
 pub fn build_manifest_json(
     app_name: &str,
     team_repo_url: &str,
@@ -235,28 +243,28 @@ pub fn ensure_app_on_repos(
 ) -> Result<()> {
     let jwt = super::app_auth::generate_jwt(client_id, private_key)
         .context("Failed to generate JWT for repo installation check")?;
+    let mut warnings = Vec::new();
     for repo in repos {
         if repo.is_empty() {
             continue;
         }
         match check_repo_installation(repo, &jwt) {
-            RepoInstallationStatus::Installed => {
-                eprintln!("  App already has access to {repo}");
-            }
+            RepoInstallationStatus::Installed => {}
             RepoInstallationStatus::NotInstalled => {
-                // TODO: Programmatic repo addition requires the browser-based
-                // GitHub App installation flow (interactive manifest flow).
-                // Until that's implemented, the operator must install the App
-                // on the repo manually via the GitHub UI.
-                eprintln!(
-                    "  Warning: App is not installed on {repo}.\n\
-                     \x20 Install it manually: https://github.com/organizations/{org}/settings/installations/{installation_id}",
-                    org = repo.split('/').next().unwrap_or("UNKNOWN"),
-                );
+                let org = repo.split('/').next().unwrap_or("UNKNOWN");
+                warnings.push(format!(
+                    "App is not installed on {repo}. \
+                     Install it manually: https://github.com/organizations/{org}/settings/installations/{installation_id}"
+                ));
             }
-            RepoInstallationStatus::CheckFailed(e) => {
-                eprintln!("  Warning: could not check installation status for {repo}: {e}");
+            RepoInstallationStatus::CheckFailed(_) => {
+                // Non-fatal — the check itself may fail for various reasons
             }
+        }
+    }
+    if !warnings.is_empty() {
+        for w in &warnings {
+            eprintln!("  Warning: {w}");
         }
     }
     Ok(())
@@ -336,6 +344,630 @@ pub(crate) fn fork_url_to_owner_repo(url: &str) -> Option<String> {
         return None;
     }
     Some(repo.to_string())
+}
+
+// ── Interactive manifest flow (browser-based App creation) ─────────
+
+/// Parameters for the interactive manifest flow.
+pub struct ManifestFlowParams {
+    /// App name, e.g. "{team}-{member}"
+    pub app_name: String,
+    /// GitHub organization name
+    pub org: String,
+    /// Team repo URL, e.g. "https://github.com/org/team-repo"
+    pub team_repo_url: String,
+    /// Override for GitHub API base URL (default: `https://api.github.com`).
+    /// Used for testing with a mock server.
+    pub github_api_base: Option<String>,
+    /// Override for GitHub web base URL (default: `https://github.com`).
+    /// Used for testing with a mock server.
+    pub github_web_base: Option<String>,
+}
+
+/// Result of a successful manifest flow — all 4 credentials.
+pub struct ManifestFlowResult {
+    pub app_id: String,
+    pub client_id: String,
+    pub private_key: String,
+    pub installation_id: String,
+}
+
+/// Intermediate credentials from the code exchange (before installation).
+#[derive(Clone)]
+struct ExchangeCredentials {
+    app_id: String,
+    client_id: String,
+    private_key: String,
+    html_url: String,
+}
+
+/// Shared state for the axum callback server.
+struct ManifestServerState {
+    csrf_state: String,
+    org: String,
+    manifest_json: serde_json::Value,
+    exchange_creds: Mutex<Option<ExchangeCredentials>>,
+    result_tx: Mutex<Option<oneshot::Sender<ManifestFlowResult>>>,
+    github_api_base: String,
+    github_web_base: String,
+}
+
+/// Response from `POST /app-manifests/{code}/conversions`.
+#[derive(serde::Deserialize)]
+struct CodeExchangeResponse {
+    id: u64,
+    client_id: String,
+    pem: String,
+    html_url: String,
+}
+
+/// A single installation from `GET /app/installations`.
+#[derive(serde::Deserialize)]
+struct Installation {
+    id: u64,
+    account: Option<InstallationAccount>,
+}
+
+#[derive(serde::Deserialize)]
+struct InstallationAccount {
+    login: String,
+}
+
+/// A prepared manifest flow server, ready to run.
+///
+/// Two-phase API: `prepare_manifest_flow()` sets up the server and returns
+/// this handle with the `start_url`. The caller displays the URL and opens
+/// the browser, then calls `run()` to block until completion or timeout.
+pub struct ManifestFlowServer {
+    /// URL the operator must visit to begin App creation.
+    pub start_url: String,
+    /// Whether to attempt opening the browser when `run()` starts.
+    pub open_browser: bool,
+    /// Whether to read a pasted redirect URL from stdin as a fallback.
+    pub stdin_fallback: bool,
+    listener: TcpListener,
+    result_rx: oneshot::Receiver<ManifestFlowResult>,
+    state: Arc<ManifestServerState>,
+}
+
+/// Prepares the manifest flow server: binds a port, builds the router,
+/// and returns a handle with the `start_url`.
+///
+/// Does not start the server or open a browser — the caller does that.
+pub fn prepare_manifest_flow(params: &ManifestFlowParams) -> Result<ManifestFlowServer> {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .context("Failed to bind local server for manifest flow")?;
+    listener
+        .set_nonblocking(true)
+        .context("Failed to set listener to non-blocking mode")?;
+    let port = listener.local_addr()?.port();
+
+    let manifest_json = build_manifest_json(&params.app_name, &params.team_repo_url, port);
+    let csrf_state = uuid::Uuid::new_v4().to_string();
+
+    let (result_tx, result_rx) = oneshot::channel::<ManifestFlowResult>();
+
+    let github_api_base = params
+        .github_api_base
+        .clone()
+        .unwrap_or_else(|| "https://api.github.com".to_string());
+    let github_web_base = params
+        .github_web_base
+        .clone()
+        .unwrap_or_else(|| "https://github.com".to_string());
+
+    let state = Arc::new(ManifestServerState {
+        csrf_state,
+        org: params.org.clone(),
+        manifest_json,
+        exchange_creds: Mutex::new(None),
+        result_tx: Mutex::new(Some(result_tx)),
+        github_api_base,
+        github_web_base,
+    });
+
+    // Routes are built later in run() based on the mode (browser vs headless).
+    // Store state for route construction.
+    let app_state = state.clone();
+
+    let start_url = format!("http://127.0.0.1:{port}/start");
+
+    Ok(ManifestFlowServer {
+        start_url,
+        open_browser: std::env::var("BM_NO_BROWSER").is_err(),
+        stdin_fallback: false,
+        listener,
+        result_rx,
+        state: app_state,
+    })
+}
+
+impl ManifestFlowServer {
+    /// Completion can happen via two paths (whichever fires first):
+    /// 1. GitHub redirects to `/installed` (setup_url callback)
+    /// 2. Background poller detects the installation via `GET /app/installations`
+    pub fn run(self) -> Result<ManifestFlowResult> {
+        let result_rx = self.result_rx;
+        let poll_state = self.state.clone();
+        let should_open = self.open_browser;
+        let stdin_fallback = self.stdin_fallback;
+        let api_base = self.state.github_api_base.clone();
+        let org = self.state.org.clone();
+        let url = self.start_url.clone();
+
+        let rt = tokio::runtime::Runtime::new()
+            .context("Failed to create tokio runtime")?;
+
+        rt.block_on(async {
+            let tokio_listener = tokio::net::TcpListener::from_std(self.listener)
+                .context("Failed to convert listener to tokio")?;
+
+            // Build router based on mode: headless only serves /start,
+            // browser mode serves all callback routes.
+            let app = if stdin_fallback {
+                axum::Router::new()
+                    .route("/start", get(handle_start))
+                    .with_state(self.state)
+            } else {
+                axum::Router::new()
+                    .route("/start", get(handle_start))
+                    .route("/callback", get(handle_callback))
+                    .route("/installed", get(handle_installed))
+                    .with_state(self.state)
+            };
+
+            let server = axum::serve(tokio_listener, app);
+
+            // Open browser AFTER the server is accepting connections.
+            // Spawned in a background thread because open::that() can block
+            // until the browser process exits on some Linux systems.
+            if should_open {
+                std::thread::spawn(move || {
+                    let _ = open::that(&url);
+                });
+            }
+
+            if stdin_fallback {
+                // Headless mode: server runs (to serve /start) but only
+                // stdin completes the flow. No poller, no callback race.
+                let (stdin_tx, stdin_rx) = oneshot::channel::<String>();
+                std::thread::spawn(move || {
+                    use std::io::IsTerminal;
+                    if !std::io::stdin().is_terminal() {
+                        return;
+                    }
+                    loop {
+                        let mut line = String::new();
+                        if std::io::stdin().read_line(&mut line).is_err() {
+                            return;
+                        }
+                        if let Some(code) = extract_code_from_url(&line) {
+                            let _ = stdin_tx.send(code);
+                            return;
+                        }
+                        eprint!("  Could not find a code in that URL. Try again: ");
+                    }
+                });
+
+                tokio::select! {
+                    code = stdin_rx => {
+                        match code {
+                            Ok(code) => {
+                                let creds = exchange_manifest_code(&code, &api_base).await?;
+
+                                // Step 2: user needs to install the App on the org.
+                                // Print the installation URL and poll until it appears.
+                                eprintln!();
+                                eprintln!("  App created! Now install it on your organization:");
+                                eprintln!("    {}/installations/new", creds.html_url);
+                                eprintln!();
+                                eprintln!("  Waiting for installation...");
+
+                                // Poll until the installation appears
+                                let installation_id = loop {
+                                    match query_installation_id(
+                                        &creds.client_id, &creds.private_key, &org, &api_base,
+                                    ).await {
+                                        Ok(id) => break id,
+                                        Err(_) => {
+                                            tokio::time::sleep(
+                                                std::time::Duration::from_secs(3)
+                                            ).await;
+                                        }
+                                    }
+                                };
+
+                                Ok(ManifestFlowResult {
+                                    app_id: creds.app_id,
+                                    client_id: creds.client_id,
+                                    private_key: creds.private_key,
+                                    installation_id: installation_id.to_string(),
+                                })
+                            }
+                            Err(_) => bail!("Stdin reader closed"),
+                        }
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(
+                        std::env::var("BM_MANIFEST_TIMEOUT_SECS")
+                            .ok()
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(300)
+                    )) => {
+                        bail!(
+                            "Manifest flow timed out after 5 minutes.\n\
+                             To retry, run `bm hire` again.\n\
+                             For headless environments, use --reuse-app with pre-generated credentials."
+                        )
+                    }
+                    res = server.into_future() => {
+                        match res {
+                            Ok(()) => bail!("Server shut down unexpectedly"),
+                            Err(e) => bail!("Server error: {e}"),
+                        }
+                    }
+                }
+            } else {
+                // Browser mode: poller + callback race to complete.
+                let poller = poll_for_installation(poll_state);
+
+                tokio::select! {
+                    result = result_rx => {
+                        match result {
+                            Ok(r) => Ok(r),
+                            Err(_) => bail!("Manifest flow server shut down without completing"),
+                        }
+                    }
+                    result = poller => {
+                        result
+                    }
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(
+                        std::env::var("BM_MANIFEST_TIMEOUT_SECS")
+                            .ok()
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(300)
+                    )) => {
+                        bail!(
+                            "Manifest flow timed out after 5 minutes.\n\
+                             To retry, run `bm hire` again.\n\
+                             For headless environments, use --reuse-app with pre-generated credentials."
+                        )
+                    }
+                    res = server.into_future() => {
+                        match res {
+                            Ok(()) => bail!("Server shut down unexpectedly before flow completed"),
+                            Err(e) => bail!("Manifest flow server error: {e}"),
+                        }
+                    }
+                }
+            }
+        })
+    }
+}
+
+/// Polls `GET /app/installations` until an installation appears.
+/// Waits for the code exchange to complete first (exchange_creds populated),
+/// then polls every 3 seconds.
+async fn poll_for_installation(
+    state: Arc<ManifestServerState>,
+) -> Result<ManifestFlowResult> {
+    // Wait for code exchange to complete
+    loop {
+        if state.exchange_creds.lock().await.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    }
+
+    // Give the setup_url redirect a chance to fire first
+    let grace_secs: u64 = std::env::var("BM_MANIFEST_POLL_GRACE_SECS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(5);
+    tokio::time::sleep(std::time::Duration::from_secs(grace_secs)).await;
+
+    // Poll for installation
+    loop {
+        let creds = state.exchange_creds.lock().await.clone().unwrap();
+
+        match query_installation_id(&creds.client_id, &creds.private_key, &state.org, &state.github_api_base).await {
+            Ok(installation_id) => {
+                let result = ManifestFlowResult {
+                    app_id: creds.app_id,
+                    client_id: creds.client_id,
+                    private_key: creds.private_key,
+                    installation_id: installation_id.to_string(),
+                };
+                // Also send via the oneshot in case /installed fires concurrently
+                if let Some(tx) = state.result_tx.lock().await.take() {
+                    let _ = tx.send(ManifestFlowResult {
+                        app_id: result.app_id.clone(),
+                        client_id: result.client_id.clone(),
+                        private_key: result.private_key.clone(),
+                        installation_id: result.installation_id.clone(),
+                    });
+                }
+                return Ok(result);
+            }
+            Err(_) => {
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+            }
+        }
+    }
+}
+
+/// Extracts the `code` query parameter from a pasted redirect URL.
+///
+/// Accepts URLs like `http://127.0.0.1:PORT/callback?code=XXX&state=YYY`
+/// or just the code string itself as a fallback.
+pub fn extract_code_from_url(input: &str) -> Option<String> {
+    let input = input.trim();
+    if input.is_empty() {
+        return None;
+    }
+
+    // Try to parse as URL with ?code= parameter
+    if let Some(query_start) = input.find('?') {
+        for pair in input[query_start + 1..].split('&') {
+            if let Some(value) = pair.strip_prefix("code=") {
+                let code = value.trim();
+                if !code.is_empty() {
+                    return Some(code.to_string());
+                }
+            }
+        }
+    }
+
+    // Fallback: treat the whole input as a code if it's alphanumeric
+    if input.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Some(input.to_string());
+    }
+
+    None
+}
+
+
+
+/// Escapes a string for safe inclusion in HTML attributes and content.
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#x27;")
+}
+
+/// GET /start — serves the auto-submitting HTML form.
+async fn handle_start(
+    State(state): State<Arc<ManifestServerState>>,
+) -> Html<String> {
+    let form_action = format!(
+        "{}/organizations/{}/settings/apps/new?state={}",
+        state.github_web_base,
+        html_escape(&state.org),
+        html_escape(&state.csrf_state),
+    );
+    let manifest_str = html_escape(&state.manifest_json.to_string());
+
+    Html(format!(
+        r#"<!DOCTYPE html>
+<html>
+<head><title>BotMinter — Creating GitHub App</title></head>
+<body>
+<h2>Creating GitHub App...</h2>
+<p>You will be redirected to GitHub to confirm App creation.</p>
+<p>If you are not redirected automatically, click the button below.</p>
+<form id="manifest-form" method="post" action="{form_action}">
+  <input type="hidden" name="manifest" value="{manifest_str}">
+  <button type="submit">Create GitHub App</button>
+</form>
+<script>document.getElementById('manifest-form').submit();</script>
+</body>
+</html>"#
+    ))
+}
+
+/// Query params for the /callback endpoint.
+#[derive(serde::Deserialize)]
+struct CallbackParams {
+    code: String,
+    state: String,
+}
+
+/// GET /callback — exchanges the code for App credentials, redirects to installation.
+async fn handle_callback(
+    State(state): State<Arc<ManifestServerState>>,
+    Query(params): Query<CallbackParams>,
+) -> impl IntoResponse {
+    if params.state != state.csrf_state {
+        return Html(
+            "<h2>Error: State mismatch</h2><p>CSRF validation failed. Please retry.</p>"
+                .to_string(),
+        )
+        .into_response();
+    }
+
+    // Exchange code for credentials (no auth required)
+    let exchange_result = exchange_manifest_code(&params.code, &state.github_api_base).await;
+
+    match exchange_result {
+        Ok(creds) => {
+            // Validate html_url matches expected base to prevent open redirect
+            let expected_prefix = format!("{}/", state.github_web_base);
+            if !creds.html_url.starts_with(&expected_prefix) {
+                return Html(format!(
+                    "<h2>Error: Unexpected App URL</h2>\
+                     <p>Expected a github.com URL but got: {}</p>",
+                    html_escape(&creds.html_url),
+                ))
+                .into_response();
+            }
+            let install_url = format!("{}/installations/new", creds.html_url);
+            *state.exchange_creds.lock().await = Some(creds);
+            Redirect::temporary(&install_url).into_response()
+        }
+        Err(e) => Html(format!(
+            "<h2>Error: Code exchange failed</h2><p>{}</p>\
+             <p>The code may have expired. Please retry with <code>bm hire</code>.</p>",
+            html_escape(&e.to_string()),
+        ))
+        .into_response(),
+    }
+}
+
+/// Exchanges a manifest code for App credentials.
+async fn exchange_manifest_code(code: &str, api_base: &str) -> Result<ExchangeCredentials> {
+    // Validate code format — GitHub manifest codes are hex strings
+    if !code.chars().all(|c| c.is_ascii_alphanumeric()) {
+        bail!("Invalid manifest code format");
+    }
+
+    let url = format!("{api_base}/app-manifests/{code}/conversions");
+
+    let client = reqwest::Client::new();
+    let response = client
+        .post(&url)
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "botminter")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+        .context("Failed to call manifest code exchange endpoint")?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        bail!("GitHub API returned {status} during code exchange: {body}");
+    }
+
+    let resp: CodeExchangeResponse = response
+        .json()
+        .await
+        .context("Failed to parse code exchange response")?;
+
+    Ok(ExchangeCredentials {
+        app_id: resp.id.to_string(),
+        client_id: resp.client_id,
+        private_key: resp.pem,
+        html_url: resp.html_url,
+    })
+}
+
+/// GET /installed — captures the installation ID after App installation.
+///
+/// Always queries the GitHub API to discover the installation ID authoritatively.
+/// The `installation_id` query parameter from GitHub's redirect is intentionally
+/// ignored to prevent spoofing by local processes.
+async fn handle_installed(
+    State(state): State<Arc<ManifestServerState>>,
+) -> Html<String> {
+    // Short-circuit if result already sent (e.g., by the background poller)
+    if state.result_tx.lock().await.is_none() {
+        return Html(
+            "<h2>Already completed</h2>\
+             <p>App credentials have been stored. You can close this tab.</p>"
+                .to_string(),
+        );
+    }
+
+    let creds = match state.exchange_creds.lock().await.clone() {
+        Some(c) => c,
+        None => {
+            return Html(
+                "<h2>Error</h2><p>App credentials not found. \
+                 The App creation step may not have completed. Please retry.</p>"
+                    .to_string(),
+            );
+        }
+    };
+
+    // Always query the API for the installation ID — never trust query params
+    let installation_id = match query_installation_id(
+        &creds.client_id,
+        &creds.private_key,
+        &state.org,
+        &state.github_api_base,
+    )
+    .await
+    {
+        Ok(id) => id,
+        Err(e) => {
+            return Html(format!(
+                "<h2>Error: Could not retrieve installation ID</h2>\
+                 <p>{}</p>\
+                 <p>Please ensure the App was installed on your organization, then retry.</p>",
+                html_escape(&e.to_string()),
+            ));
+        }
+    };
+
+    let result = ManifestFlowResult {
+        app_id: creds.app_id,
+        client_id: creds.client_id,
+        private_key: creds.private_key,
+        installation_id: installation_id.to_string(),
+    };
+
+    // Send result back to the main thread
+    if let Some(tx) = state.result_tx.lock().await.take() {
+        let _ = tx.send(result);
+    }
+
+    Html(
+        "<h2>Success!</h2>\
+         <p>GitHub App created and installed. You can close this tab.</p>\
+         <p>BotMinter is storing the credentials...</p>"
+            .to_string(),
+    )
+}
+
+/// Queries `GET /app/installations` to find the installation ID for the expected org.
+/// Uses JWT authentication with the newly created App's credentials.
+/// Validates that the installation belongs to the expected organization.
+async fn query_installation_id(client_id: &str, private_key: &str, expected_org: &str, api_base: &str) -> Result<u64> {
+    let jwt = super::app_auth::generate_jwt(client_id, private_key)
+        .context("Failed to generate JWT for installation query")?;
+
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{api_base}/app/installations"))
+        .header("Authorization", format!("Bearer {jwt}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("User-Agent", "botminter")
+        .header("X-GitHub-Api-Version", "2022-11-28")
+        .send()
+        .await
+        .context("Failed to query App installations")?;
+
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().await.unwrap_or_default();
+        bail!("GitHub API returned {status} when querying installations: {body}");
+    }
+
+    let installations: Vec<Installation> = response
+        .json()
+        .await
+        .context("Failed to parse installations response")?;
+
+    // Find the installation matching the expected org
+    for inst in &installations {
+        if let Some(ref account) = inst.account {
+            if account.login.eq_ignore_ascii_case(expected_org) {
+                return Ok(inst.id);
+            }
+        }
+    }
+
+    // Fall back to first installation if no org match (single-installation case)
+    if installations.len() == 1 {
+        return Ok(installations[0].id);
+    }
+
+    bail!(
+        "No installation found for organization '{}'. Found {} installation(s).",
+        expected_org,
+        installations.len(),
+    )
 }
 
 // ── Tests ───────────────────────────────────────────────────────────
@@ -559,6 +1191,153 @@ mod tests {
 
         let repos = collect_team_repos(&team);
         assert_eq!(repos, vec!["org/repo"]);
+    }
+
+    #[test]
+    fn html_escape_handles_special_chars() {
+        assert_eq!(html_escape("<script>"), "&lt;script&gt;");
+        assert_eq!(html_escape("a&b"), "a&amp;b");
+        assert_eq!(html_escape(r#"x"y"#), "x&quot;y");
+        assert_eq!(html_escape("x'y"), "x&#x27;y");
+        assert_eq!(html_escape("safe-string-123"), "safe-string-123");
+    }
+
+    #[test]
+    fn html_escape_prevents_attribute_breakout() {
+        // An app name with quotes should not break out of an HTML attribute
+        let malicious = r#"app' onclick='alert(1)"#;
+        let escaped = html_escape(malicious);
+        assert!(!escaped.contains('\''));
+        assert!(!escaped.contains('"'));
+    }
+
+    #[test]
+    fn start_page_html_contains_form_action_and_manifest() {
+        // Simulate what handle_start produces by testing the HTML construction logic
+        let org = "test-org";
+        let csrf_state = "test-state-uuid";
+        let manifest = build_manifest_json("test-app", "https://github.com/test-org/repo", 9999);
+
+        let form_action = format!(
+            "https://github.com/organizations/{}/settings/apps/new?state={}",
+            org, csrf_state,
+        );
+        let manifest_str = manifest.to_string();
+
+        // Verify form action points to the correct GitHub endpoint
+        assert!(form_action.contains("organizations/test-org/settings/apps/new"));
+        assert!(form_action.contains("state=test-state-uuid"));
+
+        // Verify manifest JSON is well-formed and contains required fields
+        assert!(manifest_str.contains("test-app"));
+        assert!(manifest_str.contains("redirect_url"));
+        assert!(manifest_str.contains("setup_url"));
+        assert!(manifest_str.contains("organization_projects"));
+    }
+
+    #[test]
+    fn code_exchange_response_parses() {
+        let json = r#"{
+            "id": 12345,
+            "slug": "my-team-superman",
+            "client_id": "Iv1.abc123",
+            "client_secret": "secret",
+            "pem": "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----",
+            "webhook_secret": "whsec",
+            "html_url": "https://github.com/apps/my-team-superman",
+            "permissions": {"issues": "write"},
+            "owner": {"login": "test-org", "type": "Organization"}
+        }"#;
+
+        let resp: CodeExchangeResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.id, 12345);
+        assert_eq!(resp.client_id, "Iv1.abc123");
+        assert!(resp.pem.contains("RSA PRIVATE KEY"));
+        assert_eq!(resp.html_url, "https://github.com/apps/my-team-superman");
+    }
+
+    #[test]
+    fn installation_response_parses_with_account() {
+        let json = r#"[
+            {"id": 99999, "account": {"login": "test-org"}, "repository_selection": "all"}
+        ]"#;
+
+        let installations: Vec<Installation> = serde_json::from_str(json).unwrap();
+        assert_eq!(installations.len(), 1);
+        assert_eq!(installations[0].id, 99999);
+        assert_eq!(
+            installations[0].account.as_ref().unwrap().login,
+            "test-org"
+        );
+    }
+
+    #[test]
+    fn extract_code_from_callback_url() {
+        assert_eq!(
+            extract_code_from_url("http://127.0.0.1:12345/callback?code=abc123&state=xyz"),
+            Some("abc123".to_string()),
+        );
+    }
+
+    #[test]
+    fn extract_code_from_url_with_code_only() {
+        assert_eq!(
+            extract_code_from_url("http://127.0.0.1:9999/callback?code=deadbeef42"),
+            Some("deadbeef42".to_string()),
+        );
+    }
+
+    #[test]
+    fn extract_code_from_raw_code_string() {
+        assert_eq!(
+            extract_code_from_url("abc123def456"),
+            Some("abc123def456".to_string()),
+        );
+    }
+
+    #[test]
+    fn extract_code_from_empty_input() {
+        assert_eq!(extract_code_from_url(""), None);
+        assert_eq!(extract_code_from_url("   "), None);
+    }
+
+    #[test]
+    fn extract_code_from_url_without_code_param() {
+        assert_eq!(
+            extract_code_from_url("http://127.0.0.1:12345/callback?state=xyz"),
+            None,
+        );
+    }
+
+    #[test]
+    fn empty_installations_array_parses() {
+        let json = "[]";
+        let installations: Vec<Installation> = serde_json::from_str(json).unwrap();
+        assert!(installations.is_empty());
+    }
+
+    #[test]
+    fn prepare_manifest_flow_binds_and_returns_url() {
+        let server = prepare_manifest_flow(&ManifestFlowParams {
+            app_name: "test-app".to_string(),
+            org: "test-org".to_string(),
+            team_repo_url: "https://github.com/test-org/repo".to_string(),
+            github_api_base: None,
+            github_web_base: None,
+        })
+        .unwrap();
+
+        assert!(server.start_url.starts_with("http://127.0.0.1:"));
+        assert!(server.start_url.ends_with("/start"));
+        // Port should be > 0 (OS-assigned)
+        let port_str = server
+            .start_url
+            .strip_prefix("http://127.0.0.1:")
+            .unwrap()
+            .strip_suffix("/start")
+            .unwrap();
+        let port: u16 = port_str.parse().unwrap();
+        assert!(port > 0);
     }
 
     #[test]

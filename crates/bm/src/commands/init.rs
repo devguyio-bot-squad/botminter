@@ -7,6 +7,8 @@ use crate::bridge;
 use crate::config;
 use crate::formation;
 use crate::git;
+use crate::git::manifest_flow;
+use crate::member_lifecycle::{self, AppCredentials};
 use crate::profile;
 
 /// Whether to create a new GitHub Project board or use an existing one.
@@ -238,7 +240,35 @@ pub fn run() -> Result<()> {
     super::ensure_profiles(false)?;
     config::check_prerequisites()?;
 
-    cliclack::intro("botminter — create a new team")?;
+    // Banner and welcome
+    eprintln!(
+        "\n\x1b[36m\
+  ██████╗  ██████╗ ████████╗███╗   ███╗██╗███╗   ██╗████████╗███████╗██████╗\n\
+  ██╔══██╗██╔═══██╗╚══██╔══╝████╗ ████║██║████╗  ██║╚══██╔══╝██╔════╝██╔══██╗\n\
+  ██████╔╝██║   ██║   ██║   ██╔████╔██║██║██╔██╗ ██║   ██║   █████╗  ██████╔╝\n\
+  ██╔══██╗██║   ██║   ██║   ██║╚██╔╝██║██║██║╚██╗██║   ██║   ██╔══╝  ██╔══██╗\n\
+  ██████╔╝╚██████╔╝   ██║   ██║ ╚═╝ ██║██║██║ ╚████║   ██║   ███████╗██║  ██║\n\
+  ╚═════╝  ╚═════╝    ╚═╝   ╚═╝     ╚═╝╚═╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝\
+\x1b[0m\n\n\
+  Build your agentic team\n"
+    );
+
+    cliclack::intro("Team Setup Wizard")?;
+
+    cliclack::log::info(
+        "This wizard will:\n\
+         \n\
+         1. Choose a workspace directory for your teams\n\
+         2. Select a team profile (defines roles, process, and workflow)\n\
+         3. Set up a GitHub organization and repository\n\
+         4. Create a GitHub Project board for tracking work\n\
+         5. Optionally configure a chat bridge (Telegram, Matrix, etc.)\n\
+         6. Hire team members with their own GitHub App identities\n\
+         \n\
+         Prerequisites:\n\
+         • GitHub CLI authenticated (gh auth login)\n\
+         • A GitHub organization (personal accounts not supported)"
+    )?;
 
     // Workzone location
     let default_workzone = config::default_workzone_path();
@@ -471,6 +501,137 @@ pub fn run() -> Result<()> {
     if !manifest.views.is_empty() {
         let project_url = format!("https://github.com/orgs/{}/projects/{}", owner, project_number);
         cliclack::log::info(format!("Board: {}", project_url))?;
+    }
+
+    // Create GitHub Apps for hired members via interactive manifest flow
+    if !members_to_hire.is_empty() && !github_repo.is_empty() {
+        let cfg = config::load()?;
+        if let Some(team) = cfg.teams.iter().find(|t| t.name == team_name) {
+            let team_repo_url = format!("https://github.com/{}", github_repo);
+            for (role, name) in &members_to_hire {
+                let member_dir_name = format!("{role}-{name}");
+                let app_name = format!("{}-{}", team_name, member_dir_name);
+                let slug = manifest_flow::app_name_to_slug(&app_name);
+
+                // Check name collision
+                match manifest_flow::check_name_collision(&slug) {
+                    Ok(true) => {
+                        eprintln!(
+                            "Warning: App name '{}' is already taken. \
+                             Skipping — use `bm hire` with --reuse-app later.",
+                            slug,
+                        );
+                        continue;
+                    }
+                    Ok(false) => {}
+                    Err(e) => {
+                        eprintln!("Warning: could not check App name availability: {e}");
+                    }
+                }
+
+                cliclack::log::info(format!(
+                    "GitHub App Setup for {member_dir_name}\n\
+                     \n\
+                     This creates '{app_name}[bot]' — a distinct bot account\n\
+                     for managing issues, PRs, and project boards.\n\
+                     \n\
+                     Two clicks needed:\n\
+                       1. Create the App on GitHub\n\
+                       2. Install it on your organization"
+                ))?;
+
+                let browser_available: bool = cliclack::confirm(
+                    "Is a browser available on this machine?"
+                )
+                .initial_value(true)
+                .interact()?;
+
+                let mut server = match manifest_flow::prepare_manifest_flow(
+                    &manifest_flow::ManifestFlowParams {
+                        app_name: app_name.clone(),
+                        org: github_org.clone(),
+                        team_repo_url: team_repo_url.clone(),
+                        github_api_base: std::env::var("BM_GITHUB_API_BASE").ok(),
+                        github_web_base: std::env::var("BM_GITHUB_WEB_BASE").ok(),
+                    },
+                ) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: could not start manifest flow for {member_dir_name}: {e}\n\
+                             Use `bm hire {role} --name {name}` to create the App later."
+                        );
+                        continue;
+                    }
+                };
+
+                let flow_result = if browser_available {
+                    cliclack::log::info(format!(
+                        "Opening browser...\n\
+                         If it doesn't open, visit:\n\
+                         {}", server.start_url,
+                    ))?;
+                    server.run()
+                } else {
+                    server.open_browser = false;
+                    server.stdin_fallback = true;
+
+                    let port = server.start_url
+                        .strip_prefix("http://127.0.0.1:")
+                        .and_then(|s| s.split('/').next())
+                        .unwrap_or("PORT");
+                    cliclack::log::info(format!(
+                        "Open this URL in any browser:\n\
+                         \n\
+                           {}\n\
+                         \n\
+                         After creating and installing the App, GitHub will redirect\n\
+                         your browser to a URL starting with:\n\
+                         \n\
+                           http://127.0.0.1:{port}/callback?code=...\n\
+                         \n\
+                         If the page doesn't load, that's expected — copy the full\n\
+                         URL from your browser's address bar and paste it here.",
+                        server.start_url,
+                    ))?;
+
+                    eprint!("  Paste redirect URL: ");
+                    server.run()
+                };
+
+                match flow_result {
+                    Ok(flow_result) => {
+                        let creds = AppCredentials {
+                            app_id: flow_result.app_id,
+                            client_id: flow_result.client_id,
+                            private_key: flow_result.private_key,
+                            installation_id: flow_result.installation_id,
+                        };
+                        match member_lifecycle::setup_app_credentials(
+                            team, &member_dir_name, &creds, None,
+                        ) {
+                            Ok(_) => {
+                                cliclack::log::info(format!(
+                                    "GitHub App credentials stored for {member_dir_name}"
+                                ))?;
+                            }
+                            Err(e) => {
+                                eprintln!(
+                                    "Warning: App created but credential storage failed for {member_dir_name}: {e}\n\
+                                     Use `bm hire {role} --name {name} --reuse-app` to retry."
+                                );
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "Warning: GitHub App creation failed for {member_dir_name}: {e}\n\
+                             Use `bm hire {role} --name {name}` to create the App later."
+                        );
+                    }
+                }
+            }
+        }
     }
 
     spinner.stop("Done!");
