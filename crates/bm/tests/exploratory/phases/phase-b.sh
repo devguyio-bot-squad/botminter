@@ -60,8 +60,8 @@ else
     fail "B10" "Member dirs" "missing"
 fi
 
-# B11: Hire duplicate (still uses bm_hire — should fail because member dir exists)
-OUT=$(bm_hire superman --name alice 2>&1)
+# B11: Hire duplicate without --reuse-app (should fail because member dir exists)
+OUT=$(bm hire superman --name alice -t "$TEAM" 2>&1)
 EC=$?
 if [ $EC -ne 0 ]; then note "B11" "Hire duplicate alice" "Correctly rejects: 'already exists'"; else fail "B11" "Hire duplicate" "Should have failed"; fi
 

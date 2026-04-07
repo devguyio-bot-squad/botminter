@@ -2,27 +2,27 @@
 
 ## Checklist
 
-- [ ] Add `jsonwebtoken` dependency with `aws_lc_rs` + `use_pem` features
-- [ ] Implement `git/app_auth.rs` (JWT signing, installation token exchange)
-- [ ] Implement manifest flow in `bm hire` (axum callback, browser, URL fallback, 5-min timeout)
-- [ ] Store App credentials via `formation.credential_store(GitHubApp)`
-- [ ] Add `--reuse-app`, `--app-id`, `--client-id`, `--private-key-file`, `--installation-id`, `--save-credentials` flags
-- [ ] Handle `bm hire` idempotency (existing member: replace App or reconnect)
-- [ ] Install App on team repo + project repos
-- [ ] Wire App creation into `bm init` wizard (require org, no token prompt)
-- [ ] Implement daemon token lifecycle (cache credentials, JWT→token, refresh loop)
-- [ ] Implement `formation.setup_token_delivery()` (create `.config/gh/`, git credential helper)
-- [ ] Implement `formation.refresh_token()` (atomic `hosts.yml` write)
-- [ ] Remove `gh_token` from `TeamEntry`/`Credentials`
-- [ ] Remove `require_gh_token()`
-- [ ] Remove `gh_token: Option<&str>` from `git/github.rs` functions
-- [ ] Update `bm projects add` to install member Apps on new repos
-- [ ] Implement `bm fire` with `--keep-app` flag
-- [ ] Implement `bm credentials export -o <file>`
-- [ ] Implement `bm init --credentials-file <file>`
-- [ ] Migrate E2E tests (hybrid: one manifest test, rest pre-provisioned)
+- [x] Add `jsonwebtoken` dependency with `aws_lc_rs` + `use_pem` features
+- [x] Implement `git/app_auth.rs` (JWT signing, installation token exchange)
+- [ ] Implement manifest flow in `bm hire` (axum callback, browser, URL fallback, 5-min timeout) — *deferred: only --reuse-app path implemented*
+- [x] Store App credentials via `formation.credential_store(GitHubApp)`
+- [x] Add `--reuse-app`, `--app-id`, `--client-id`, `--private-key-file`, `--installation-id`, `--save-credentials` flags
+- [x] Handle `bm hire` idempotency (existing member: replace App or reconnect)
+- [x] Install App on team repo + project repos
+- [ ] Wire App creation into `bm init` wizard (require org, no token prompt) — *import via --credentials-file works; interactive creation deferred*
+- [x] Implement daemon token lifecycle (cache credentials, JWT→token, refresh loop)
+- [x] Implement `formation.setup_token_delivery()` (create `.config/gh/`, git credential helper)
+- [x] Implement `formation.refresh_token()` (atomic `hosts.yml` write)
+- [x] Remove `gh_token` from `TeamEntry`/`Credentials`
+- [x] Remove `require_gh_token()`
+- [x] Remove `gh_token: Option<&str>` from `git/github.rs` functions
+- [x] Update `bm projects add` to install member Apps on new repos
+- [x] Implement `bm fire` with `--keep-app` flag
+- [x] Implement `bm credentials export -o <file>`
+- [x] Implement `bm init --credentials-file <file>`
+- [x] Migrate E2E tests (hybrid: one manifest test, rest pre-provisioned) — *pre-provisioned only, no manifest flow test*
 - [ ] Migrate exploratory tests to per-member App auth
-- [ ] Update profile docs and user-facing docs
+- [x] Update profile docs and user-facing docs — *partial: CLI reference updated*
 - [ ] Remove `TESTS_GH_TOKEN` from test infrastructure
 
 ## Steps (Sequential)

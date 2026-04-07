@@ -143,13 +143,14 @@ deploy: build clean
     # Copy binaries (bm + bm-agent from build, others from operator's PATH)
     scp -q {{CARGO_ROOT}}/target/debug/bm {{TEST_HOST}}:{{REMOTE_BIN}}/bm
     scp -q {{CARGO_ROOT}}/target/debug/bm-agent {{TEST_HOST}}:{{REMOTE_BIN}}/bm-agent
-    # Deploy ralph, claude, and claude-code-acp-rs from operator's PATH
-    for bin in ralph claude claude-code-acp-rs claude-agent-acp; do
+    # Deploy ralph and claude from operator's PATH
+    for bin in ralph claude; do
         LOCAL_BIN=$(which "$bin" 2>/dev/null || true)
         if [ -n "$LOCAL_BIN" ]; then
             scp -q "$LOCAL_BIN" {{TEST_HOST}}:{{REMOTE_BIN}}/"$bin"
         fi
     done
+    # claude-agent-acp is pre-installed on the test user via pnpm
     # Deploy GitHub App PEM file to the remote test user
     scp -q "{{TESTS_APP_PRIVATE_KEY_FILE}}" {{TEST_HOST}}:~/.config/github-apps/bm-test-app.pem
     # Copy test scripts

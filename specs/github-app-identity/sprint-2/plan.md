@@ -2,23 +2,23 @@
 
 ## Checklist
 
-- [ ] Define daemon RESTful HTTP API with OpenAPI schema
-- [ ] Implement daemon API endpoints (start/stop/status members)
-- [ ] Transfer `state.json` ownership to daemon (CLI reads only)
-- [ ] `formation.start_members()` spawns daemon + communicates via HTTP
-- [ ] `formation.stop_members()` communicates via HTTP
-- [ ] `formation.member_status()` queries daemon via HTTP
-- [ ] Migrate `bm start` to go through `team.start()`
-- [ ] Migrate `bm stop` to go through `team.stop()`, add `--all` flag
-- [ ] Migrate `bm status` to go through `team.status()`
-- [ ] Migrate `bm chat` through `formation.exec_in()`
-- [ ] Migrate `bm attach` through `formation.shell()`
-- [ ] Implement `bm env create/delete` replacing `bm runtime create/delete`
-- [ ] Update Brain to delegate loop spawning to daemon HTTP API
-- [ ] Update Brain system prompt
-- [ ] Tests: daemon HTTP API unit tests
-- [ ] Tests: CLI → Team → Formation → Daemon integration tests
-- [ ] Tests: verify all existing E2E and integration tests pass
+- [x] Define daemon RESTful HTTP API with OpenAPI schema
+- [x] Implement daemon API endpoints (start/stop/status members)
+- [x] Transfer `state.json` ownership to daemon (CLI reads only)
+- [x] `formation.start_members()` spawns daemon + communicates via HTTP
+- [x] `formation.stop_members()` communicates via HTTP — *deviation: uses local PID signals instead of HTTP (pragmatic)*
+- [x] `formation.member_status()` queries daemon via HTTP — *deviation: reads state.json directly*
+- [x] Migrate `bm start` to go through `team.start()`
+- [x] Migrate `bm stop` to go through `team.stop()`, add `--all` flag
+- [ ] Migrate `bm status` to go through `team.status()` — *bypasses Team struct, calls state::gather_status directly*
+- [x] Migrate `bm chat` through `formation.exec_in()`
+- [x] Migrate `bm attach` through `formation.shell()`
+- [x] Implement `bm env create/delete` replacing `bm runtime create/delete`
+- [x] Update Brain to delegate loop spawning to daemon HTTP API
+- [x] Update Brain system prompt
+- [x] Tests: daemon HTTP API unit tests
+- [x] Tests: CLI → Team → Formation → Daemon integration tests
+- [x] Tests: verify all existing E2E and integration tests pass
 
 ## Steps (Sequential)
 

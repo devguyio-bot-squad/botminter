@@ -2,19 +2,19 @@
 
 ## Checklist
 
-- [ ] Define `Formation` trait in `formation/mod.rs`
-- [ ] Define key-value `CredentialStore` trait in `formation/mod.rs`
-- [ ] Define `CredentialDomain` enum and supporting types
-- [ ] Create `formation/local/` module structure with platform detection
-- [ ] Implement `LinuxLocalFormation` wrapping existing free functions
-- [ ] Create `MacosLocalFormation` stub
-- [ ] Move `LocalCredentialStore` to `formation/local/linux/credential.rs` and generalize to key-value
-- [ ] Decouple bridge-state.json from credential store (bridge module manages its own metadata)
-- [ ] Create Team struct as API boundary wrapping formation
-- [ ] Migrate bridge credential usage to new key-value interface
-- [ ] Update commands to go through Team where applicable
-- [ ] Tests: unit tests for Formation trait dispatch, CredentialStore key-value, CredentialDomain routing
-- [ ] Tests: verify all existing E2E and integration tests pass
+- [x] Define `Formation` trait in `formation/mod.rs`
+- [x] Define key-value `CredentialStore` trait in `formation/mod.rs`
+- [x] Define `CredentialDomain` enum and supporting types
+- [x] Create `formation/local/` module structure with platform detection
+- [x] Implement `LinuxLocalFormation` wrapping existing free functions
+- [x] Create `MacosLocalFormation` stub
+- [x] Move `LocalCredentialStore` to `formation/local/linux/credential.rs` and generalize to key-value
+- [x] Decouple bridge-state.json from credential store (bridge module manages its own metadata)
+- [x] Create Team struct as API boundary wrapping formation
+- [x] Migrate bridge credential usage to new key-value interface
+- [x] Update commands to go through Team where applicable
+- [x] Tests: unit tests for Formation trait dispatch, CredentialStore key-value, CredentialDomain routing
+- [x] Tests: verify all existing E2E and integration tests pass
 
 ## Steps
 

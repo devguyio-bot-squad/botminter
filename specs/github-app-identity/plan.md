@@ -2,16 +2,17 @@
 
 ## Sprint Index
 
-- [ ] **Sprint 1: Formation Trait + CredentialStore + Team API Boundary**
+- [x] **Sprint 1: Formation Trait + CredentialStore + Team API Boundary** (complete)
   - Foundation: Formation trait, key-value CredentialStore, Team as API boundary. Auth model unchanged — `gh_token` signatures preserved.
   - [sprint-1/plan.md](sprint-1/plan.md) | [sprint-1/PROMPT.md](sprint-1/PROMPT.md)
 
-- [ ] **Sprint 2: Daemon Supervisor + CLI Through Team + Brain Model**
+- [x] **Sprint 2: Daemon Supervisor + CLI Through Team + Brain Model** (complete, 1 minor gap: `bm status` bypasses Team struct)
   - Daemon as formation-internal supervisor with RESTful HTTP API (OpenAPI schema). `bm start/stop/status` through Team. `bm env create/delete`. Brain delegates loops to daemon. Auth model unchanged.
   - [sprint-2/plan.md](sprint-2/plan.md) | [sprint-2/PROMPT.md](sprint-2/PROMPT.md)
 
-- [ ] **Sprint 3: GitHub App Identity + bm fire + Credentials Export**
+- [ ] **Sprint 3: GitHub App Identity + bm fire + Credentials Export** (mostly complete, 4 open items)
   - JWT auth module, manifest flow in `bm hire`, token lifecycle, `GH_CONFIG_DIR` + `hosts.yml`, remove `gh_token`, `bm fire`, `bm credentials export/import`. Auth model swapped to per-member GitHub App.
+  - **Open:** interactive manifest flow (deferred), exploratory test migration, `TESTS_GH_TOKEN` removal, `bm init` interactive App creation
   - [sprint-3/plan.md](sprint-3/plan.md) | [sprint-3/PROMPT.md](sprint-3/PROMPT.md)
 
 Each sprint includes its own unit tests, integration tests, E2E updates, and doc updates.
