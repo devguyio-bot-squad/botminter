@@ -4,7 +4,7 @@ This guide walks you through setting up a bridge for your team, from initializat
 
 ## Prerequisites
 
-- A profile with bridge support (`scrum-compact` supports Matrix, Telegram, and Rocket.Chat)
+- A profile with bridge support (`agentic-sdlc-minimal` supports Matrix, Telegram, and Rocket.Chat)
 - For local bridges (Matrix, Rocket.Chat): Podman installed and running
 - For external bridges (Telegram, experimental): bot tokens created via @BotFather
 - `bm` CLI installed and GitHub auth configured
@@ -24,7 +24,7 @@ For non-interactive/CI mode, use the `--bridge` flag:
 ```bash
 # Matrix via Tuwunel (default -- BotMinter manages the homeserver)
 bm init --non-interactive \
-  --profile scrum-compact \
+  --profile agentic-sdlc-minimal \
   --team-name my-team \
   --org my-org \
   --repo my-team \
@@ -80,8 +80,8 @@ BotMinter resolves per-member credentials from the keyring (or environment varia
 You can also start or stop individual members:
 
 ```bash
-bm start superman-01    # start a single member
-bm stop superman-01     # stop a single member (bridge stays running)
+bm start engineer-01    # start a single member
+bm stop engineer-01     # stop a single member (bridge stays running)
 ```
 
 ## Managing credentials
@@ -91,7 +91,7 @@ bm stop superman-01     # stop a single member (bridge stays running)
 If you need to add credentials for a member:
 
 ```bash
-bm bridge identity add superman-01
+bm bridge identity add engineer-01
 # External bridges: prompts for token
 # Local bridges: auto-provisions via the bridge API
 ```
@@ -103,8 +103,8 @@ After adding credentials, run `bm teams sync` to update the member's `ralph.yml`
 Check what's stored for a member:
 
 ```bash
-bm bridge identity show superman-01            # masked token
-bm bridge identity show superman-01 --reveal   # full token
+bm bridge identity show engineer-01            # masked token
+bm bridge identity show engineer-01 --reveal   # full token
 ```
 
 ### Rotating credentials
@@ -112,7 +112,7 @@ bm bridge identity show superman-01 --reveal   # full token
 Generate a fresh token for a member:
 
 ```bash
-bm bridge identity rotate superman-01
+bm bridge identity rotate engineer-01
 ```
 
 The new token is stored in the keyring, replacing the old one.
@@ -130,7 +130,7 @@ bm bridge status
 When the system keyring is unavailable, supply credentials via environment variables:
 
 ```bash
-export BM_BRIDGE_TOKEN_SUPERMAN_01=your-bot-token
+export BM_BRIDGE_TOKEN_ENGINEER_01=your-bot-token
 bm start
 ```
 

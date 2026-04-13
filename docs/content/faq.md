@@ -6,7 +6,7 @@ Claude Code is the recommended backend and all shipped profiles are built for it
 
 ## Do I need multiple agents running in parallel?
 
-Not at all. It depends on the profile you choose. The `scrum-compact` profile runs a single agent that wears multiple hats — planner, implementer, reviewer — all in one. Other profiles like `scrum` distribute those hats across specialized agents. You pick the formation that fits your workflow.
+Not at all. It depends on the profile you choose. The `agentic-sdlc-minimal` profile uses three roles (engineer, chief-of-staff, sentinel) with the engineer wearing multiple hats — planner, implementer, reviewer. Other profiles like `scrum` distribute those hats across more specialized agents. You pick the formation that fits your workflow.
 
 ## Is this only for Scrum teams?
 
@@ -51,4 +51,4 @@ These skills are markdown files under `~/.config/botminter/minty/skills/` and ar
 
 ## Why do I need to prefix my comments with `@bot`?
 
-Each agent has its own GitHub App identity and posts as a bot user (e.g., `team-superman[bot]`). The `@bot` prefix helps the agent reliably identify human input when parsing issue comments. While agent and human comments are now distinguishable by author, the prefix remains a useful convention for clarity.
+Each agent has its own GitHub App identity and posts as a bot user (e.g., `team-engineer[bot]`). The `@bot` prefix helps the agent reliably identify human input when parsing issue comments. While agent and human comments are now distinguishable by author, the prefix remains a useful convention for clarity.

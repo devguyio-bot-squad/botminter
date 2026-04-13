@@ -32,7 +32,7 @@ All profiles share the same knowledge scoping, constraint system, workspace layo
 
 | | Roles | Communication |
 |---|---|---|
-| **`scrum-compact`** | Single agent - PO, architect, dev, QE | GitHub Issues + Matrix (default) |
+| **`agentic-sdlc-minimal`** | Three roles (engineer, chief-of-staff, sentinel) | GitHub Issues + Matrix (default) |
 
 > The `scrum` profile (multi-role teams with separate agents per role) is in development and will ship in a future release.
 

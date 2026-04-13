@@ -6,7 +6,7 @@ This guide walks you through setting up your own Claude Code agents, hiring a me
     BotMinter is under active development. Commands, configuration format, and behavior may change without notice between releases. See the [Roadmap](../roadmap.md) for current status.
 
 !!! note
-    This guide uses the `scrum-compact` profile as an example — a single agent (role: `superman`) that wears multiple hats: product owner, architect, developer, QE, and more. The commands and workflow are the same for any profile — only the profile name and available roles differ. See [Profiles](../concepts/profiles.md) for available profiles.
+    This guide uses the `agentic-sdlc-minimal` profile as an example — a three-member model with three roles: `engineer` (an agent that wears multiple hats: product owner, architect, developer, QE, and more), `chief-of-staff` (coordinates process and team-level tasks), and `sentinel` (automated gates and merge governance). The commands and workflow are the same for any profile — only the profile name and available roles differ. See [Profiles](../concepts/profiles.md) for available profiles.
 
 ## Prerequisites
 
@@ -27,7 +27,7 @@ The wizard walks you through the full setup:
 
 1. **Workzone directory** — where teams live (default: `~/.botminter/workspaces`)
 2. **Team name** — identifier for your team (e.g., `my-team`)
-3. **Profile** — team methodology (e.g., `scrum-compact`)
+3. **Profile** — team methodology (e.g., `agentic-sdlc-minimal`)
 4. **Bridge** — optional communication bridge (Matrix or Telegram) if the profile supports one
 5. **GitHub integration** — auto-detects your `gh auth` session, validates it, then lets you browse orgs and select or create a repo interactively
 6. **Project board** — select an existing GitHub Project board or create a new one
@@ -38,7 +38,7 @@ The wizard walks you through the full setup:
 When the wizard completes, it has:
 
 - **Created (or cloned) a team repo** — the control plane with your profile's process conventions, knowledge structure, and role definitions
-- **Bootstrapped GitHub labels** — status labels matching the profile's workflow pipeline (e.g., `status/dev:in-progress`, `status/po:triage`)
+- **Bootstrapped GitHub labels** — status labels matching the profile's workflow pipeline (e.g., `status/eng:dev:implement`, `status/eng:po:triage`)
 - **Created (or selected) a GitHub Project board** — for tracking issue status across roles
 - **Registered the team** in your local config (`~/.botminter/config.yml`)
 - **Hired members** (if you chose to during the wizard) — extracted member skeletons into the team repo
@@ -73,15 +73,15 @@ If you already hired members and added projects during `bm init`, skip to [Step 
 Add a member to the team by specifying a role from the profile:
 
 ```bash
-bm hire superman
+bm hire engineer
 ```
 
-This extracts the member skeleton from the profile on disk into the team repo — including its Ralph config, prompts, knowledge, and invariants. With the `scrum-compact` profile, the `superman` role is a single agent that wears all hats (PO, architect, developer, QE).
+This extracts the member skeleton from the profile on disk into the team repo — including its Ralph config, prompts, knowledge, and invariants. With the `agentic-sdlc-minimal` profile, the `engineer` role is an agent that wears all hats (PO, architect, developer, QE).
 
 You can optionally provide a name:
 
 ```bash
-bm hire superman --name atlas
+bm hire engineer --name atlas
 ```
 
 To see what roles are available in your profile:
@@ -132,9 +132,9 @@ Sync the GitHub Project board's status columns with your profile and get instruc
 bm projects sync
 ```
 
-This updates the board's Status field options to match your profile's workflow stages, then prints step-by-step instructions for creating filtered views — one per role — so each agent sees only the statuses relevant to it.
+This updates the board's Status field options to match your profile's workflow stages, then prints step-by-step instructions for creating filtered views so each role sees only the statuses relevant to it.
 
-Example output for the `scrum-compact` profile:
+Example output for the `agentic-sdlc-minimal` profile:
 
 ```
 ✓ Status field synced (25 options)
@@ -152,14 +152,12 @@ For each view:
   5. Click save
   6. To create the next view, click the tab dropdown → Duplicate view, then repeat from step 3
 
-  View        Filter
-  ----        ------
-  PO          status:po:triage,po:backlog,po:design-review,po:plan-review,po:ready,po:accept,po:merge,done,error
-  Architect   status:arch:design,arch:plan,arch:breakdown,arch:in-progress,arch:sign-off,done,error
-  Developer   status:dev:ready,dev:implement,dev:code-review,done,error
-  QE          status:qe:test-design,qe:verify,done,error
-  Lead        status:lead:design-review,lead:plan-review,lead:breakdown-review,done,error
-  Specialist  status:sre:infra-setup,cw:write,cw:review,done,error
+  View            Filter
+  ----            ------
+  Engineer        status:eng:po:triage,eng:po:backlog,eng:po:ready,eng:arch:design,eng:arch:plan,eng:arch:breakdown,eng:arch:in-progress,eng:arch:sign-off,eng:dev:implement,eng:dev:code-review,eng:qe:test-design,eng:qe:verify,eng:lead:design-review,eng:lead:plan-review,eng:lead:breakdown-review,done,error
+  Human Gates     status:human:po:design-review,human:po:plan-review,human:po:accept,done,error
+  Sentinel        status:snt:gate:merge,done,error
+  Chief of Staff  status:cos:exec:todo,cos:exec:in-progress,cos:exec:done,done,error
 ```
 
 ## Step 5: Launch
@@ -182,7 +180,7 @@ Inspect the team, its members, or configured projects:
 
 ```bash
 bm teams show                    # Full team details: members, projects, config
-bm members show superman-01      # Member details: role, status, knowledge files
+bm members show engineer-01      # Member details: role, status, knowledge files
 bm projects list                 # List configured projects with fork URLs
 ```
 
@@ -191,15 +189,15 @@ bm projects list                 # List configured projects with fork URLs
     workzone/
       my-team/                                   # Team directory
         team/                                    # Team repo (control plane)
-          members/superman-01/                    # Member config
+          members/engineer-01/                    # Member config
           projects/my-project/                   # Project-specific dirs
-        superman-01/                             # Workspace repo (agent CWD)
+        engineer-01/                             # Workspace repo (agent CWD)
           team/                                  # Submodule → team repo
           projects/
             my-project/                          # Submodule → project fork
-          PROMPT.md                              # Copied from team/members/superman-01/
-          CLAUDE.md                              # Copied from team/members/superman-01/
-          ralph.yml                              # Copied from team/members/superman-01/
+          PROMPT.md                              # Copied from team/members/engineer-01/
+          CLAUDE.md                              # Copied from team/members/engineer-01/
+          ralph.yml                              # Copied from team/members/engineer-01/
           .claude/agents/                        # Symlinks into team/ submodule paths
           .botminter.workspace                   # Workspace marker file
     ```

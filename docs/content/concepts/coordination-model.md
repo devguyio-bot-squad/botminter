@@ -10,15 +10,16 @@ The specific roles, labels, and priorities are defined by the [profile](profiles
 
 ## Status label convention
 
-Status labels follow the pattern `status/<role>:<phase>`:
+Status labels follow the pattern `status/<role-slug>:<persona>:<activity>`:
 
-- `<role>` — the team member role responsible
-- `<phase>` — the current phase within that role's workflow
+- `<role-slug>` — the team member role responsible (e.g., `eng`, `cos`, `snt`)
+- `<persona>` — the persona or sub-role acting (e.g., `po`, `arch`, `dev`, `exec`, `gate`)
+- `<activity>` — the current activity within that persona's workflow
 
 **Transition rule**: Only the role named in the status label may transition it. Profiles may designate a role with override authority.
 
 ???+ example "Example: scrum status labels"
-    In the `scrum` profile, roles include `po`, `arch`, `dev`, and `qe`. A label like `status/arch:design` means the architect is responsible for producing a design. When finished, the architect transitions the label to the next role (e.g., `status/po:design-review`).
+    In the `scrum` profile, role slugs include `eng`, `cos`, `snt`, and `human`. A label like `status/eng:arch:design` means the engineer (wearing the architect persona) is responsible for producing a design. When finished, the engineer transitions the label to the next status (e.g., `status/human:po:design-review`).
 
     See [Process Conventions](../reference/process.md) for the full scrum label scheme.
 
@@ -53,21 +54,21 @@ No direct communication occurs between members. The board (GitHub issues) is the
     sequenceDiagram
         participant HA as human-assistant
         participant Board as GitHub Issues
-        participant Arch as architect
+        participant Arch as engineer (architect)
 
-        HA->>Board: Scan for status/po:*
-        Board-->>HA: #42 at status/po:triage
-        HA->>Board: Triage → status/po:backlog
-        HA->>Board: Activate → status/arch:design
+        HA->>Board: Scan for status/eng:po:*
+        Board-->>HA: #42 at status/eng:po:triage
+        HA->>Board: Triage → status/eng:po:backlog
+        HA->>Board: Activate → status/eng:arch:design
 
-        Arch->>Board: Scan for status/arch:*
-        Board-->>Arch: #42 at status/arch:design
+        Arch->>Board: Scan for status/eng:arch:*
+        Board-->>Arch: #42 at status/eng:arch:design
         Arch->>Board: Produce design doc
-        Arch->>Board: → status/po:design-review
+        Arch->>Board: → status/human:po:design-review
 
-        HA->>Board: Scan for status/po:*
-        Board-->>HA: #42 at status/po:design-review
-        HA->>Board: Human approves → status/arch:plan
+        HA->>Board: Scan for status/human:po:*
+        Board-->>HA: #42 at status/human:po:design-review
+        HA->>Board: Human approves → status/eng:arch:plan
     ```
 
 ## Priority dispatch
@@ -77,13 +78,13 @@ When multiple issues match a member's role, the coordinator processes them by pr
 One issue is processed per scan cycle. After processing, the board rescans.
 
 ???+ example "Example: scrum priority dispatch"
-    **Architect priority** (highest to lowest):
-    `arch:breakdown` > `arch:plan` > `arch:design` > `arch:in-progress`
+    **Engineer priority** (highest to lowest):
+    `eng:arch:breakdown` > `eng:arch:plan` > `eng:arch:design` > `eng:arch:in-progress`
 
     **human-assistant priority** (highest to lowest):
-    `po:triage` > `po:design-review` > `po:plan-review` > `po:accept` > `po:backlog` > `po:ready`
+    `eng:po:triage` > `human:po:design-review` > `human:po:plan-review` > `human:po:accept` > `eng:po:backlog` > `eng:po:ready`
 
-    **chief-of-staff**: Single status — `cos:todo` dispatches to the executor hat.
+    **chief-of-staff**: Single status — `cos:exec:todo` dispatches to the executor hat.
 
 ## Role-as-skill pattern
 
@@ -106,9 +107,9 @@ Rejection routing relies on the hatless Ralph orchestrator. When a rejection eve
 ???+ example "Example: scrum rejection loops"
     At review gates, the human (via the human-assistant) can reject work:
 
-    - `status/po:design-review` → `status/arch:design` (with feedback comment)
-    - `status/po:plan-review` → `status/arch:plan` (with feedback comment)
-    - `status/po:accept` → `status/arch:in-progress` (with feedback comment)
+    - `status/human:po:design-review` → `status/eng:arch:design` (with feedback comment)
+    - `status/human:po:plan-review` → `status/eng:arch:plan` (with feedback comment)
+    - `status/human:po:accept` → `status/eng:arch:in-progress` (with feedback comment)
 
 ## Comment format
 
@@ -120,7 +121,7 @@ All comments use emoji-attributed format to identify which role wrote them:
 Comment text here.
 ````
 
-The emoji and role name are read from each member's `.botminter.yml` file. Each member posts as its own GitHub App bot user (e.g., `team-superman[bot]`). The role attribution in the comment body provides additional context about which hat/role wrote the comment.
+The emoji and role name are read from each member's `.botminter.yml` file. Each member posts as its own GitHub App bot user (e.g., `team-engineer[bot]`). The role attribution in the comment body provides additional context about which hat/role wrote the comment.
 
 ???+ example "Example: scrum emoji mapping"
     | Role | Emoji |
@@ -156,7 +157,7 @@ Members support an operating mode toggle in their `PROMPT.md`. This acts as a co
 - **Autonomous mode** — agents act independently
 
 ???+ example "Example: compact profile HIL"
-    In the `scrum-compact` profile, the single "superman" agent posts review request comments on GitHub issues at review gates (`po:design-review`, `po:plan-review`, `po:accept`). The human responds with `Approved` or `Rejected: <feedback>` as an issue comment. The agent checks for responses each scan cycle and advances or reverts status accordingly. If no response is found, no action is taken — the agent never auto-approves.
+    In the `agentic-sdlc-minimal` profile, three members collaborate — the **engineer** (handles architecture, development, and QE), the **chief-of-staff** (handles team management tasks), and the **sentinel** (handles merge gates). At review gates (`human:po:design-review`, `human:po:plan-review`, `human:po:accept`), the engineer posts review request comments on GitHub issues. The human responds with `Approved` or `Rejected: <feedback>` as an issue comment. The engineer checks for responses each scan cycle and advances or reverts status accordingly. If no response is found, no action is taken — the agent never auto-approves.
 
 ???+ example "Example: scrum HIL"
     In `scrum`, the `human-assistant` member acts as the PO's (Product Owner's) proxy. The human sends status updates and questions via RObot (Ralph's bridge integration - Matrix by default), and the human-assistant incorporates human guidance into team decisions.

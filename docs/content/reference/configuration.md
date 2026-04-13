@@ -34,7 +34,7 @@ Profiles are stored on disk at `~/.config/botminter/profiles/`. This directory i
       skills/                       # Profile skills
       formations/                   # Deployment targets
       .schema/                      # Schema validation layout
-    scrum-compact/                  # Single-agent profile (optional bridge: Matrix or Telegram)
+    agentic-sdlc-minimal/                  # Minimal agentic SDLC profile (engineer, chief-of-staff, sentinel; optional bridge)
       ...
   minty/                            # Minty interactive assistant
     prompt.md                       # Minty persona + system instructions
@@ -354,7 +354,7 @@ teams:
 | `vms[].name` | Yes | Name of a Lima VM provisioned by `bm env create` |
 | `teams[].name` | Yes | Team identifier |
 | `teams[].path` | Yes | Absolute path to team directory |
-| `teams[].profile` | Yes | Profile name (e.g., `scrum`, `scrum-compact`) |
+| `teams[].profile` | Yes | Profile name (e.g., `scrum`, `agentic-sdlc-minimal`) |
 | `teams[].github_repo` | No | GitHub `org/repo` for team coordination |
 | `teams[].vm` | No | Lima VM name this team is linked to (for `bm attach` resolution) |
 | `teams[].coding_agent` | No | Override the profile's `default_coding_agent` for this team (e.g., `gemini-cli`) |

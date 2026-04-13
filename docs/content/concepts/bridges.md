@@ -81,7 +81,7 @@ The CredentialStore trait provides `store`, `retrieve`, `remove`, and `list` ope
 When the system keyring is unavailable (CI pipelines, containers, headless servers), credentials are supplied via environment variables:
 
 ```bash
-export BM_BRIDGE_TOKEN_SUPERMAN_01=your-bot-token-here
+export BM_BRIDGE_TOKEN_ENGINEER_01=your-bot-token-here
 ```
 
 The naming convention is `BM_BRIDGE_TOKEN_{USERNAME}` where the username is uppercased with hyphens replaced by underscores. This is the primary credential mechanism for CI pipelines and containers.
@@ -111,7 +111,7 @@ bridges:
 The bridge implementation files live in `profiles/{profile}/bridges/{bridge}/`:
 
 ```
-profiles/scrum-compact/
+profiles/agentic-sdlc-minimal/
   bridges/
     telegram/
       bridge.yml       # Bridge manifest (Knative-style resource format)
@@ -135,7 +135,7 @@ Operators select a bridge (or none) during `bm init`. The selected bridge name i
 - **Environment variables** are visible to the Ralph process and its children -- this is the injection mechanism, consistent with standard secret management practices
 - **Keyring entries are machine-local** -- after migrating to a new machine, re-provision bridge credentials with `bm bridge identity add`
 - **bridge-state.json** tracks provisioning state (usernames, user IDs, room IDs) but never contains tokens or secrets
-- **Matrix (Tuwunel) passwords** -- Because Matrix access tokens can expire but passwords persist, the Tuwunel bridge stores per-user passwords in `tuwunel-passwords.json` (located in the bridge directory at `team/bridges/tuwunel/`, with `0600` permissions). The file is a JSON object mapping usernames to passwords (e.g., `{"bmadmin": "bmadmin-pass-default", "superman-01": "a1b2c3..."}`). It is required for credential rotation (`bm bridge identity rotate`) and idempotent re-onboarding. If this file is lost, existing bot users cannot be re-authenticated and must be recreated. These are passwords for bot accounts on a local-only homeserver, not operator credentials.
+- **Matrix (Tuwunel) passwords** -- Because Matrix access tokens can expire but passwords persist, the Tuwunel bridge stores per-user passwords in `tuwunel-passwords.json` (located in the bridge directory at `team/bridges/tuwunel/`, with `0600` permissions). The file is a JSON object mapping usernames to passwords (e.g., `{"bmadmin": "bmadmin-pass-default", "engineer-01": "a1b2c3..."}`). It is required for credential rotation (`bm bridge identity rotate`) and idempotent re-onboarding. If this file is lost, existing bot users cannot be re-authenticated and must be recreated. These are passwords for bot accounts on a local-only homeserver, not operator credentials.
 
 ## Bridge spec
 

@@ -14,7 +14,7 @@ The wizard will prompt you for:
 
 1. **Workzone directory** — where teams live (default: `~/.botminter/workspaces`)
 2. **Team name** — identifier for your team (e.g., `my-team`)
-3. **Profile** — team methodology (e.g., `scrum-compact`)
+3. **Profile** — team methodology (e.g., `agentic-sdlc-minimal`)
 4. **Bridge** — communication bridge (e.g., Matrix via Tuwunel, the default) if the profile supports one
 5. **GitHub integration** — auto-detects your `gh auth` session, validates it, then lets you browse orgs and select or create a repo
 6. **Project board** — select an existing GitHub Project board or create a new one
@@ -57,7 +57,7 @@ For CI pipelines or scripted setup:
 
 ```bash
 bm init --non-interactive \
-  --profile scrum-compact \
+  --profile agentic-sdlc-minimal \
   --team-name my-team \
   --org my-org \
   --repo my-team-repo \
@@ -122,10 +122,10 @@ Use `bm profiles list` to see all available profiles:
 
 | Profile | Description | Status |
 |---------|-------------|--------|
-| `scrum-compact` | Single-agent "superman" profile with GitHub comment-based human review | Available |
+| `agentic-sdlc-minimal` | Minimal agentic SDLC with three roles (engineer, chief-of-staff, sentinel) | Available |
 | `scrum` | Multi-role team with pull-based kanban, status labels, conventional commits | In development |
 
-`scrum-compact` supports communication bridges: Matrix via Tuwunel (default), Telegram (experimental), and Rocket.Chat (experimental). Select one during `bm init` or use `--bridge <name>` in non-interactive mode. See the [Bridge Setup Guide](bridge-setup.md) for details.
+`agentic-sdlc-minimal` supports communication bridges: Matrix via Tuwunel (default), Telegram (experimental), and Rocket.Chat (experimental). Select one during `bm init` or use `--bridge <name>` in non-interactive mode. See the [Bridge Setup Guide](bridge-setup.md) for details.
 
 Use `bm profiles describe <name>` for detailed information about roles and labels.
 

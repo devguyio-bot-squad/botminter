@@ -32,11 +32,12 @@ Every issue must have exactly one kind label:
 Status labels follow the naming pattern:
 
 ```
-status/<role>:<phase>
+status/<role-slug>:<persona>:<activity>
 ```
 
-- `<role>` — the team member role responsible (e.g., `po`, `arch`, `dev`, `qe`)
-- `<phase>` — the current phase within that role's workflow
+- `<role-slug>` — the team member role responsible (e.g., `eng`, `cos`, `snt`, `human`)
+- `<persona>` — the persona or sub-role acting (e.g., `po`, `arch`, `dev`, `qe`, `exec`, `gate`)
+- `<activity>` — the current activity within that persona's workflow
 
 **Transition rule**: Only the role named in the status label may transition it. The PO (Product Owner) may override any status.
 
@@ -44,16 +45,16 @@ status/<role>:<phase>
 
 | Status | Role | Description |
 |--------|------|-------------|
-| `status/po:triage` | human-assistant | New epic, awaiting evaluation |
-| `status/po:backlog` | human-assistant | Accepted, prioritized, awaiting activation |
-| `status/arch:design` | architect | Architect producing design doc |
-| `status/po:design-review` | human-assistant | Design doc awaiting human review |
-| `status/arch:plan` | architect | Architect proposing story breakdown |
-| `status/po:plan-review` | human-assistant | Story breakdown awaiting human review |
-| `status/arch:breakdown` | architect | Architect creating story issues |
-| `status/po:ready` | human-assistant | Stories created, epic in ready backlog |
-| `status/arch:in-progress` | architect | Architect monitoring story execution |
-| `status/po:accept` | human-assistant | Epic awaiting human acceptance |
+| `status/eng:po:triage` | human-assistant | New epic, awaiting evaluation |
+| `status/eng:po:backlog` | human-assistant | Accepted, prioritized, awaiting activation |
+| `status/eng:arch:design` | engineer | Engineer (architect persona) producing design doc |
+| `status/human:po:design-review` | human-assistant | Design doc awaiting human review |
+| `status/eng:arch:plan` | engineer | Engineer (architect persona) proposing story breakdown |
+| `status/human:po:plan-review` | human-assistant | Story breakdown awaiting human review |
+| `status/eng:arch:breakdown` | engineer | Engineer (architect persona) creating story issues |
+| `status/eng:po:ready` | human-assistant | Stories created, epic in ready backlog |
+| `status/eng:arch:in-progress` | engineer | Engineer (architect persona) monitoring story execution |
+| `status/human:po:accept` | human-assistant | Epic awaiting human acceptance |
 | `status/done` | — | Epic complete |
 
 ### Rejection loops
@@ -62,9 +63,9 @@ At any review gate, the human can reject and send the epic back:
 
 | From | To | Trigger |
 |------|----|---------|
-| `status/po:design-review` | `status/arch:design` | Human rejects design with feedback |
-| `status/po:plan-review` | `status/arch:plan` | Human rejects breakdown with feedback |
-| `status/po:accept` | `status/arch:in-progress` | Human rejects completed epic |
+| `status/human:po:design-review` | `status/eng:arch:design` | Human rejects design with feedback |
+| `status/human:po:plan-review` | `status/eng:arch:plan` | Human rejects breakdown with feedback |
+| `status/human:po:accept` | `status/eng:arch:in-progress` | Human rejects completed epic |
 
 The rejecting member appends feedback as a standard comment.
 
@@ -72,23 +73,23 @@ The rejecting member appends feedback as a standard comment.
 
 | Status | Role | Description |
 |--------|------|-------------|
-| `status/cos:todo` | chief-of-staff | Task awaiting chief of staff |
-| `status/cos:in-progress` | chief-of-staff | Chief of staff working on task |
-| `status/cos:done` | chief-of-staff | Task completed by chief of staff |
+| `status/cos:exec:todo` | chief-of-staff | Task awaiting chief of staff |
+| `status/cos:exec:in-progress` | chief-of-staff | Chief of staff working on task |
+| `status/cos:exec:done` | chief-of-staff | Task completed by chief of staff |
 
 ### Story statuses
 
-Currently only `status/dev:ready` is active. The remaining story statuses are planned for Milestone 4 when dev, QE (Quality Engineer), and reviewer agents are added.
+Currently only `status/eng:dev:ready` is active. The remaining story statuses are planned for Milestone 4 when dev, QE (Quality Engineer), and reviewer agents are added.
 
 | Status | Description | Available |
 |--------|-------------|-----------|
-| `status/dev:ready` | Story ready for development | Now |
-| `status/qe:test-design` | QE designing tests | Milestone 4 |
-| `status/dev:implement` | Developer implementing | Milestone 4 |
-| `status/dev:code-review` | Code review | Milestone 4 |
-| `status/qe:verify` | QE verifying implementation | Milestone 4 |
-| `status/arch:sign-off` | Architect sign-off | Milestone 4 |
-| `status/po:merge` | Merge gate | Milestone 4 |
+| `status/eng:dev:ready` | Story ready for development | Now |
+| `status/eng:qe:test-design` | QE designing tests | Milestone 4 |
+| `status/eng:dev:implement` | Developer implementing | Milestone 4 |
+| `status/eng:dev:code-review` | Code review | Milestone 4 |
+| `status/eng:qe:verify` | QE verifying implementation | Milestone 4 |
+| `status/eng:arch:sign-off` | Architect sign-off | Milestone 4 |
+| `status/snt:gate:merge` | Sentinel handles merge | Milestone 4 |
 
 ### Error status
 

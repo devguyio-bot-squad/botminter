@@ -1,6 +1,6 @@
 # Member Roles
 
-This reference documents the member roles defined in BotMinter profiles, including their hat models, event dispatch, and responsibilities. The `chief-of-staff` role is available in both `scrum-compact` and `scrum` profiles. The `human-assistant` and `architect` roles are defined in the `scrum` profile (in development, not yet shipping in release builds).
+This reference documents the member roles defined in BotMinter profiles, including their hat models, event dispatch, and responsibilities. The `agentic-sdlc-minimal` profile ships three roles: `engineer`, `sentinel`, and `chief-of-staff`. The `scrum` profile (in development, not yet shipping in release builds) defines additional roles: `human-assistant` and `architect`.
 
 ## human-assistant
 
@@ -111,6 +111,47 @@ Before transitioning to `status/po:ready`:
 
 ---
 
+## sentinel
+
+The team's quality gate and PR watcher. The sentinel runs merge-gate tests on PRs before merging and scans project forks for orphaned PRs that need triage.
+
+### Hat model
+
+| Hat | Triggers | Responsibility | Transitions to |
+|-----|----------|----------------|---------------|
+| `pr_gate` | `snt.gate` | Run merge-gate tests on PR, merge or reject | `done` or `eng:dev:implement` |
+| `pr_triage` | `snt.triage` | Scan project forks for orphaned PRs, create triage issues | `eng:po:triage` |
+
+Board scanning is handled by the **board-scanner skill** (auto-injected into the coordinator via `skills.overrides`). The coordinator scans for `snt:*` issues and dispatches to the appropriate work hat.
+
+### Event dispatch
+
+| Status | Event | Hat activated |
+|--------|-------|--------------|
+| `snt:gate:merge` | `snt.gate` | pr_gate |
+| (periodic) | `snt.triage` | pr_triage |
+
+### Merge gate workflow
+
+1. Issue reaches `snt:gate:merge` via auto-advance from `eng:arch:sign-off`
+2. Sentinel reads merge-gate config from `team/projects/<project>/knowledge/merge-gate.md`
+3. Checks out PR branch and runs defined test commands
+4. If all pass — merges PR, advances to `done`
+5. If any fail — rejects, returns to `eng:dev:implement`
+
+### PR triage
+
+- Scans open PRs on project forks
+- Identifies orphaned PRs (no linked board issue)
+- Creates triage issues at `eng:po:triage`
+
+### Constraints
+
+- Never merge without running merge-gate tests
+- Always use PROCESS.md comment format: `### 🛡️ sentinel — <ISO-timestamp>`
+
+---
+
 ## chief-of-staff
 
 Process improvement and team coordination. The chief-of-staff handles operational tasks — process audits, retrospective actions, tooling improvements, and ad-hoc coordination work. It operates as a persistent Ralph loop with a single work hat.
@@ -119,7 +160,7 @@ Process improvement and team coordination. The chief-of-staff handles operationa
 
 | Hat | Triggers | Responsibility | Transitions to |
 |-----|----------|----------------|---------------|
-| `executor` | `cos.execute` | Pick up `cos:todo` tasks, execute them, report results | `cos:done` |
+| `executor` | `cos.execute` | Pick up `cos:exec:todo` tasks, execute them, report results | `cos:exec:done` |
 
 Board scanning is handled by the **board-scanner skill** (auto-injected into the coordinator via `skills.overrides`). The coordinator scans for `cos:*` issues and dispatches to the executor hat.
 
@@ -127,9 +168,9 @@ Board scanning is handled by the **board-scanner skill** (auto-injected into the
 
 | Status label | Event | Hat activated |
 |-------------|-------|--------------|
-| `cos:todo` | `cos.execute` | executor |
+| `cos:exec:todo` | `cos.execute` | executor |
 
-**Priority**: Only one status triggers work (`cos:todo`). The executor transitions through `cos:in-progress` while working and to `cos:done` on completion.
+**Priority**: Only one status triggers work (`cos:exec:todo`). The executor transitions through `cos:exec:in-progress` while working and to `cos:exec:done` on completion.
 
 One issue is processed per scan cycle.
 
@@ -152,15 +193,15 @@ See [Coordination Model — Role-as-skill](../concepts/coordination-model.md#rol
 
 ## Planned roles (Milestone 4)
 
-These roles are designed but not yet implemented:
+In the `agentic-sdlc-minimal` profile, the `engineer` role already implements the capabilities originally planned as separate roles — development, testing, and code review — via its hat model. The `scrum` profile plans to split these into dedicated roles for larger teams:
 
-| Role | Purpose |
-|------|---------|
-| `dev` | Developer — implements stories, follows TDD (Test-Driven Development) |
-| `qe` | QE (Quality Engineer) — writes tests, verifies implementations |
-| `reviewer` | Code reviewer — reviews PRs, checks quality |
+| Role | Purpose | Status |
+|------|---------|--------|
+| `dev` | Developer — implements stories, follows TDD (Test-Driven Development) | Covered by `engineer` hats in `agentic-sdlc-minimal` |
+| `qe` | QE (Quality Engineer) — writes tests, verifies implementations | Covered by `engineer` hats in `agentic-sdlc-minimal` |
+| `reviewer` | Code reviewer — reviews PRs, checks quality | Covered by `engineer` hats in `agentic-sdlc-minimal` |
 
-The full story lifecycle (QE writes tests, dev implements, QE verifies, reviewer reviews, architect signs off, PO (Product Owner) merges) is planned for [Milestone 4](../roadmap.md).
+The full story lifecycle with dedicated roles (QE writes tests, dev implements, QE verifies, reviewer reviews, architect signs off, PO (Product Owner) merges) is planned for [Milestone 4](../roadmap.md) in the `scrum` profile.
 
 ## Related topics
 

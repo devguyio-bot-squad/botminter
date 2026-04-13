@@ -39,7 +39,7 @@ bm init --non-interactive --profile <profile> --team-name <name> --org <org> --r
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `--non-interactive` | Yes | Run without interactive prompts |
-| `--profile <profile>` | Yes | Profile name (e.g., `scrum-compact`) |
+| `--profile <profile>` | Yes | Profile name (e.g., `agentic-sdlc-minimal`) |
 | `--team-name <name>` | Yes | Team identifier |
 | `--org <org>` | Yes | GitHub organization (personal accounts not allowed) |
 | `--repo <repo>` | Yes | GitHub repo name |
@@ -194,7 +194,7 @@ bm fire <member> [-t <team>] [--keep-app]
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `<member>` | Yes | Member name to fire (e.g., `superman-01`) |
+| `<member>` | Yes | Member name to fire (e.g., `engineer-01`) |
 | `-t <team>` | No | Team to operate on (defaults to default team) |
 | `--keep-app` | No | Preserve the GitHub App installation for reuse |
 
@@ -237,7 +237,7 @@ bm credentials export -o <file> [-t <team>]
 ```yaml
 team: my-team
 members:
-  superman:
+  engineer:
     github_app:
       app_id: "123456"
       client_id: "Iv1.abc123"
@@ -765,7 +765,7 @@ bm bridge identity add <username> [-t <team>]
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `<username>` | Yes | Member name (e.g., `superman-01`) |
+| `<username>` | Yes | Member name (e.g., `engineer-01`) |
 | `-t <team>` | No | Team to operate on |
 
 **Behavior:**
@@ -784,7 +784,7 @@ bm bridge identity show <username> [--reveal] [-t <team>]
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
-| `<username>` | Yes | Member name (e.g., `superman-01`) |
+| `<username>` | Yes | Member name (e.g., `engineer-01`) |
 | `--reveal` | No | Show full token (default: masked) |
 | `-t <team>` | No | Team to operate on |
 

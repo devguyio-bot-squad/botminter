@@ -19,7 +19,7 @@ Profiles live on disk at `~/.config/botminter/profiles/<profile-name>/`. The `bm
       invariants/
       roles/
       ...
-    scrum-compact/                  # Single-agent "superman" profile (optional bridge)
+    agentic-sdlc-minimal/                  # Minimal agentic SDLC profile (three roles)
       ...
   minty/                            # Minty interactive assistant config
     prompt.md                       # Persona prompt
@@ -132,18 +132,24 @@ Teams can override the default coding agent in `~/.botminter/config.yml` via the
 
 ## Available profiles
 
-BotMinter ships with the `scrum-compact` profile. The `scrum` profile (multi-role teams) is in development and will ship in a future release.
+BotMinter ships with the `agentic-sdlc-minimal` profile. The `scrum` profile (multi-role teams) is in development and will ship in a future release.
 
-### `scrum-compact` (recommended starting point)
+### `agentic-sdlc-minimal` (recommended starting point)
 
-A single agent (role: `superman`) that wears all hats — product owner, architect, developer, QE, SRE, and content writer. The agent self-transitions through the entire issue lifecycle by switching hats.
+A minimal agentic software development lifecycle with three roles and clear separation of concerns:
 
-- **One agent, all roles** — no coordination overhead, simplest setup
-- **Chief of staff** — a `chief-of-staff` role is also available for coordination and process improvement. Hire one with `bm hire chief-of-staff`.
-- **GitHub-based HIL** — human approves/rejects via GitHub issue comments. The agent posts a review request, moves on to other work, and checks for the human's response on the next scan cycle. Non-blocking.
-- **Full pipeline** — same epic lifecycle and status transitions as the multi-member `scrum` profile
+| Role | Purpose | Key hats |
+|------|---------|----------|
+| `engineer` | Full SDLC engineer — PO, architect, dev, QE, SRE, and content writer in one member | po, architect, dev, qe, sre, content_writer |
+| `chief-of-staff` | The operator's chief of staff — handles operational tasks, reviews member activity, and drives improvements | executor |
+| `sentinel` | Merge gatekeeper — runs project-specific tests before merging PRs, triages orphaned PRs | pr_gate, pr_triage |
 
-Best for: individual engineers who want to get started quickly with a single Claude Code agent.
+- **Three roles, clear boundaries** — the `engineer` handles the full issue lifecycle by switching hats, `chief-of-staff` is the operator's AI assistant, and `sentinel` gatekeeps merges
+- **Human review gates** — statuses prefixed with `human:` (e.g., `human:po:design-review`) require human approval via GitHub issue comments. The agent posts a review request, moves on to other work, and checks for the human's response on the next scan cycle. Non-blocking.
+- **Sentinel merge gating** — PRs are merged by the `sentinel` role, not by the engineer, enforcing automated quality gates before merge
+- **`<role-slug>:<persona>:<activity>` status convention** — statuses carry a role slug prefix (`eng:`, `cos:`, `snt:`, `human:`) making ownership unambiguous across the board
+
+Best for: individual engineers or small teams who want a structured agentic SDLC with human oversight and automated merge gating.
 
 ### `scrum` (in development)
 
@@ -166,16 +172,26 @@ Best for: teams that want dedicated agents per role with parallel execution.
 
 Profiles use two separate GitHub mechanisms for tracking work:
 
-**Labels** (regular GitHub issue labels) — classify work items by type and project:
+**Labels** (regular GitHub issue labels) — classify work items by project:
 
 | Label | Created by | Purpose |
 |-------|-----------|---------|
-| `kind/epic` | `bm init` | Epic-level work item |
-| `kind/story` | `bm init` | Story-level work item |
 | `kind/docs` | `bm init` | Documentation story, routed to content writer hats |
 | `project/<name>` | `bm projects add` | Tags an issue to a specific project (e.g., `project/my-app`) |
 
-**Statuses** (GitHub Projects v2 Status field) — track where an issue is in the pipeline. Statuses use the format `<role>:<phase>` (e.g., `arch:design`, `po:triage`). These are managed as single-select options on the Project board's Status field, not as regular labels. `bm projects sync` keeps them in sync with the profile.
+!!! note "GitHub native issue types"
+    The `agentic-sdlc-minimal` profile uses GitHub native issue types (Epic, Task, Bug) instead of `kind/epic` and `kind/story` labels. Issue types are set via the `issueTypeId` field in the GitHub API. The `project/<name>` label is required on every issue to associate it with a project.
+
+**Statuses** (GitHub Projects v2 Status field) — track where an issue is in the pipeline. Statuses use the format `<role-slug>:<persona>:<activity>` (e.g., `eng:arch:design`, `eng:po:triage`, `human:po:design-review`). The role slug prefix identifies who owns the status:
+
+| Prefix | Owner | Examples |
+|--------|-------|----------|
+| `eng:` | Engineer agent | `eng:po:triage`, `eng:arch:design`, `eng:dev:implement` |
+| `cos:` | Chief of staff agent | `cos:exec:review` |
+| `snt:` | Sentinel agent | `snt:gate:merge` |
+| `human:` | Human operator (review gate) | `human:po:design-review`, `human:po:plan-review` |
+
+Statuses are managed as single-select options on the Project board's Status field, not as regular labels. `bm projects sync` keeps them in sync with the profile.
 
 This separation matters: labels are static classification, statuses are dynamic pipeline position.
 
@@ -185,28 +201,28 @@ All three profiles share the same epic lifecycle. An epic flows through design, 
 
 ```mermaid
 flowchart TD
-    triage["po:triage"] --> backlog["po:backlog"]
+    triage["eng:po:triage"] --> backlog["eng:po:backlog"]
 
     subgraph Design Phase
-        backlog --> design["arch:design"]
-        design --> dreview["po:design-review"]
+        backlog --> design["eng:arch:design"]
+        design --> dreview["human:po:design-review"]
         dreview -->|reject| design
     end
 
     subgraph Planning Phase
-        dreview -->|approve| plan["arch:plan"]
-        plan --> preview["po:plan-review"]
+        dreview -->|approve| plan["eng:arch:plan"]
+        plan --> preview["human:po:plan-review"]
         preview -->|reject| plan
     end
 
     subgraph Execution Phase
-        preview -->|approve| breakdown["arch:breakdown"]
-        breakdown --> ready["po:ready"]
-        ready --> inprog["arch:in-progress"]
+        preview -->|approve| breakdown["eng:arch:breakdown"]
+        breakdown --> ready["eng:po:ready"]
+        ready --> inprog["eng:arch:in-progress"]
     end
 
     subgraph Acceptance
-        inprog --> accept["po:accept"]
+        inprog --> accept["human:po:accept"]
         accept -->|reject| inprog
         accept -->|approve| done["done"]
     end
@@ -214,22 +230,21 @@ flowchart TD
 
 ### Story lifecycle
 
-When an epic reaches `arch:breakdown`, the architect creates individual story issues (labeled `kind/story`). Each story goes through its own pipeline:
+When an epic reaches `eng:arch:breakdown`, the architect creates individual story issues (using the Task issue type). Each story goes through its own pipeline:
 
 ```mermaid
 flowchart TD
-    ready["dev:ready"] --> testdesign["qe:test-design"]
-    testdesign --> implement["dev:implement"]
-    implement --> codereview["dev:code-review"]
-    codereview --> verify["qe:verify"]
-    verify --> signoff["arch:sign-off"]
-    signoff --> merge["po:merge"]
+    testdesign["eng:qe:test-design"] --> implement["eng:dev:implement"]
+    implement --> codereview["eng:dev:code-review"]
+    codereview --> verify["eng:qe:verify"]
+    verify --> signoff["eng:arch:sign-off"]
+    signoff --> merge["snt:gate:merge"]
     merge --> done["done"]
 ```
 
-The story pipeline is linear — no rejection loops. QE designs tests before development starts (test-first), the developer implements, code review and QE verification follow, then the architect signs off and the story is merged. `arch:sign-off` and `po:merge` are auto-advance gates in the compact profiles.
+The story pipeline is linear — no rejection loops. QE designs tests before development starts (test-first), the developer implements, code review and QE verification follow, then the architect signs off. The `sentinel` role handles the final merge via `snt:gate:merge`, enforcing automated quality gates before the PR is merged. `eng:arch:sign-off` is an auto-advance gate in the engineer's workflow.
 
-There are also **specialist statuses** for non-standard work: `sre:infra-setup` for infrastructure tasks, and `cw:write` → `cw:review` for documentation stories (labeled `kind/docs`).
+There are also **specialist statuses** for non-standard work: `eng:sre:infra-setup` for infrastructure tasks, and `eng:cw:write` followed by `eng:cw:review` for documentation stories (labeled `kind/docs`).
 
 ### Views
 
@@ -237,15 +252,15 @@ Profiles define role-based views for the GitHub Project board. Since the API doe
 
 ```yaml
 views:
-  - name: "PO"
-    prefixes: ["po"]
+  - name: "Engineer"
+    prefixes: ["eng"]
     also_include: ["done", "error"]
-  - name: "Architect"
-    prefixes: ["arch"]
+  - name: "Human Gates"
+    prefixes: ["human"]
     also_include: ["done", "error"]
 ```
 
-Each view matches statuses by prefix (e.g., `["po"]` matches `po:triage`, `po:backlog`, etc.) and adds the `also_include` entries. See the [Getting Started guide](../getting-started/index.md#step-4-set-up-the-project-board) for example output.
+Each view matches statuses by role-slug prefix (e.g., `["eng"]` matches `eng:po:triage`, `eng:arch:design`, `eng:dev:implement`, etc.) and adds the `also_include` entries. See the [Getting Started guide](../getting-started/index.md#step-4-set-up-the-project-board) for example output.
 
 ## Listing profiles
 
@@ -253,7 +268,7 @@ Use the `bm` CLI to see available profiles:
 
 ```bash
 bm profiles list                    # Table of all profiles on disk
-bm profiles describe scrum-compact  # Detailed profile information
+bm profiles describe agentic-sdlc-minimal  # Detailed profile information
 ```
 
 ## Creating a new profile

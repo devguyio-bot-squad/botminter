@@ -8,7 +8,7 @@ Each team member runs in an isolated **workspace repo** — a dedicated GitHub-h
 workzone/
   my-team/                                        # Team directory
     team/                                         # Team repo (control plane, git repo)
-    superman-01/                                  # Workspace repo for member
+    engineer-01/                                  # Workspace repo for member
       .gitmodules
       team/                                       # Submodule → org/my-team (team repo)
       projects/
@@ -24,7 +24,7 @@ workzone/
       .ralph/                                     # Ralph runtime state (gitignored)
 ```
 
-The specific member names (e.g., `superman-01`, `architect-01`) depend on the [profile](profiles.md). The workspace structure is the same for all profiles.
+The specific member names (e.g., `engineer-01`, `architect-01`) depend on the [profile](profiles.md). The workspace structure is the same for all profiles.
 
 The agent's working directory (CWD) is the workspace repo root. Projects are accessible as submodules under `projects/`. The team repo is accessible at `team/`.
 
@@ -51,7 +51,7 @@ The workspace repo uses git submodules to reference shared repos:
 | Team repo | `team/` | The team's GitHub repo (control plane) |
 | Project fork | `projects/<project>/` | A project fork on GitHub |
 
-Each submodule checks out a **member branch** (e.g., `superman-01`). This gives each agent its own branch to work on without conflicting with other members.
+Each submodule checks out a **member branch** (e.g., `engineer-01`). This gives each agent its own branch to work on without conflicting with other members.
 
 ### Team repo submodule (`team/`)
 
