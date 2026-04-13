@@ -567,9 +567,9 @@ pub fn run() -> Result<()> {
 
                 let flow_result = if browser_available {
                     cliclack::log::info(format!(
-                        "Opening browser...\n\
-                         If it doesn't open, visit:\n\
-                         {}", server.start_url,
+                        "Click this link to create the GitHub App:\n\
+                         \n\
+                           {}", server.start_url,
                     ))?;
                     server.run()
                 } else {
@@ -601,6 +601,17 @@ pub fn run() -> Result<()> {
 
                 match flow_result {
                     Ok(flow_result) => {
+                        cliclack::log::success("GitHub App created and installed successfully!")?;
+
+                        // Let the user confirm before proceeding — they may still be in the browser
+                        if {
+                            use std::io::IsTerminal;
+                            std::io::stdin().is_terminal()
+                        } {
+                            eprint!("  Press Enter to continue...");
+                            let _ = std::io::stdin().read_line(&mut String::new());
+                        }
+
                         let creds = AppCredentials {
                             app_id: flow_result.app_id,
                             client_id: flow_result.client_id,

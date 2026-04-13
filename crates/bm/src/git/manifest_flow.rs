@@ -518,14 +518,16 @@ impl ManifestFlowServer {
 
             let server = axum::serve(tokio_listener, app);
 
-            // Open browser AFTER the server is accepting connections.
-            // Spawned in a background thread because open::that() can block
-            // until the browser process exits on some Linux systems.
-            if should_open {
-                std::thread::spawn(move || {
-                    let _ = open::that(&url);
-                });
-            }
+            // Browser auto-launch disabled — users click the link in the
+            // terminal instead. Kept for reference in case we want to
+            // re-enable on platforms where it works reliably.
+            //
+            // if should_open {
+            //     std::thread::spawn(move || {
+            //         let _ = open::that(&url);
+            //     });
+            // }
+            let _ = should_open; // suppress unused warning
 
             if stdin_fallback {
                 // Headless mode: server runs (to serve /start) but only

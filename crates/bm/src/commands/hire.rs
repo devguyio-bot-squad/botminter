@@ -149,12 +149,12 @@ fn run_manifest_flow_for_member(
         // ── Browser path ─────────────────────────────────────────
         if is_tty {
             cliclack::log::info(format!(
-                "Opening browser...\n\
-                 If it doesn't open, visit:\n\
-                 {}", server.start_url,
+                "Click this link to create the GitHub App:\n\
+                 \n\
+                   {}", server.start_url,
             ))?;
         } else {
-            eprintln!("If the browser doesn't open, visit this URL manually:");
+            eprintln!("Click this link to create the GitHub App:");
             eprintln!("  {}\n", server.start_url);
         }
         server.run()?
@@ -189,6 +189,12 @@ fn run_manifest_flow_for_member(
 
     eprintln!();
     cliclack::log::success("GitHub App created and installed successfully!")?;
+
+    // Let the user confirm before proceeding — they may still be in the browser
+    if is_tty {
+        eprint!("  Press Enter to continue...");
+        let _ = std::io::stdin().read_line(&mut String::new());
+    }
 
     // Store the credentials
     let creds = AppCredentials {
