@@ -246,7 +246,7 @@ mod tests {
     fn extract_profile_scrum_compact_includes_expected_dirs() {
         let (_profiles_tmp, base) = setup_disk_profiles();
         let output = tempfile::tempdir().unwrap();
-        extract_profile_from(&base, "scrum-compact", output.path(), &claude_code_agent()).unwrap();
+        extract_profile_from(&base, "agentic-sdlc-minimal", output.path(), &claude_code_agent()).unwrap();
 
         assert!(output.path().join("skills").is_dir());
         assert!(output.path().join("formations").is_dir());

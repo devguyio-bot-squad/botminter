@@ -613,7 +613,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -643,7 +643,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -669,7 +669,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -690,7 +690,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -711,7 +711,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         // %2e = '.' so %2e%2e = '..'
@@ -733,7 +733,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         // We can't put /etc/passwd in a URL path param easily since axum
         // treats the leading / differently. Instead test via the handler directly.
@@ -751,7 +751,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         // Create a symlink inside team repo that points outside
         let link_path = team_path.join("evil-link");
@@ -787,7 +787,7 @@ mod tests {
         let team_path = setup_fixture_team(tmp.path());
         git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -813,7 +813,7 @@ mod tests {
         let team_path = setup_fixture_team(tmp.path());
         git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -839,7 +839,7 @@ mod tests {
         let team_path = setup_fixture_team(tmp.path());
         git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let state = super::super::state::WebState {
             config_path: Arc::new(config_path),
@@ -857,7 +857,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -878,7 +878,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -900,7 +900,7 @@ mod tests {
         let team_path = setup_fixture_team(tmp.path());
         git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path.clone());
         let new_content = "# Updated\nNew content here\n";
@@ -972,7 +972,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -1032,7 +1032,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app

@@ -26,10 +26,10 @@ use super::super::tuwunel::TuwunelGuard;
 // ── Constants ─────────────────────────────────────────────────────────
 
 const TEAM_NAME: &str = "e2e-fresh";
-const PROFILE: &str = "scrum-compact";
-const ROLE: &str = "superman";
+const PROFILE: &str = "agentic-sdlc-minimal";
+const ROLE: &str = "engineer";
 const MEMBER_NAME: &str = "alice";
-const MEMBER_DIR: &str = "superman-alice";
+const MEMBER_DIR: &str = "engineer-alice";
 
 // ── Reusable case functions ───────────────────────────────────────────
 //

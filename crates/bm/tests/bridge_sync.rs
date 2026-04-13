@@ -36,7 +36,7 @@ fn setup_team_repo_with_bridge(tmp: &Path) -> PathBuf {
     // Create botminter.yml with bridge key
     fs::write(
         team_repo.join("botminter.yml"),
-        "profile: scrum-compact\nschema_version: \"0.7\"\nbridge: stub\nprojects: []\n",
+        "profile: agentic-sdlc-minimal\nschema_version: \"0.7\"\nbridge: stub\nprojects: []\n",
     )
     .unwrap();
 
@@ -309,7 +309,7 @@ spec:
 
         fs::write(
             team_repo.join("botminter.yml"),
-            "profile: scrum-compact\nschema_version: \"0.7\"\nbridge: telegram\nprojects: []\n",
+            "profile: agentic-sdlc-minimal\nschema_version: \"0.7\"\nbridge: telegram\nprojects: []\n",
         )
         .unwrap();
 

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 /// Profiles to include in release builds (comma-separated).
-const SHIPPED_PROFILES: &str = "scrum-compact";
+const SHIPPED_PROFILES: &str = "agentic-sdlc-minimal";
 
 /// Bridges to strip from profile manifests in release builds (comma-separated).
 const STRIPPED_BRIDGES: &[&str] = &["rocketchat"];

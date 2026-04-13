@@ -394,7 +394,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -443,7 +443,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app
@@ -513,7 +513,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "scrum-compact", "org/test");
+        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
 
         let app = test_app(config_path);
         let resp = app

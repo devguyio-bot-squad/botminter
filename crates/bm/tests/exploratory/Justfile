@@ -35,7 +35,7 @@ TEAM := "exploratory-test"
 ORG := "devguyio-bot-squad"
 REPO := "exploratory-test-team"
 FULL_REPO := ORG + "/" + REPO
-PROFILE := "scrum-compact"
+PROFILE := "agentic-sdlc-minimal"
 BOARD := "Exploratory Test Board"
 TUWUNEL_PORT := env("TUWUNEL_PORT", "8008")
 

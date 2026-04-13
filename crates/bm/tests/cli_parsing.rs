@@ -731,8 +731,8 @@ fn profiles_init_extracts_to_temp_dir() {
         "scrum profile should be extracted"
     );
     assert!(
-        profiles_dir.join("scrum-compact").join("botminter.yml").exists(),
-        "scrum-compact profile should be extracted"
+        profiles_dir.join("agentic-sdlc-minimal").join("botminter.yml").exists(),
+        "agentic-sdlc-minimal profile should be extracted"
     );
 }
 
@@ -896,7 +896,7 @@ fn init_bridge_flag_parses() {
         .args([
             "init",
             "--non-interactive",
-            "--profile", "scrum-compact",
+            "--profile", "agentic-sdlc-minimal",
             "--team-name", "test",
             "--org", "testorg",
             "--repo", "testrepo",
@@ -920,7 +920,7 @@ fn init_without_bridge_flag_parses() {
         .args([
             "init",
             "--non-interactive",
-            "--profile", "scrum-compact",
+            "--profile", "agentic-sdlc-minimal",
             "--team-name", "test",
             "--org", "testorg",
             "--repo", "testrepo",

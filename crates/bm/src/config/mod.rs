@@ -352,7 +352,7 @@ mod tests {
                 TeamEntry {
                     name: "default".to_string(),
                     path: PathBuf::from("/tmp/default"),
-                    profile: "scrum-compact".to_string(),
+                    profile: "agentic-sdlc-minimal".to_string(),
                     github_repo: "".to_string(),
                     credentials: Credentials::default(),
                     coding_agent: None,
@@ -461,7 +461,7 @@ mod tests {
             teams: vec![TeamEntry {
                 name: "exists".to_string(),
                 path: PathBuf::from("/tmp/exists"),
-                profile: "scrum-compact".to_string(),
+                profile: "agentic-sdlc-minimal".to_string(),
                 github_repo: "".to_string(),
                 credentials: Credentials::default(),
                 coding_agent: None,

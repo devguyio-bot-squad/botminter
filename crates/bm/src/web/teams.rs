@@ -73,7 +73,7 @@ mod tests {
                 config::TeamEntry {
                     name: "alpha".to_string(),
                     path: tmp.path().join("alpha"),
-                    profile: "scrum-compact".to_string(),
+                    profile: "agentic-sdlc-minimal".to_string(),
                     github_repo: "org/alpha-team".to_string(),
                     credentials: config::Credentials::default(),
                     coding_agent: None,
@@ -121,7 +121,7 @@ mod tests {
 
         assert_eq!(teams.len(), 2);
         assert_eq!(teams[0]["name"], "alpha");
-        assert_eq!(teams[0]["profile"], "scrum-compact");
+        assert_eq!(teams[0]["profile"], "agentic-sdlc-minimal");
         assert_eq!(teams[0]["github_repo"], "org/alpha-team");
         assert!(teams[0]["path"].is_string());
         assert_eq!(teams[1]["name"], "beta");

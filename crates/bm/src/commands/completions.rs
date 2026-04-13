@@ -360,7 +360,7 @@ mod tests {
                     TeamEntry {
                         name: "beta".into(),
                         path: PathBuf::from("/tmp/beta"),
-                        profile: "scrum-compact".into(),
+                        profile: "agentic-sdlc-minimal".into(),
                         github_repo: String::new(),
                         credentials: Credentials::default(),
                         coding_agent: None,

@@ -1,6 +1,6 @@
-name: scrum-compact
-display_name: "Scrum Compact Solo Team"
-description: "Lightweight single-member team with GitHub-based human review. One agent wears all hats. Human approves/rejects via GitHub issue comments."
+name: agentic-sdlc-minimal
+display_name: "Agentic SDLC Minimal"
+description: "Minimal agentic software lifecycle with three roles: engineer, sentinel, and chief-of-staff. Human gates via GitHub comments."
 version: "1.0.0"
 schema_version: '1.0'
 

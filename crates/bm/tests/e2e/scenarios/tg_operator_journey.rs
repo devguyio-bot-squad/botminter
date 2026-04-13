@@ -23,10 +23,10 @@ use super::super::test_env::TestEnv;
 // ── Constants ─────────────────────────────────────────────────────────
 
 const TEAM_NAME: &str = "e2e-tg";
-const PROFILE: &str = "scrum-compact";
-const ROLE: &str = "superman";
+const PROFILE: &str = "agentic-sdlc-minimal";
+const ROLE: &str = "engineer";
 const MEMBER_NAME: &str = "tg-alice";
-const MEMBER_DIR: &str = "superman-tg-alice";
+const MEMBER_DIR: &str = "engineer-tg-alice";
 const BOT_TOKEN: &str = "123456789:ABCDEFGhijklmnopqrstuvwxyz-e2e";
 
 // ── Reusable case functions ───────────────────────────────────────────

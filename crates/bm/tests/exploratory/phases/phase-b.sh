@@ -13,7 +13,7 @@ OUT=$(bm init --non-interactive --profile "$PROFILE" --team-name "$TEAM" \
     --org "$ORG" --repo "$REPO" --bridge tuwunel \
     --github-project-board "$BOARD" 2>&1)
 EC=$?
-if [ $EC -eq 0 ]; then pass "B1" "bm init (non-interactive, scrum-compact, tuwunel)"; else fail "B1" "bm init" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
+if [ $EC -eq 0 ]; then pass "B1" "bm init (non-interactive, agentic-sdlc-minimal, tuwunel)"; else fail "B1" "bm init" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
 
 # B2: GitHub repo exists
 if gh repo view "$FULL_REPO" --json name >/dev/null 2>&1; then pass "B2" "GitHub repo exists"; else fail "B2" "GitHub repo" "not found"; fi

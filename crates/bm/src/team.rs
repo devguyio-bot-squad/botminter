@@ -209,7 +209,7 @@ mod tests {
         TeamEntry {
             name: "test-team".to_string(),
             path: PathBuf::from("/tmp/test-team"),
-            profile: "scrum-compact".to_string(),
+            profile: "agentic-sdlc-minimal".to_string(),
             github_repo: "org/repo".to_string(),
             credentials: Credentials::default(),
             coding_agent: None,

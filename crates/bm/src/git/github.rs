@@ -217,9 +217,14 @@ pub fn sync_project_status_field(
     Ok(())
 }
 
-/// Maps a status name prefix to a GitHub Project color for visual grouping.
+/// Maps a status name to a GitHub Project color for visual grouping.
+///
+/// For 3-part statuses (`eng:po:triage`), uses the persona (2nd segment) for color.
+/// For 1-part statuses (`done`, `error`), matches the name directly.
 fn color_for_status(name: &str) -> &'static str {
-    match name.split(':').next().unwrap_or("") {
+    let parts: Vec<&str> = name.split(':').collect();
+    let key = if parts.len() >= 3 { parts[1] } else { parts[0] };
+    match key {
         "po" => "BLUE",
         "arch" => "PURPLE",
         "dev" => "YELLOW",
@@ -227,10 +232,15 @@ fn color_for_status(name: &str) -> &'static str {
         "lead" => "ORANGE",
         "sre" => "GRAY",
         "cw" => "ORANGE",
+        "exec" => "PURPLE",
+        "gate" => "RED",
+        "bug" => "RED",
         "mgr" => "PURPLE",
-        "error" => "RED",
-        "done" => "GREEN",
-        _ => "GRAY",
+        _ => match name {
+            "error" => "RED",
+            "done" => "GREEN",
+            _ => "GRAY",
+        },
     }
 }
 

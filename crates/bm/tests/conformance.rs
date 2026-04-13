@@ -276,8 +276,8 @@ fn stub_bridge_has_required_files() {
 
 #[test]
 fn telegram_bridge_yml_has_required_fields() {
-    // Validate both scrum-compact and scrum profile copies
-    for profile in ["scrum-compact", "scrum"] {
+    // Validate both agentic-sdlc-minimal and scrum profile copies
+    for profile in ["agentic-sdlc-minimal", "scrum"] {
         let path = profile_bridge_dir(profile, "telegram").join("bridge.yml");
         let val = read_yaml(&path);
 
@@ -326,7 +326,7 @@ fn telegram_bridge_yml_has_required_fields() {
 
 #[test]
 fn telegram_bridge_has_no_lifecycle() {
-    for profile in ["scrum-compact", "scrum"] {
+    for profile in ["agentic-sdlc-minimal", "scrum"] {
         let path = profile_bridge_dir(profile, "telegram").join("bridge.yml");
         let val = read_yaml(&path);
 
@@ -341,7 +341,7 @@ fn telegram_bridge_has_no_lifecycle() {
 
 #[test]
 fn telegram_bridge_has_identity_commands() {
-    for profile in ["scrum-compact", "scrum"] {
+    for profile in ["agentic-sdlc-minimal", "scrum"] {
         let path = profile_bridge_dir(profile, "telegram").join("bridge.yml");
         let val = read_yaml(&path);
 
@@ -367,7 +367,7 @@ fn telegram_bridge_has_identity_commands() {
 
 #[test]
 fn telegram_schema_json_has_bot_token() {
-    for profile in ["scrum-compact", "scrum"] {
+    for profile in ["agentic-sdlc-minimal", "scrum"] {
         let path = profile_bridge_dir(profile, "telegram").join("schema.json");
         let val = read_json(&path);
 
@@ -415,7 +415,7 @@ fn telegram_schema_json_has_bot_token() {
 
 #[test]
 fn telegram_bridge_has_required_files() {
-    for profile in ["scrum-compact", "scrum"] {
+    for profile in ["agentic-sdlc-minimal", "scrum"] {
         let dir = profile_bridge_dir(profile, "telegram");
 
         assert!(
@@ -440,7 +440,7 @@ fn telegram_bridge_has_required_files() {
 
 #[test]
 fn tuwunel_bridge_yml_has_required_fields() {
-    for profile in ["scrum-compact", "scrum"] {
+    for profile in ["agentic-sdlc-minimal", "scrum"] {
         let path = profile_bridge_dir(profile, "tuwunel").join("bridge.yml");
         let val = read_yaml(&path);
 
@@ -488,7 +488,7 @@ fn tuwunel_bridge_yml_has_required_fields() {
 
 #[test]
 fn tuwunel_bridge_has_lifecycle_commands() {
-    for profile in ["scrum-compact", "scrum"] {
+    for profile in ["agentic-sdlc-minimal", "scrum"] {
         let path = profile_bridge_dir(profile, "tuwunel").join("bridge.yml");
         let val = read_yaml(&path);
 
@@ -512,7 +512,7 @@ fn tuwunel_bridge_has_lifecycle_commands() {
 
 #[test]
 fn tuwunel_bridge_has_identity_commands() {
-    for profile in ["scrum-compact", "scrum"] {
+    for profile in ["agentic-sdlc-minimal", "scrum"] {
         let path = profile_bridge_dir(profile, "tuwunel").join("bridge.yml");
         let val = read_yaml(&path);
 
@@ -536,7 +536,7 @@ fn tuwunel_bridge_has_identity_commands() {
 
 #[test]
 fn tuwunel_bridge_has_room_commands() {
-    for profile in ["scrum-compact", "scrum"] {
+    for profile in ["agentic-sdlc-minimal", "scrum"] {
         let path = profile_bridge_dir(profile, "tuwunel").join("bridge.yml");
         let val = read_yaml(&path);
 
@@ -555,7 +555,7 @@ fn tuwunel_bridge_has_room_commands() {
 
 #[test]
 fn tuwunel_schema_json_has_host() {
-    for profile in ["scrum-compact", "scrum"] {
+    for profile in ["agentic-sdlc-minimal", "scrum"] {
         let path = profile_bridge_dir(profile, "tuwunel").join("schema.json");
         let contents = std::fs::read_to_string(&path)
             .unwrap_or_else(|_| panic!("Could not read {}", path.display()));
@@ -590,7 +590,7 @@ fn tuwunel_schema_json_has_host() {
 
 #[test]
 fn tuwunel_bridge_has_required_files() {
-    for profile in ["scrum-compact", "scrum"] {
+    for profile in ["agentic-sdlc-minimal", "scrum"] {
         let dir = profile_bridge_dir(profile, "tuwunel");
 
         assert!(

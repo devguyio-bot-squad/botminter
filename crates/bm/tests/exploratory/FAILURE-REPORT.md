@@ -34,7 +34,7 @@
 **Diagnosis status:** Debug output added. Awaiting next run for data.
 
 **Files involved:**
-- `profiles/scrum-compact/bridges/tuwunel/Justfile` (onboard recipe, lines 234-400)
+- `profiles/agentic-sdlc-minimal/bridges/tuwunel/Justfile` (onboard recipe, lines 234-400)
 - `crates/bm/src/bridge/provisioning.rs` (verify + re-onboard flow)
 - `crates/bm/tests/exploratory/phases/phase-c.sh` (test assertion)
 

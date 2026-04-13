@@ -598,7 +598,7 @@ mod tests {
     fn check_schema_version_match() {
         let (_tmp, base) = setup_disk_profiles();
         assert!(check_schema_version_in("scrum", "1.0", &base).is_ok());
-        assert!(check_schema_version_in("scrum-compact", "1.0", &base).is_ok());
+        assert!(check_schema_version_in("agentic-sdlc-minimal", "1.0", &base).is_ok());
     }
 
     #[test]
@@ -661,7 +661,7 @@ mod tests {
     #[test]
     fn scrum_compact_has_views() {
         let (_tmp, base) = setup_disk_profiles();
-        let manifest = read_manifest_from("scrum-compact", &base).unwrap();
+        let manifest = read_manifest_from("agentic-sdlc-minimal", &base).unwrap();
         assert!(!manifest.views.is_empty());
     }
 

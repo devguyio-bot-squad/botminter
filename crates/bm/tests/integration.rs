@@ -581,7 +581,7 @@ fn schema_version_mismatch_blocks_sync() {
 fn multi_team_default_resolution() {
     let tmp = tempfile::tempdir().unwrap();
     let team_repo_alpha = setup_team(tmp.path(), "alpha", "scrum");
-    add_team_to_config(tmp.path(), "beta", "scrum-compact", false);
+    add_team_to_config(tmp.path(), "beta", "agentic-sdlc-minimal", false);
 
     // Default team is "alpha" (set by setup_team)
     // Hire into default team (no -t flag)
@@ -593,13 +593,13 @@ fn multi_team_default_resolution() {
 fn team_flag_overrides_default() {
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "alpha", "scrum");
-    let team_repo_beta = add_team_to_config(tmp.path(), "beta", "scrum-compact", false);
+    let team_repo_beta = add_team_to_config(tmp.path(), "beta", "agentic-sdlc-minimal", false);
 
     // Use -t to target non-default team
-    bm_hire(tmp.path(), "superman", "clark", "beta");
+    bm_hire(tmp.path(), "engineer", "clark", "beta");
 
     // Verify member landed in beta, not alpha
-    assert!(team_repo_beta.join("members/superman-clark").is_dir());
+    assert!(team_repo_beta.join("members/engineer-clark").is_dir());
 }
 
 #[test]
@@ -1018,7 +1018,7 @@ fn dynamic_completions_include_profile_names() {
 fn dynamic_completions_include_team_names() {
     let tmp = tempfile::tempdir().unwrap();
     let team_name = "test-completions-team";
-    setup_team(tmp.path(), team_name, "scrum-compact");
+    setup_team(tmp.path(), team_name, "agentic-sdlc-minimal");
 
     let completions = complete_bash(&["bm", "hire", "somerole", "-t", ""], tmp.path());
     assert!(
@@ -2143,45 +2143,45 @@ fn profile_views_extracted_to_team_repo() {
 #[test]
 fn profile_views_parse_correctly() {
     let tmp = tempfile::tempdir().unwrap();
-    let team_repo = setup_team(tmp.path(), "test-team", "scrum-compact");
+    let team_repo = setup_team(tmp.path(), "test-team", "agentic-sdlc-minimal");
 
     // Parse the extracted manifest
     let content = fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
     let manifest: profile::ProfileManifest = serde_yml::from_str(&content).unwrap();
 
-    assert!(!manifest.views.is_empty(), "compact profile should have views");
+    assert!(!manifest.views.is_empty(), "agentic-sdlc-minimal profile should have views");
 
-    // The PO view should resolve to po:* statuses + done + error
-    let po_view = manifest
+    // The Engineer view should resolve to eng:* statuses + done + error
+    let eng_view = manifest
         .views
         .iter()
-        .find(|v| v.name == "PO")
-        .expect("should have a PO view");
+        .find(|v| v.name == "Engineer")
+        .expect("should have an Engineer view");
 
-    let resolved = po_view.resolve_statuses(&manifest.statuses);
+    let resolved = eng_view.resolve_statuses(&manifest.statuses);
     assert!(
-        resolved.iter().any(|s| s == "po:triage"),
-        "PO view should include po:triage"
+        resolved.iter().any(|s| s == "eng:po:triage"),
+        "Engineer view should include eng:po:triage"
     );
     assert!(
         resolved.iter().any(|s| s == "done"),
-        "PO view should include done"
+        "Engineer view should include done"
     );
     assert!(
-        !resolved.iter().any(|s| s.starts_with("arch:")),
-        "PO view should NOT include arch:* statuses"
+        !resolved.iter().any(|s| s.starts_with("snt:")),
+        "Engineer view should NOT include snt:* statuses"
     );
 
     // Filter string should start with "status:"
-    let filter = po_view.filter_string(&manifest.statuses);
+    let filter = eng_view.filter_string(&manifest.statuses);
     assert!(
         filter.starts_with("status:"),
         "filter should start with 'status:', got: {}",
         filter
     );
     assert!(
-        filter.contains("po:triage"),
-        "filter should contain po:triage, got: {}",
+        filter.contains("eng:po:triage"),
+        "filter should contain eng:po:triage, got: {}",
         filter
     );
 }
@@ -2643,7 +2643,7 @@ fn init_non_interactive_creates_team_with_skip_github() {
             "init",
             "--non-interactive",
             "--profile",
-            "scrum-compact",
+            "agentic-sdlc-minimal",
             "--team-name",
             "test-team",
             "--org",
@@ -2703,12 +2703,12 @@ fn init_non_interactive_creates_team_with_skip_github() {
         .join("botminter")
         .join("profiles");
     assert!(
-        profiles_dir.join("scrum-compact").join("botminter.yml").exists(),
+        profiles_dir.join("agentic-sdlc-minimal").join("botminter.yml").exists(),
         "botminter.yml should exist in extracted profile directory"
     );
 
     // Verify roles/ directory exists in extracted profiles (not stale members/ layout)
-    let scrum_compact_roles = profiles_dir.join("scrum-compact").join("roles");
+    let scrum_compact_roles = profiles_dir.join("agentic-sdlc-minimal").join("roles");
     assert!(
         scrum_compact_roles.is_dir(),
         "roles/ directory should exist in extracted profile at {}",
@@ -2796,7 +2796,7 @@ fn init_non_interactive_fails_on_duplicate_team_dir() {
             "init",
             "--non-interactive",
             "--profile",
-            "scrum-compact",
+            "agentic-sdlc-minimal",
             "--team-name",
             "dup-team",
             "--org",
@@ -2826,7 +2826,7 @@ fn init_non_interactive_fails_on_duplicate_team_dir() {
             "init",
             "--non-interactive",
             "--profile",
-            "scrum-compact",
+            "agentic-sdlc-minimal",
             "--team-name",
             "dup-team",
             "--org",
@@ -2863,7 +2863,7 @@ fn setup_bridge_test() -> (tempfile::TempDir, String, PathBuf, PathBuf) {
     // Create botminter.yml with bridge configured
     fs::write(
         team_repo.join("botminter.yml"),
-        "schema_version: '1.0'\nprofile: scrum-compact\nbridge: stub\n",
+        "schema_version: '1.0'\nprofile: agentic-sdlc-minimal\nbridge: stub\n",
     )
     .unwrap();
 
@@ -2892,7 +2892,7 @@ fn setup_bridge_test() -> (tempfile::TempDir, String, PathBuf, PathBuf) {
         teams: vec![TeamEntry {
             name: team_name.to_string(),
             path: team_dir.clone(),
-            profile: "scrum-compact".to_string(),
+            profile: "agentic-sdlc-minimal".to_string(),
             github_repo: String::new(),
             credentials: Credentials::default(),
             coding_agent: None,
@@ -2922,7 +2922,7 @@ fn setup_no_bridge_test() -> (tempfile::TempDir, String) {
     fs::create_dir_all(&team_repo).unwrap();
     fs::write(
         team_repo.join("botminter.yml"),
-        "schema_version: \"1.0.0\"\nprofile: scrum-compact\n",
+        "schema_version: \"1.0.0\"\nprofile: agentic-sdlc-minimal\n",
     )
     .unwrap();
 
@@ -2932,7 +2932,7 @@ fn setup_no_bridge_test() -> (tempfile::TempDir, String) {
         teams: vec![TeamEntry {
             name: team_name.to_string(),
             path: team_dir,
-            profile: "scrum-compact".to_string(),
+            profile: "agentic-sdlc-minimal".to_string(),
             github_repo: String::new(),
             credentials: Credentials::default(),
             coding_agent: None,
@@ -2962,7 +2962,7 @@ fn setup_external_bridge_test() -> (tempfile::TempDir, String) {
     fs::create_dir_all(&team_repo).unwrap();
     fs::write(
         team_repo.join("botminter.yml"),
-        "schema_version: \"1.0.0\"\nprofile: scrum-compact\nbridge: telegram\n",
+        "schema_version: \"1.0.0\"\nprofile: agentic-sdlc-minimal\nbridge: telegram\n",
     )
     .unwrap();
 
@@ -3010,7 +3010,7 @@ remove username:
         teams: vec![TeamEntry {
             name: team_name.to_string(),
             path: team_dir,
-            profile: "scrum-compact".to_string(),
+            profile: "agentic-sdlc-minimal".to_string(),
             github_repo: String::new(),
             credentials: Credentials::default(),
             coding_agent: None,
@@ -3443,7 +3443,7 @@ fn init_bridge_records_in_manifest() {
         .args([
             "init",
             "--non-interactive",
-            "--profile", "scrum-compact",
+            "--profile", "agentic-sdlc-minimal",
             "--team-name", "bridge-init-test",
             "--org", "testorg",
             "--repo", "testrepo",
@@ -3489,7 +3489,7 @@ fn init_no_bridge_has_no_bridge_key() {
         .args([
             "init",
             "--non-interactive",
-            "--profile", "scrum-compact",
+            "--profile", "agentic-sdlc-minimal",
             "--team-name", "no-bridge-test",
             "--org", "testorg",
             "--repo", "testrepo",
@@ -3532,7 +3532,7 @@ fn init_bridge_invalid_name_fails() {
         .args([
             "init",
             "--non-interactive",
-            "--profile", "scrum-compact",
+            "--profile", "agentic-sdlc-minimal",
             "--team-name", "bad-bridge-test",
             "--org", "testorg",
             "--repo", "testrepo",
@@ -3659,7 +3659,7 @@ fn setup_fixture_team(tmp: &Path, team_name: &str) -> PathBuf {
         teams: vec![TeamEntry {
             name: team_name.to_string(),
             path: team_dir.clone(),
-            profile: "scrum-compact".to_string(),
+            profile: "agentic-sdlc-minimal".to_string(),
             github_repo: String::new(),
             credentials: Credentials::default(),
             coding_agent: None,
@@ -3733,7 +3733,7 @@ fn daemon_console_api_e2e_with_fixtures() {
         let teams = body.as_array().expect("should be array");
         assert_eq!(teams.len(), 1);
         assert_eq!(teams[0]["name"], team_name);
-        assert_eq!(teams[0]["profile"], "scrum-compact");
+        assert_eq!(teams[0]["profile"], "agentic-sdlc-minimal");
     }
 
     // ── GET /api/teams/:team/overview ───────────────────────────
@@ -3746,7 +3746,7 @@ fn daemon_console_api_e2e_with_fixtures() {
         let body: serde_json::Value = resp.json().unwrap();
 
         // Profile
-        assert_eq!(body["profile"], "scrum-compact");
+        assert_eq!(body["profile"], "agentic-sdlc-minimal");
         assert_eq!(body["name"], team_name);
 
         // Members — fixture has 3
@@ -3896,7 +3896,7 @@ fn daemon_console_api_e2e_with_fixtures() {
         );
         let content = body["content"].as_str().unwrap();
         assert!(
-            content.contains("scrum-compact"),
+            content.contains("agentic-sdlc-minimal"),
             "botminter.yml should contain profile name"
         );
         assert!(

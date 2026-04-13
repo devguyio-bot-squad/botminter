@@ -16,8 +16,8 @@ use super::super::test_env::TestEnv;
 
 const SUITE_NAME: &str = "scenario_manifest_journey";
 const TEAM_NAME: &str = "e2e-manifest";
-const PROFILE: &str = "scrum-compact";
-const ROLE: &str = "superman";
+const PROFILE: &str = "agentic-sdlc-minimal";
+const ROLE: &str = "engineer";
 const MEMBER_NAME: &str = "mflow";
 
 pub fn scenario(config: &E2eConfig) -> Trial {

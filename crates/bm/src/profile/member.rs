@@ -287,7 +287,7 @@ mod tests {
 
         let team_tmp = tempfile::tempdir().unwrap();
         let team_repo = team_tmp.path();
-        let profile = "scrum-compact";
+        let profile = "agentic-sdlc-minimal";
         let manifest = crate::profile::read_manifest_from(profile, &profiles_path).unwrap();
         let coding_agent = manifest
             .coding_agents
@@ -301,14 +301,14 @@ mod tests {
         .unwrap();
 
         // First hire — creates directory
-        let r1 = hire_member(team_repo, profile, "superman", Some("01"), coding_agent).unwrap();
+        let r1 = hire_member(team_repo, profile, "engineer", Some("01"), coding_agent).unwrap();
         assert!(!r1.already_existed, "First hire should create a new member");
-        assert_eq!(r1.member_dir_name, "superman-01");
+        assert_eq!(r1.member_dir_name, "engineer-01");
 
         // Second hire with same name — returns already_existed
-        let r2 = hire_member(team_repo, profile, "superman", Some("01"), coding_agent).unwrap();
+        let r2 = hire_member(team_repo, profile, "engineer", Some("01"), coding_agent).unwrap();
         assert!(r2.already_existed, "Second hire should detect existing member");
-        assert_eq!(r2.member_dir_name, "superman-01");
+        assert_eq!(r2.member_dir_name, "engineer-01");
         assert_eq!(r2.member_name, "01");
 
         // Restore HOME

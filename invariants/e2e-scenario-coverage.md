@@ -38,9 +38,9 @@ A PR that adds a happy path feature without updating the scenario test is incomp
 
 | Scenario | Profile | Bridge | Journey |
 |----------|---------|--------|---------|
-| Fresh start | scrum-compact | telegram | init --bridge → hire all → project add → sync teams → sync projects → **start → status (healthy) → bridge functional (tg-mock receives calls) → stop (clean)** |
-| Existing team | scrum-compact | telegram | clone existing → hire → sync → **start → status (healthy) → bridge functional → stop (clean)** |
-| Daemon mode | scrum-compact | telegram | init → hire → **daemon start → GH events → members auto-launch → status (members healthy, bridge connected) → daemon stop (all processes terminated)** |
+| Fresh start | agentic-sdlc-minimal | telegram | init --bridge → hire all → project add → sync teams → sync projects → **start → status (healthy) → bridge functional (tg-mock receives calls) → stop (clean)** |
+| Existing team | agentic-sdlc-minimal | telegram | clone existing → hire → sync → **start → status (healthy) → bridge functional → stop (clean)** |
+| Daemon mode | agentic-sdlc-minimal | telegram | init → hire → **daemon start → GH events → members auto-launch → status (members healthy, bridge connected) → daemon stop (all processes terminated)** |
 
 Sub-scenarios MAY share setup by building on earlier scenarios (e.g., daemon mode reuses fresh start setup but replaces `bm start` with `bm daemon start`).
 
