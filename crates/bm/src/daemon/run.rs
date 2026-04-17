@@ -177,6 +177,16 @@ async fn run_daemon_async(
         &format!("Console available at http://{}:{}", bind, port),
     );
 
+    #[cfg(feature = "console")]
+    if !crate::web::assets::has_console_assets() {
+        daemon_log(
+            &paths,
+            "WARN",
+            "Console assets not found — the console will show 'Console not built'. \
+             Run 'npm ci && npm run build' in console/ to build assets.",
+        );
+    }
+
     let listener = tokio::net::TcpListener::bind(addr)
         .await
         .with_context(|| format!("Failed to bind to {}", addr))?;
