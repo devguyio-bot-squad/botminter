@@ -33,6 +33,10 @@ pub struct ProfileManifest {
     /// Operator identity (set during `bm init --bridge` for local bridges).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator: Option<OperatorDef>,
+    /// Meetings declared by this profile. A meeting is a preset chat session
+    /// with a specific member wearing a specific hat — available via `bm meetings <name>`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub meetings: Vec<Meeting>,
 }
 
 /// Operator identity configuration.
@@ -95,6 +99,38 @@ pub struct CodingAgentDef {
     /// CLI flag to skip permission prompts (e.g. "--dangerously-skip-permissions")
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub skip_permissions_flag: Option<String>,
+}
+
+/// A meeting declared by a profile. A meeting is a preset chat session —
+/// a named shortcut for member + hat + initial context, available via
+/// `bm meetings <name>`.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct Meeting {
+    pub name: String,
+    pub description: String,
+    pub member: String,
+    pub hat: String,
+    /// Skill invocation prefix piped as the first turn (e.g., "/pdd").
+    /// Combined with user args: `/pdd my idea`. Without args: `/pdd`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(default)]
+    pub args: Vec<MeetingArg>,
+}
+
+/// An argument accepted by a meeting command.
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct MeetingArg {
+    pub name: String,
+    #[serde(default)]
+    pub positional: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub long: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "type")]
+    pub arg_type: Option<String>,
+    #[serde(default)]
+    pub required: bool,
+    pub description: String,
 }
 
 /// Defines a role-based view for the GitHub Project board.
@@ -285,5 +321,131 @@ bridges: []
         assert_eq!(bridge.display_name, "Telegram");
         assert_eq!(bridge.description, "Bot API");
         assert_eq!(bridge.bridge_type, "external");
+    }
+
+    // ── Meeting tests ──────────────────────────────────────────
+
+    #[test]
+    fn manifest_with_meetings_deserializes() {
+        let yaml = r#"
+name: test
+display_name: "Test Profile"
+description: "Test"
+version: "1.0.0"
+schema_version: "1.0"
+meetings:
+  - name: planning
+    description: "Collaborative planning session"
+    member: engineer
+    hat: lead_plan-create
+    prompt: "/pdd"
+    args:
+      - name: idea
+        positional: true
+        required: false
+        description: "Rough idea to plan"
+      - name: epic
+        long: epic
+        required: false
+        description: "Epic issue number"
+  - name: verification
+    description: "Verify acceptance criteria"
+    member: engineer
+    hat: qe_verify
+    args:
+      - name: work-item
+        positional: true
+        required: true
+        description: "Issue number"
+"#;
+        let manifest: ProfileManifest = serde_yml::from_str(yaml).unwrap();
+        assert_eq!(manifest.meetings.len(), 2);
+
+        let planning = &manifest.meetings[0];
+        assert_eq!(planning.name, "planning");
+        assert_eq!(planning.member, "engineer");
+        assert_eq!(planning.hat, "lead_plan-create");
+        assert_eq!(planning.prompt, Some("/pdd".into()));
+        assert_eq!(planning.args.len(), 2);
+        assert!(planning.args[0].positional);
+        assert!(!planning.args[0].required);
+        assert!(!planning.args[1].positional);
+        assert_eq!(planning.args[1].long, Some("epic".into()));
+
+        let verification = &manifest.meetings[1];
+        assert_eq!(verification.name, "verification");
+        assert_eq!(verification.hat, "qe_verify");
+        assert!(verification.prompt.is_none());
+        assert!(verification.args[0].required);
+    }
+
+    #[test]
+    fn manifest_no_meetings_deserializes() {
+        let yaml = r#"
+name: test
+display_name: "Test Profile"
+description: "Test"
+version: "1.0.0"
+schema_version: "1.0"
+"#;
+        let manifest: ProfileManifest = serde_yml::from_str(yaml).unwrap();
+        assert!(manifest.meetings.is_empty());
+    }
+
+    #[test]
+    fn manifest_empty_meetings_deserializes() {
+        let yaml = r#"
+name: test
+display_name: "Test Profile"
+description: "Test"
+version: "1.0.0"
+schema_version: "1.0"
+meetings: []
+"#;
+        let manifest: ProfileManifest = serde_yml::from_str(yaml).unwrap();
+        assert!(manifest.meetings.is_empty());
+    }
+
+    #[test]
+    fn meeting_arg_type_field_deserializes() {
+        let yaml = r#"
+name: test
+display_name: "Test Profile"
+description: "Test"
+version: "1.0.0"
+schema_version: "1.0"
+meetings:
+  - name: planning
+    description: "Test"
+    member: engineer
+    hat: test
+    args:
+      - name: epic
+        long: epic
+        type: int
+        required: false
+        description: "Epic number"
+"#;
+        let manifest: ProfileManifest = serde_yml::from_str(yaml).unwrap();
+        let arg = &manifest.meetings[0].args[0];
+        assert_eq!(arg.arg_type, Some("int".into()));
+    }
+
+    #[test]
+    fn meeting_no_args_deserializes() {
+        let yaml = r#"
+name: test
+display_name: "Test Profile"
+description: "Test"
+version: "1.0.0"
+schema_version: "1.0"
+meetings:
+  - name: planning
+    description: "Test"
+    member: engineer
+    hat: test
+"#;
+        let manifest: ProfileManifest = serde_yml::from_str(yaml).unwrap();
+        assert!(manifest.meetings[0].args.is_empty());
     }
 }
