@@ -2,6 +2,7 @@ pub(crate) mod config;
 pub(crate) mod skills;
 
 use std::collections::BTreeMap;
+use std::io::Write;
 use std::path::Path;
 
 use anyhow::{bail, Context, Result};
@@ -244,6 +245,136 @@ pub fn build_meta_prompt(params: &MetaPromptParams) -> String {
     out.push_str("These do not apply in interactive mode — the human drives the workflow.\n");
 
     out
+}
+
+/// Launches a chat session by writing the meta-prompt to a temp file,
+/// resolving the coding agent, and exec-ing through the formation.
+///
+/// If `initial_prompt` is provided, it is passed as a positional argument
+/// to the coding agent binary (e.g., `claude "/pdd my idea"`), triggering
+/// the first turn immediately while keeping the session interactive.
+pub fn launch_session(
+    session: &ChatSession,
+    team: &crate::config::TeamEntry,
+    team_repo: &Path,
+    initial_prompt: Option<&str>,
+    autonomous: bool,
+) -> Result<()> {
+    let manifest = crate::profile::read_team_repo_manifest(team_repo)?;
+    let coding_agent = crate::profile::resolve_coding_agent(team, &manifest)?;
+
+    let mut tmp_file = tempfile::Builder::new()
+        .prefix("bm-session-")
+        .suffix(".md")
+        .tempfile()
+        .context("Failed to create temp file for meta-prompt")?;
+    tmp_file
+        .write_all(session.meta_prompt.as_bytes())
+        .context("Failed to write meta-prompt to temp file")?;
+
+    let tmp_path = tmp_file.into_temp_path();
+    let tmp_path_str = tmp_path
+        .to_str()
+        .context("Temp path is not valid UTF-8")?;
+    let prompt_flag = coding_agent.system_prompt_flag.as_deref().with_context(|| {
+        format!(
+            "Coding agent '{}' ({}) does not define a system_prompt_flag",
+            coding_agent.display_name, coding_agent.binary
+        )
+    })?;
+
+    let mut args: Vec<&str> = vec![prompt_flag, tmp_path_str];
+    if autonomous {
+        if let Some(flag) = coding_agent.skip_permissions_flag.as_deref() {
+            args.push(flag);
+        }
+    }
+    let prompt_string;
+    if let Some(prompt) = initial_prompt {
+        prompt_string = prompt.to_string();
+        args.push(&prompt_string);
+    }
+
+    // TODO: uses create_local_formation() regardless of resolved type — breaks for Lima/K8s (ADR-0008)
+    let resolved_formation = crate::formation::resolve_formation(team_repo, None)?;
+
+    if resolved_formation.is_some() {
+        let local_formation = crate::formation::create_local_formation(&team.name)?;
+        let mut cmd_parts: Vec<&str> = vec![&coding_agent.binary];
+        cmd_parts.extend(&args);
+        local_formation.exec_in(&session.ws_path, &cmd_parts)?;
+    } else {
+        use std::os::unix::process::CommandExt;
+        let mut cmd = std::process::Command::new(&coding_agent.binary);
+        cmd.current_dir(&session.ws_path);
+        for a in &args {
+            cmd.arg(a);
+        }
+        let err = cmd.exec();
+        bail!("Failed to launch {}: {}", coding_agent.binary, err);
+    }
+
+    Ok(())
+}
+
+/// Resolves a member name from a role. Scans the team repo's `members/`
+/// directory for a member whose role matches the requested one.
+/// When multiple members share a role, returns the first alphabetically.
+pub fn resolve_member_by_role(team_repo: &Path, role: &str) -> Result<String> {
+    let members_dir = team_repo.join("members");
+    if !members_dir.is_dir() {
+        bail!("No members directory found in team repo");
+    }
+
+    let mut candidates = Vec::new();
+    for entry in std::fs::read_dir(&members_dir)
+        .context("Failed to read members directory")?
+        .filter_map(|e| e.ok())
+    {
+        let name = match entry.file_name().into_string() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        if name.starts_with('.') || !entry.path().is_dir() {
+            continue;
+        }
+        let (member_role, _) = read_member_info(&entry.path(), &name)?;
+        if member_role == role {
+            candidates.push(name);
+        }
+    }
+
+    match candidates.len() {
+        0 => bail!(
+            "No member with role '{}' found. Run `bm members list` to see hired members.",
+            role
+        ),
+        1 => Ok(candidates.into_iter().next().unwrap()),
+        _ => {
+            candidates.sort();
+            Ok(candidates.into_iter().next().unwrap())
+        }
+    }
+}
+
+/// Combines a meeting's prompt prefix with user-provided args into the
+/// initial prompt that gets piped to the coding agent's stdin.
+///
+/// Examples:
+/// - prompt="/pdd", args="my idea" → "/pdd my idea"
+/// - prompt="/pdd", args=None → "/pdd"
+/// - prompt=None, args="my idea" → "my idea"
+/// - prompt=None, args=None → None
+pub fn build_meeting_prompt(
+    prompt_prefix: Option<&str>,
+    user_args: Option<&str>,
+) -> Option<String> {
+    match (prompt_prefix, user_args) {
+        (Some(prefix), Some(args)) => Some(format!("{} {}", prefix, args)),
+        (Some(prefix), None) => Some(prefix.to_string()),
+        (None, Some(args)) => Some(args.to_string()),
+        (None, None) => None,
+    }
 }
 
 #[cfg(test)]
@@ -681,5 +812,73 @@ mod tests {
             result.contains("You normally run autonomously inside Ralph Orchestrator"),
             "Missing autonomy context"
         );
+    }
+
+    #[test]
+    fn resolve_member_by_role_finds_member() {
+        let tmp = tempfile::tempdir().unwrap();
+        let members = tmp.path().join("members");
+        let member_dir = members.join("engineer-alice");
+        std::fs::create_dir_all(&member_dir).unwrap();
+        std::fs::write(
+            member_dir.join("botminter.yml"),
+            "role: engineer\nname: alice\n",
+        )
+        .unwrap();
+
+        let result = resolve_member_by_role(tmp.path(), "engineer").unwrap();
+        assert_eq!(result, "engineer-alice");
+    }
+
+    #[test]
+    fn resolve_member_by_role_no_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let members = tmp.path().join("members");
+        let member_dir = members.join("engineer-alice");
+        std::fs::create_dir_all(&member_dir).unwrap();
+        std::fs::write(
+            member_dir.join("botminter.yml"),
+            "role: engineer\nname: alice\n",
+        )
+        .unwrap();
+
+        let result = resolve_member_by_role(tmp.path(), "architect");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("architect"));
+    }
+
+    #[test]
+    fn resolve_member_by_role_infers_from_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let members = tmp.path().join("members");
+        let member_dir = members.join("engineer-bob");
+        std::fs::create_dir_all(&member_dir).unwrap();
+
+        let result = resolve_member_by_role(tmp.path(), "engineer").unwrap();
+        assert_eq!(result, "engineer-bob");
+    }
+
+    #[test]
+    fn meeting_prompt_prefix_and_args() {
+        let result = build_meeting_prompt(Some("/pdd"), Some("my idea"));
+        assert_eq!(result, Some("/pdd my idea".into()));
+    }
+
+    #[test]
+    fn meeting_prompt_prefix_only() {
+        let result = build_meeting_prompt(Some("/pdd"), None);
+        assert_eq!(result, Some("/pdd".into()));
+    }
+
+    #[test]
+    fn meeting_prompt_args_only() {
+        let result = build_meeting_prompt(None, Some("my idea"));
+        assert_eq!(result, Some("my idea".into()));
+    }
+
+    #[test]
+    fn meeting_prompt_neither() {
+        let result = build_meeting_prompt(None, None);
+        assert!(result.is_none());
     }
 }

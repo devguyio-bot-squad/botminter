@@ -19,14 +19,14 @@ pub(crate) use extraction::extract_member_from;
 pub use member::{auto_suffix, finalize_member_manifest, hire_member, HireResult};
 pub(crate) use member::render_member_placeholders;
 pub use manifest::{
-    BridgeDef, CodingAgentDef, LabelDef, OperatorDef, ProfileManifest, ProjectDef, RoleDef,
-    StatusDef, ViewDef,
+    BridgeDef, CodingAgentDef, LabelDef, Meeting, MeetingArg, OperatorDef, ProfileManifest,
+    ProjectDef, RoleDef, StatusDef, ViewDef,
 };
 pub use team_repo::{
-    augment_manifest_with_projects, credentials_env, discover_member_dirs, gather_team_summary,
-    infer_role_from_dir, list_files_in_dir, list_scope_files, list_subdirs, read_member_role,
-    read_team_projects, read_team_repo_manifest, read_team_schema, record_bridge_in_manifest,
-    validate_bridge_selection, validate_knowledge_path, TeamSummary,
+    augment_manifest_with_projects, credentials_env, detect_meetings, discover_member_dirs,
+    gather_team_summary, infer_role_from_dir, list_files_in_dir, list_scope_files, list_subdirs,
+    read_member_role, read_team_projects, read_team_repo_manifest, read_team_schema,
+    record_bridge_in_manifest, validate_bridge_selection, validate_knowledge_path, TeamSummary,
 };
 
 use std::fs;
