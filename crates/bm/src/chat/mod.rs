@@ -32,8 +32,8 @@ pub struct MetaPromptParams<'a> {
     pub skills: &'a [SkillInfo],
 }
 
-/// All data needed to launch or render a chat session.
-pub struct ChatSession {
+/// All data needed to launch a coding agent session.
+pub struct AgentSession {
     /// The assembled meta-prompt markdown.
     pub meta_prompt: String,
     /// Path to the member's workspace.
@@ -49,7 +49,7 @@ pub fn prepare_chat_session(
     team_path: &Path,
     member: &str,
     hat: Option<&str>,
-) -> Result<ChatSession> {
+) -> Result<AgentSession> {
     // Verify member exists
     let member_dir = team_repo.join("members").join(member);
     if !member_dir.is_dir() {
@@ -143,7 +143,7 @@ pub fn prepare_chat_session(
     };
     let meta_prompt = build_meta_prompt(&params);
 
-    Ok(ChatSession { meta_prompt, ws_path })
+    Ok(AgentSession { meta_prompt, ws_path })
 }
 
 /// Builds a meta-prompt for an interactive `bm chat` session.
@@ -254,7 +254,7 @@ pub fn build_meta_prompt(params: &MetaPromptParams) -> String {
 /// to the coding agent binary (e.g., `claude "/pdd my idea"`), triggering
 /// the first turn immediately while keeping the session interactive.
 pub fn launch_session(
-    session: &ChatSession,
+    session: &AgentSession,
     team: &crate::config::TeamEntry,
     team_repo: &Path,
     initial_prompt: Option<&str>,
@@ -357,22 +357,45 @@ pub fn resolve_member_by_role(team_repo: &Path, role: &str) -> Result<String> {
     }
 }
 
-/// Combines a meeting's prompt prefix with user-provided args into the
-/// initial prompt that gets piped to the coding agent's stdin.
+/// Prepares a meeting session. Unlike `prepare_chat_session()`, this does
+/// NOT build a meta-prompt from ralph.yml/hats/skills/guardrails. The
+/// meeting's `instructions` field IS the system prompt.
+pub fn prepare_meeting_session(
+    team_path: &Path,
+    member: &str,
+    instructions: &str,
+) -> Result<AgentSession> {
+    if instructions.trim().is_empty() {
+        bail!("Meeting instructions must not be empty");
+    }
+    let ws_path = team_path.join(member);
+    if !ws_path.join(".botminter.workspace").exists() {
+        bail!(
+            "No workspace found for member '{}'. Run `bm teams sync` first.",
+            member
+        );
+    }
+    Ok(AgentSession {
+        meta_prompt: instructions.to_string(),
+        ws_path,
+    })
+}
+
+/// Combines a meeting's initial prompt with user-provided trailing input.
 ///
 /// Examples:
-/// - prompt="/pdd", args="my idea" → "/pdd my idea"
-/// - prompt="/pdd", args=None → "/pdd"
-/// - prompt=None, args="my idea" → "my idea"
-/// - prompt=None, args=None → None
+/// - prompt="start", input="plan the auth feature" → "start plan the auth feature"
+/// - prompt="start", input=None → "start"
+/// - prompt=None, input="plan something" → "plan something"
+/// - prompt=None, input=None → None
 pub fn build_meeting_prompt(
-    prompt_prefix: Option<&str>,
-    user_args: Option<&str>,
+    prompt: Option<&str>,
+    user_input: Option<&str>,
 ) -> Option<String> {
-    match (prompt_prefix, user_args) {
-        (Some(prefix), Some(args)) => Some(format!("{} {}", prefix, args)),
-        (Some(prefix), None) => Some(prefix.to_string()),
-        (None, Some(args)) => Some(args.to_string()),
+    match (prompt, user_input) {
+        (Some(p), Some(input)) => Some(format!("{} {}", p, input)),
+        (Some(p), None) => Some(p.to_string()),
+        (None, Some(input)) => Some(input.to_string()),
         (None, None) => None,
     }
 }
@@ -858,27 +881,4 @@ mod tests {
         assert_eq!(result, "engineer-bob");
     }
 
-    #[test]
-    fn meeting_prompt_prefix_and_args() {
-        let result = build_meeting_prompt(Some("/pdd"), Some("my idea"));
-        assert_eq!(result, Some("/pdd my idea".into()));
-    }
-
-    #[test]
-    fn meeting_prompt_prefix_only() {
-        let result = build_meeting_prompt(Some("/pdd"), None);
-        assert_eq!(result, Some("/pdd".into()));
-    }
-
-    #[test]
-    fn meeting_prompt_args_only() {
-        let result = build_meeting_prompt(None, Some("my idea"));
-        assert_eq!(result, Some("my idea".into()));
-    }
-
-    #[test]
-    fn meeting_prompt_neither() {
-        let result = build_meeting_prompt(None, None);
-        assert!(result.is_none());
-    }
 }

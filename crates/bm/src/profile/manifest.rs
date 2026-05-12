@@ -33,8 +33,9 @@ pub struct ProfileManifest {
     /// Operator identity (set during `bm init --bridge` for local bridges).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub operator: Option<OperatorDef>,
-    /// Meetings declared by this profile. A meeting is a preset chat session
-    /// with a specific member wearing a specific hat — available via `bm meetings <name>`.
+    /// Meetings declared by this profile. Each meeting is a named shortcut
+    /// for launching an agent with custom instructions — available via
+    /// `bm meetings <name>`.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub meetings: Vec<Meeting>,
 }
@@ -101,36 +102,20 @@ pub struct CodingAgentDef {
     pub skip_permissions_flag: Option<String>,
 }
 
-/// A meeting declared by a profile. A meeting is a preset chat session —
-/// a named shortcut for member + hat + initial context, available via
-/// `bm meetings <name>`.
+/// A named shortcut for launching an agent with custom instructions and an
+/// initial prompt, available via `bm meetings <name>`.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Meeting {
     pub name: String,
     pub description: String,
     pub member: String,
-    pub hat: String,
-    /// Skill invocation prefix piped as the first turn (e.g., "/pdd").
-    /// Combined with user args: `/pdd my idea`. Without args: `/pdd`.
+    /// The meeting's system prompt. Written to a temp file and passed via
+    /// `--append-system-prompt-file`. This replaces the full meta-prompt
+    /// pipeline that `bm chat` uses.
+    pub instructions: String,
+    /// Initial message prepended to user-provided trailing args.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
-    #[serde(default)]
-    pub args: Vec<MeetingArg>,
-}
-
-/// An argument accepted by a meeting command.
-#[derive(Debug, Serialize, Deserialize, Clone)]
-pub struct MeetingArg {
-    pub name: String,
-    #[serde(default)]
-    pub positional: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub long: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none", rename = "type")]
-    pub arg_type: Option<String>,
-    #[serde(default)]
-    pub required: bool,
-    pub description: String,
 }
 
 /// Defines a role-based view for the GitHub Project board.
@@ -337,26 +322,15 @@ meetings:
   - name: planning
     description: "Collaborative planning session"
     member: engineer
-    hat: lead_plan-create
-    prompt: "/pdd"
-    args:
-      - name: idea
-        positional: true
-        required: false
-        description: "Rough idea to plan"
-      - name: epic
-        long: epic
-        required: false
-        description: "Epic issue number"
+    instructions: |
+      You are an engineer in a planning meeting.
+      Help the user plan their work.
+    prompt: start
   - name: verification
     description: "Verify acceptance criteria"
     member: engineer
-    hat: qe_verify
-    args:
-      - name: work-item
-        positional: true
-        required: true
-        description: "Issue number"
+    instructions: |
+      You are an engineer in a verification meeting.
 "#;
         let manifest: ProfileManifest = serde_yml::from_str(yaml).unwrap();
         assert_eq!(manifest.meetings.len(), 2);
@@ -364,19 +338,13 @@ meetings:
         let planning = &manifest.meetings[0];
         assert_eq!(planning.name, "planning");
         assert_eq!(planning.member, "engineer");
-        assert_eq!(planning.hat, "lead_plan-create");
-        assert_eq!(planning.prompt, Some("/pdd".into()));
-        assert_eq!(planning.args.len(), 2);
-        assert!(planning.args[0].positional);
-        assert!(!planning.args[0].required);
-        assert!(!planning.args[1].positional);
-        assert_eq!(planning.args[1].long, Some("epic".into()));
+        assert!(planning.instructions.contains("planning meeting"));
+        assert_eq!(planning.prompt, Some("start".into()));
 
         let verification = &manifest.meetings[1];
         assert_eq!(verification.name, "verification");
-        assert_eq!(verification.hat, "qe_verify");
+        assert!(verification.instructions.contains("verification meeting"));
         assert!(verification.prompt.is_none());
-        assert!(verification.args[0].required);
     }
 
     #[test]
@@ -407,7 +375,7 @@ meetings: []
     }
 
     #[test]
-    fn meeting_arg_type_field_deserializes() {
+    fn meeting_no_prompt_deserializes() {
         let yaml = r#"
 name: test
 display_name: "Test Profile"
@@ -418,21 +386,15 @@ meetings:
   - name: planning
     description: "Test"
     member: engineer
-    hat: test
-    args:
-      - name: epic
-        long: epic
-        type: int
-        required: false
-        description: "Epic number"
+    instructions: "Do the thing."
 "#;
         let manifest: ProfileManifest = serde_yml::from_str(yaml).unwrap();
-        let arg = &manifest.meetings[0].args[0];
-        assert_eq!(arg.arg_type, Some("int".into()));
+        assert_eq!(manifest.meetings[0].instructions, "Do the thing.");
+        assert!(manifest.meetings[0].prompt.is_none());
     }
 
     #[test]
-    fn meeting_no_args_deserializes() {
+    fn meeting_multiline_instructions_roundtrip() {
         let yaml = r#"
 name: test
 display_name: "Test Profile"
@@ -443,9 +405,18 @@ meetings:
   - name: planning
     description: "Test"
     member: engineer
-    hat: test
+    instructions: |
+      Line one.
+      Line two.
+      Line three.
+    prompt: start
 "#;
         let manifest: ProfileManifest = serde_yml::from_str(yaml).unwrap();
-        assert!(manifest.meetings[0].args.is_empty());
+        let meeting = &manifest.meetings[0];
+        assert!(meeting.instructions.contains("Line one."));
+        assert!(meeting.instructions.contains("Line two."));
+        assert!(meeting.instructions.contains("Line three."));
+        // YAML | block includes trailing newline
+        assert!(meeting.instructions.ends_with('\n'));
     }
 }

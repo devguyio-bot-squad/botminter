@@ -16,9 +16,16 @@ fn leak(s: &str) -> &'static str {
 // subcommand injection — not cross-command coupling (ADR-0007 exception).
 
 /// Convert a profile Meeting into a Clap subcommand for dynamic injection.
+/// Accepts free-form trailing input rather than custom named/positional args.
 pub fn build_meeting_subcommand(meeting: &Meeting) -> clap::Command {
-    let mut cmd = clap::Command::new(leak(&meeting.name))
+    clap::Command::new(leak(&meeting.name))
         .about(leak(&meeting.description))
+        .trailing_var_arg(true)
+        .arg(
+            clap::Arg::new("user_input")
+                .num_args(0..)
+                .help("Free-form input passed to the meeting"),
+        )
         .arg(
             clap::Arg::new("team")
                 .short('t')
@@ -31,19 +38,7 @@ pub fn build_meeting_subcommand(meeting: &Meeting) -> clap::Command {
                 .long("autonomous")
                 .action(clap::ArgAction::SetTrue)
                 .help("Run with --dangerously-skip-permissions"),
-        );
-    for arg_def in &meeting.args {
-        let mut arg = clap::Arg::new(leak(&arg_def.name));
-        if arg_def.positional {
-            arg = arg.required(arg_def.required);
-        } else {
-            let long_name = arg_def.long.as_deref().unwrap_or(&arg_def.name);
-            arg = arg.long(leak(long_name)).required(arg_def.required);
-        }
-        arg = arg.help(leak(&arg_def.description));
-        cmd = cmd.arg(arg);
-    }
-    cmd
+        )
 }
 
 /// Dispatch a matched meeting subcommand.
@@ -56,17 +51,19 @@ pub fn run_meeting(meeting: &Meeting, matches: &clap::ArgMatches) -> Result<()> 
     let team_repo = team.path.join("team");
 
     let member = chat::resolve_member_by_role(&team_repo, &meeting.member)?;
-    let user_args = extract_user_args(meeting, matches)?;
+
+    let user_input = matches
+        .get_many::<String>("user_input")
+        .map(|vals| vals.cloned().collect::<Vec<_>>().join(" "));
+
     let initial_prompt = chat::build_meeting_prompt(
         meeting.prompt.as_deref(),
-        user_args.as_deref(),
+        user_input.as_deref(),
     );
-    let session = chat::prepare_chat_session(
-        &team_repo,
-        &team.name,
+    let session = chat::prepare_meeting_session(
         &team.path,
         &member,
-        Some(&meeting.hat),
+        &meeting.instructions,
     )?;
 
     chat::launch_session(&session, team, &team_repo, initial_prompt.as_deref(), autonomous)
@@ -86,58 +83,18 @@ pub fn run_external(args: Vec<OsString>) -> Result<()> {
     );
 }
 
-/// Extract user-provided args from ArgMatches (excluding --team and -a).
-fn extract_user_args(meeting: &Meeting, matches: &clap::ArgMatches) -> Result<Option<String>> {
-    let mut parts = Vec::new();
-
-    for arg_def in &meeting.args {
-        if let Some(val) = matches.get_one::<String>(&arg_def.name) {
-            if arg_def.positional {
-                parts.push(val.clone());
-            } else {
-                let label = arg_def.long.as_deref().unwrap_or(&arg_def.name);
-                parts.push(format!("--{} {}", label, val));
-            }
-        }
-    }
-
-    if parts.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(parts.join(" ")))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::profile::{Meeting, MeetingArg};
+    use crate::profile::Meeting;
 
     fn planning_meeting() -> Meeting {
         Meeting {
             name: "planning".into(),
             description: "Collaborative planning session".into(),
             member: "engineer".into(),
-            hat: "lead_plan-create".into(),
-            prompt: Some("/pdd".into()),
-            args: vec![
-                MeetingArg {
-                    name: "idea".into(),
-                    positional: true,
-                    long: None,
-                    arg_type: None,
-                    required: false,
-                    description: "Rough idea to plan".into(),
-                },
-                MeetingArg {
-                    name: "epic".into(),
-                    positional: false,
-                    long: Some("epic".into()),
-                    arg_type: Some("int".into()),
-                    required: false,
-                    description: "Epic issue number to load as input".into(),
-                },
-            ],
+            instructions: "You are an engineer in a planning meeting.\n".into(),
+            prompt: Some("start".into()),
         }
     }
 
@@ -146,16 +103,8 @@ mod tests {
             name: "verification".into(),
             description: "Verify acceptance criteria for completed work".into(),
             member: "engineer".into(),
-            hat: "qe_verify".into(),
-            prompt: Some("/verification".into()),
-            args: vec![MeetingArg {
-                name: "work-item".into(),
-                positional: true,
-                long: None,
-                arg_type: None,
-                required: true,
-                description: "Issue number to verify".into(),
-            }],
+            instructions: "You are an engineer in a verification meeting.\n".into(),
+            prompt: None,
         }
     }
 
@@ -167,76 +116,100 @@ mod tests {
     }
 
     #[test]
-    fn build_meeting_subcommand_has_positional_named_and_team_args() {
+    fn build_meeting_subcommand_has_user_input_and_team_args() {
         let m = planning_meeting();
         let cmd = build_meeting_subcommand(&m);
         let arg_names: Vec<&str> = cmd.get_arguments().map(|a| a.get_id().as_str()).collect();
-        assert!(arg_names.contains(&"idea"));
-        assert!(arg_names.contains(&"epic"));
+        assert!(arg_names.contains(&"user_input"));
         assert!(arg_names.contains(&"team"));
+        assert!(arg_names.contains(&"autonomous"));
     }
 
     #[test]
-    fn build_meeting_subcommand_required_positional() {
-        let m = verification_meeting();
-        let cmd = build_meeting_subcommand(&m);
-        let arg = cmd
-            .get_arguments()
-            .find(|a| a.get_id().as_str() == "work-item")
-            .unwrap();
-        assert!(arg.is_required_set());
-    }
-
-    #[test]
-    fn extract_user_args_with_positional_arg() {
+    fn trailing_args_parsed_as_user_input() {
         let m = planning_meeting();
         let cmd = build_meeting_subcommand(&m);
         let matches = cmd
-            .try_get_matches_from(vec!["planning", "Add OAuth support"])
+            .try_get_matches_from(vec!["planning", "plan", "the", "auth", "feature"])
             .unwrap();
-        let prompt = extract_user_args(&m, &matches).unwrap();
-        assert_eq!(prompt, Some("Add OAuth support".into()));
+        let input: Vec<String> = matches
+            .get_many::<String>("user_input")
+            .unwrap()
+            .cloned()
+            .collect();
+        assert_eq!(input, vec!["plan", "the", "auth", "feature"]);
     }
 
     #[test]
-    fn extract_user_args_with_named_arg() {
-        let m = planning_meeting();
-        let cmd = build_meeting_subcommand(&m);
-        let matches = cmd
-            .try_get_matches_from(vec!["planning", "--epic", "42"])
-            .unwrap();
-        let prompt = extract_user_args(&m, &matches).unwrap();
-        assert_eq!(prompt, Some("--epic 42".into()));
-    }
-
-    #[test]
-    fn extract_user_args_no_args_returns_none() {
+    fn no_trailing_args_returns_none() {
         let m = planning_meeting();
         let cmd = build_meeting_subcommand(&m);
         let matches = cmd.try_get_matches_from(vec!["planning"]).unwrap();
-        let prompt = extract_user_args(&m, &matches).unwrap();
+        let input = matches.get_many::<String>("user_input");
+        assert!(input.is_none());
+    }
+
+    #[test]
+    fn team_and_autonomous_flags_work() {
+        let m = planning_meeting();
+        let cmd = build_meeting_subcommand(&m);
+        let matches = cmd
+            .try_get_matches_from(vec!["planning", "-t", "my-team", "-a"])
+            .unwrap();
+        assert_eq!(
+            matches.get_one::<String>("team").map(|s| s.as_str()),
+            Some("my-team")
+        );
+        assert!(matches.get_flag("autonomous"));
+    }
+
+    #[test]
+    fn trailing_args_with_team_flag() {
+        let m = planning_meeting();
+        let cmd = build_meeting_subcommand(&m);
+        let matches = cmd
+            .try_get_matches_from(vec!["planning", "-t", "my-team", "plan", "something"])
+            .unwrap();
+        let input: Vec<String> = matches
+            .get_many::<String>("user_input")
+            .unwrap()
+            .cloned()
+            .collect();
+        assert_eq!(input, vec!["plan", "something"]);
+        assert_eq!(
+            matches.get_one::<String>("team").map(|s| s.as_str()),
+            Some("my-team")
+        );
+    }
+
+    #[test]
+    fn prompt_combined_with_user_input() {
+        let m = planning_meeting();
+        let prompt = chat::build_meeting_prompt(
+            m.prompt.as_deref(),
+            Some("plan the auth feature"),
+        );
+        assert_eq!(prompt, Some("start plan the auth feature".into()));
+    }
+
+    #[test]
+    fn prompt_alone_when_no_user_input() {
+        let m = planning_meeting();
+        let prompt = chat::build_meeting_prompt(m.prompt.as_deref(), None);
+        assert_eq!(prompt, Some("start".into()));
+    }
+
+    #[test]
+    fn user_input_alone_when_no_prompt() {
+        let m = verification_meeting();
+        let prompt = chat::build_meeting_prompt(m.prompt.as_deref(), Some("plan something"));
+        assert_eq!(prompt, Some("plan something".into()));
+    }
+
+    #[test]
+    fn none_when_neither_prompt_nor_input() {
+        let m = verification_meeting();
+        let prompt = chat::build_meeting_prompt(m.prompt.as_deref(), None);
         assert!(prompt.is_none());
-    }
-
-    #[test]
-    fn extract_user_args_with_both_args() {
-        let m = planning_meeting();
-        let cmd = build_meeting_subcommand(&m);
-        let matches = cmd
-            .try_get_matches_from(vec!["planning", "OAuth support", "--epic", "42"])
-            .unwrap();
-        let prompt = extract_user_args(&m, &matches).unwrap();
-        assert_eq!(prompt, Some("OAuth support --epic 42".into()));
-    }
-
-    #[test]
-    fn extract_user_args_ignores_team_flag() {
-        let m = planning_meeting();
-        let cmd = build_meeting_subcommand(&m);
-        let matches = cmd
-            .try_get_matches_from(vec!["planning", "-t", "my-team", "OAuth support"])
-            .unwrap();
-        let prompt = extract_user_args(&m, &matches).unwrap();
-        assert_eq!(prompt, Some("OAuth support".into()));
     }
 }
