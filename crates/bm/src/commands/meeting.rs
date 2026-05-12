@@ -183,6 +183,25 @@ mod tests {
     }
 
     #[test]
+    fn flags_after_positional_args_are_captured_as_input() {
+        // trailing_var_arg(true) means flags after the first positional value
+        // are NOT parsed — they become part of user_input. This is by design:
+        // users must place -t and -a BEFORE free-form text.
+        let m = planning_meeting();
+        let cmd = build_meeting_subcommand(&m);
+        let matches = cmd
+            .try_get_matches_from(vec!["planning", "some", "text", "-t", "my-team"])
+            .unwrap();
+        let input: Vec<String> = matches
+            .get_many::<String>("user_input")
+            .unwrap()
+            .cloned()
+            .collect();
+        assert_eq!(input, vec!["some", "text", "-t", "my-team"]);
+        assert!(matches.get_one::<String>("team").is_none());
+    }
+
+    #[test]
     fn prompt_combined_with_user_input() {
         let m = planning_meeting();
         let prompt = chat::build_meeting_prompt(

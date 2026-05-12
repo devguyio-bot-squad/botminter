@@ -48,7 +48,7 @@ If you find yourself repeatedly opening `bm chat`, loading a specific skill, and
 
 When you run `bm meetings <name>`:
 
-1. BotMinter reads the meeting definition from the profile's `botminter.yml`
+1. BotMinter reads the meeting definition from the team repo's `botminter.yml`
 2. The `member` field is resolved to a hired member of that role (e.g., `engineer` → `engineer-01`)
 3. The meeting's `instructions` are written to a temporary file
 4. An `AgentSession` is constructed directly — no meta-prompt pipeline, no hat resolution

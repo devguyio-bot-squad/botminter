@@ -368,6 +368,9 @@ meetings:
     prompt: start               # Optional initial message
 ```
 
+!!! warning "Flag ordering"
+    Flags (`-t`, `-a`) must appear **before** free-form input. Flags placed after the first word of input are captured as text sent to the agent.
+
 **Examples:**
 
 ```bash
@@ -377,8 +380,8 @@ bm meetings planning
 # Start with context
 bm meetings planning plan the auth feature
 
-# Override team
-bm meetings verification -t my-team
+# Override team (flag BEFORE input)
+bm meetings planning -t my-team plan something
 ```
 
 ### `bm minty`

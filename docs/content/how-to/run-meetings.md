@@ -41,6 +41,17 @@ If the meeting defines a `prompt` (e.g., `start`), your input is appended to it.
 | *(none)* | `plan the auth feature` | `plan the auth feature` |
 | *(none)* | *(none)* | *(no initial message — you type first)* |
 
+!!! warning "Flags must come before free-form text"
+    Place `-t` and `-a` **before** the free-form input. Flags after the first word of input are captured as part of the text sent to the agent, not parsed as CLI flags.
+
+    ```bash
+    # Correct — flag before input
+    bm meetings planning -t my-team plan the auth feature
+
+    # Wrong — flag is sent to the agent as text
+    bm meetings planning plan the auth feature -t my-team
+    ```
+
 ### Targeting a specific team
 
 ```bash
@@ -130,28 +141,24 @@ instructions: |
 
 ## Testing a meeting definition
 
-After editing a profile's `botminter.yml`:
+After editing meetings in your team repo's `botminter.yml`:
 
-1. Re-extract the profile to pick up changes:
-
-    ```bash
-    bm profiles init
-    ```
-
-2. Verify the meeting appears:
+1. Verify the meeting appears:
 
     ```bash
     bm meetings --help
     ```
 
-3. Run it:
+2. Run it:
 
     ```bash
     bm meetings <name>
     ```
 
+To test changes to the profile source (for future teams), edit `~/.config/botminter/profiles/<profile>/botminter.yml`, then create a new team with `bm init` to see the updated meetings.
+
 !!! note "Profile vs. team repo"
-    Meetings are defined in the profile (`~/.config/botminter/profiles/<profile>/botminter.yml`), not in the team repo. Changes to the profile affect all future teams created from it. Existing teams read the profile from disk at runtime, so profile changes take effect immediately for `bm meetings` — no re-init required.
+    Meetings are defined in the profile source (`~/.config/botminter/profiles/<profile>/botminter.yml`) and copied into the team repo during `bm init`. At runtime, `bm meetings` reads from the **team repo's** `botminter.yml`, not the profile on disk. To update meetings for an existing team, edit `<team_path>/team/botminter.yml` directly. To update them for future teams, edit the profile source and re-init.
 
 ## Troubleshooting
 

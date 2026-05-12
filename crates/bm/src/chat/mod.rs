@@ -881,4 +881,50 @@ mod tests {
         assert_eq!(result, "engineer-bob");
     }
 
+    #[test]
+    fn resolve_member_by_role_picks_first_alphabetically() {
+        let tmp = tempfile::tempdir().unwrap();
+        let members = tmp.path().join("members");
+        for name in ["engineer-charlie", "engineer-alice", "engineer-bob"] {
+            std::fs::create_dir_all(members.join(name)).unwrap();
+        }
+
+        let result = resolve_member_by_role(tmp.path(), "engineer").unwrap();
+        assert_eq!(result, "engineer-alice");
+    }
+
+    #[test]
+    fn prepare_meeting_session_empty_instructions_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result = prepare_meeting_session(tmp.path(), "engineer-01", "   ");
+        let err = result.err().expect("should fail for empty instructions");
+        assert!(
+            err.to_string().contains("must not be empty")
+        );
+    }
+
+    #[test]
+    fn prepare_meeting_session_missing_workspace_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let result =
+            prepare_meeting_session(tmp.path(), "engineer-01", "You are an engineer.");
+        let err = result.err().expect("should fail for missing workspace");
+        assert!(
+            err.to_string().contains("No workspace found")
+        );
+    }
+
+    #[test]
+    fn prepare_meeting_session_returns_valid_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("engineer-01");
+        std::fs::create_dir_all(&ws).unwrap();
+        std::fs::write(ws.join(".botminter.workspace"), "").unwrap();
+
+        let session =
+            prepare_meeting_session(tmp.path(), "engineer-01", "You are an engineer.")
+                .expect("should succeed with valid workspace");
+        assert_eq!(session.meta_prompt, "You are an engineer.");
+        assert_eq!(session.ws_path, ws);
+    }
 }
