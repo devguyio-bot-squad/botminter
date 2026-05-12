@@ -185,7 +185,8 @@ gh api graphql \
 | Team Kind | GitHub Issue Type |
 |-----------|-------------------|
 | epic | Epic |
-| story | Task |
+| story | Story |
+| task | Task |
 | bug | Bug |
 
 ---
