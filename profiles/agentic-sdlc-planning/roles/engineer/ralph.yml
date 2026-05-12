@@ -45,7 +45,7 @@ hats:
 
       1. Load the `github-project` skill.
       2. Read the issue using the query-issues operation (`--type single --issue <N>`).
-         The response includes `issueType.name` (Epic, Task, Bug) and labels.
+         The response includes `issueType.name` (Epic, Story, Task, Bug) and labels.
       3. Determine the issue's current project status.
       4. Branch to the appropriate handler below.
 
@@ -373,7 +373,7 @@ hats:
          The response includes `issueType.name`.
       3. Locate the planning artifacts in `team/specs/` (or the path referenced in the issue comments).
       4. **For Epics:** Read ALL artifacts: `requirements.md`, `design.md`, `plan.md`, `idea-honing.md`.
-         **For Stories (Tasks):** Read ALL code task files and the task catalog `README.md`.
+         **For Stories:** Read ALL code task files and the task catalog `README.md`.
       5. Execute the 6-step process above. Produce your own evidence for every claim you verify.
       6. **If passed:**
          - Set the issue's project status to `human:po:plan-review` via the status-workflow skill.
@@ -480,6 +480,7 @@ hats:
       **For Stories:**
       - Each task issue (if created) has the `agent-internal` label
       - Each task issue (if created) is a sub-issue of the parent Story
+      - The story comment lists all created task numbers (or notes the externalization mode)
 
       ### Comment Format
       Use `### 👑 lead — <ISO-timestamp>` for all comments.
