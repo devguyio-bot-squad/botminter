@@ -1,7 +1,7 @@
 name: agentic-sdlc-planning
 display_name: "Agentic SDLC Planning"
-description: "Agentic software lifecycle with PDD planning pipeline, adversarial review, verification, and a multi-gate status graph. Three roles: engineer (full SDLC), sentinel (merge gatekeeper), and chief-of-staff (operator's AI assistant)."
-version: "1.0.0"
+description: "Agentic software lifecycle with epic-mgmt (PDD) planning pipeline, adversarial review, verification, and a multi-gate status graph. Three roles: engineer (full SDLC), sentinel (merge gatekeeper), and chief-of-staff (operator's AI assistant)."
+version: "1.0.1"
 schema_version: '1.0'
 
 coding_agents:
@@ -39,8 +39,8 @@ roles:
     description: "PR merge gatekeeper and orphaned PR triage"
 
 labels:
-  # Issue classification uses GitHub native issue types (Epic, Task, Bug).
-  # Stories and subtasks are linked via native sub-issues.
+  # Issue classification uses GitHub native issue types (Epic, Story, Task, Bug).
+  # Parent-child relationships use native sub-issues.
   - name: "kind/docs"
     color: "0075CA"
     description: "Label modifier — routes any issue type to content writer hats"
@@ -112,6 +112,14 @@ statuses:
   - name: "snt:gate:merge"
     description: "Sentinel running merge gates on PR"
 
+  # Specialist statuses (content writer, SRE)
+  - name: "eng:cw:write"
+    description: "Engineer (content writer hat) drafting documentation"
+  - name: "eng:cw:review"
+    description: "Engineer (content writer hat) reviewing documentation"
+  - name: "eng:sre:setup"
+    description: "Engineer (SRE hat) setting up test infrastructure"
+
   # Bug statuses (shared: human:po:triage, done)
   - name: "eng:qe:investigate"
     description: "Engineer (QE hat) investigating bug"
@@ -144,24 +152,26 @@ meetings:
   - name: planning
     description: "Collaborative planning session"
     member: engineer
-    hat: lead_plan-create
-    prompt: "/pdd"
-    args:
-      - name: idea
-        positional: true
-        required: false
-        description: "Rough idea to plan"
-      - name: epic
-        long: epic
-        required: false
-        description: "Epic issue number to load as input"
+    instructions: |
+      - You are an engineer on this team.
+      - Right now you are in an interactive planning meeting with the human (PO).
+      - When the user says "start" you must start the planning meeting and welcome the user to the planning meeting.
+      - You MUST start by orienting yourself and understanding if this meeting is about a fresh idea, an existing epic, or an existing issue.
+      - If this is about some unplanned work or work that's not tracked, you MUST ask the user if this is for an epic or a story:
+          - If epic, then you must load the `epic-mgmt` skill and work at epic level
+          - If story, then you must load the `story-mgmt` skill and work at the story level
+      - If this is about some already tracked epic:
+          - You MUST read the epic issue (if one exists) and scan `team/specs/` for existing artifacts BEFORE starting any PDD step
+          - If `plan.md` exists with STORY-NN entries AND story issues exist as sub-issues of the epic, you MUST NOT run the PDD pipeline — epic planning is already complete
+          - If epic planning is complete, you MUST load the `story-mgmt` skill and work at story level
+      - If this is about some already tracked story, you MUST load the `story-mgmt` skill and work at the story level.
+    prompt: start
   - name: verification
     description: "Verify acceptance criteria for completed work"
     member: engineer
-    hat: qe_verify
-    prompt: "/verification"
-    args:
-      - name: work-item
-        positional: true
-        required: true
-        description: "Issue number to verify"
+    instructions: |
+      - You are an engineer on this team.
+      - Right now you are in an interactive verification meeting with the human (PO).
+      - You MUST load the `verification` skill to verify acceptance criteria for completed work.
+      - Ask the user for the work item (issue number) to verify.
+    prompt: start
