@@ -230,7 +230,7 @@ pub fn inject_project_skill_dirs(ralph_yml_path: &Path, projects: &[&str]) -> Re
         return Ok(());
     }
 
-    let mut lines: Vec<String> = projects
+    let lines: Vec<String> = projects
         .iter()
         .map(|p| format!("    - team/projects/{}/coding-agent/skills", p))
         .collect();
