@@ -176,8 +176,7 @@ pub fn start_local_members(
         let brain_mode = formation::is_brain_member(&ws);
 
         // Launch ralph or brain
-        // TODO(CT-02): TmuxSession lifecycle will be wired here
-        let tmux = formation::local::tmux::TmuxSession::new(&team.name)?;
+        let tmux = prepare_tmux_session(&team.name, member_filter.is_none())?;
         let launch_result = if brain_mode {
             let system_prompt_path = ws.join("brain-prompt.md");
             let brain_config = formation::BrainLaunchConfig {
@@ -445,6 +444,19 @@ pub(crate) fn resolve_app_credentials_and_deliver(
     Ok(Some(gh_config_dir))
 }
 
+/// Prepares the tmux session for member launches.
+///
+/// For full start (`is_full_start=true`): checks prerequisites, destroys any
+/// existing session, and creates a fresh one.
+/// For single-member start (`is_full_start=false`): checks prerequisites and
+/// creates the session only if it doesn't already exist.
+pub(crate) fn prepare_tmux_session(
+    _team_name: &str,
+    _is_full_start: bool,
+) -> Result<formation::local::tmux::TmuxSession> {
+    bail!("not yet implemented")
+}
+
 /// Discover and filter member directories in the team repo.
 fn discover_members(team_repo: &Path, member_filter: Option<&str>) -> Result<Vec<String>> {
     let members_dir = team_repo.join("members");
@@ -474,6 +486,159 @@ fn discover_members(team_repo: &Path, member_filter: Option<&str>) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::formation::local::tmux::TmuxSession;
+    use std::process::Command as StdCommand;
+
+    fn tmux_cmd() -> StdCommand {
+        let mut cmd = StdCommand::new("tmux");
+        cmd.env_remove("TMUX_TMPDIR");
+        cmd
+    }
+
+    struct TmuxGuard {
+        session_name: String,
+    }
+
+    impl TmuxGuard {
+        fn new(session_name: &str) -> Self {
+            Self {
+                session_name: session_name.to_string(),
+            }
+        }
+    }
+
+    impl Drop for TmuxGuard {
+        fn drop(&mut self) {
+            let _ = tmux_cmd()
+                .args(["-L", "botminter", "kill-session", "-t", &self.session_name])
+                .output();
+        }
+    }
+
+    // ── CT-02: AC1 — Full Start Creates Session ───────────────────────
+
+    #[test]
+    fn full_start_creates_tmux_session_for_team() {
+        let team_name = "ct7-02-create";
+        let tmux = prepare_tmux_session(team_name, true)
+            .expect("prepare_tmux_session should create session");
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        assert!(tmux.exists(), "tmux session must exist after full start");
+
+        let members = ["alice", "bob", "charlie"];
+        for m in &members {
+            tmux.create_window(m, &["sleep", "300"], Path::new("/tmp"), &[])
+                .expect("create_window should succeed in prepared session");
+        }
+
+        let windows = tmux.list_windows().expect("list_windows should succeed");
+        for m in &members {
+            assert!(
+                windows.iter().any(|w| w.name == *m),
+                "window '{}' must exist in session",
+                m,
+            );
+        }
+        assert!(
+            windows.len() >= 3,
+            "session must have at least 3 member windows, got {}",
+            windows.len(),
+        );
+    }
+
+    // ── CT-02: AC2 — Previous Session Destroyed on Full Start ─────────
+
+    #[test]
+    fn full_start_destroys_previous_session_and_creates_fresh() {
+        let team_name = "ct7-02-destroy";
+        let old = TmuxSession::new(team_name).unwrap();
+        let _guard = TmuxGuard::new(old.session_name());
+        old.create().expect("old session should be created");
+        old.create_window("stale-member", &["sleep", "300"], Path::new("/tmp"), &[])
+            .expect("old window should be created");
+        assert!(old.window_exists("stale-member"), "precondition: old window exists");
+
+        let tmux = prepare_tmux_session(team_name, true)
+            .expect("prepare_tmux_session should succeed on re-create");
+
+        assert!(tmux.exists(), "session must exist after full start re-create");
+        assert!(
+            !tmux.window_exists("stale-member"),
+            "old window 'stale-member' must be gone after full start destroy+create",
+        );
+    }
+
+    // ── CT-02: AC3 — Daemon-Triggered Single Start Reuses Session ─────
+
+    #[test]
+    fn single_member_start_reuses_existing_session() {
+        let team_name = "ct7-02-reuse";
+        let existing = TmuxSession::new(team_name).unwrap();
+        let _guard = TmuxGuard::new(existing.session_name());
+        existing.create().expect("existing session should be created");
+        existing
+            .create_window("running-member", &["sleep", "300"], Path::new("/tmp"), &[])
+            .expect("existing window should be created");
+
+        let tmux = prepare_tmux_session(team_name, false)
+            .expect("prepare_tmux_session (single) should succeed");
+
+        assert!(tmux.exists(), "session must still exist for single start");
+        assert!(
+            tmux.window_exists("running-member"),
+            "existing window 'running-member' must be preserved on single start",
+        );
+    }
+
+    // ── CT-02: AC4 — Stop Preserves Windows with Scrollback ───────────
+
+    #[test]
+    fn stop_preserves_tmux_windows_with_scrollback() {
+        let team_name = "ct7-02-stop";
+        let tmux = prepare_tmux_session(team_name, true)
+            .expect("prepare_tmux_session should succeed");
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        tmux.create_window(
+            "scroll-agent",
+            &["bash", "-c", "echo SCROLLBACK_CT702 && sleep 300"],
+            Path::new("/tmp"),
+            &[],
+        )
+        .expect("create_window with output command should succeed");
+
+        thread::sleep(Duration::from_millis(500));
+
+        tmux.kill_window_process("scroll-agent")
+            .expect("kill should succeed");
+        thread::sleep(Duration::from_millis(300));
+
+        assert!(
+            tmux.window_exists("scroll-agent"),
+            "window must survive process kill (remain-on-exit)",
+        );
+        assert!(
+            tmux.is_pane_dead("scroll-agent").unwrap(),
+            "pane must be dead after process kill",
+        );
+
+        let capture = tmux_cmd()
+            .args([
+                "-L", "botminter", "capture-pane", "-t",
+                &format!("{}:scroll-agent", tmux.session_name()),
+                "-p",
+            ])
+            .output()
+            .expect("capture-pane should execute");
+        let pane_content = String::from_utf8_lossy(&capture.stdout);
+        assert!(
+            pane_content.contains("SCROLLBACK_CT702"),
+            "scrollback must contain marker text after process kill, got: {pane_content}",
+        );
+    }
+
+    // ── Existing tests ────────────────────────────────────────────────
 
     #[test]
     fn start_result_tracks_all_outcomes() {
