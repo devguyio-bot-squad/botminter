@@ -90,6 +90,28 @@ pub struct SessionInfo {
     pub attach_command: String,
 }
 
+fn allocate_pty() -> Result<(std::fs::File, std::fs::File)> {
+    use std::os::unix::io::FromRawFd;
+    unsafe {
+        let mut master: libc::c_int = 0;
+        let mut slave: libc::c_int = 0;
+        if libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        ) != 0
+        {
+            bail!("failed to allocate pseudo-terminal for attach");
+        }
+        Ok((
+            std::fs::File::from_raw_fd(master),
+            std::fs::File::from_raw_fd(slave),
+        ))
+    }
+}
+
 fn validate_name(name: &str, label: &str) -> Result<()> {
     if name.is_empty()
         || !name
@@ -236,6 +258,76 @@ impl TmuxSession {
         Ok(())
     }
 
+    pub fn create_window(
+        &self,
+        name: &str,
+        cmd: &[&str],
+        cwd: &Path,
+        envs: &[(&str, &str)],
+    ) -> Result<u32> {
+        validate_name(name, "window name")?;
+        self.source_config()?;
+
+        let cwd_str = cwd
+            .to_str()
+            .context("cwd contains non-UTF-8 characters")?;
+
+        let mut tmux = tmux_cmd();
+        tmux.args([
+            "-L",
+            &self.socket_name,
+            "new-window",
+            "-t",
+            &self.session_name,
+            "-n",
+            name,
+            "-c",
+            cwd_str,
+        ]);
+
+        for (k, v) in envs {
+            tmux.args(["-e", &format!("{k}={v}")]);
+        }
+
+        tmux.arg("--");
+        tmux.args(cmd);
+
+        let output = tmux.output().with_context(|| {
+            format!(
+                "failed to create window '{name}' in session '{}' on socket '{}'",
+                self.session_name, self.socket_name
+            )
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "tmux new-window failed for window '{name}' in session '{}' on socket '{}': {}",
+                self.session_name,
+                self.socket_name,
+                stderr.trim()
+            );
+        }
+
+        let target = format!("{}:{}", self.session_name, name);
+
+        let pid_str = self.query_pane_format(&target, "#{pane_pid}")?;
+        let pid: u32 = pid_str.parse().with_context(|| {
+            format!("failed to parse PID from tmux output: '{pid_str}'")
+        })?;
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let dead_str = self.query_pane_format(&target, "#{pane_dead}:#{pane_dead_status}")?;
+        if let Some(exit_code) = dead_str.strip_prefix("1:") {
+            bail!(
+                "process in window '{name}' exited immediately with exit status {exit_code}"
+            );
+        }
+
+        Ok(pid)
+    }
+
     pub fn window_exists(&self, name: &str) -> bool {
         let output = tmux_cmd()
             .args([
@@ -380,26 +472,11 @@ impl TmuxSession {
 
         let _pty_master: Option<std::fs::File>;
         if !std::io::stdin().is_terminal() {
-            unsafe {
-                let mut master: libc::c_int = 0;
-                let mut slave: libc::c_int = 0;
-                if libc::openpty(
-                    &mut master,
-                    &mut slave,
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                    std::ptr::null_mut(),
-                ) != 0
-                {
-                    bail!("failed to allocate pseudo-terminal for attach");
-                }
-                use std::os::unix::io::FromRawFd;
-                _pty_master = Some(std::fs::File::from_raw_fd(master));
-                let slave_file = std::fs::File::from_raw_fd(slave);
-                let slave_out = slave_file.try_clone().context("clone PTY slave")?;
-                let slave_err = slave_file.try_clone().context("clone PTY slave")?;
-                cmd.stdin(slave_file).stdout(slave_out).stderr(slave_err);
-            }
+            let (master, slave) = allocate_pty()?;
+            _pty_master = Some(master);
+            let slave_out = slave.try_clone().context("clone PTY slave")?;
+            let slave_err = slave.try_clone().context("clone PTY slave")?;
+            cmd.stdin(slave).stdout(slave_out).stderr(slave_err);
         } else {
             _pty_master = None;
         }
@@ -419,75 +496,6 @@ impl TmuxSession {
         Ok(())
     }
 
-    pub fn create_window(
-        &self,
-        name: &str,
-        cmd: &[&str],
-        cwd: &Path,
-        envs: &[(&str, &str)],
-    ) -> Result<u32> {
-        validate_name(name, "window name")?;
-        self.source_config()?;
-
-        let cwd_str = cwd
-            .to_str()
-            .context("cwd contains non-UTF-8 characters")?;
-
-        let mut tmux = tmux_cmd();
-        tmux.args([
-            "-L",
-            &self.socket_name,
-            "new-window",
-            "-t",
-            &self.session_name,
-            "-n",
-            name,
-            "-c",
-            cwd_str,
-        ]);
-
-        for (k, v) in envs {
-            tmux.args(["-e", &format!("{k}={v}")]);
-        }
-
-        tmux.arg("--");
-        tmux.args(cmd);
-
-        let output = tmux.output().with_context(|| {
-            format!(
-                "failed to create window '{name}' in session '{}' on socket '{}'",
-                self.session_name, self.socket_name
-            )
-        })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(
-                "tmux new-window failed for window '{name}' in session '{}' on socket '{}': {}",
-                self.session_name,
-                self.socket_name,
-                stderr.trim()
-            );
-        }
-
-        let target = format!("{}:{}", self.session_name, name);
-
-        let pid_str = self.query_pane_format(&target, "#{pane_pid}")?;
-        let pid: u32 = pid_str.parse().with_context(|| {
-            format!("failed to parse PID from tmux output: '{pid_str}'")
-        })?;
-
-        std::thread::sleep(std::time::Duration::from_millis(100));
-
-        let dead_str = self.query_pane_format(&target, "#{pane_dead}:#{pane_dead_status}")?;
-        if let Some(exit_code) = dead_str.strip_prefix("1:") {
-            bail!(
-                "process in window '{name}' exited immediately with exit status {exit_code}"
-            );
-        }
-
-        Ok(pid)
-    }
 }
 
 #[cfg(test)]
