@@ -224,6 +224,22 @@ impl TmuxSession {
         Ok(())
     }
 
+    pub fn window_exists(&self, _name: &str) -> bool {
+        false
+    }
+
+    pub fn is_pane_dead(&self, _window: &str) -> Result<bool> {
+        bail!("not yet implemented")
+    }
+
+    pub fn pane_pid(&self, _window: &str) -> Result<u32> {
+        bail!("not yet implemented")
+    }
+
+    pub fn list_windows(&self) -> Result<Vec<TmuxWindow>> {
+        bail!("not yet implemented")
+    }
+
     pub fn create_window(
         &self,
         name: &str,
@@ -857,6 +873,191 @@ mod tests {
         assert!(
             !err.contains("not yet implemented"),
             "error must describe missing session, not be a stub: {err}"
+        );
+    }
+
+    // ── CT-02 (Story #6): Window Queries — window_exists ──────────────
+
+    #[test]
+    fn window_exists_returns_true_when_window_present() {
+        let session = TmuxSession::new("ct02-wexist-t").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window should succeed");
+
+        assert!(
+            session.window_exists("bob"),
+            "window_exists must return true when window 'bob' exists in the session"
+        );
+    }
+
+    #[test]
+    fn window_exists_returns_false_when_window_absent() {
+        let session = TmuxSession::new("ct02-wexist-f").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        assert!(
+            !session.window_exists("bob"),
+            "window_exists must return false when window 'bob' does not exist (no error, no panic)"
+        );
+    }
+
+    // ── CT-02 (Story #6): Window Queries — is_pane_dead ───────────────
+
+    #[test]
+    fn is_pane_dead_returns_false_for_live_process() {
+        let session = TmuxSession::new("ct02-dead-f").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window should succeed");
+
+        let dead = session
+            .is_pane_dead("bob")
+            .expect("is_pane_dead should succeed for existing window");
+        assert!(
+            !dead,
+            "is_pane_dead must return false for a live process (sleep 300)"
+        );
+    }
+
+    #[test]
+    fn is_pane_dead_returns_true_for_exited_process() {
+        let session = TmuxSession::new("ct02-dead-t").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        // Create window with `true` — exits immediately with 0.
+        // remain-on-exit keeps the pane so we can query it.
+        // Use new-window directly to avoid create_window's immediate-exit detection.
+        let target = format!("{}:{}", session.session_name, "bob");
+        tmux_cmd()
+            .args([
+                "-L", "botminter", "new-window",
+                "-t", &session.session_name,
+                "-n", "bob",
+                "-c", cwd.to_str().unwrap(),
+                "--", "true",
+            ])
+            .output()
+            .expect("tmux new-window should succeed");
+
+        // Poll for the pane to become dead (tmux async state update)
+        let mut detected = false;
+        for _ in 0..5 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            match session.is_pane_dead("bob") {
+                Ok(true) => {
+                    detected = true;
+                    break;
+                }
+                Ok(false) => continue,
+                Err(e) => panic!("is_pane_dead returned error: {e}"),
+            }
+        }
+        assert!(
+            detected,
+            "is_pane_dead must return true for a window whose command has exited"
+        );
+    }
+
+    // ── CT-02 (Story #6): Window Queries — pane_pid ───────────────────
+
+    #[test]
+    fn pane_pid_returns_valid_pid_for_running_window() {
+        let session = TmuxSession::new("ct02-pid").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window should succeed");
+
+        let pid = session
+            .pane_pid("bob")
+            .expect("pane_pid should succeed for existing window");
+        assert!(pid > 0, "PID must be positive, got: {pid}");
+
+        let alive = unsafe { libc::kill(pid as i32, 0) };
+        assert_eq!(alive, 0, "PID {pid} must be a running process");
+    }
+
+    // ── CT-02 (Story #6): Window Queries — list_windows ───────────────
+
+    #[test]
+    fn list_windows_returns_all_windows_with_state() {
+        let session = TmuxSession::new("ct02-list").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window 'bob' should succeed");
+        session
+            .create_window("cos", &["sleep", "300"], &cwd, &[])
+            .expect("create_window 'cos' should succeed");
+
+        let windows = session
+            .list_windows()
+            .expect("list_windows should succeed");
+
+        let names: Vec<&str> = windows.iter().map(|w| w.name.as_str()).collect();
+        assert!(
+            names.contains(&"bob"),
+            "list_windows must include window 'bob', got: {names:?}"
+        );
+        assert!(
+            names.contains(&"cos"),
+            "list_windows must include window 'cos', got: {names:?}"
+        );
+
+        for w in &windows {
+            if w.name == "bob" || w.name == "cos" {
+                assert!(w.pane_pid > 0, "window '{}' must have a valid PID", w.name);
+                assert!(!w.dead, "window '{}' must not be dead (running sleep)", w.name);
+            }
+        }
+    }
+
+    // ── CT-02 (Story #6): Window Queries — Non-Existent Window Error ──
+
+    #[test]
+    fn non_existent_window_returns_error() {
+        let session = TmuxSession::new("ct02-ghost").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let pid_result = session.pane_pid("ghost");
+        assert!(
+            pid_result.is_err(),
+            "pane_pid for non-existent window must return Err"
+        );
+        let pid_err = pid_result.unwrap_err().to_string();
+        assert!(
+            pid_err.contains("ghost"),
+            "error must mention window name 'ghost', got: {pid_err}"
+        );
+
+        let dead_result = session.is_pane_dead("ghost");
+        assert!(
+            dead_result.is_err(),
+            "is_pane_dead for non-existent window must return Err"
+        );
+        let dead_err = dead_result.unwrap_err().to_string();
+        assert!(
+            dead_err.contains("ghost"),
+            "error must mention window name 'ghost', got: {dead_err}"
         );
     }
 }
