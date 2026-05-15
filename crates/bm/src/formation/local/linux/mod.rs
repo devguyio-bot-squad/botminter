@@ -553,6 +553,11 @@ mod tests {
 
     // ── CT-01 (Story #8): Prerequisite Check — tmux detection ──────
 
+    // std::env::set_var("PATH") is process-global; parallel tests that mutate
+    // PATH corrupt each other's which::which / Command lookups. This mutex
+    // serializes all PATH-mutating prerequisite tests.
+    static PATH_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn create_stub_script(dir: &std::path::Path, name: &str, content: &str) {
         let path = dir.join(name);
         std::fs::write(&path, content).unwrap();
@@ -560,16 +565,23 @@ mod tests {
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
     }
 
+    fn with_path<F: FnOnce() -> R, R>(new_path: impl AsRef<std::ffi::OsStr>, f: F) -> R {
+        let _guard = PATH_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let orig = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", new_path);
+        let result = f();
+        std::env::set_var("PATH", &orig);
+        result
+    }
+
     #[test]
     fn prerequisites_missing_tmux_error_names_tmux_and_suggests_install() {
         let tmp = tempfile::tempdir().unwrap();
         create_stub_script(tmp.path(), "ralph", "#!/bin/sh\nexit 0\n");
 
-        let orig_path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", tmp.path());
-        let f = LinuxLocalFormation::new("test-team");
-        let result = f.check_prerequisites();
-        std::env::set_var("PATH", &orig_path);
+        let result = with_path(tmp.path(), || {
+            LinuxLocalFormation::new("test-team").check_prerequisites()
+        });
 
         let err = result.expect_err("should fail when tmux is missing");
         let msg = err.to_string();
@@ -592,11 +604,9 @@ mod tests {
             "#!/bin/sh\nif [ \"$1\" = \"-V\" ]; then echo 'tmux 2.9'; exit 0; fi\nexit 1\n",
         );
 
-        let orig_path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", tmp.path());
-        let f = LinuxLocalFormation::new("test-team");
-        let result = f.check_prerequisites();
-        std::env::set_var("PATH", &orig_path);
+        let result = with_path(tmp.path(), || {
+            LinuxLocalFormation::new("test-team").check_prerequisites()
+        });
 
         let err = result.expect_err("should fail when tmux version is below 3.0");
         let msg = err.to_string();
@@ -615,10 +625,10 @@ mod tests {
         );
 
         let orig_path = std::env::var("PATH").unwrap_or_default();
-        std::env::set_var("PATH", format!("{}:{}", tmp.path().display(), orig_path));
-        let f = LinuxLocalFormation::new("test-team");
-        let result = f.check_prerequisites();
-        std::env::set_var("PATH", &orig_path);
+        let result = with_path(
+            format!("{}:{}", tmp.path().display(), orig_path),
+            || LinuxLocalFormation::new("test-team").check_prerequisites(),
+        );
 
         assert!(
             result.is_ok(),
