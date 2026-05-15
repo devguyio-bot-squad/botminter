@@ -119,19 +119,91 @@ impl TmuxSession {
     }
 
     pub fn create(&self) -> Result<()> {
-        bail!("create() not yet implemented")
+        TmuxConfig::ensure_written()?;
+
+        let output = tmux_cmd()
+            .args([
+                "-L",
+                &self.socket_name,
+                "new-session",
+                "-d",
+                "-s",
+                &self.session_name,
+                "-f",
+            ])
+            .arg(&self.config_path)
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to run tmux new-session for '{}' on socket '{}'",
+                    self.session_name, self.socket_name
+                )
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "tmux new-session failed for '{}' on socket '{}': {}",
+                self.session_name,
+                self.socket_name,
+                stderr.trim()
+            );
+        }
+
+        Ok(())
     }
 
     pub fn exists(&self) -> bool {
-        false
+        tmux_cmd()
+            .args([
+                "-L",
+                &self.socket_name,
+                "has-session",
+                "-t",
+                &self.session_name,
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
 
     pub fn destroy(&self) -> Result<()> {
-        bail!("destroy() not yet implemented")
+        let output = tmux_cmd()
+            .args([
+                "-L",
+                &self.socket_name,
+                "kill-session",
+                "-t",
+                &self.session_name,
+            ])
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to run tmux kill-session for '{}' on socket '{}'",
+                    self.session_name, self.socket_name
+                )
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "tmux kill-session failed for '{}' on socket '{}': {}",
+                self.session_name,
+                self.socket_name,
+                stderr.trim()
+            );
+        }
+
+        Ok(())
     }
 
     pub fn destroy_if_exists(&self) -> Result<()> {
-        bail!("destroy_if_exists() not yet implemented")
+        if self.exists() {
+            self.destroy()?;
+        }
+        Ok(())
     }
 }
 
