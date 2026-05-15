@@ -451,10 +451,22 @@ pub(crate) fn resolve_app_credentials_and_deliver(
 /// For single-member start (`is_full_start=false`): checks prerequisites and
 /// creates the session only if it doesn't already exist.
 pub(crate) fn prepare_tmux_session(
-    _team_name: &str,
-    _is_full_start: bool,
+    team_name: &str,
+    is_full_start: bool,
 ) -> Result<formation::local::tmux::TmuxSession> {
-    bail!("not yet implemented")
+    formation::local::tmux::TmuxSession::check_tmux_available()?;
+    formation::local::tmux::config::TmuxConfig::ensure_written()?;
+
+    let tmux = formation::local::tmux::TmuxSession::new(team_name)?;
+
+    if is_full_start {
+        tmux.destroy_if_exists()?;
+        tmux.create()?;
+    } else if !tmux.exists() {
+        tmux.create()?;
+    }
+
+    Ok(tmux)
 }
 
 /// Discover and filter member directories in the team repo.
@@ -608,7 +620,24 @@ mod tests {
         )
         .expect("create_window with output command should succeed");
 
-        thread::sleep(Duration::from_millis(500));
+        // Poll until the echo output appears (up to 5s) — fixed sleeps are racy under load
+        let mut marker_visible = false;
+        for _ in 0..50 {
+            let out = tmux_cmd()
+                .args([
+                    "-L", "botminter", "capture-pane", "-t",
+                    &format!("{}:scroll-agent", tmux.session_name()),
+                    "-p",
+                ])
+                .output()
+                .expect("capture-pane poll should execute");
+            if String::from_utf8_lossy(&out.stdout).contains("SCROLLBACK_CT702") {
+                marker_visible = true;
+                break;
+            }
+            thread::sleep(Duration::from_millis(100));
+        }
+        assert!(marker_visible, "echo output must appear before kill");
 
         tmux.kill_window_process("scroll-agent")
             .expect("kill should succeed");
@@ -627,7 +656,7 @@ mod tests {
             .args([
                 "-L", "botminter", "capture-pane", "-t",
                 &format!("{}:scroll-agent", tmux.session_name()),
-                "-p",
+                "-S", "-", "-p",
             ])
             .output()
             .expect("capture-pane should execute");
