@@ -1,5 +1,6 @@
 mod linux;
 mod macos;
+pub mod tmux;
 
 use anyhow::{bail, Result};
 
