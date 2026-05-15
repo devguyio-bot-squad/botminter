@@ -162,6 +162,16 @@ impl TmuxSession {
         Ok(())
     }
 
+    fn require_window(&self, window: &str) -> Result<String> {
+        if !self.window_exists(window) {
+            bail!(
+                "window '{window}' not found in session '{}'",
+                self.session_name
+            );
+        }
+        Ok(format!("{}:{}", self.session_name, window))
+    }
+
     fn query_pane_format(&self, target: &str, format: &str) -> Result<String> {
         let output = tmux_cmd()
             .args([
@@ -249,13 +259,7 @@ impl TmuxSession {
     }
 
     pub fn is_pane_dead(&self, window: &str) -> Result<bool> {
-        if !self.window_exists(window) {
-            bail!(
-                "window '{window}' not found in session '{}'",
-                self.session_name
-            );
-        }
-        let target = format!("{}:{}", self.session_name, window);
+        let target = self.require_window(window)?;
         let result = self.query_pane_format(&target, "#{pane_dead}")?;
         match result.as_str() {
             "1" => Ok(true),
@@ -265,13 +269,7 @@ impl TmuxSession {
     }
 
     pub fn pane_pid(&self, window: &str) -> Result<u32> {
-        if !self.window_exists(window) {
-            bail!(
-                "window '{window}' not found in session '{}'",
-                self.session_name
-            );
-        }
-        let target = format!("{}:{}", self.session_name, window);
+        let target = self.require_window(window)?;
         let pid_str = self.query_pane_format(&target, "#{pane_pid}")?;
         pid_str
             .parse()
