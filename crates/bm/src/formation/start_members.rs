@@ -472,6 +472,30 @@ pub(crate) fn prepare_tmux_session(
     Ok(tmux)
 }
 
+/// Action decided by `single_start_guard` for a member window.
+#[derive(Debug, PartialEq)]
+#[allow(dead_code)]
+pub(crate) enum SingleStartAction {
+    /// No existing window — proceed with launch.
+    Launch,
+    /// Window exists with a live process — skip, returning the running PID.
+    Skip { pid: u32 },
+}
+
+/// Checks the tmux window state for a member and decides whether to launch,
+/// skip (live), or clean up (dead) before launching.
+///
+/// - No window → `Launch`
+/// - Window alive → `Skip { pid }`
+/// - Window dead → removes the dead window, then `Launch`
+#[allow(dead_code)]
+pub(crate) fn single_start_guard(
+    _tmux: &formation::local::tmux::TmuxSession,
+    _member: &str,
+) -> Result<SingleStartAction> {
+    bail!("not yet implemented")
+}
+
 /// Discover and filter member directories in the team repo.
 fn discover_members(team_repo: &Path, member_filter: Option<&str>) -> Result<Vec<String>> {
     let members_dir = team_repo.join("members");
@@ -746,5 +770,304 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let err = discover_members(tmp.path(), None).unwrap_err();
         assert!(err.to_string().contains("No members hired"));
+    }
+
+    // ── CT-03: AC1 — Fresh Single Start Creates Session + Window ─────
+
+    #[test]
+    fn fresh_single_start_creates_session_and_window() {
+        let team_name = "ct7-03-fresh";
+        let tmux = prepare_tmux_session(team_name, false)
+            .expect("prepare_tmux_session (single) should create session when none exists");
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        assert!(tmux.exists(), "session must exist after fresh single start");
+
+        let action = single_start_guard(&tmux, "bob")
+            .expect("single_start_guard should succeed for fresh session");
+        assert_eq!(
+            action,
+            SingleStartAction::Launch,
+            "guard must return Launch when no window exists",
+        );
+
+        let pid = tmux
+            .create_window("bob", &["sleep", "300"], Path::new("/tmp"), &[])
+            .expect("create_window should succeed after guard returns Launch");
+
+        let windows = tmux.list_windows().expect("list_windows should succeed");
+        assert!(
+            windows.iter().any(|w| w.name == "bob"),
+            "window 'bob' must exist after launch",
+        );
+        assert!(pid > 0, "launched PID must be positive");
+    }
+
+    // ── CT-03: AC2 — Additive Single Start Preserves Existing Windows ─
+
+    #[test]
+    fn additive_single_start_preserves_existing_windows() {
+        let team_name = "ct7-03-additive";
+        let tmux = prepare_tmux_session(team_name, false)
+            .expect("prepare_tmux_session should succeed");
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        let bob_pid = tmux
+            .create_window("bob", &["sleep", "300"], Path::new("/tmp"), &[])
+            .expect("bob window should be created");
+
+        let action = single_start_guard(&tmux, "cos")
+            .expect("guard should succeed for new member cos");
+        assert_eq!(
+            action,
+            SingleStartAction::Launch,
+            "guard must return Launch for non-existing cos window",
+        );
+
+        tmux.create_window("cos", &["sleep", "300"], Path::new("/tmp"), &[])
+            .expect("cos window should be created");
+
+        assert!(
+            tmux.window_exists("bob"),
+            "bob window must still exist after adding cos",
+        );
+        assert!(
+            tmux.window_exists("cos"),
+            "cos window must exist after additive start",
+        );
+        assert!(
+            !tmux.is_pane_dead("bob").unwrap(),
+            "bob pane must still be alive",
+        );
+        let bob_pid_after = tmux.pane_pid("bob").expect("pane_pid for bob should succeed");
+        assert_eq!(
+            bob_pid, bob_pid_after,
+            "bob's PID must be unchanged after cos was added",
+        );
+    }
+
+    // ── CT-03: AC3 — Skip-If-Live Returns Skip with PID ─────────────
+
+    #[test]
+    fn skip_if_live_returns_skip_with_pid() {
+        let team_name = "ct7-03-skip";
+        let tmux = prepare_tmux_session(team_name, true)
+            .expect("prepare_tmux_session should succeed");
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        let bob_pid = tmux
+            .create_window("bob", &["sleep", "300"], Path::new("/tmp"), &[])
+            .expect("bob window should be created");
+
+        assert!(!tmux.is_pane_dead("bob").unwrap(), "precondition: bob is alive");
+
+        let action = single_start_guard(&tmux, "bob")
+            .expect("guard should succeed for live member");
+        assert_eq!(
+            action,
+            SingleStartAction::Skip { pid: bob_pid },
+            "guard must return Skip with the running PID when member is live",
+        );
+
+        assert!(
+            tmux.window_exists("bob"),
+            "bob window must still exist after skip",
+        );
+        assert!(
+            !tmux.is_pane_dead("bob").unwrap(),
+            "bob process must not be affected by the guard check",
+        );
+    }
+
+    // ── CT-03: AC4 — Dead-Window Restart Removes and Re-launches ─────
+
+    #[test]
+    fn dead_window_restart_removes_dead_and_returns_launch() {
+        let team_name = "ct7-03-dead";
+        let tmux = prepare_tmux_session(team_name, true)
+            .expect("prepare_tmux_session should succeed");
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        tmux.create_window("bob", &["bash", "-c", "exit 0"], Path::new("/tmp"), &[])
+            .expect("bob window should be created with short-lived process");
+
+        thread::sleep(Duration::from_millis(500));
+
+        assert!(
+            tmux.window_exists("bob"),
+            "precondition: bob window exists (remain-on-exit)",
+        );
+        assert!(
+            tmux.is_pane_dead("bob").unwrap(),
+            "precondition: bob pane is dead after process exit",
+        );
+
+        let action = single_start_guard(&tmux, "bob")
+            .expect("guard should succeed for dead member");
+        assert_eq!(
+            action,
+            SingleStartAction::Launch,
+            "guard must return Launch after cleaning up dead window",
+        );
+        assert!(
+            !tmux.window_exists("bob"),
+            "dead window must be removed by the guard",
+        );
+
+        let new_pid = tmux
+            .create_window("bob", &["sleep", "300"], Path::new("/tmp"), &[])
+            .expect("re-creating bob window should succeed after dead cleanup");
+        assert!(new_pid > 0, "new PID must be positive");
+        assert!(
+            !tmux.is_pane_dead("bob").unwrap(),
+            "re-launched bob must be alive",
+        );
+    }
+
+    // ── CT-03: AC5 — Stop Then Start Cycle ──────────────────────────
+
+    #[test]
+    fn stop_then_start_cycle_replaces_dead_window() {
+        let team_name = "ct7-03-cycle";
+        let tmux = prepare_tmux_session(team_name, true)
+            .expect("prepare_tmux_session should succeed");
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        let original_pid = tmux
+            .create_window("bob", &["sleep", "300"], Path::new("/tmp"), &[])
+            .expect("bob window should be created");
+
+        assert!(!tmux.is_pane_dead("bob").unwrap(), "precondition: bob is alive");
+
+        tmux.kill_window_process("bob")
+            .expect("kill should succeed");
+        thread::sleep(Duration::from_millis(300));
+
+        assert!(
+            tmux.window_exists("bob"),
+            "window must survive kill (remain-on-exit)",
+        );
+        assert!(
+            tmux.is_pane_dead("bob").unwrap(),
+            "pane must be dead after kill",
+        );
+
+        let action = single_start_guard(&tmux, "bob")
+            .expect("guard should succeed for killed member");
+        assert_eq!(
+            action,
+            SingleStartAction::Launch,
+            "guard must return Launch after cleaning up killed window",
+        );
+        assert!(
+            !tmux.window_exists("bob"),
+            "dead window must be removed by the guard",
+        );
+
+        let new_pid = tmux
+            .create_window("bob", &["sleep", "300"], Path::new("/tmp"), &[])
+            .expect("re-creating bob should succeed");
+        assert_ne!(
+            new_pid, original_pid,
+            "new PID must differ from the killed one",
+        );
+        assert!(
+            !tmux.is_pane_dead("bob").unwrap(),
+            "restarted bob must be alive",
+        );
+    }
+
+    // ── CT-03: AC6 — TOCTOU Race Produces Clear Error ───────────────
+
+    #[test]
+    fn toctou_race_produces_clear_error_not_corruption() {
+        let team_name = "ct7-03-race";
+        let tmux = prepare_tmux_session(team_name, true)
+            .expect("prepare_tmux_session should succeed");
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        let session_name = tmux.session_name().to_string();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+
+        for i in 0..2 {
+            let barrier = barrier.clone();
+            let sname = session_name.clone();
+            let handle = thread::spawn(move || {
+                let tmux = TmuxSession::new(&sname.replace("bm-", ""))
+                    .expect("TmuxSession::new should succeed in thread");
+                barrier.wait();
+                let guard_result = single_start_guard(&tmux, "bob");
+                let create_result = if matches!(guard_result, Ok(SingleStartAction::Launch)) {
+                    Some(
+                        tmux.create_window(
+                            "bob",
+                            &["sleep", "300"],
+                            Path::new("/tmp"),
+                            &[],
+                        ),
+                    )
+                } else {
+                    None
+                };
+                (i, guard_result, create_result)
+            });
+            handles.push(handle);
+        }
+
+        let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
+
+        let mut launches = 0;
+        let mut skips = 0;
+        let mut create_successes = 0;
+        let mut create_failures = 0;
+
+        for (_i, guard_result, create_result) in &results {
+            match guard_result {
+                Ok(SingleStartAction::Launch) => {
+                    launches += 1;
+                    if let Some(cr) = create_result {
+                        match cr {
+                            Ok(_) => create_successes += 1,
+                            Err(e) => {
+                                let msg = e.to_string().to_lowercase();
+                                assert!(
+                                    msg.contains("duplicate")
+                                        || msg.contains("already exists")
+                                        || msg.contains("create_window"),
+                                    "create_window error must indicate duplicate, got: {}",
+                                    e,
+                                );
+                                create_failures += 1;
+                            }
+                        }
+                    }
+                }
+                Ok(SingleStartAction::Skip { .. }) => {
+                    skips += 1;
+                }
+                Err(e) => {
+                    panic!("single_start_guard should not error in race: {}", e);
+                }
+            }
+        }
+
+        assert!(
+            tmux.window_exists("bob"),
+            "bob window must exist after race — at least one invocation must succeed",
+        );
+        assert!(
+            create_successes >= 1,
+            "at least one create_window must succeed, got {} successes",
+            create_successes,
+        );
+        assert!(
+            create_successes + create_failures + skips == 2,
+            "all invocations must resolve to success, duplicate error, or skip — \
+             got {} successes, {} failures, {} skips",
+            create_successes,
+            create_failures,
+            skips,
+        );
     }
 }
