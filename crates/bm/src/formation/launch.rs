@@ -17,6 +17,52 @@ pub(crate) fn reap_child(mut child: Child) {
     });
 }
 
+fn collect_bridge_env_vars(
+    member_token: Option<&str>,
+    bridge_type: Option<&str>,
+    service_url: Option<&str>,
+    gh_config_dir: Option<&std::path::Path>,
+) -> Result<Vec<(String, String)>> {
+    let mut vars = Vec::new();
+
+    if let Some(config_dir) = gh_config_dir {
+        let s = config_dir
+            .to_str()
+            .context("GH_CONFIG_DIR path contains non-UTF-8 characters")?;
+        vars.push(("GH_CONFIG_DIR".into(), s.into()));
+    }
+
+    if let Some(token) = member_token {
+        match bridge_type {
+            Some("rocketchat") => {
+                vars.push(("RALPH_ROCKETCHAT_AUTH_TOKEN".into(), token.into()));
+                if let Some(url) = service_url {
+                    vars.push(("RALPH_ROCKETCHAT_SERVER_URL".into(), url.into()));
+                }
+            }
+            Some("tuwunel") => {
+                vars.push(("RALPH_MATRIX_ACCESS_TOKEN".into(), token.into()));
+                if let Some(url) = service_url {
+                    vars.push(("RALPH_MATRIX_HOMESERVER_URL".into(), url.into()));
+                }
+            }
+            _ => {
+                vars.push(("RALPH_TELEGRAM_BOT_TOKEN".into(), token.into()));
+            }
+        }
+    }
+
+    Ok(vars)
+}
+
+fn vars_to_unset(gh_config_dir: Option<&std::path::Path>) -> Vec<&'static str> {
+    let mut vars = vec!["CLAUDECODE"];
+    if gh_config_dir.is_some() {
+        vars.extend_from_slice(&["GH_TOKEN", "GITHUB_TOKEN"]);
+    }
+    vars
+}
+
 /// Launches `ralph run -p PROMPT.md` in the given workspace directory.
 /// Returns the child PID.
 ///
@@ -33,36 +79,14 @@ pub fn launch_ralph(
     service_url: Option<&str>,
     gh_config_dir: Option<&std::path::Path>,
 ) -> Result<u32> {
+    let bridge_vars = collect_bridge_env_vars(member_token, bridge_type, service_url, gh_config_dir)?;
+
     // Credentials are written to a temporary file and sourced by the bash
     // wrapper. Sourcing sets env vars via setenv() which does NOT update
     // /proc/pid/environ, keeping secrets hidden from `ps auxe`.
     let mut cred_content = String::new();
-
-    if let Some(config_dir) = gh_config_dir {
-        let s = config_dir
-            .to_str()
-            .context("GH_CONFIG_DIR path contains non-UTF-8 characters")?;
-        writeln!(cred_content, "export GH_CONFIG_DIR='{s}'").unwrap();
-    }
-
-    if let Some(token) = member_token {
-        match bridge_type {
-            Some("rocketchat") => {
-                writeln!(cred_content, "export RALPH_ROCKETCHAT_AUTH_TOKEN='{token}'").unwrap();
-                if let Some(url) = service_url {
-                    writeln!(cred_content, "export RALPH_ROCKETCHAT_SERVER_URL='{url}'").unwrap();
-                }
-            }
-            Some("tuwunel") => {
-                writeln!(cred_content, "export RALPH_MATRIX_ACCESS_TOKEN='{token}'").unwrap();
-                if let Some(url) = service_url {
-                    writeln!(cred_content, "export RALPH_MATRIX_HOMESERVER_URL='{url}'").unwrap();
-                }
-            }
-            _ => {
-                writeln!(cred_content, "export RALPH_TELEGRAM_BOT_TOKEN='{token}'").unwrap();
-            }
-        }
+    for (key, value) in &bridge_vars {
+        writeln!(cred_content, "export {key}='{value}'").unwrap();
     }
 
     let has_credentials = !cred_content.is_empty();
@@ -76,10 +100,8 @@ pub fn launch_ralph(
         }
     }
 
-    let mut unsets = String::from("env -u CLAUDECODE");
-    if gh_config_dir.is_some() {
-        unsets.push_str(" -u GH_TOKEN -u GITHUB_TOKEN");
-    }
+    let env_u: Vec<_> = vars_to_unset(gh_config_dir).iter().map(|v| format!("-u {v}")).collect();
+    let unsets = format!("env {}", env_u.join(" "));
 
     let cmd_str = if has_credentials {
         // Source credentials (setenv — not in /proc/pid/environ), delete the
@@ -137,34 +159,12 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
         .to_str()
         .context("log path contains non-UTF-8 characters")?;
 
-    let mut env_strs: Vec<(String, String)> = Vec::new();
-
-    if let Some(config_dir) = config.gh_config_dir {
-        let s = config_dir
-            .to_str()
-            .context("GH_CONFIG_DIR path contains non-UTF-8 characters")?;
-        env_strs.push(("GH_CONFIG_DIR".into(), s.into()));
-    }
-
-    if let Some(token) = config.member_token {
-        match config.bridge_type {
-            Some("rocketchat") => {
-                env_strs.push(("RALPH_ROCKETCHAT_AUTH_TOKEN".into(), token.into()));
-                if let Some(url) = config.service_url {
-                    env_strs.push(("RALPH_ROCKETCHAT_SERVER_URL".into(), url.into()));
-                }
-            }
-            Some("tuwunel") => {
-                env_strs.push(("RALPH_MATRIX_ACCESS_TOKEN".into(), token.into()));
-                if let Some(url) = config.service_url {
-                    env_strs.push(("RALPH_MATRIX_HOMESERVER_URL".into(), url.into()));
-                }
-            }
-            _ => {
-                env_strs.push(("RALPH_TELEGRAM_BOT_TOKEN".into(), token.into()));
-            }
-        }
-    }
+    let mut env_strs = collect_bridge_env_vars(
+        config.member_token,
+        config.bridge_type,
+        config.service_url,
+        config.gh_config_dir,
+    )?;
 
     if let Some(rid) = config.room_id {
         env_strs.push(("BM_BRAIN_ROOM_ID".into(), rid.into()));
@@ -187,11 +187,7 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
         .map(|(k, v)| (k.as_str(), v.as_str()))
         .collect();
 
-    let mut unsets = vec!["CLAUDECODE"];
-    if config.gh_config_dir.is_some() {
-        unsets.extend_from_slice(&["GH_TOKEN", "GITHUB_TOKEN"]);
-    }
-    let unset_cmd = format!("unset {}", unsets.join(" "));
+    let unset_cmd = format!("unset {}", vars_to_unset(config.gh_config_dir).join(" "));
 
     // Bash wrapper tees all output (stdout+stderr) to brain-stderr.log while
     // keeping it visible in the tmux pane. The startup marker proves the
