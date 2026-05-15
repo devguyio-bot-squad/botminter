@@ -361,8 +361,49 @@ impl Formation for LinuxLocalFormation {
         Ok(())
     }
 
-    fn shell(&self, _member: Option<String>) -> Result<()> {
-        bail!("not yet implemented")
+    fn shell(&self, member: Option<String>) -> Result<()> {
+        let tmux = TmuxSession::new(&self.team_name)?;
+
+        if !tmux.exists() {
+            bail!("No tmux session found for team '{}'. Start members first with: bm start", self.team_name);
+        }
+
+        if let Some(ref name) = member {
+            if !tmux.window_exists(name) {
+                let windows = tmux.list_windows()?;
+                let available: Vec<&str> = windows.iter().map(|w| w.name.as_str()).collect();
+                bail!(
+                    "No window '{}' found. Available windows: {}",
+                    name,
+                    available.join(", ")
+                );
+            }
+        }
+
+        if std::env::var("TMUX").is_ok() {
+            eprintln!("Warning: already inside a tmux session. Nesting may cause issues. Use Ctrl-b d to detach.");
+        }
+
+        eprintln!("tmux cheat sheet:");
+        eprintln!("  Ctrl-b n  — next window");
+        eprintln!("  Ctrl-b p  — previous window");
+        eprintln!("  Ctrl-b [  — scroll mode (q to exit)");
+        eprintln!("  Ctrl-b d  — detach");
+
+        let target = match member {
+            Some(ref w) => format!("{}:{}", tmux.session_name(), w),
+            None => tmux.session_name().to_string(),
+        };
+
+        let status = super::tmux::tmux_cmd()
+            .args(["-L", "botminter", "attach-session", "-t", &target])
+            .status()
+            .with_context(|| format!("failed to attach to tmux session '{target}'"))?;
+
+        if !status.success() {
+            bail!("tmux attach-session failed for '{target}'");
+        }
+        Ok(())
     }
 
     fn write_topology(
@@ -509,7 +550,7 @@ mod tests {
     fn linux_formation_shell_returns_error() {
         let f = LinuxLocalFormation::new("test-team");
         let err = f.shell(None).unwrap_err();
-        assert!(err.to_string().contains("not yet implemented"));
+        assert!(err.to_string().contains("No tmux session found"));
     }
 
     #[test]
