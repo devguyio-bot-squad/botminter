@@ -1,7 +1,7 @@
 pub mod config;
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
@@ -89,15 +89,20 @@ pub struct SessionInfo {
     pub attach_command: String,
 }
 
+fn validate_name(name: &str, label: &str) -> Result<()> {
+    if name.is_empty()
+        || !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        bail!("Invalid {label} '{name}': must match [a-zA-Z0-9_-]+");
+    }
+    Ok(())
+}
+
 impl TmuxSession {
     pub fn new(team_name: &str) -> Result<Self> {
-        if team_name.is_empty()
-            || !team_name
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-        {
-            bail!("Invalid team name '{team_name}': must match [a-zA-Z0-9_-]+");
-        }
+        validate_name(team_name, "team name")?;
 
         let config_path = TmuxConfig::path()?;
 
@@ -176,6 +181,17 @@ impl TmuxSession {
             self.destroy()?;
         }
         Ok(())
+    }
+
+    pub fn create_window(
+        &self,
+        name: &str,
+        cmd: &[&str],
+        cwd: &Path,
+        envs: &[(&str, &str)],
+    ) -> Result<u32> {
+        let _ = (name, cmd, cwd, envs);
+        bail!("not yet implemented")
     }
 }
 
@@ -561,6 +577,186 @@ mod tests {
         assert!(
             result.is_err(),
             "second create() must return Err when session already exists"
+        );
+    }
+
+    // ── CT-01: AC1 — Window Creation with Command ──────────────────────
+
+    #[test]
+    fn create_window_creates_named_window_with_valid_pid() {
+        let session = TmuxSession::new("ct01-create").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        let pid = session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window should succeed");
+
+        assert!(pid > 0, "PID must be a positive integer, got: {pid}");
+
+        let has_window = tmux_cmd()
+            .args([
+                "-L", "botminter", "list-windows", "-t", "bm-ct01-create",
+                "-F", "#{window_name}",
+            ])
+            .output()
+            .expect("list-windows should execute");
+        let windows = String::from_utf8_lossy(&has_window.stdout);
+        assert!(
+            windows.contains("bob"),
+            "window named 'bob' must exist, got: {windows}"
+        );
+
+        let alive = unsafe { libc::kill(pid as i32, 0) };
+        assert_eq!(alive, 0, "PID {pid} must be alive (kill -0 returned {alive})");
+    }
+
+    // ── CT-01: AC2 — Environment Variable Passing ──────────────────────
+
+    #[test]
+    fn create_window_passes_env_vars_securely() {
+        let session = TmuxSession::new("ct01-env").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        let pid = session
+            .create_window(
+                "envtest",
+                &["sleep", "300"],
+                &cwd,
+                &[("SECRET", "token123")],
+            )
+            .expect("create_window with envs should succeed");
+
+        let start_cmd = tmux_cmd()
+            .args([
+                "-L", "botminter", "display-message",
+                "-t", "bm-ct01-env:envtest",
+                "-p", "#{pane_start_command}",
+            ])
+            .output()
+            .expect("display-message should execute");
+        let start_cmd_str = String::from_utf8_lossy(&start_cmd.stdout);
+        assert!(
+            !start_cmd_str.contains("token123"),
+            "secret must NOT appear in pane_start_command, got: {start_cmd_str}"
+        );
+
+        let ps_output = Command::new("ps")
+            .args(["-p", &pid.to_string(), "-o", "args="])
+            .output()
+            .expect("ps should execute");
+        let ps_str = String::from_utf8_lossy(&ps_output.stdout);
+        assert!(
+            !ps_str.contains("token123"),
+            "secret must NOT appear in ps output, got: {ps_str}"
+        );
+    }
+
+    // ── CT-01: AC3 — Window Name Validation — Valid ────────────────────
+
+    #[test]
+    fn create_window_accepts_valid_names() {
+        let session = TmuxSession::new("ct01-valid").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        for name in &["bob", "agent_1", "my-worker"] {
+            let result = session.create_window(name, &["sleep", "300"], &cwd, &[]);
+            assert!(
+                result.is_ok(),
+                "window name '{name}' must be accepted, got: {:?}",
+                result.unwrap_err()
+            );
+        }
+    }
+
+    // ── CT-01: AC4 — Window Name Validation — Invalid ──────────────────
+
+    #[test]
+    fn create_window_rejects_invalid_names() {
+        let session = TmuxSession::new("ct01-invalid").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        for name in &["my;window", "win:name", "win name", ""] {
+            let result = session.create_window(name, &["sleep", "300"], &cwd, &[]);
+            assert!(
+                result.is_err(),
+                "window name '{name}' must be rejected"
+            );
+            let err = result.unwrap_err().to_string();
+            assert!(
+                err.contains("Invalid") || err.contains("invalid"),
+                "error for '{name}' must mention invalid, got: {err}"
+            );
+        }
+    }
+
+    // ── CT-01: AC5 — Immediate Exit Detection — Non-Zero Exit ──────────
+
+    #[test]
+    fn create_window_detects_immediate_nonzero_exit() {
+        let session = TmuxSession::new("ct01-exit").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        let result = session.create_window("fail", &["false"], &cwd, &[]);
+        assert!(
+            result.is_err(),
+            "create_window with 'false' must return Err, not a stale PID"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("exit") || err.contains("Exit") || err.contains("status"),
+            "error must mention exit status, got: {err}"
+        );
+    }
+
+    // ── CT-01: AC6 — Immediate Exit Detection — Binary Not Found ───────
+
+    #[test]
+    fn create_window_detects_binary_not_found() {
+        let session = TmuxSession::new("ct01-notfound").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        let result =
+            session.create_window("missing", &["__nonexistent_binary__"], &cwd, &[]);
+        assert!(
+            result.is_err(),
+            "create_window with nonexistent binary must return Err"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            !err.contains("not yet implemented"),
+            "error must be a real error, not a stub: {err}"
+        );
+    }
+
+    // ── CT-01: AC7 — No Session Error ──────────────────────────────────
+
+    #[test]
+    fn create_window_without_session_returns_error() {
+        let session = TmuxSession::new("ct01-nosess").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+
+        let cwd = std::env::temp_dir();
+        let result = session.create_window("test", &["sleep", "300"], &cwd, &[]);
+        assert!(
+            result.is_err(),
+            "create_window without a session must return Err"
+        );
+        let err = result.unwrap_err().to_string();
+        assert!(
+            !err.contains("not yet implemented"),
+            "error must describe missing session, not be a stub: {err}"
         );
     }
 }
