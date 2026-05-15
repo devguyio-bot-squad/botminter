@@ -69,7 +69,6 @@ fn parse_tmux_version(output: &str) -> Result<TmuxVersion> {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)]
 pub struct TmuxSession {
     socket_name: String,
     session_name: String,
@@ -118,32 +117,22 @@ impl TmuxSession {
         parse_tmux_version(&stdout)
     }
 
-    pub fn create(&self) -> Result<()> {
-        TmuxConfig::ensure_written()?;
+    fn run_session_cmd(&self, subcommand: &str, args: &[&str]) -> Result<()> {
+        let mut cmd = tmux_cmd();
+        cmd.args(["-L", &self.socket_name, subcommand]);
+        cmd.args(args);
 
-        let output = tmux_cmd()
-            .args([
-                "-L",
-                &self.socket_name,
-                "new-session",
-                "-d",
-                "-s",
-                &self.session_name,
-                "-f",
-            ])
-            .arg(&self.config_path)
-            .output()
-            .with_context(|| {
-                format!(
-                    "failed to run tmux new-session for '{}' on socket '{}'",
-                    self.session_name, self.socket_name
-                )
-            })?;
+        let output = cmd.output().with_context(|| {
+            format!(
+                "failed to run tmux {subcommand} for '{}' on socket '{}'",
+                self.session_name, self.socket_name
+            )
+        })?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             bail!(
-                "tmux new-session failed for '{}' on socket '{}': {}",
+                "tmux {subcommand} failed for '{}' on socket '{}': {}",
                 self.session_name,
                 self.socket_name,
                 stderr.trim()
@@ -151,6 +140,15 @@ impl TmuxSession {
         }
 
         Ok(())
+    }
+
+    pub fn create(&self) -> Result<()> {
+        TmuxConfig::ensure_written()?;
+        let config = self
+            .config_path
+            .to_str()
+            .context("config path contains non-UTF-8 characters")?;
+        self.run_session_cmd("new-session", &["-d", "-s", &self.session_name, "-f", config])
     }
 
     pub fn exists(&self) -> bool {
@@ -170,33 +168,7 @@ impl TmuxSession {
     }
 
     pub fn destroy(&self) -> Result<()> {
-        let output = tmux_cmd()
-            .args([
-                "-L",
-                &self.socket_name,
-                "kill-session",
-                "-t",
-                &self.session_name,
-            ])
-            .output()
-            .with_context(|| {
-                format!(
-                    "failed to run tmux kill-session for '{}' on socket '{}'",
-                    self.session_name, self.socket_name
-                )
-            })?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            bail!(
-                "tmux kill-session failed for '{}' on socket '{}': {}",
-                self.session_name,
-                self.socket_name,
-                stderr.trim()
-            );
-        }
-
-        Ok(())
+        self.run_session_cmd("kill-session", &["-t", &self.session_name])
     }
 
     pub fn destroy_if_exists(&self) -> Result<()> {
@@ -425,9 +397,8 @@ mod tests {
 
     impl Drop for TmuxGuard {
         fn drop(&mut self) {
-            let _ = Command::new("tmux")
+            let _ = tmux_cmd()
                 .args(["-L", "botminter", "kill-session", "-t", &self.session_name])
-                .env_remove("TMUX_TMPDIR")
                 .output();
         }
     }
@@ -439,12 +410,10 @@ mod tests {
         let session = TmuxSession::new("ct03-create").unwrap();
         let _guard = TmuxGuard::new(&session.session_name);
 
-        TmuxConfig::ensure_written().unwrap();
         session.create().expect("create() should succeed");
 
-        let output = Command::new("tmux")
+        let output = tmux_cmd()
             .args(["-L", "botminter", "has-session", "-t", "bm-ct03-create"])
-            .env_remove("TMUX_TMPDIR")
             .output()
             .expect("tmux has-session command should execute");
         assert!(
@@ -460,7 +429,6 @@ mod tests {
         let session = TmuxSession::new("ct03-exists-t").unwrap();
         let _guard = TmuxGuard::new(&session.session_name);
 
-        TmuxConfig::ensure_written().unwrap();
         session.create().expect("create() should succeed");
         assert!(
             session.exists(),
@@ -488,7 +456,6 @@ mod tests {
         let session = TmuxSession::new("ct03-destroy").unwrap();
         let _guard = TmuxGuard::new(&session.session_name);
 
-        TmuxConfig::ensure_written().unwrap();
         session.create().expect("create() should succeed");
         session.destroy().expect("destroy() should succeed");
         assert!(
@@ -519,7 +486,6 @@ mod tests {
         let session = TmuxSession::new("ct03-config").unwrap();
         let _guard = TmuxGuard::new(&session.session_name);
 
-        TmuxConfig::ensure_written().unwrap();
         session.create().expect("create() should succeed");
 
         let config_path = TmuxConfig::path().unwrap();
@@ -544,12 +510,10 @@ mod tests {
         let session = TmuxSession::new("ct03-socket").unwrap();
         let _guard = TmuxGuard::new(&session.session_name);
 
-        TmuxConfig::ensure_written().unwrap();
         session.create().expect("create() should succeed");
 
-        let botminter_output = Command::new("tmux")
+        let botminter_output = tmux_cmd()
             .args(["-L", "botminter", "list-sessions", "-F", "#{session_name}"])
-            .env_remove("TMUX_TMPDIR")
             .output()
             .expect("tmux list-sessions on botminter socket should execute");
         let botminter_sessions = String::from_utf8_lossy(&botminter_output.stdout);
@@ -558,9 +522,8 @@ mod tests {
             "session must appear on botminter socket, got: {botminter_sessions}"
         );
 
-        let default_output = Command::new("tmux")
+        let default_output = tmux_cmd()
             .args(["list-sessions", "-F", "#{session_name}"])
-            .env_remove("TMUX_TMPDIR")
             .output();
         if let Ok(output) = default_output {
             let default_sessions = String::from_utf8_lossy(&output.stdout);
@@ -578,8 +541,6 @@ mod tests {
         let session = TmuxSession::new("ct03-lifecycle").unwrap();
         let _guard = TmuxGuard::new(&session.session_name);
 
-        TmuxConfig::ensure_written().unwrap();
-
         session.create().expect("create() should succeed");
         assert!(session.exists(), "exists() must be true after create()");
 
@@ -594,7 +555,6 @@ mod tests {
         let session = TmuxSession::new("ct03-double").unwrap();
         let _guard = TmuxGuard::new(&session.session_name);
 
-        TmuxConfig::ensure_written().unwrap();
         session.create().expect("first create() should succeed");
 
         let result = session.create();
