@@ -190,8 +190,114 @@ impl TmuxSession {
         cwd: &Path,
         envs: &[(&str, &str)],
     ) -> Result<u32> {
-        let _ = (name, cmd, cwd, envs);
-        bail!("not yet implemented")
+        validate_name(name, "window name")?;
+
+        let config_str = self
+            .config_path
+            .to_str()
+            .context("config path contains non-UTF-8 characters")?;
+        tmux_cmd()
+            .args(["-L", &self.socket_name, "source-file", config_str])
+            .output()
+            .with_context(|| {
+                format!("failed to source config file '{config_str}'")
+            })?;
+
+        let cwd_str = cwd
+            .to_str()
+            .context("cwd contains non-UTF-8 characters")?;
+
+        let mut tmux = tmux_cmd();
+        tmux.args([
+            "-L",
+            &self.socket_name,
+            "new-window",
+            "-t",
+            &self.session_name,
+            "-n",
+            name,
+            "-c",
+            cwd_str,
+        ]);
+
+        for (k, v) in envs {
+            tmux.args(["-e", &format!("{k}={v}")]);
+        }
+
+        tmux.arg("--");
+        tmux.args(cmd);
+
+        let output = tmux.output().with_context(|| {
+            format!(
+                "failed to create window '{name}' in session '{}' on socket '{}'",
+                self.session_name, self.socket_name
+            )
+        })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "tmux new-window failed for window '{name}' in session '{}' on socket '{}': {}",
+                self.session_name,
+                self.socket_name,
+                stderr.trim()
+            );
+        }
+
+        let target = format!("{}:{}", self.session_name, name);
+        let pid_output = tmux_cmd()
+            .args([
+                "-L",
+                &self.socket_name,
+                "display-message",
+                "-t",
+                &target,
+                "-p",
+                "#{pane_pid}",
+            ])
+            .output()
+            .with_context(|| format!("failed to query PID for window '{name}'"))?;
+
+        if !pid_output.status.success() {
+            let stderr = String::from_utf8_lossy(&pid_output.stderr);
+            bail!("failed to get PID for window '{name}': {}", stderr.trim());
+        }
+
+        let pid_str = String::from_utf8_lossy(&pid_output.stdout);
+        let pid: u32 = pid_str.trim().parse().with_context(|| {
+            format!(
+                "failed to parse PID from tmux output: '{}'",
+                pid_str.trim()
+            )
+        })?;
+
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let dead_output = tmux_cmd()
+            .args([
+                "-L",
+                &self.socket_name,
+                "display-message",
+                "-t",
+                &target,
+                "-p",
+                "#{pane_dead}:#{pane_dead_status}",
+            ])
+            .output()
+            .with_context(|| {
+                format!("failed to check process status for window '{name}'")
+            })?;
+
+        let dead_str = String::from_utf8_lossy(&dead_output.stdout);
+        let dead_str = dead_str.trim();
+
+        if let Some(exit_code) = dead_str.strip_prefix("1:") {
+            bail!(
+                "process in window '{name}' exited immediately with exit status {exit_code}"
+            );
+        }
+
+        Ok(pid)
     }
 }
 
