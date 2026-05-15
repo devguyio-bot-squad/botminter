@@ -6,6 +6,7 @@ use anyhow::{bail, Context, Result};
 
 use crate::bridge::{self, BridgeStartResult};
 use crate::config::{BotminterConfig, TeamEntry};
+use crate::formation::local::tmux::TmuxSession;
 use crate::formation::{self, CredentialDomain};
 use crate::git::app_auth;
 use crate::git::manifest_flow::credential_keys;
@@ -456,11 +457,11 @@ pub(crate) fn resolve_app_credentials_and_deliver(
 pub(crate) fn prepare_tmux_session(
     team_name: &str,
     is_full_start: bool,
-) -> Result<formation::local::tmux::TmuxSession> {
-    formation::local::tmux::TmuxSession::check_tmux_available()?;
+) -> Result<TmuxSession> {
+    TmuxSession::check_tmux_available()?;
     formation::local::tmux::config::TmuxConfig::ensure_written()?;
 
-    let tmux = formation::local::tmux::TmuxSession::new(team_name)?;
+    let tmux = TmuxSession::new(team_name)?;
 
     if is_full_start {
         tmux.destroy_if_exists()?;
@@ -490,7 +491,7 @@ pub(crate) enum SingleStartAction {
 /// - Window dead → removes the dead window, then `Launch`
 #[allow(dead_code)]
 pub(crate) fn single_start_guard(
-    tmux: &formation::local::tmux::TmuxSession,
+    tmux: &TmuxSession,
     member: &str,
 ) -> Result<SingleStartAction> {
     if !tmux.window_exists(member) {
@@ -1027,7 +1028,6 @@ mod tests {
 
         let results: Vec<_> = handles.into_iter().map(|h| h.join().unwrap()).collect();
 
-        let mut launches = 0;
         let mut skips = 0;
         let mut create_successes = 0;
         let mut create_failures = 0;
@@ -1035,7 +1035,6 @@ mod tests {
         for (_i, guard_result, create_result) in &results {
             match guard_result {
                 Ok(SingleStartAction::Launch) => {
-                    launches += 1;
                     if let Some(cr) = create_result {
                         match cr {
                             Ok(_) => create_successes += 1,
