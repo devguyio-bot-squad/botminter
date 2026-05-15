@@ -194,7 +194,8 @@ impl TmuxSession {
         self.run_session_cmd(
             "new-session",
             &["-d", "-s", &self.session_name, "-f", self.config_str()?],
-        )
+        )?;
+        self.source_config()
     }
 
     pub fn exists(&self) -> bool {
@@ -224,20 +225,107 @@ impl TmuxSession {
         Ok(())
     }
 
-    pub fn window_exists(&self, _name: &str) -> bool {
-        false
+    pub fn window_exists(&self, name: &str) -> bool {
+        let output = tmux_cmd()
+            .args([
+                "-L",
+                &self.socket_name,
+                "list-windows",
+                "-t",
+                &self.session_name,
+                "-F",
+                "#{window_name}",
+            ])
+            .stderr(std::process::Stdio::null())
+            .output();
+
+        match output {
+            Ok(out) if out.status.success() => {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                stdout.lines().any(|line| line.trim() == name)
+            }
+            _ => false,
+        }
     }
 
-    pub fn is_pane_dead(&self, _window: &str) -> Result<bool> {
-        bail!("not yet implemented")
+    pub fn is_pane_dead(&self, window: &str) -> Result<bool> {
+        if !self.window_exists(window) {
+            bail!(
+                "window '{window}' not found in session '{}'",
+                self.session_name
+            );
+        }
+        let target = format!("{}:{}", self.session_name, window);
+        let result = self.query_pane_format(&target, "#{pane_dead}")?;
+        match result.as_str() {
+            "1" => Ok(true),
+            "0" => Ok(false),
+            other => bail!("unexpected pane_dead value for window '{window}': {other}"),
+        }
     }
 
-    pub fn pane_pid(&self, _window: &str) -> Result<u32> {
-        bail!("not yet implemented")
+    pub fn pane_pid(&self, window: &str) -> Result<u32> {
+        if !self.window_exists(window) {
+            bail!(
+                "window '{window}' not found in session '{}'",
+                self.session_name
+            );
+        }
+        let target = format!("{}:{}", self.session_name, window);
+        let pid_str = self.query_pane_format(&target, "#{pane_pid}")?;
+        pid_str
+            .parse()
+            .with_context(|| format!("failed to parse PID for window '{window}': '{pid_str}'"))
     }
 
     pub fn list_windows(&self) -> Result<Vec<TmuxWindow>> {
-        bail!("not yet implemented")
+        let output = tmux_cmd()
+            .args([
+                "-L",
+                &self.socket_name,
+                "list-windows",
+                "-t",
+                &self.session_name,
+                "-F",
+                "#{window_index}|#{window_name}|#{pane_pid}|#{pane_dead}",
+            ])
+            .output()
+            .with_context(|| {
+                format!(
+                    "failed to list windows for session '{}' on socket '{}'",
+                    self.session_name, self.socket_name
+                )
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "tmux list-windows failed for session '{}' on socket '{}': {}",
+                self.session_name,
+                self.socket_name,
+                stderr.trim()
+            );
+        }
+
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let mut windows = Vec::new();
+        for line in stdout.lines() {
+            let parts: Vec<&str> = line.split('|').collect();
+            if parts.len() != 4 {
+                continue;
+            }
+            windows.push(TmuxWindow {
+                index: parts[0].parse().with_context(|| {
+                    format!("failed to parse window index from '{}'", parts[0])
+                })?,
+                name: parts[1].to_string(),
+                pane_pid: parts[2].parse().with_context(|| {
+                    format!("failed to parse pane PID from '{}'", parts[2])
+                })?,
+                dead: parts[3] == "1",
+            });
+        }
+        Ok(windows)
     }
 
     pub fn create_window(
