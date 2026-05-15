@@ -4,7 +4,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::process::Command;
 
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 
 use config::TmuxConfig;
 
@@ -27,12 +27,53 @@ fn tmux_cmd() -> Command {
 }
 
 pub fn parse_tmux_version(output: &str) -> Result<TmuxVersion> {
-    bail!("not implemented")
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        bail!("empty tmux version output");
+    }
+
+    let bytes = trimmed.as_bytes();
+    let len = bytes.len();
+    let mut i = 0;
+
+    while i < len {
+        if bytes[i].is_ascii_digit() {
+            let major_start = i;
+            while i < len && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            if i < len && bytes[i] == b'.' {
+                let major: u32 = trimmed[major_start..i].parse()?;
+                i += 1;
+                let minor_start = i;
+                while i < len && bytes[i].is_ascii_digit() {
+                    i += 1;
+                }
+                if i > minor_start {
+                    let minor: u32 = trimmed[minor_start..i].parse()?;
+                    if major < 3 {
+                        bail!(
+                            "tmux version {major}.{minor} is below minimum required 3.0"
+                        );
+                    }
+                    return Ok(TmuxVersion { major, minor });
+                }
+            }
+        }
+        i += 1;
+    }
+
+    bail!("failed to parse tmux version from: {trimmed}")
 }
 
 impl TmuxSession {
     pub fn check_tmux_available() -> Result<TmuxVersion> {
-        bail!("not implemented")
+        let output = tmux_cmd()
+            .arg("-V")
+            .output()
+            .context("tmux is not installed or not found in PATH")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_tmux_version(&stdout)
     }
 }
 
