@@ -8,6 +8,8 @@ use anyhow::{bail, Context, Result};
 
 use config::TmuxConfig;
 
+const MINIMUM_MAJOR_VERSION: u32 = 3;
+
 #[derive(Debug)]
 pub struct TmuxVersion {
     pub major: u32,
@@ -26,7 +28,7 @@ fn tmux_cmd() -> Command {
     cmd
 }
 
-pub fn parse_tmux_version(output: &str) -> Result<TmuxVersion> {
+fn parse_tmux_version(output: &str) -> Result<TmuxVersion> {
     let trimmed = output.trim();
     if trimmed.is_empty() {
         bail!("empty tmux version output");
@@ -51,9 +53,9 @@ pub fn parse_tmux_version(output: &str) -> Result<TmuxVersion> {
                 }
                 if i > minor_start {
                     let minor: u32 = trimmed[minor_start..i].parse()?;
-                    if major < 3 {
+                    if major < MINIMUM_MAJOR_VERSION {
                         bail!(
-                            "tmux version {major}.{minor} is below minimum required 3.0"
+                            "tmux version {major}.{minor} is below minimum required {MINIMUM_MAJOR_VERSION}.0"
                         );
                     }
                     return Ok(TmuxVersion { major, minor });
@@ -66,15 +68,12 @@ pub fn parse_tmux_version(output: &str) -> Result<TmuxVersion> {
     bail!("failed to parse tmux version from: {trimmed}")
 }
 
-impl TmuxSession {
-    pub fn check_tmux_available() -> Result<TmuxVersion> {
-        let output = tmux_cmd()
-            .arg("-V")
-            .output()
-            .context("tmux is not installed or not found in PATH")?;
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        parse_tmux_version(&stdout)
-    }
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct TmuxSession {
+    socket_name: String,
+    session_name: String,
+    config_path: PathBuf,
 }
 
 pub struct TmuxWindow {
@@ -89,14 +88,6 @@ pub struct SessionInfo {
     pub socket_name: String,
     pub windows: Vec<TmuxWindow>,
     pub attach_command: String,
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-pub struct TmuxSession {
-    socket_name: String,
-    session_name: String,
-    config_path: PathBuf,
 }
 
 impl TmuxSession {
@@ -116,6 +107,15 @@ impl TmuxSession {
             session_name: format!("bm-{team_name}"),
             config_path,
         })
+    }
+
+    pub fn check_tmux_available() -> Result<TmuxVersion> {
+        let output = tmux_cmd()
+            .arg("-V")
+            .output()
+            .context("tmux is not installed or not found in PATH")?;
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        parse_tmux_version(&stdout)
     }
 }
 
