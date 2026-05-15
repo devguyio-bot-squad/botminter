@@ -326,6 +326,26 @@ impl TmuxSession {
         Ok(windows)
     }
 
+    pub fn kill_window_process(&self, _name: &str) -> Result<()> {
+        bail!("not yet implemented")
+    }
+
+    pub fn remove_window(&self, _name: &str) -> Result<()> {
+        bail!("not yet implemented")
+    }
+
+    pub fn remove_dead_window(&self, _name: &str) -> Result<()> {
+        bail!("not yet implemented")
+    }
+
+    pub fn session_info(&self) -> Result<SessionInfo> {
+        bail!("not yet implemented")
+    }
+
+    pub fn attach(&self, _window: Option<&str>) -> Result<()> {
+        bail!("not yet implemented")
+    }
+
     pub fn create_window(
         &self,
         name: &str,
@@ -1144,6 +1164,378 @@ mod tests {
         assert!(
             dead_err.contains("ghost"),
             "error must mention window name 'ghost', got: {dead_err}"
+        );
+    }
+
+    // ── CT-03 (Story #6): Kill Window Process ────────────────────────────
+
+    #[test]
+    fn kill_window_process_sends_sigterm_and_pane_dies() {
+        let session = TmuxSession::new("ct03w-kill").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        let pid = session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window should succeed");
+
+        session
+            .kill_window_process("bob")
+            .expect("kill_window_process should succeed");
+
+        let mut detected = false;
+        for _ in 0..5 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            match session.is_pane_dead("bob") {
+                Ok(true) => {
+                    detected = true;
+                    break;
+                }
+                Ok(false) => continue,
+                Err(e) => panic!("is_pane_dead returned error: {e}"),
+            }
+        }
+        assert!(
+            detected,
+            "is_pane_dead must return true after kill_window_process (PID {pid} should be dead)"
+        );
+
+        assert!(
+            session.window_exists("bob"),
+            "window 'bob' must still exist in session after kill (remain-on-exit)"
+        );
+    }
+
+    // ── CT-03 (Story #6): Remove Window ──────────────────────────────────
+
+    #[test]
+    fn remove_window_removes_named_window() {
+        let session = TmuxSession::new("ct03w-remove").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window should succeed");
+
+        session
+            .remove_window("bob")
+            .expect("remove_window should succeed");
+
+        assert!(
+            !session.window_exists("bob"),
+            "window 'bob' must not exist after remove_window"
+        );
+    }
+
+    // ── CT-03 (Story #6): Remove Dead Window — Dead Pane ─────────────────
+
+    #[test]
+    fn remove_dead_window_removes_dead_pane() {
+        let session = TmuxSession::new("ct03w-rmdead").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        // Use tmux directly to create a window with `true` (exits immediately)
+        // to avoid create_window's immediate-exit detection
+        tmux_cmd()
+            .args([
+                "-L", "botminter", "new-window",
+                "-t", &session.session_name,
+                "-n", "deadwin",
+                "-c", cwd.to_str().unwrap(),
+                "--", "true",
+            ])
+            .output()
+            .expect("tmux new-window should succeed");
+
+        // Poll until pane is dead
+        let mut dead = false;
+        for _ in 0..5 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if session.is_pane_dead("deadwin").unwrap_or(false) {
+                dead = true;
+                break;
+            }
+        }
+        assert!(dead, "pane must be dead before testing remove_dead_window");
+
+        session
+            .remove_dead_window("deadwin")
+            .expect("remove_dead_window should succeed for dead pane");
+
+        assert!(
+            !session.window_exists("deadwin"),
+            "dead window must be removed after remove_dead_window"
+        );
+    }
+
+    // ── CT-03 (Story #6): Remove Dead Window — Live Pane (No-Op) ─────────
+
+    #[test]
+    fn remove_dead_window_is_noop_for_live_pane() {
+        let session = TmuxSession::new("ct03w-rmlive").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        let pid = session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window should succeed");
+
+        let result = session.remove_dead_window("bob");
+        assert!(
+            result.is_ok(),
+            "remove_dead_window must return Ok for live pane, got: {:?}",
+            result.unwrap_err()
+        );
+
+        assert!(
+            session.window_exists("bob"),
+            "live window 'bob' must still exist after remove_dead_window"
+        );
+
+        let alive = unsafe { libc::kill(pid as i32, 0) };
+        assert_eq!(alive, 0, "process PID {pid} must still be alive");
+    }
+
+    // ── CT-03 (Story #6): Session Info ───────────────────────────────────
+
+    #[test]
+    fn session_info_returns_correct_state() {
+        let session = TmuxSession::new("ct03w-info").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window 'bob' should succeed");
+        session
+            .create_window("cos", &["sleep", "300"], &cwd, &[])
+            .expect("create_window 'cos' should succeed");
+
+        let info = session
+            .session_info()
+            .expect("session_info should succeed");
+
+        assert_eq!(
+            info.session_name, "bm-ct03w-info",
+            "session_name must match"
+        );
+        assert_eq!(
+            info.socket_name, "botminter",
+            "socket_name must be 'botminter'"
+        );
+
+        let names: Vec<&str> = info.windows.iter().map(|w| w.name.as_str()).collect();
+        assert!(
+            names.contains(&"bob"),
+            "session_info windows must include 'bob', got: {names:?}"
+        );
+        assert!(
+            names.contains(&"cos"),
+            "session_info windows must include 'cos', got: {names:?}"
+        );
+
+        assert!(
+            info.attach_command.contains("tmux"),
+            "attach_command must contain 'tmux', got: {}",
+            info.attach_command
+        );
+        assert!(
+            info.attach_command.contains("botminter"),
+            "attach_command must reference botminter socket, got: {}",
+            info.attach_command
+        );
+    }
+
+    // ── CT-03 (Story #6): Attach — Basic ─────────────────────────────────
+
+    #[test]
+    fn attach_basic_creates_client() {
+        let session = TmuxSession::new("ct03w-attach").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window should succeed");
+
+        let session_name = session.session_name.clone();
+        let handle = std::thread::spawn(move || {
+            let s = TmuxSession::new("ct03w-attach").unwrap();
+            s.attach(None)
+        });
+
+        // Poll for tmux client
+        let mut client_found = false;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let output = tmux_cmd()
+                .args(["-L", "botminter", "list-clients", "-F", "#{client_session}"])
+                .output();
+            if let Ok(out) = output {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if stdout.contains(&session_name) {
+                    client_found = true;
+                    break;
+                }
+            }
+        }
+
+        // Send detach keys to release the blocking attach
+        let _ = tmux_cmd()
+            .args([
+                "-L", "botminter", "send-keys",
+                "-t", &session_name,
+                "C-b", "",
+            ])
+            .output();
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        let _ = tmux_cmd()
+            .args(["-L", "botminter", "detach-client", "-s", &session_name])
+            .output();
+
+        let result = handle.join().expect("attach thread should not panic");
+
+        assert!(
+            client_found,
+            "tmux client must appear in list-clients after attach"
+        );
+    }
+
+    // ── CT-03 (Story #6): Attach — With Window Target ────────────────────
+
+    #[test]
+    fn attach_with_window_targets_specific_window() {
+        let session = TmuxSession::new("ct03w-attwin").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window 'bob' should succeed");
+        session
+            .create_window("cos", &["sleep", "300"], &cwd, &[])
+            .expect("create_window 'cos' should succeed");
+
+        let session_name = session.session_name.clone();
+        let handle = std::thread::spawn(move || {
+            let s = TmuxSession::new("ct03w-attwin").unwrap();
+            s.attach(Some("bob"))
+        });
+
+        // Poll for client
+        let mut client_found = false;
+        for _ in 0..20 {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            let output = tmux_cmd()
+                .args(["-L", "botminter", "list-clients", "-F", "#{client_session}"])
+                .output();
+            if let Ok(out) = output {
+                let stdout = String::from_utf8_lossy(&out.stdout);
+                if stdout.contains(&session_name) {
+                    client_found = true;
+                    break;
+                }
+            }
+        }
+
+        // Detach client
+        let _ = tmux_cmd()
+            .args(["-L", "botminter", "detach-client", "-s", &session_name])
+            .output();
+
+        let _ = handle.join();
+
+        assert!(
+            client_found,
+            "tmux client must appear when attaching with window target"
+        );
+    }
+
+    // ── CT-03 (Story #6): Full Lifecycle Integration ─────────────────────
+
+    #[test]
+    fn window_full_lifecycle_integration() {
+        let session = TmuxSession::new("ct03w-life").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+
+        // Create two windows: one long-running, one that exits immediately
+        session
+            .create_window("alive", &["sleep", "300"], &cwd, &[])
+            .expect("create_window 'alive' should succeed");
+
+        // Use tmux directly for `true` to avoid immediate-exit detection
+        tmux_cmd()
+            .args([
+                "-L", "botminter", "new-window",
+                "-t", &session.session_name,
+                "-n", "mortal",
+                "-c", cwd.to_str().unwrap(),
+                "--", "true",
+            ])
+            .output()
+            .expect("tmux new-window for 'mortal' should succeed");
+
+        // List and verify both windows exist
+        let windows = session.list_windows().expect("list_windows should succeed");
+        let names: Vec<&str> = windows.iter().map(|w| w.name.as_str()).collect();
+        assert!(names.contains(&"alive"), "must have 'alive' window");
+        assert!(names.contains(&"mortal"), "must have 'mortal' window");
+
+        // Wait for mortal to die
+        let mut mortal_dead = false;
+        for _ in 0..5 {
+            std::thread::sleep(std::time::Duration::from_millis(100));
+            if session.is_pane_dead("mortal").unwrap_or(false) {
+                mortal_dead = true;
+                break;
+            }
+        }
+        assert!(mortal_dead, "'mortal' window must be dead");
+
+        // Remove dead window
+        session
+            .remove_dead_window("mortal")
+            .expect("remove_dead_window should succeed");
+        assert!(
+            !session.window_exists("mortal"),
+            "'mortal' window must be removed"
+        );
+
+        // Verify live window is undisturbed
+        assert!(
+            session.window_exists("alive"),
+            "'alive' window must still exist"
+        );
+        assert!(
+            !session.is_pane_dead("alive").unwrap(),
+            "'alive' window must still be running"
+        );
+    }
+
+    // ── CT-03 (Story #6): Remove Non-Existent Window Error ───────────────
+
+    #[test]
+    fn remove_nonexistent_window_returns_error() {
+        let session = TmuxSession::new("ct03w-rmghost").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+        session.create().expect("session create should succeed");
+
+        let result = session.remove_window("ghost");
+        assert!(
+            result.is_err(),
+            "remove_window for non-existent window must return Err"
         );
     }
 }
