@@ -1,6 +1,7 @@
 use std::fs;
+use std::io::Write;
 use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
@@ -17,24 +18,26 @@ impl TmuxConfig {
     }
 
     pub fn ensure_written() -> Result<()> {
-        let path = Self::path()?;
+        Self::write_to(&Self::path()?)
+    }
+
+    fn write_to(path: &Path) -> Result<()> {
         let dir = path
             .parent()
             .context("Config path has no parent directory")?;
         fs::create_dir_all(dir)
             .with_context(|| format!("Failed to create config dir {}", dir.display()))?;
 
-        let content = Self::config_content();
-
-        let tmp = tempfile::NamedTempFile::new_in(dir)
+        let mut tmp = tempfile::NamedTempFile::new_in(dir)
             .context("Failed to create temp config file")?;
-        fs::write(tmp.path(), content).context("Failed to write temp config file")?;
+        tmp.write_all(Self::config_content().as_bytes())
+            .context("Failed to write config content")?;
 
         let perms = fs::Permissions::from_mode(0o600);
         fs::set_permissions(tmp.path(), perms)
             .context("Failed to set config file permissions")?;
 
-        tmp.persist(&path)
+        tmp.persist(path)
             .context("Failed to persist config file")?;
 
         Ok(())
@@ -93,23 +96,13 @@ mod tests {
     }
 
     #[test]
-    fn ensure_written_creates_file_with_correct_content() {
-        let tmp = tempfile::tempdir().unwrap();
-        let config_path = tmp.path().join("tmux.conf");
+    fn write_to_creates_file_with_correct_content() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tmux.conf");
 
-        // ensure_written() should write to the real path, not tmp —
-        // this test verifies the file at the real path after calling ensure_written().
-        // For red phase: this will fail because ensure_written() is a no-op stub.
-        TmuxConfig::ensure_written().unwrap();
+        TmuxConfig::write_to(&path).unwrap();
 
-        let real_path = TmuxConfig::path().unwrap();
-        assert!(
-            real_path.exists(),
-            "ensure_written() must create config file at {}, but it does not exist",
-            real_path.display()
-        );
-
-        let content = std::fs::read_to_string(&real_path).unwrap();
+        let content = fs::read_to_string(&path).unwrap();
         assert_eq!(
             content,
             TmuxConfig::config_content(),
@@ -118,15 +111,15 @@ mod tests {
     }
 
     #[test]
-    fn ensure_written_sets_0600_permissions() {
+    fn write_to_sets_0600_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        TmuxConfig::ensure_written().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tmux.conf");
 
-        let real_path = TmuxConfig::path().unwrap();
-        assert!(real_path.exists(), "config file must exist after ensure_written()");
+        TmuxConfig::write_to(&path).unwrap();
 
-        let metadata = std::fs::metadata(&real_path).unwrap();
+        let metadata = fs::metadata(&path).unwrap();
         let mode = metadata.permissions().mode() & 0o777;
         assert_eq!(
             mode, 0o600,
@@ -135,27 +128,33 @@ mod tests {
     }
 
     #[test]
-    fn ensure_written_leaves_no_tmp_files() {
+    fn write_to_leaves_no_tmp_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("tmux.conf");
+
+        TmuxConfig::write_to(&path).unwrap();
+
+        let tmp_files: Vec<_> = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(
+            tmp_files.is_empty(),
+            "no .tmp files should remain after write_to(), found: {:?}",
+            tmp_files.iter().map(|e| e.file_name()).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn ensure_written_creates_file_at_config_path() {
         TmuxConfig::ensure_written().unwrap();
 
-        let real_path = TmuxConfig::path().unwrap();
-        if let Some(parent) = real_path.parent() {
-            if parent.exists() {
-                let tmp_files: Vec<_> = std::fs::read_dir(parent)
-                    .unwrap()
-                    .filter_map(|e| e.ok())
-                    .filter(|e| {
-                        e.file_name()
-                            .to_string_lossy()
-                            .contains(".tmp")
-                    })
-                    .collect();
-                assert!(
-                    tmp_files.is_empty(),
-                    "no .tmp files should remain after ensure_written(), found: {:?}",
-                    tmp_files.iter().map(|e| e.file_name()).collect::<Vec<_>>()
-                );
-            }
-        }
+        let path = TmuxConfig::path().unwrap();
+        assert!(
+            path.exists(),
+            "ensure_written() must create config file at {}",
+            path.display()
+        );
     }
 }

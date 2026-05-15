@@ -26,7 +26,7 @@ pub struct SessionInfo {
 }
 
 #[derive(Debug)]
-#[allow(dead_code)] // fields used in CT-02/CT-03
+#[allow(dead_code)]
 pub struct TmuxSession {
     socket_name: String,
     session_name: String,
