@@ -2,7 +2,7 @@ pub mod config;
 
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 use config::TmuxConfig;
 
@@ -26,6 +26,7 @@ pub struct SessionInfo {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)] // fields used in CT-02/CT-03
 pub struct TmuxSession {
     socket_name: String,
     session_name: String,
@@ -33,8 +34,22 @@ pub struct TmuxSession {
 }
 
 impl TmuxSession {
-    pub fn new(_team_name: &str) -> Result<Self> {
-        anyhow::bail!("not implemented")
+    pub fn new(team_name: &str) -> Result<Self> {
+        if team_name.is_empty()
+            || !team_name
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        {
+            bail!("Invalid team name '{team_name}': must match [a-zA-Z0-9_-]+");
+        }
+
+        let config_path = TmuxConfig::path()?;
+
+        Ok(Self {
+            socket_name: "botminter".to_string(),
+            session_name: format!("bm-{team_name}"),
+            config_path,
+        })
     }
 }
 

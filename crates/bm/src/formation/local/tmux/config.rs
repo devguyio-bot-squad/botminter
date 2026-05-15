@@ -1,19 +1,42 @@
+use std::fs;
+use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 pub struct TmuxConfig;
 
 impl TmuxConfig {
     pub fn config_content() -> &'static str {
-        ""
+        include_str!("tmux.conf")
     }
 
     pub fn path() -> Result<PathBuf> {
-        Ok(PathBuf::from("/dev/null"))
+        let config = dirs::config_dir().context("Could not determine config directory")?;
+        Ok(config.join("botminter").join("tmux.conf"))
     }
 
     pub fn ensure_written() -> Result<()> {
+        let path = Self::path()?;
+        let dir = path
+            .parent()
+            .context("Config path has no parent directory")?;
+        fs::create_dir_all(dir)
+            .with_context(|| format!("Failed to create config dir {}", dir.display()))?;
+
+        let content = Self::config_content();
+
+        let tmp = tempfile::NamedTempFile::new_in(dir)
+            .context("Failed to create temp config file")?;
+        fs::write(tmp.path(), content).context("Failed to write temp config file")?;
+
+        let perms = fs::Permissions::from_mode(0o600);
+        fs::set_permissions(tmp.path(), perms)
+            .context("Failed to set config file permissions")?;
+
+        tmp.persist(&path)
+            .context("Failed to persist config file")?;
+
         Ok(())
     }
 }
