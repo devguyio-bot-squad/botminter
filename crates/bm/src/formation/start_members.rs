@@ -490,10 +490,20 @@ pub(crate) enum SingleStartAction {
 /// - Window dead → removes the dead window, then `Launch`
 #[allow(dead_code)]
 pub(crate) fn single_start_guard(
-    _tmux: &formation::local::tmux::TmuxSession,
-    _member: &str,
+    tmux: &formation::local::tmux::TmuxSession,
+    member: &str,
 ) -> Result<SingleStartAction> {
-    bail!("not yet implemented")
+    if !tmux.window_exists(member) {
+        return Ok(SingleStartAction::Launch);
+    }
+
+    if tmux.is_pane_dead(member)? {
+        tmux.remove_dead_window(member)?;
+        return Ok(SingleStartAction::Launch);
+    }
+
+    let pid = tmux.pane_pid(member)?;
+    Ok(SingleStartAction::Skip { pid })
 }
 
 /// Discover and filter member directories in the team repo.
@@ -888,7 +898,7 @@ mod tests {
             .expect("prepare_tmux_session should succeed");
         let _guard = TmuxGuard::new(tmux.session_name());
 
-        tmux.create_window("bob", &["bash", "-c", "exit 0"], Path::new("/tmp"), &[])
+        tmux.create_window("bob", &["bash", "-c", "sleep 0.2; exit 0"], Path::new("/tmp"), &[])
             .expect("bob window should be created with short-lived process");
 
         thread::sleep(Duration::from_millis(500));
