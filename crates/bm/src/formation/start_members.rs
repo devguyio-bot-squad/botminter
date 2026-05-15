@@ -102,6 +102,10 @@ pub fn start_local_members(
     }
     result.stale_cleaned = stale;
 
+    // Prepare tmux session once before the member loop — full start destroys any
+    // existing session, single-member start reuses it.
+    let tmux = prepare_tmux_session(&team.name, member_filter.is_none())?;
+
     // Launch each member
     let workzone = &cfg.workzone;
     let team_ws_base = workzone.join(&team.name);
@@ -176,7 +180,6 @@ pub fn start_local_members(
         let brain_mode = formation::is_brain_member(&ws);
 
         // Launch ralph or brain
-        let tmux = prepare_tmux_session(&team.name, member_filter.is_none())?;
         let launch_result = if brain_mode {
             let system_prompt_path = ws.join("brain-prompt.md");
             let brain_config = formation::BrainLaunchConfig {
