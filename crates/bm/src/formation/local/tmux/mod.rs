@@ -122,6 +122,12 @@ impl TmuxSession {
         parse_tmux_version(&stdout)
     }
 
+    fn config_str(&self) -> Result<&str> {
+        self.config_path
+            .to_str()
+            .context("config path contains non-UTF-8 characters")
+    }
+
     fn run_session_cmd(&self, subcommand: &str, args: &[&str]) -> Result<()> {
         let mut cmd = tmux_cmd();
         cmd.args(["-L", &self.socket_name, subcommand]);
@@ -147,13 +153,48 @@ impl TmuxSession {
         Ok(())
     }
 
+    fn source_config(&self) -> Result<()> {
+        let config = self.config_str()?;
+        tmux_cmd()
+            .args(["-L", &self.socket_name, "source-file", config])
+            .output()
+            .with_context(|| format!("failed to source config file '{config}'"))?;
+        Ok(())
+    }
+
+    fn query_pane_format(&self, target: &str, format: &str) -> Result<String> {
+        let output = tmux_cmd()
+            .args([
+                "-L",
+                &self.socket_name,
+                "display-message",
+                "-t",
+                target,
+                "-p",
+                format,
+            ])
+            .output()
+            .with_context(|| {
+                format!("failed to query '{format}' for target '{target}'")
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            bail!(
+                "tmux display-message failed for target '{target}': {}",
+                stderr.trim()
+            );
+        }
+
+        Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+    }
+
     pub fn create(&self) -> Result<()> {
         TmuxConfig::ensure_written()?;
-        let config = self
-            .config_path
-            .to_str()
-            .context("config path contains non-UTF-8 characters")?;
-        self.run_session_cmd("new-session", &["-d", "-s", &self.session_name, "-f", config])
+        self.run_session_cmd(
+            "new-session",
+            &["-d", "-s", &self.session_name, "-f", self.config_str()?],
+        )
     }
 
     pub fn exists(&self) -> bool {
@@ -191,17 +232,7 @@ impl TmuxSession {
         envs: &[(&str, &str)],
     ) -> Result<u32> {
         validate_name(name, "window name")?;
-
-        let config_str = self
-            .config_path
-            .to_str()
-            .context("config path contains non-UTF-8 characters")?;
-        tmux_cmd()
-            .args(["-L", &self.socket_name, "source-file", config_str])
-            .output()
-            .with_context(|| {
-                format!("failed to source config file '{config_str}'")
-            })?;
+        self.source_config()?;
 
         let cwd_str = cwd
             .to_str()
@@ -245,52 +276,15 @@ impl TmuxSession {
         }
 
         let target = format!("{}:{}", self.session_name, name);
-        let pid_output = tmux_cmd()
-            .args([
-                "-L",
-                &self.socket_name,
-                "display-message",
-                "-t",
-                &target,
-                "-p",
-                "#{pane_pid}",
-            ])
-            .output()
-            .with_context(|| format!("failed to query PID for window '{name}'"))?;
 
-        if !pid_output.status.success() {
-            let stderr = String::from_utf8_lossy(&pid_output.stderr);
-            bail!("failed to get PID for window '{name}': {}", stderr.trim());
-        }
-
-        let pid_str = String::from_utf8_lossy(&pid_output.stdout);
-        let pid: u32 = pid_str.trim().parse().with_context(|| {
-            format!(
-                "failed to parse PID from tmux output: '{}'",
-                pid_str.trim()
-            )
+        let pid_str = self.query_pane_format(&target, "#{pane_pid}")?;
+        let pid: u32 = pid_str.parse().with_context(|| {
+            format!("failed to parse PID from tmux output: '{pid_str}'")
         })?;
 
         std::thread::sleep(std::time::Duration::from_millis(100));
 
-        let dead_output = tmux_cmd()
-            .args([
-                "-L",
-                &self.socket_name,
-                "display-message",
-                "-t",
-                &target,
-                "-p",
-                "#{pane_dead}:#{pane_dead_status}",
-            ])
-            .output()
-            .with_context(|| {
-                format!("failed to check process status for window '{name}'")
-            })?;
-
-        let dead_str = String::from_utf8_lossy(&dead_output.stdout);
-        let dead_str = dead_str.trim();
-
+        let dead_str = self.query_pane_format(&target, "#{pane_dead}:#{pane_dead_status}")?;
         if let Some(exit_code) = dead_str.strip_prefix("1:") {
             bail!(
                 "process in window '{name}' exited immediately with exit status {exit_code}"
