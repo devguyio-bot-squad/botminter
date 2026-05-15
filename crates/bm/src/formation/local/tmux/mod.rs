@@ -1,6 +1,7 @@
 pub mod config;
 
 use std::fmt;
+use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -326,24 +327,96 @@ impl TmuxSession {
         Ok(windows)
     }
 
-    pub fn kill_window_process(&self, _name: &str) -> Result<()> {
-        bail!("not yet implemented")
+    pub fn kill_window_process(&self, name: &str) -> Result<()> {
+        let pid = self.pane_pid(name)?;
+        let ret = unsafe { libc::kill(pid as i32, libc::SIGTERM) };
+        if ret == -1 {
+            let errno = std::io::Error::last_os_error();
+            if errno.raw_os_error() == Some(libc::ESRCH) {
+                return Ok(());
+            }
+            bail!(
+                "failed to send SIGTERM to PID {pid} for window '{name}': {errno}"
+            );
+        }
+        Ok(())
     }
 
-    pub fn remove_window(&self, _name: &str) -> Result<()> {
-        bail!("not yet implemented")
+    pub fn remove_window(&self, name: &str) -> Result<()> {
+        let target = self.require_window(name)?;
+        self.run_session_cmd("kill-window", &["-t", &target])
     }
 
-    pub fn remove_dead_window(&self, _name: &str) -> Result<()> {
-        bail!("not yet implemented")
+    pub fn remove_dead_window(&self, name: &str) -> Result<()> {
+        if !self.window_exists(name) {
+            return Ok(());
+        }
+        if self.is_pane_dead(name)? {
+            self.remove_window(name)?;
+        }
+        Ok(())
     }
 
     pub fn session_info(&self) -> Result<SessionInfo> {
-        bail!("not yet implemented")
+        let windows = self.list_windows()?;
+        Ok(SessionInfo {
+            session_name: self.session_name.clone(),
+            socket_name: self.socket_name.clone(),
+            attach_command: format!(
+                "tmux -L {} attach-session -t {}",
+                self.socket_name, self.session_name
+            ),
+            windows,
+        })
     }
 
-    pub fn attach(&self, _window: Option<&str>) -> Result<()> {
-        bail!("not yet implemented")
+    pub fn attach(&self, window: Option<&str>) -> Result<()> {
+        let target = match window {
+            Some(w) => format!("{}:{}", self.session_name, w),
+            None => self.session_name.clone(),
+        };
+        let mut cmd = tmux_cmd();
+        cmd.args(["-L", &self.socket_name, "attach-session", "-t", &target]);
+
+        let _pty_master: Option<std::fs::File>;
+        if !std::io::stdin().is_terminal() {
+            unsafe {
+                let mut master: libc::c_int = 0;
+                let mut slave: libc::c_int = 0;
+                if libc::openpty(
+                    &mut master,
+                    &mut slave,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                ) != 0
+                {
+                    bail!("failed to allocate pseudo-terminal for attach");
+                }
+                use std::os::unix::io::FromRawFd;
+                _pty_master = Some(std::fs::File::from_raw_fd(master));
+                let slave_file = std::fs::File::from_raw_fd(slave);
+                let slave_out = slave_file.try_clone().context("clone PTY slave")?;
+                let slave_err = slave_file.try_clone().context("clone PTY slave")?;
+                cmd.stdin(slave_file).stdout(slave_out).stderr(slave_err);
+            }
+        } else {
+            _pty_master = None;
+        }
+
+        let status = cmd.status().with_context(|| {
+            format!(
+                "failed to attach to '{target}' on socket '{}'",
+                self.socket_name
+            )
+        })?;
+        if !status.success() {
+            bail!(
+                "tmux attach-session failed for '{target}' on socket '{}'",
+                self.socket_name
+            );
+        }
+        Ok(())
     }
 
     pub fn create_window(
