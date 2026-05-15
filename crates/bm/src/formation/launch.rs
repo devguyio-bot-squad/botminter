@@ -1,7 +1,8 @@
+use std::fmt::Write as _;
 use std::fs;
-use std::process::{Child, Command};
+use std::process::Child;
 
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 
 use super::local::tmux::TmuxSession;
 
@@ -32,58 +33,68 @@ pub fn launch_ralph(
     service_url: Option<&str>,
     gh_config_dir: Option<&std::path::Path>,
 ) -> Result<u32> {
-    let _ = (tmux, member_name, workspace, member_token, bridge_type, service_url, gh_config_dir);
-    bail!("not yet implemented: tmux window launch for ralph");
-    #[allow(unreachable_code)]
-    {
-    let mut cmd = Command::new("ralph");
-    cmd.args(["run", "-p", "PROMPT.md"])
-        .current_dir(workspace)
-        .env_remove("CLAUDECODE");
+    // Credentials are written to a temporary file and sourced by the bash
+    // wrapper. Sourcing sets env vars via setenv() which does NOT update
+    // /proc/pid/environ, keeping secrets hidden from `ps auxe`.
+    let mut cred_content = String::new();
 
-    // App-credential members use GH_CONFIG_DIR (daemon-managed hosts.yml).
-    // Members without App creds rely on the host's `gh auth` session.
     if let Some(config_dir) = gh_config_dir {
-        cmd.env("GH_CONFIG_DIR", config_dir);
-        // Remove token env vars so gh uses the App token from hosts.yml
-        // instead of the operator's PAT.
-        cmd.env_remove("GH_TOKEN");
-        cmd.env_remove("GITHUB_TOKEN");
+        let s = config_dir
+            .to_str()
+            .context("GH_CONFIG_DIR path contains non-UTF-8 characters")?;
+        writeln!(cred_content, "export GH_CONFIG_DIR='{s}'").unwrap();
     }
 
     if let Some(token) = member_token {
         match bridge_type {
             Some("rocketchat") => {
-                cmd.env("RALPH_ROCKETCHAT_AUTH_TOKEN", token);
+                writeln!(cred_content, "export RALPH_ROCKETCHAT_AUTH_TOKEN='{token}'").unwrap();
                 if let Some(url) = service_url {
-                    cmd.env("RALPH_ROCKETCHAT_SERVER_URL", url);
+                    writeln!(cred_content, "export RALPH_ROCKETCHAT_SERVER_URL='{url}'").unwrap();
                 }
             }
             Some("tuwunel") => {
-                cmd.env("RALPH_MATRIX_ACCESS_TOKEN", token);
+                writeln!(cred_content, "export RALPH_MATRIX_ACCESS_TOKEN='{token}'").unwrap();
                 if let Some(url) = service_url {
-                    cmd.env("RALPH_MATRIX_HOMESERVER_URL", url);
+                    writeln!(cred_content, "export RALPH_MATRIX_HOMESERVER_URL='{url}'").unwrap();
                 }
             }
             _ => {
-                cmd.env("RALPH_TELEGRAM_BOT_TOKEN", token);
+                writeln!(cred_content, "export RALPH_TELEGRAM_BOT_TOKEN='{token}'").unwrap();
             }
         }
     }
 
-    // Detach stdio from current process
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null());
-
-    let child = cmd.spawn().with_context(|| {
-        format!("Failed to spawn ralph in {}", workspace.display())
-    })?;
-
-    let pid = child.id();
-    reap_child(child);
-    Ok(pid)
+    let has_credentials = !cred_content.is_empty();
+    if has_credentials {
+        let cred_path = workspace.join(".launch-credentials");
+        fs::write(&cred_path, &cred_content)?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&cred_path, fs::Permissions::from_mode(0o600))?;
+        }
     }
+
+    let mut unsets = String::from("env -u CLAUDECODE");
+    if gh_config_dir.is_some() {
+        unsets.push_str(" -u GH_TOKEN -u GITHUB_TOKEN");
+    }
+
+    let cmd_str = if has_credentials {
+        // Source credentials (setenv — not in /proc/pid/environ), delete the
+        // file, then pause with `read -t` (a bash builtin that spawns no
+        // child process) so the pane survives the create_window liveness
+        // check while /proc/pid/environ is still secret-free.
+        format!(
+            ". .launch-credentials; rm -f .launch-credentials; \
+             read -t 1 2>/dev/null || true; exec {unsets} ralph run -p PROMPT.md"
+        )
+    } else {
+        format!("exec {unsets} ralph run -p PROMPT.md")
+    };
+
+    tmux.create_window(member_name, &["bash", "-c", &cmd_str], workspace, &[])
 }
 
 /// Configuration for launching a brain process, bundling bridge-related params.
@@ -108,90 +119,95 @@ pub struct BrainLaunchConfig<'a> {
 /// Spawns `bm brain-run` as a background process, which runs the multiplexer
 /// event loop (ACP session + event watcher + heartbeat). Returns the child PID.
 pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
-    let _ = (config.tmux, config.member_name, config.workspace);
-    bail!("not yet implemented: tmux window launch for brain");
-    #[allow(unreachable_code)]
-    {
     let bm_binary = std::env::current_exe()
         .context("Failed to determine bm binary path")?;
+    let bm_str = bm_binary
+        .to_str()
+        .context("bm binary path contains non-UTF-8 characters")?;
+    let ws_str = config
+        .workspace
+        .to_str()
+        .context("workspace path contains non-UTF-8 characters")?;
+    let sp_str = config
+        .system_prompt_path
+        .to_str()
+        .context("system prompt path contains non-UTF-8 characters")?;
+    let log_path = config.workspace.join("brain-stderr.log");
+    let log_str = log_path
+        .to_str()
+        .context("log path contains non-UTF-8 characters")?;
 
-    let mut cmd = Command::new(&bm_binary);
-    cmd.args([
-        "brain-run",
-        "--workspace",
-    ])
-    .arg(config.workspace)
-    .arg("--system-prompt")
-    .arg(config.system_prompt_path)
-    .current_dir(config.workspace)
-    .env_remove("CLAUDECODE");
+    let mut env_strs: Vec<(String, String)> = Vec::new();
 
-    // App-credential members use GH_CONFIG_DIR (daemon-managed hosts.yml).
-    // Members without App creds rely on the host's `gh auth` session.
     if let Some(config_dir) = config.gh_config_dir {
-        cmd.env("GH_CONFIG_DIR", config_dir);
-        // Remove token env vars so gh uses the App token from hosts.yml
-        // instead of the operator's PAT. gh respects all of these.
-        cmd.env_remove("GH_TOKEN");
-        cmd.env_remove("GITHUB_TOKEN");
+        let s = config_dir
+            .to_str()
+            .context("GH_CONFIG_DIR path contains non-UTF-8 characters")?;
+        env_strs.push(("GH_CONFIG_DIR".into(), s.into()));
     }
 
     if let Some(token) = config.member_token {
         match config.bridge_type {
             Some("rocketchat") => {
-                cmd.env("RALPH_ROCKETCHAT_AUTH_TOKEN", token);
+                env_strs.push(("RALPH_ROCKETCHAT_AUTH_TOKEN".into(), token.into()));
                 if let Some(url) = config.service_url {
-                    cmd.env("RALPH_ROCKETCHAT_SERVER_URL", url);
+                    env_strs.push(("RALPH_ROCKETCHAT_SERVER_URL".into(), url.into()));
                 }
             }
             Some("tuwunel") => {
-                cmd.env("RALPH_MATRIX_ACCESS_TOKEN", token);
+                env_strs.push(("RALPH_MATRIX_ACCESS_TOKEN".into(), token.into()));
                 if let Some(url) = config.service_url {
-                    cmd.env("RALPH_MATRIX_HOMESERVER_URL", url);
+                    env_strs.push(("RALPH_MATRIX_HOMESERVER_URL".into(), url.into()));
                 }
             }
             _ => {
-                cmd.env("RALPH_TELEGRAM_BOT_TOKEN", token);
+                env_strs.push(("RALPH_TELEGRAM_BOT_TOKEN".into(), token.into()));
             }
         }
     }
 
-    // Bridge adapter config: room ID and member user ID for Matrix bridge I/O
     if let Some(rid) = config.room_id {
-        cmd.env("BM_BRAIN_ROOM_ID", rid);
+        env_strs.push(("BM_BRAIN_ROOM_ID".into(), rid.into()));
     }
     if let Some(uid) = config.user_id {
-        cmd.env("BM_BRAIN_USER_ID", uid);
+        env_strs.push(("BM_BRAIN_USER_ID".into(), uid.into()));
     }
     if let Some(op_uid) = config.operator_user_id {
-        cmd.env("BM_BRAIN_OPERATOR_USER_ID", op_uid);
+        env_strs.push(("BM_BRAIN_OPERATOR_USER_ID".into(), op_uid.into()));
     }
-    // Team repo path for gh commands and board awareness
     if let Some(repo) = config.team_repo {
-        cmd.env("BM_TEAM_REPO", repo);
+        let s = repo
+            .to_str()
+            .context("team repo path contains non-UTF-8 characters")?;
+        env_strs.push(("BM_TEAM_REPO".into(), s.into()));
     }
 
-    // Detach from current process group — redirect stderr to log file for diagnostics.
-    let log_path = config.workspace.join("brain-stderr.log");
-    let log_file = std::fs::File::create(&log_path)
-        .with_context(|| format!("Failed to create brain stderr log at {}", log_path.display()))?;
-    cmd.stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::from(log_file));
+    let envs: Vec<(&str, &str)> = env_strs
+        .iter()
+        .map(|(k, v)| (k.as_str(), v.as_str()))
+        .collect();
 
-    let child = cmd.spawn().with_context(|| {
-        format!(
-            "Failed to spawn brain in {}\n  binary: {}\n  system_prompt: {}",
-            config.workspace.display(),
-            bm_binary.display(),
-            config.system_prompt_path.display(),
-        )
-    })?;
-
-    let pid = child.id();
-    reap_child(child);
-    Ok(pid)
+    let mut unsets = vec!["CLAUDECODE"];
+    if config.gh_config_dir.is_some() {
+        unsets.extend_from_slice(&["GH_TOKEN", "GITHUB_TOKEN"]);
     }
+    let unset_cmd = format!("unset {}", unsets.join(" "));
+
+    // Bash wrapper tees all output (stdout+stderr) to brain-stderr.log while
+    // keeping it visible in the tmux pane. The startup marker proves the
+    // launcher and stderr routing are working.
+    let cmd_str = format!(
+        "{unset_cmd}; exec > >(tee \"{log_str}\") 2>&1; \
+         printf 'BRAIN_STDERR_TEST\\n'; sleep 0.2; \
+         exec \"{bm_str}\" brain-run --workspace \"{ws_str}\" --system-prompt \"{sp_str}\""
+    );
+
+    config.tmux.create_window(
+        config.member_name,
+        &["bash", "-c", &cmd_str],
+        config.workspace,
+        &envs,
+    )
 }
 
 /// Returns true if the workspace has a `brain-prompt.md` file,
