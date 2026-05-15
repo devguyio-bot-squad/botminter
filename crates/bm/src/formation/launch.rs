@@ -1,7 +1,9 @@
 use std::fs;
 use std::process::{Child, Command};
 
-use anyhow::{Context, Result};
+use anyhow::{bail, Context, Result};
+
+use super::local::tmux::TmuxSession;
 
 /// Spawns a detached thread that calls `child.wait()`, triggering `waitpid()`
 /// so the child is reaped by the kernel instead of becoming a zombie.
@@ -22,12 +24,18 @@ pub(crate) fn reap_child(mut child: Child) {
 /// `hosts.yml` with the installation token, and `gh` reads from it.
 /// `GH_TOKEN` would override `hosts.yml`, so we must not set both.
 pub fn launch_ralph(
+    tmux: &TmuxSession,
+    member_name: &str,
     workspace: &std::path::Path,
     member_token: Option<&str>,
     bridge_type: Option<&str>,
     service_url: Option<&str>,
     gh_config_dir: Option<&std::path::Path>,
 ) -> Result<u32> {
+    let _ = (tmux, member_name, workspace, member_token, bridge_type, service_url, gh_config_dir);
+    bail!("not yet implemented: tmux window launch for ralph");
+    #[allow(unreachable_code)]
+    {
     let mut cmd = Command::new("ralph");
     cmd.args(["run", "-p", "PROMPT.md"])
         .current_dir(workspace)
@@ -75,10 +83,13 @@ pub fn launch_ralph(
     let pid = child.id();
     reap_child(child);
     Ok(pid)
+    }
 }
 
 /// Configuration for launching a brain process, bundling bridge-related params.
 pub struct BrainLaunchConfig<'a> {
+    pub tmux: &'a TmuxSession,
+    pub member_name: &'a str,
     pub workspace: &'a std::path::Path,
     pub system_prompt_path: &'a std::path::Path,
     pub member_token: Option<&'a str>,
@@ -97,6 +108,10 @@ pub struct BrainLaunchConfig<'a> {
 /// Spawns `bm brain-run` as a background process, which runs the multiplexer
 /// event loop (ACP session + event watcher + heartbeat). Returns the child PID.
 pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
+    let _ = (config.tmux, config.member_name, config.workspace);
+    bail!("not yet implemented: tmux window launch for brain");
+    #[allow(unreachable_code)]
+    {
     let bm_binary = std::env::current_exe()
         .context("Failed to determine bm binary path")?;
 
@@ -176,6 +191,7 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
     let pid = child.id();
     reap_child(child);
     Ok(pid)
+    }
 }
 
 /// Returns true if the workspace has a `brain-prompt.md` file,
@@ -222,27 +238,311 @@ pub fn check_robot_enabled_mismatch(
 mod tests {
     use super::*;
     use std::fs;
+    use std::process::Command as StdCommand;
+
+    fn tmux_cmd() -> StdCommand {
+        let mut cmd = StdCommand::new("tmux");
+        cmd.env_remove("TMUX_TMPDIR");
+        cmd
+    }
+
+    struct TmuxGuard {
+        session_name: String,
+    }
+
+    impl TmuxGuard {
+        fn new(session_name: &str) -> Self {
+            Self {
+                session_name: session_name.to_string(),
+            }
+        }
+    }
+
+    impl Drop for TmuxGuard {
+        fn drop(&mut self) {
+            let _ = tmux_cmd()
+                .args(["-L", "botminter", "kill-session", "-t", &self.session_name])
+                .output();
+        }
+    }
 
     #[test]
-    fn launch_ralph_receives_per_member_credential() {
-        // This test verifies that launch_ralph correctly accepts bridge-type-aware
-        // parameters. We can't test actual process spawning, but we verify the
-        // function signature accepts the new bridge_type + service_url parameters.
-        //
-        // The real test is that `bm start` resolves credentials per-member
-        // via resolve_credential_from_store() in the member loop.
-
-        // Verify launch_ralph compiles with bridge-type-aware parameters + gh_config_dir
-        let _: fn(&std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32> =
+    fn launch_ralph_receives_tmux_and_member_name() {
+        let _: fn(&TmuxSession, &str, &std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32> =
             launch_ralph;
     }
 
     #[test]
-    fn launch_brain_signature_accepts_config_struct() {
-        // Verify launch_brain compiles with BrainLaunchConfig,
-        // including room_id and user_id for bridge adapter config.
+    fn launch_brain_signature_accepts_config_with_tmux() {
         let _: fn(&BrainLaunchConfig<'_>) -> Result<u32> = launch_brain;
     }
+
+    // ── CT-01: AC1 — Ralph Launch Creates Window ───────────────────
+
+    #[test]
+    fn launch_ralph_creates_tmux_window_with_valid_pid() {
+        let session = TmuxSession::new("ct7-01-ralph").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name());
+        session.create().expect("session should be created");
+
+        let workspace = tempfile::tempdir().unwrap();
+
+        let result = launch_ralph(
+            &session,
+            "bob",
+            workspace.path(),
+            None,
+            None,
+            None,
+            None,
+        );
+        let pid = result.expect("launch_ralph should succeed");
+
+        assert!(
+            session.window_exists("bob"),
+            "tmux window 'bob' must exist after launch_ralph"
+        );
+
+        assert!(pid > 0, "returned PID must be positive");
+        let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
+        assert!(alive, "process with returned PID must be running");
+    }
+
+    // ── CT-01: AC2 — Brain Launch Creates Window with Stderr Log ───
+
+    #[test]
+    fn launch_brain_creates_window_with_stderr_log() {
+        let session = TmuxSession::new("ct7-01-brain").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name());
+        session.create().expect("session should be created");
+
+        let workspace = tempfile::tempdir().unwrap();
+        let system_prompt = workspace.path().join("brain-prompt.md");
+        fs::write(&system_prompt, "# Test brain prompt").unwrap();
+
+        let config = BrainLaunchConfig {
+            tmux: &session,
+            member_name: "brain-bob",
+            workspace: workspace.path(),
+            system_prompt_path: &system_prompt,
+            member_token: None,
+            bridge_type: None,
+            service_url: None,
+            room_id: None,
+            user_id: None,
+            operator_user_id: None,
+            team_repo: None,
+            gh_config_dir: None,
+        };
+
+        let result = launch_brain(&config);
+        let pid = result.expect("launch_brain should succeed");
+
+        assert!(
+            session.window_exists("brain-bob"),
+            "tmux window 'brain-bob' must exist after launch_brain"
+        );
+
+        let log_path = workspace.path().join("brain-stderr.log");
+        assert!(log_path.exists(), "brain-stderr.log must be created");
+
+        // Verify stderr content appears in log (test uses a stub that writes marker)
+        let log_content = fs::read_to_string(&log_path).unwrap_or_default();
+        assert!(
+            log_content.contains("BRAIN_STDERR_TEST"),
+            "brain-stderr.log must contain stderr output"
+        );
+
+        // Verify stderr also visible in tmux pane
+        let capture = tmux_cmd()
+            .args([
+                "-L", "botminter", "capture-pane", "-t",
+                &format!("{}:brain-bob", session.session_name()),
+                "-p",
+            ])
+            .output()
+            .expect("capture-pane should execute");
+        let pane_output = String::from_utf8_lossy(&capture.stdout);
+        assert!(
+            pane_output.contains("BRAIN_STDERR_TEST"),
+            "pane capture must show stderr output, got: {pane_output}"
+        );
+
+        assert!(pid > 0, "returned PID must be positive");
+    }
+
+    // ── CT-01: AC3 — Agent Output Visible in Pane ──────────────────
+
+    #[test]
+    fn agent_output_visible_in_tmux_pane() {
+        let session = TmuxSession::new("ct7-01-output").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name());
+        session.create().expect("session should be created");
+
+        let workspace = tempfile::tempdir().unwrap();
+
+        launch_ralph(
+            &session,
+            "agent-out",
+            workspace.path(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("launch_ralph should succeed");
+
+        // Poll capture-pane every 500ms, up to 10s
+        let mut found = false;
+        for _ in 0..20 {
+            let capture = tmux_cmd()
+                .args([
+                    "-L", "botminter", "capture-pane", "-t",
+                    &format!("{}:agent-out", session.session_name()),
+                    "-p",
+                ])
+                .output();
+            if let Ok(output) = capture {
+                let text = String::from_utf8_lossy(&output.stdout);
+                if !text.trim().is_empty() {
+                    found = true;
+                    break;
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        assert!(found, "agent output must be visible in tmux pane within 10s");
+    }
+
+    // ── CT-01: AC4 — Daemon Not in Tmux ────────────────────────────
+
+    #[test]
+    fn daemon_pid_not_in_any_tmux_window() {
+        let session = TmuxSession::new("ct7-01-nodaemon").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name());
+        session.create().expect("session should be created");
+
+        let workspace = tempfile::tempdir().unwrap();
+
+        launch_ralph(
+            &session,
+            "member1",
+            workspace.path(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("launch_ralph should succeed");
+
+        let windows = session.list_windows().expect("list_windows should succeed");
+        for win in &windows {
+            assert!(
+                !win.name.contains("daemon"),
+                "no tmux window should be named 'daemon', found: {}",
+                win.name
+            );
+        }
+        // Daemon PID (current process) must not be a pane_pid
+        let daemon_pid = std::process::id();
+        for win in &windows {
+            assert_ne!(
+                win.pane_pid, daemon_pid,
+                "daemon PID must not appear as a pane PID in any tmux window"
+            );
+        }
+    }
+
+    // ── CT-01: AC5 — Credential Security ───────────────────────────
+
+    #[test]
+    fn launch_credentials_not_in_pane_start_command_or_ps() {
+        let session = TmuxSession::new("ct7-01-creds").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name());
+        session.create().expect("session should be created");
+
+        let workspace = tempfile::tempdir().unwrap();
+        let secret_value = "SUPER_SECRET_TOKEN_ct701";
+
+        launch_ralph(
+            &session,
+            "secmember",
+            workspace.path(),
+            Some(secret_value),
+            None,
+            None,
+            None,
+        )
+        .expect("launch_ralph should succeed");
+
+        // Check pane_start_command does not contain secret
+        let pane_cmd = tmux_cmd()
+            .args([
+                "-L", "botminter", "display-message", "-t",
+                &format!("{}:secmember", session.session_name()),
+                "-p", "#{pane_start_command}",
+            ])
+            .output()
+            .expect("display-message should execute");
+        let pane_cmd_str = String::from_utf8_lossy(&pane_cmd.stdout);
+        assert!(
+            !pane_cmd_str.contains(secret_value),
+            "pane_start_command must not contain secret value"
+        );
+
+        // Check ps output does not contain secret
+        let ps = StdCommand::new("ps")
+            .args(["auxe"])
+            .output()
+            .expect("ps should execute");
+        let ps_str = String::from_utf8_lossy(&ps.stdout);
+        assert!(
+            !ps_str.contains(secret_value),
+            "ps output must not contain secret value"
+        );
+    }
+
+    // ── CT-01: AC6 — TMUX_TMPDIR Isolation ─────────────────────────
+
+    #[test]
+    fn tmux_tmpdir_isolation_for_launched_agents() {
+        let evil_dir = "/tmp/evil-tmux-ct701";
+        std::env::set_var("TMUX_TMPDIR", evil_dir);
+
+        let session = TmuxSession::new("ct7-01-tmpdir").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name());
+        session.create().expect("session should be created");
+
+        let workspace = tempfile::tempdir().unwrap();
+
+        launch_ralph(
+            &session,
+            "isomember",
+            workspace.path(),
+            None,
+            None,
+            None,
+            None,
+        )
+        .expect("launch_ralph should succeed");
+
+        std::env::remove_var("TMUX_TMPDIR");
+
+        // Verify socket is under /tmp/tmux-<uid>/, not under evil_dir
+        let uid = unsafe { libc::getuid() };
+        let expected_dir = format!("/tmp/tmux-{uid}");
+        let socket_path = std::path::Path::new(&expected_dir).join("botminter");
+        assert!(
+            socket_path.exists(),
+            "tmux socket must be under {expected_dir}, not under {evil_dir}"
+        );
+        assert!(
+            !std::path::Path::new(evil_dir).join("botminter").exists(),
+            "tmux socket must not be under TMUX_TMPDIR ({evil_dir})"
+        );
+    }
+
+    // ── Existing tests ─────────────────────────────────────────────
 
     #[test]
     fn is_brain_member_with_brain_prompt() {
@@ -259,9 +559,6 @@ mod tests {
 
     #[test]
     fn check_robot_enabled_diagnostic() {
-        // Test the diagnostic warning logic: when a member has a credential
-        // but RObot.enabled is false, a warning should be emitted.
-        // This validates the function exists and works correctly.
         let tmp = tempfile::tempdir().unwrap();
         let ralph_yml = tmp.path().join("ralph.yml");
         fs::write(

@@ -136,6 +136,10 @@ impl TmuxSession {
         })
     }
 
+    pub fn session_name(&self) -> &str {
+        &self.session_name
+    }
+
     pub fn check_tmux_available() -> Result<TmuxVersion> {
         let output = tmux_cmd()
             .arg("-V")

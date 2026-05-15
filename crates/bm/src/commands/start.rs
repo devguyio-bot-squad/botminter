@@ -260,11 +260,12 @@ mod tests {
     }
 
     #[test]
-    fn launch_ralph_receives_per_member_credential() {
+    fn launch_ralph_receives_tmux_and_member_name() {
         use crate::formation;
+        use crate::formation::local::tmux::TmuxSession;
         use anyhow::Result;
 
-        let _: fn(&std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32> =
+        let _: fn(&TmuxSession, &str, &std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32> =
             formation::launch_ralph;
     }
 

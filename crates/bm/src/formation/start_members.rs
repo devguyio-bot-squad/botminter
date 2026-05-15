@@ -176,9 +176,13 @@ pub fn start_local_members(
         let brain_mode = formation::is_brain_member(&ws);
 
         // Launch ralph or brain
+        // TODO(CT-02): TmuxSession lifecycle will be wired here
+        let tmux = formation::local::tmux::TmuxSession::new(&team.name)?;
         let launch_result = if brain_mode {
             let system_prompt_path = ws.join("brain-prompt.md");
             let brain_config = formation::BrainLaunchConfig {
+                tmux: &tmux,
+                member_name: member_dir_name,
                 workspace: &ws,
                 system_prompt_path: &system_prompt_path,
                 member_token: member_token.as_deref(),
@@ -193,6 +197,8 @@ pub fn start_local_members(
             formation::launch_brain(&brain_config)
         } else {
             formation::launch_ralph(
+                &tmux,
+                member_dir_name,
                 &ws,
                 member_token.as_deref(),
                 bridge_creds.bridge_type_name.as_deref(),
