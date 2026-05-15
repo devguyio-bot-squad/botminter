@@ -335,7 +335,7 @@ mod tests {
             Ok(())
         }
 
-        fn shell(&self) -> Result<()> {
+        fn shell(&self, _member: Option<String>) -> Result<()> {
             Ok(())
         }
 

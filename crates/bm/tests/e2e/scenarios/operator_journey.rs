@@ -155,20 +155,23 @@ fn env_create_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + st
 
 fn attach_local_formation_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        // For v2 teams with local formation, `bm attach` should tell the user
-        // they're already in the local environment (not try Lima).
+        // For v2 teams with local formation, `bm attach` without a running tmux session
+        // should fail with "No tmux session found" (or "not yet implemented" during transition).
         let output = env.command("bm")
             .args(["attach", "-t", TEAM_NAME])
             .output();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         assert!(
             !output.status.success(),
-            "bm attach on local formation should fail (not applicable), got: {}",
+            "bm attach on local formation should fail when no tmux session, got: {}",
             stderr
         );
         assert!(
-            stderr.contains("not applicable") || stderr.contains("already in the local environment"),
-            "bm attach should say 'not applicable' for local formation, got: {}",
+            stderr.contains("not applicable")
+                || stderr.contains("already in the local environment")
+                || stderr.contains("not yet implemented")
+                || stderr.contains("No tmux session found"),
+            "bm attach should say 'not applicable' or 'No tmux session found' for local formation, got: {}",
             stderr
         );
     }

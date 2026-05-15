@@ -361,13 +361,8 @@ impl Formation for LinuxLocalFormation {
         Ok(())
     }
 
-    fn shell(&self) -> Result<()> {
-        // Local formation: the operator is already in the local environment.
-        // This is a no-op — unlike Lima/K8s where you'd SSH into the VM or exec into a pod.
-        bail!(
-            "shell() is not applicable for local formation — \
-             you are already in the local environment"
-        )
+    fn shell(&self, _member: Option<String>) -> Result<()> {
+        bail!("not yet implemented")
     }
 
     fn write_topology(
@@ -513,8 +508,8 @@ mod tests {
     #[test]
     fn linux_formation_shell_returns_error() {
         let f = LinuxLocalFormation::new("test-team");
-        let err = f.shell().unwrap_err();
-        assert!(err.to_string().contains("not applicable"));
+        let err = f.shell(None).unwrap_err();
+        assert!(err.to_string().contains("not yet implemented"));
     }
 
     #[test]
@@ -635,5 +630,190 @@ mod tests {
             "check_prerequisites should pass with tmux 3.0+ and ralph available: {:?}",
             result.err()
         );
+    }
+
+    // ── CT-02 (Story #8): bm attach — shell() with tmux ─────────────
+
+    use crate::formation::local::tmux::TmuxSession;
+
+    struct TmuxGuard {
+        session_name: String,
+    }
+
+    impl TmuxGuard {
+        fn new(session_name: &str) -> Self {
+            Self {
+                session_name: session_name.to_string(),
+            }
+        }
+    }
+
+    impl Drop for TmuxGuard {
+        fn drop(&mut self) {
+            let _ = crate::formation::local::tmux::tmux_cmd()
+                .args(["-L", "botminter", "kill-session", "-t", &self.session_name])
+                .output();
+        }
+    }
+
+    #[test]
+    fn shell_no_session_returns_start_hint() {
+        let f = LinuxLocalFormation::new("ct02-nosess");
+        let _guard = TmuxGuard::new("bm-ct02-nosess");
+
+        let err = f.shell(None).unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("No tmux session found"),
+            "should say 'No tmux session found', got: {msg}"
+        );
+        assert!(
+            msg.contains("bm start"),
+            "should suggest 'bm start', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn shell_attaches_to_existing_session() {
+        let f = LinuxLocalFormation::new("ct02-attach");
+        let tmux = TmuxSession::new("ct02-attach").unwrap();
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        crate::formation::local::tmux::config::TmuxConfig::ensure_written().unwrap();
+        tmux.create().unwrap();
+        assert!(tmux.exists(), "session should exist before shell()");
+
+        // shell(None) should attempt to attach — since we're not in a real
+        // terminal, it may fail due to PTY/attach issues, but must NOT return
+        // "No tmux session found" or a generic stub error.
+        let result = f.shell(None);
+        match result {
+            Ok(()) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    !msg.contains("No tmux session found"),
+                    "should not say 'No tmux session found' when session exists, got: {msg}"
+                );
+                assert!(
+                    !msg.contains("not yet implemented"),
+                    "shell() must actually attempt attach for existing sessions, got: {msg}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shell_with_member_targets_window() {
+        let f = LinuxLocalFormation::new("ct02-memwin");
+        let tmux = TmuxSession::new("ct02-memwin").unwrap();
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        crate::formation::local::tmux::config::TmuxConfig::ensure_written().unwrap();
+        tmux.create().unwrap();
+        tmux.create_window("bob", &["sleep", "300"], std::path::Path::new("/tmp"), &[])
+            .unwrap();
+
+        // shell(Some("bob")) should target bob's window — must not return a
+        // stub error or "No tmux session found"
+        let result = f.shell(Some("bob".to_string()));
+        match result {
+            Ok(()) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    !msg.contains("No tmux session found"),
+                    "should not say 'No tmux session found' when session exists, got: {msg}"
+                );
+                assert!(
+                    !msg.contains("not yet implemented"),
+                    "shell() must actually target bob's window, got: {msg}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn shell_with_nonexistent_member_lists_available_windows() {
+        let f = LinuxLocalFormation::new("ct02-nowin");
+        let tmux = TmuxSession::new("ct02-nowin").unwrap();
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        crate::formation::local::tmux::config::TmuxConfig::ensure_written().unwrap();
+        tmux.create().unwrap();
+        tmux.create_window("bob", &["sleep", "300"], std::path::Path::new("/tmp"), &[])
+            .unwrap();
+        tmux.create_window("cos", &["sleep", "300"], std::path::Path::new("/tmp"), &[])
+            .unwrap();
+
+        let err = f
+            .shell(Some("alice".to_string()))
+            .expect_err("should fail for non-existent member window");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("alice"),
+            "error should mention requested member 'alice', got: {msg}"
+        );
+        assert!(
+            msg.contains("bob"),
+            "error should list available window 'bob', got: {msg}"
+        );
+        assert!(
+            msg.contains("cos"),
+            "error should list available window 'cos', got: {msg}"
+        );
+    }
+
+    #[test]
+    fn shell_nested_tmux_warns_but_proceeds() {
+        let f = LinuxLocalFormation::new("ct02-nested");
+        let tmux = TmuxSession::new("ct02-nested").unwrap();
+        let _guard = TmuxGuard::new(tmux.session_name());
+
+        crate::formation::local::tmux::config::TmuxConfig::ensure_written().unwrap();
+        tmux.create().unwrap();
+
+        // Simulate being inside tmux by setting $TMUX
+        let orig_tmux = std::env::var("TMUX").ok();
+        std::env::set_var("TMUX", "/tmp/tmux-fake/default,12345,0");
+
+        let result = f.shell(None);
+
+        // Restore $TMUX
+        match orig_tmux {
+            Some(v) => std::env::set_var("TMUX", v),
+            None => std::env::remove_var("TMUX"),
+        }
+
+        // The shell() function should still attempt attach even when $TMUX is
+        // set (warn on stderr, then proceed). It must NOT return a stub error.
+        match result {
+            Ok(()) => {}
+            Err(e) => {
+                let msg = e.to_string();
+                assert!(
+                    !msg.contains("not yet implemented"),
+                    "shell() must detect $TMUX and proceed with attach, got stub: {msg}"
+                );
+                assert!(
+                    !msg.contains("No tmux session found"),
+                    "should not say 'No tmux session found' when session exists, got: {msg}"
+                );
+            }
+        }
+    }
+
+    // Cheat sheet display test is in crates/bm/tests/integration.rs
+    // (attach_cheat_sheet_displayed_on_stderr) because it requires spawning
+    // the bm binary as a child process to capture stderr.
+
+    #[test]
+    fn shell_trait_compatibility_all_implementors_compile() {
+        // Verify the new shell(member: Option<String>) signature works via
+        // the Formation trait object. If this compiles, all implementors are compatible.
+        let formation: Box<dyn Formation> =
+            crate::formation::local::create_local_formation("ct02-compat").unwrap();
+        let _ = formation.shell(None);
+        let _ = formation.shell(Some("bob".to_string()));
     }
 }

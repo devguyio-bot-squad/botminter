@@ -78,7 +78,7 @@ impl Formation for MacosLocalFormation {
         bail!("macOS local formation is not yet supported")
     }
 
-    fn shell(&self) -> Result<()> {
+    fn shell(&self, _member: Option<String>) -> Result<()> {
         bail!("macOS local formation is not yet supported")
     }
 

@@ -323,8 +323,8 @@ fn main() -> Result<()> {
                 commands::bootstrap::delete(&name, force)?;
             }
         },
-        Command::Attach { team } => {
-            commands::attach::run(team.as_deref())?;
+        Command::Attach { member, team } => {
+            commands::attach::run(team.as_deref(), member)?;
         }
         Command::Debug { command } => match command {
             DebugCommand::BrainLogs {

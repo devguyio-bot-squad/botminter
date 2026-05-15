@@ -99,7 +99,8 @@ pub trait Formation {
     fn exec_in(&self, workspace: &Path, cmd: &[&str]) -> Result<()>;
 
     /// Open an interactive shell in the formation's environment.
-    fn shell(&self) -> Result<()>;
+    /// When `member` is `Some`, target a specific member window.
+    fn shell(&self, member: Option<String>) -> Result<()>;
 
     // ── Topology ─────────────────────────────────────────────────
 

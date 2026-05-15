@@ -352,8 +352,11 @@ pub enum Command {
         command: RuntimeCommand,
     },
 
-    /// Attach to a running Lima VM
+    /// Attach to the tmux session for a running team
     Attach {
+        /// Optional member name to select a specific window
+        member: Option<String>,
+
         /// Team to operate on (resolves VM from team config)
         #[arg(short, long)]
         team: Option<String>,

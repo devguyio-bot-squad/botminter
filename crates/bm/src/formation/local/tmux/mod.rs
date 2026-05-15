@@ -23,7 +23,7 @@ impl fmt::Display for TmuxVersion {
     }
 }
 
-fn tmux_cmd() -> Command {
+pub(crate) fn tmux_cmd() -> Command {
     let mut cmd = Command::new("tmux");
     cmd.env_remove("TMUX_TMPDIR");
     cmd

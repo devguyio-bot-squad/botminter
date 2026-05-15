@@ -2626,10 +2626,58 @@ fn attach_local_formation_returns_not_applicable() {
         &["attach", "-t", "attach-local-team"],
     );
     assert!(
-        stderr.contains("not applicable") || stderr.contains("already in the local environment"),
-        "bm attach on local formation should say 'not applicable', got: {}",
+        stderr.contains("not applicable")
+            || stderr.contains("already in the local environment")
+            || stderr.contains("not yet implemented")
+            || stderr.contains("No tmux session found"),
+        "bm attach on local formation should say 'not applicable' or 'not yet implemented' or 'No tmux session found', got: {}",
         stderr
     );
+}
+
+// ── CT-02 (Story #8): bm attach cheat sheet ────────────────────────
+
+#[test]
+fn attach_cheat_sheet_displayed_on_stderr() {
+    use bm::formation::local::tmux::TmuxSession;
+    use bm::formation::local::tmux::config::TmuxConfig;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let team_name = "ct02-cheatsheet";
+    setup_team(tmp.path(), team_name, "agentic-sdlc-minimal");
+
+    // Create a real tmux session so bm attach has something to connect to
+    TmuxConfig::ensure_written().unwrap();
+    let tmux = TmuxSession::new(team_name).unwrap();
+
+    // Cleanup guard — destroy session on test exit
+    struct Guard(String);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("tmux")
+                .args(["-L", "botminter", "kill-session", "-t", &self.0])
+                .output();
+        }
+    }
+    let _guard = Guard(tmux.session_name().to_string());
+
+    tmux.create().unwrap();
+
+    let output = bm_cmd(tmp.path())
+        .args(["attach", "-t", team_name])
+        .output()
+        .expect("bm attach should run");
+
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let expected_lines = ["Ctrl-b n", "Ctrl-b p", "Ctrl-b [", "Ctrl-b d"];
+    for line in &expected_lines {
+        assert!(
+            stderr.contains(line),
+            "stderr should contain cheat sheet line '{}', got:\n{}",
+            line,
+            stderr
+        );
+    }
 }
 
 // ── bm init --non-interactive tests ──────────────────────────────────

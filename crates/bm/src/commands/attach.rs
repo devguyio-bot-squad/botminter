@@ -6,11 +6,11 @@ use crate::config;
 use crate::formation;
 use crate::formation::lima::{Lima, VmStatus};
 
-/// Handles `bm attach [-t <team>]`.
+/// Handles `bm attach [member] [-t <team>]`.
 ///
 /// For v2 teams (with formations dir), delegates to `formation.shell()`.
 /// For v1 teams (Lima VMs), uses legacy Lima exec_shell behavior.
-pub fn run(team: Option<&str>) -> Result<()> {
+pub fn run(team: Option<&str>, member: Option<String>) -> Result<()> {
     let cfg = config::load_or_default();
 
     // Try v2 formation path first: if the team has a formations dir,
@@ -19,7 +19,7 @@ pub fn run(team: Option<&str>) -> Result<()> {
         let team_repo = team_entry.path.join("team");
         if let Ok(Some(_)) = formation::resolve_formation(&team_repo, None) {
             let local_formation = formation::create_local_formation(&team_entry.name)?;
-            return local_formation.shell();
+            return local_formation.shell(member);
         }
     }
 
