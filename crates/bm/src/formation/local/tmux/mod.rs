@@ -117,6 +117,22 @@ impl TmuxSession {
         let stdout = String::from_utf8_lossy(&output.stdout);
         parse_tmux_version(&stdout)
     }
+
+    pub fn create(&self) -> Result<()> {
+        bail!("create() not yet implemented")
+    }
+
+    pub fn exists(&self) -> bool {
+        false
+    }
+
+    pub fn destroy(&self) -> Result<()> {
+        bail!("destroy() not yet implemented")
+    }
+
+    pub fn destroy_if_exists(&self) -> Result<()> {
+        bail!("destroy_if_exists() not yet implemented")
+    }
 }
 
 #[cfg(test)]
@@ -318,6 +334,201 @@ mod tests {
         assert!(
             result.is_ok(),
             "check_tmux_available must succeed even with TMUX_TMPDIR set to garbage"
+        );
+    }
+
+    // ── CT-03: Session Lifecycle — Cleanup Guard ────────────────────
+
+    struct TmuxGuard {
+        session_name: String,
+    }
+
+    impl TmuxGuard {
+        fn new(session_name: &str) -> Self {
+            Self {
+                session_name: session_name.to_string(),
+            }
+        }
+    }
+
+    impl Drop for TmuxGuard {
+        fn drop(&mut self) {
+            let _ = Command::new("tmux")
+                .args(["-L", "botminter", "kill-session", "-t", &self.session_name])
+                .env_remove("TMUX_TMPDIR")
+                .output();
+        }
+    }
+
+    // ── CT-03: AC1 — Session Creation ───────────────────────────────
+
+    #[test]
+    fn session_create_creates_session() {
+        let session = TmuxSession::new("ct03-create").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+
+        TmuxConfig::ensure_written().unwrap();
+        session.create().expect("create() should succeed");
+
+        let output = Command::new("tmux")
+            .args(["-L", "botminter", "has-session", "-t", "bm-ct03-create"])
+            .env_remove("TMUX_TMPDIR")
+            .output()
+            .expect("tmux has-session command should execute");
+        assert!(
+            output.status.success(),
+            "session bm-ct03-create must exist on botminter socket after create()"
+        );
+    }
+
+    // ── CT-03: AC2 — Exists Returns True When Session Created ───────
+
+    #[test]
+    fn session_exists_returns_true_when_created() {
+        let session = TmuxSession::new("ct03-exists-t").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+
+        TmuxConfig::ensure_written().unwrap();
+        session.create().expect("create() should succeed");
+        assert!(
+            session.exists(),
+            "exists() must return true after create()"
+        );
+    }
+
+    // ── CT-03: AC3 — Exists Returns False When No Session ───────────
+
+    #[test]
+    fn session_exists_returns_false_when_not_created() {
+        let session = TmuxSession::new("ct03-exists-f").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+
+        assert!(
+            !session.exists(),
+            "exists() must return false when no session exists"
+        );
+    }
+
+    // ── CT-03: AC4 — Destroy Removes Session ────────────────────────
+
+    #[test]
+    fn session_destroy_removes_session() {
+        let session = TmuxSession::new("ct03-destroy").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+
+        TmuxConfig::ensure_written().unwrap();
+        session.create().expect("create() should succeed");
+        session.destroy().expect("destroy() should succeed");
+        assert!(
+            !session.exists(),
+            "exists() must return false after destroy()"
+        );
+    }
+
+    // ── CT-03: AC5 — Idempotent Destroy ─────────────────────────────
+
+    #[test]
+    fn session_destroy_if_exists_no_error_when_absent() {
+        let session = TmuxSession::new("ct03-idempotent").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+
+        let result = session.destroy_if_exists();
+        assert!(
+            result.is_ok(),
+            "destroy_if_exists() must return Ok when no session exists, got: {:?}",
+            result.unwrap_err()
+        );
+    }
+
+    // ── CT-03: AC6 — Config File Written Before Session ─────────────
+
+    #[test]
+    fn session_create_ensures_config_exists() {
+        let session = TmuxSession::new("ct03-config").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+
+        TmuxConfig::ensure_written().unwrap();
+        session.create().expect("create() should succeed");
+
+        let config_path = TmuxConfig::path().unwrap();
+        assert!(
+            config_path.exists(),
+            "config file must exist at {} after create()",
+            config_path.display()
+        );
+
+        let metadata = std::fs::metadata(&config_path).unwrap();
+        let mode = std::os::unix::fs::PermissionsExt::mode(&metadata.permissions()) & 0o777;
+        assert_eq!(
+            mode, 0o600,
+            "config file must have 0600 permissions, got: {mode:04o}"
+        );
+    }
+
+    // ── CT-03: AC7 — Socket Isolation ───────────────────────────────
+
+    #[test]
+    fn session_socket_isolation() {
+        let session = TmuxSession::new("ct03-socket").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+
+        TmuxConfig::ensure_written().unwrap();
+        session.create().expect("create() should succeed");
+
+        let botminter_output = Command::new("tmux")
+            .args(["-L", "botminter", "list-sessions", "-F", "#{session_name}"])
+            .env_remove("TMUX_TMPDIR")
+            .output()
+            .expect("tmux list-sessions on botminter socket should execute");
+        let botminter_sessions = String::from_utf8_lossy(&botminter_output.stdout);
+        assert!(
+            botminter_sessions.contains("bm-ct03-socket"),
+            "session must appear on botminter socket, got: {botminter_sessions}"
+        );
+
+        let default_output = Command::new("tmux")
+            .args(["list-sessions", "-F", "#{session_name}"])
+            .env_remove("TMUX_TMPDIR")
+            .output();
+        if let Ok(output) = default_output {
+            let default_sessions = String::from_utf8_lossy(&output.stdout);
+            assert!(
+                !default_sessions.contains("bm-ct03-socket"),
+                "session must NOT appear on default socket, got: {default_sessions}"
+            );
+        }
+    }
+
+    // ── CT-03: AC8 — Full Lifecycle ─────────────────────────────────
+
+    #[test]
+    fn session_full_lifecycle() {
+        let session = TmuxSession::new("ct03-lifecycle").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+
+        TmuxConfig::ensure_written().unwrap();
+
+        session.create().expect("create() should succeed");
+        assert!(session.exists(), "exists() must be true after create()");
+
+        session.destroy().expect("destroy() should succeed");
+        assert!(!session.exists(), "exists() must be false after destroy()");
+    }
+
+    // ── CT-03: Double Create ────────────────────────────────────────
+
+    #[test]
+    fn session_double_create_returns_error() {
+        let session = TmuxSession::new("ct03-double").unwrap();
+        let _guard = TmuxGuard::new(&session.session_name);
+
+        TmuxConfig::ensure_written().unwrap();
+        session.create().expect("first create() should succeed");
+
+        let result = session.create();
+        assert!(
+            result.is_err(),
+            "second create() must return Err when session already exists"
         );
     }
 }
