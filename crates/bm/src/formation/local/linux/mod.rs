@@ -17,6 +17,8 @@ use crate::formation::start_members::{MemberLaunched, MemberSkipped, StartResult
 use crate::formation::stop_members::{MemberStopped, StopResult};
 use crate::state;
 
+use super::tmux::TmuxSession;
+
 /// Linux local formation — runs members as local processes on the operator's machine.
 ///
 /// Delegates to existing free functions (`start_local_members`, `stop_local_members`,
@@ -77,6 +79,13 @@ impl Formation for LinuxLocalFormation {
         if which::which("ralph").is_err() {
             bail!("'ralph' not found in PATH. Install ralph-orchestrator first.");
         }
+        if which::which("tmux").is_err() {
+            bail!(
+                "tmux is required but not found in PATH. Install it with: \
+                 apt install tmux / dnf install tmux / brew install tmux"
+            );
+        }
+        TmuxSession::check_tmux_available()?;
         Ok(())
     }
 
