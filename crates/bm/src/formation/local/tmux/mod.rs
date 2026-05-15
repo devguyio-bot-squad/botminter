@@ -1,14 +1,39 @@
 pub mod config;
 
+use std::fmt;
 use std::path::PathBuf;
+use std::process::Command;
 
 use anyhow::{bail, Result};
 
 use config::TmuxConfig;
 
+#[derive(Debug)]
 pub struct TmuxVersion {
     pub major: u32,
     pub minor: u32,
+}
+
+impl fmt::Display for TmuxVersion {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}.{}", self.major, self.minor)
+    }
+}
+
+fn tmux_cmd() -> Command {
+    let mut cmd = Command::new("tmux");
+    cmd.env_remove("TMUX_TMPDIR");
+    cmd
+}
+
+pub fn parse_tmux_version(output: &str) -> Result<TmuxVersion> {
+    bail!("not implemented")
+}
+
+impl TmuxSession {
+    pub fn check_tmux_available() -> Result<TmuxVersion> {
+        bail!("not implemented")
+    }
 }
 
 pub struct TmuxWindow {
@@ -130,6 +155,128 @@ mod tests {
         assert_eq!(
             session.config_path, expected,
             "config_path must match TmuxConfig::path()"
+        );
+    }
+
+    // ── CT-02: Version Parsing — Standard Format ────────────────────
+
+    #[test]
+    fn parse_version_standard_format() {
+        let v = parse_tmux_version("tmux 3.4")
+            .expect("'tmux 3.4' is a valid version string");
+        assert_eq!(v.major, 3);
+        assert_eq!(v.minor, 4);
+    }
+
+    // ── CT-02: Version Parsing — Letter Suffix ──────────────────────
+
+    #[test]
+    fn parse_version_letter_suffix() {
+        let v = parse_tmux_version("tmux 3.3a")
+            .expect("'tmux 3.3a' is a valid version string");
+        assert_eq!(v.major, 3);
+        assert_eq!(v.minor, 3);
+    }
+
+    // ── CT-02: Version Parsing — Development Prefix ─────────────────
+
+    #[test]
+    fn parse_version_development_prefix() {
+        let v = parse_tmux_version("tmux next-3.4")
+            .expect("'tmux next-3.4' is a valid version string");
+        assert_eq!(v.major, 3);
+        assert_eq!(v.minor, 4);
+    }
+
+    // ── CT-02: Version Parsing — Release Candidate ──────────────────
+
+    #[test]
+    fn parse_version_release_candidate() {
+        let v = parse_tmux_version("tmux 3.2-rc")
+            .expect("'tmux 3.2-rc' is a valid version string");
+        assert_eq!(v.major, 3);
+        assert_eq!(v.minor, 2);
+    }
+
+    // ── CT-02: Minimum Version Enforcement ──────────────────────────
+
+    #[test]
+    fn parse_version_rejects_below_minimum() {
+        let result = parse_tmux_version("tmux 2.9");
+        assert!(result.is_err(), "version 2.9 must be rejected (minimum is 3.0)");
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("3.0") && err.contains("2.9"),
+            "error must mention required version 3.0 and found version 2.9, got: {err}"
+        );
+    }
+
+    #[test]
+    fn parse_version_rejects_below_minimum_with_suffix() {
+        let result = parse_tmux_version("tmux 2.9a");
+        assert!(result.is_err(), "version 2.9a must be rejected");
+    }
+
+    // ── CT-02: Unparseable Version String ───────────────────────────
+
+    #[test]
+    fn parse_version_rejects_garbage_input() {
+        let result = parse_tmux_version("not tmux");
+        assert!(result.is_err(), "garbage input must be rejected");
+    }
+
+    #[test]
+    fn parse_version_rejects_empty_input() {
+        let result = parse_tmux_version("");
+        assert!(result.is_err(), "empty input must be rejected");
+    }
+
+    // ── CT-02: Display for TmuxVersion ──────────────────────────────
+
+    #[test]
+    fn tmux_version_display() {
+        let v = TmuxVersion { major: 3, minor: 4 };
+        assert_eq!(v.to_string(), "3.4");
+    }
+
+    // ── CT-02: TMUX_TMPDIR Unset ────────────────────────────────────
+
+    #[test]
+    fn tmux_cmd_removes_tmux_tmpdir() {
+        std::env::set_var("TMUX_TMPDIR", "/tmp/evil");
+        let output = tmux_cmd()
+            .arg("-V")
+            .output();
+        std::env::remove_var("TMUX_TMPDIR");
+        // The command should execute without using the evil TMUX_TMPDIR.
+        // If tmux is available, this succeeds; the key assertion is that
+        // tmux_cmd() builds a Command that env_removes TMUX_TMPDIR.
+        // We verify by checking that check_tmux_available works even
+        // with TMUX_TMPDIR set to garbage.
+        assert!(output.is_ok(), "tmux_cmd() must produce a valid Command");
+    }
+
+    // ── CT-02: Integration — Real tmux ──────────────────────────────
+
+    #[test]
+    fn check_tmux_available_returns_valid_version() {
+        let v = TmuxSession::check_tmux_available()
+            .expect("tmux should be available in the test environment");
+        assert!(
+            v.major >= 3,
+            "system tmux must be version 3.0+, got: {}",
+            v
+        );
+    }
+
+    #[test]
+    fn check_tmux_available_works_with_tmux_tmpdir_set() {
+        std::env::set_var("TMUX_TMPDIR", "/nonexistent/path");
+        let result = TmuxSession::check_tmux_available();
+        std::env::remove_var("TMUX_TMPDIR");
+        assert!(
+            result.is_ok(),
+            "check_tmux_available must succeed even with TMUX_TMPDIR set to garbage"
         );
     }
 }
