@@ -134,7 +134,6 @@ pub fn sync_workspace(
 
     // Provision new project submodules from manifest
     if !projects.is_empty() {
-        let projects_dir = ws_root.join("projects");
         fs::create_dir_all(&projects_dir)
             .context("Failed to create projects directory")?;
 
