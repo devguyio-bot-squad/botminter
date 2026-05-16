@@ -390,9 +390,10 @@ impl Formation for LinuxLocalFormation {
         eprintln!("  Ctrl-b [  — scroll mode (q to exit)");
         eprintln!("  Ctrl-b d  — detach");
 
+        let session = tmux.session_name();
         let target = match member {
-            Some(ref w) => format!("{}:{}", tmux.session_name(), w),
-            None => tmux.session_name().to_string(),
+            Some(ref w) => format!("{session}:{w}"),
+            None => session.to_string(),
         };
 
         let status = super::tmux::tmux_cmd()
@@ -593,6 +594,19 @@ mod tests {
     // PATH corrupt each other's which::which / Command lookups. This mutex
     // serializes all PATH-mutating prerequisite tests.
     static PATH_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    fn with_env<F: FnOnce() -> R, R>(var: &str, value: &str, f: F) -> R {
+        let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let orig = std::env::var(var).ok();
+        std::env::set_var(var, value);
+        let result = f();
+        match orig {
+            Some(v) => std::env::set_var(var, v),
+            None => std::env::remove_var(var),
+        }
+        result
+    }
 
     fn create_stub_script(dir: &std::path::Path, name: &str, content: &str) {
         let path = dir.join(name);
@@ -814,20 +828,10 @@ mod tests {
         crate::formation::local::tmux::config::TmuxConfig::ensure_written().unwrap();
         tmux.create().unwrap();
 
-        // Simulate being inside tmux by setting $TMUX
-        let orig_tmux = std::env::var("TMUX").ok();
-        std::env::set_var("TMUX", "/tmp/tmux-fake/default,12345,0");
+        let result = with_env("TMUX", "/tmp/tmux-fake/default,12345,0", || {
+            f.shell(None)
+        });
 
-        let result = f.shell(None);
-
-        // Restore $TMUX
-        match orig_tmux {
-            Some(v) => std::env::set_var("TMUX", v),
-            None => std::env::remove_var("TMUX"),
-        }
-
-        // The shell() function should still attempt attach even when $TMUX is
-        // set (warn on stderr, then proceed). It must NOT return a stub error.
         match result {
             Ok(()) => {}
             Err(e) => {
