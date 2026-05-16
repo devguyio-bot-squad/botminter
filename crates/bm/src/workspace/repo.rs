@@ -620,7 +620,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn workspace_repo_member_branch_in_team_submodule() {
+    fn workspace_repo_team_submodule_on_main() {
         let tmp = tempfile::tempdir().unwrap();
         let team_repo = setup_team_repo_for_ws(tmp.path());
         let workspace_base = tmp.path().join("workzone");
@@ -634,8 +634,8 @@ pub(super) mod tests {
         let branch = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
         assert_eq!(
             branch.trim(),
-            "arch-01",
-            "team submodule should be on the member branch"
+            "main",
+            "AC-01: team submodule should be on main, not a member branch"
         );
     }
 
@@ -695,7 +695,7 @@ pub(super) mod tests {
     }
 
     #[test]
-    fn workspace_repo_member_branch_in_project_submodules() {
+    fn workspace_repo_project_submodules_on_main() {
         let tmp = tempfile::tempdir().unwrap();
         let team_repo = setup_team_repo_for_ws(tmp.path());
         let fork = setup_fork_repo(tmp.path(), "my-project");
@@ -715,8 +715,8 @@ pub(super) mod tests {
             git_cmd_output(&proj_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
         assert_eq!(
             branch.trim(),
-            "arch-01",
-            "project submodule should be on the member branch"
+            "main",
+            "AC-01: project submodule should be on main, not a member branch"
         );
     }
 

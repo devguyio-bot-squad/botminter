@@ -20,6 +20,7 @@ pub enum SyncEvent {
     BranchAlreadyOnIt(String),
     BranchCheckedOut(String),
     BranchCreated(String),
+    BranchMigrated(String),
     ProjectProvisioned(String),
 }
 
@@ -491,23 +492,19 @@ mod tests {
     }
 
     #[test]
-    fn sync_member_branch_in_team_submodule() {
+    fn sync_team_submodule_on_main() {
         let tmp = tempfile::tempdir().unwrap();
-        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+        let (ws, _member, agent) = setup_syncable_workspace(tmp.path());
 
-        // After initial create, team/ submodule should be on member branch
+        // Sync — team/ submodule should end up on main (no member branches)
+        sync_workspace(&ws, "arch-01", &agent, false, false, None, None, &[]).unwrap();
+
         let team_sub = ws.join("team");
-        let branch = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
-        assert_eq!(branch.trim(), member, "team/ should be on member branch");
-
-        // Sync and verify branch is still correct (not detached HEAD)
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
-
         let branch = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
         assert_eq!(
             branch.trim(),
-            member,
-            "team/ should remain on member branch after sync (not detached HEAD)"
+            "main",
+            "AC-01: team/ submodule should be on main after sync, not a member branch"
         );
     }
 
@@ -736,7 +733,7 @@ mod tests {
     }
 
     #[test]
-    fn sync_provisions_project_on_member_branch() {
+    fn sync_provisions_project_on_main() {
         let tmp = tempfile::tempdir().unwrap();
         let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
         let fork_url = fork.to_str().unwrap();
@@ -749,12 +746,12 @@ mod tests {
         let project_dir = ws.join("projects/new-project");
         assert!(
             project_dir.is_dir(),
-            "AC-02: project must exist before checking branch"
+            "project must exist before checking branch"
         );
         let branch = git_cmd_output(&project_dir, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
         assert_eq!(
-            branch.trim(), member,
-            "AC-02: provisioned project submodule should be on member branch, not detached HEAD"
+            branch.trim(), "main",
+            "AC-01: provisioned project submodule should be on main, not a member branch"
         );
     }
 
@@ -887,5 +884,131 @@ mod tests {
                 );
             }
         }
+    }
+
+    // ── Member branch migration tests (Issue #13) ─────────────────
+
+    #[test]
+    fn sync_migrates_member_branch_to_main() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Precondition: team submodule is on a member branch (created by create_workspace_repo)
+        let team_sub = ws.join("team");
+        let branch_before = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch_before.trim(), &member,
+            "precondition: team/ should start on member branch"
+        );
+
+        // Sync should migrate to main
+        let result = sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+
+        // After migration, team submodule should be on main
+        let branch_after = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch_after.trim(), "main",
+            "AC-07: team/ should be migrated to main after sync"
+        );
+
+        // Old member branch should be deleted
+        let branch_list = git_cmd_output(&team_sub, &["branch", "--list", &member]).unwrap();
+        assert!(
+            branch_list.trim().is_empty(),
+            "AC-07: old member branch '{}' should be deleted after migration",
+            member
+        );
+
+        // BranchMigrated event should be emitted (unconditionally — visible without -v)
+        let migrated = result.events.iter().any(|e| matches!(e, SyncEvent::BranchMigrated(name) if name == &member));
+        assert!(
+            migrated,
+            "AC-07: SyncResult events should contain BranchMigrated for '{}'",
+            member
+        );
+    }
+
+    #[test]
+    fn sync_migrates_project_submodule_branch_to_main() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fork = crate::workspace::repo::tests::setup_fork_repo(tmp.path(), "migr-proj");
+        let fork_url_str = fork.to_str().unwrap().to_string();
+        let member = "arch-01";
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+        let agent = claude_code_agent();
+        let projects = [("migr-proj", fork_url_str.as_str())];
+        let params = test_ws_params(&team_repo, &workspace_base, member, &projects, &agent);
+        create_workspace_repo(&params).unwrap();
+        let ws = workspace_base.join(member);
+
+        // Precondition: project submodule is on member branch
+        let proj_sub = ws.join("projects/migr-proj");
+        let branch_before = git_cmd_output(&proj_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch_before.trim(), member,
+            "precondition: project submodule should start on member branch"
+        );
+
+        // Sync should migrate project submodule to main
+        sync_workspace(&ws, member, &agent, false, false, None, None, &[]).unwrap();
+
+        let branch_after = git_cmd_output(&proj_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch_after.trim(), "main",
+            "AC-07: project submodule should be migrated to main after sync"
+        );
+
+        // Old member branch should be deleted
+        let branch_list = git_cmd_output(&proj_sub, &["branch", "--list", member]).unwrap();
+        assert!(
+            branch_list.trim().is_empty(),
+            "AC-07: old member branch should be deleted from project submodule"
+        );
+    }
+
+    #[test]
+    fn sync_migration_logs_warning_on_unmerged_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Create a divergent commit on the member branch in team submodule
+        // so `git branch -d` would fail (unmerged)
+        let team_sub = ws.join("team");
+        fs::write(team_sub.join("divergent.txt"), "unmerged work").unwrap();
+        git_cmd(&team_sub, &["add", "divergent.txt"]).unwrap();
+        git_cmd(&team_sub, &["commit", "-m", "divergent commit on member branch"]).unwrap();
+
+        // Switch to main and make a different commit so branches diverge
+        git_cmd(&team_sub, &["checkout", "main"]).unwrap();
+        fs::write(team_sub.join("main-only.txt"), "main work").unwrap();
+        git_cmd(&team_sub, &["add", "main-only.txt"]).unwrap();
+        git_cmd(&team_sub, &["commit", "-m", "main diverges"]).unwrap();
+
+        // Switch back to member branch so sync finds it
+        git_cmd(&team_sub, &["checkout", &member]).unwrap();
+
+        // Sync should succeed (not error out) even with unmerged branch
+        let result = sync_workspace(&ws, &member, &agent, false, false, None, None, &[]);
+        assert!(
+            result.is_ok(),
+            "AC-07: sync should not fail when member branch has unmerged commits; got: {:?}",
+            result.err()
+        );
+
+        // The member branch should be preserved (not deleted) since it has unmerged work
+        let branch_list = git_cmd_output(&team_sub, &["branch", "--list", &member]).unwrap();
+        assert!(
+            !branch_list.trim().is_empty(),
+            "AC-07: member branch with unmerged commits should be preserved (not forcefully deleted)"
+        );
+
+        // Submodule should still be on main after migration attempt
+        let branch_after = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch_after.trim(), "main",
+            "AC-07: team submodule should be on main even when old branch can't be deleted"
+        );
     }
 }
