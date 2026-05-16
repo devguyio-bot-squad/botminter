@@ -204,15 +204,16 @@ fn gather_tmux_info(team_name: &str) -> Option<TmuxStatusInfo> {
         return None;
     }
     let info = session.session_info().ok()?;
+    let raw_attach_command = format!(
+        "tmux -L {} attach -t {}",
+        info.socket_name, info.session_name,
+    );
     Some(TmuxStatusInfo {
         session_name: info.session_name,
         socket_name: info.socket_name,
         window_count: info.windows.len(),
         attach_command: "bm attach".to_string(),
-        raw_attach_command: format!(
-            "tmux -L botminter attach -t {}",
-            session.session_name()
-        ),
+        raw_attach_command,
     })
 }
 
