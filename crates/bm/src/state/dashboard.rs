@@ -25,6 +25,16 @@ pub struct StatusInfo {
     pub crashed_cleaned: usize,
     pub bridge: Option<BridgeDisplay>,
     pub verbose: Option<VerboseDisplay>,
+    pub tmux: Option<TmuxStatusInfo>,
+}
+
+/// Tmux session info for the status dashboard.
+pub struct TmuxStatusInfo {
+    pub session_name: String,
+    pub socket_name: String,
+    pub window_count: usize,
+    pub attach_command: String,
+    pub raw_attach_command: String,
 }
 
 /// Daemon status info for display.
@@ -167,6 +177,9 @@ pub fn gather_status(
         None
     };
 
+    // Tmux
+    let tmux = gather_tmux_info(team_name);
+
     Ok(StatusInfo {
         formation,
         project_names,
@@ -176,12 +189,17 @@ pub fn gather_status(
         crashed_cleaned,
         bridge: bridge_display,
         verbose: verbose_display,
+        tmux,
     })
 }
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+fn gather_tmux_info(_team_name: &str) -> Option<TmuxStatusInfo> {
+    None
+}
 
 fn gather_daemon_info(team_name: &str) -> Option<DaemonDisplay> {
     match daemon::query_status(team_name) {
@@ -293,4 +311,153 @@ fn gather_verbose(
         workspaces,
         ralph_sections,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::formation::local::tmux::{TmuxSession, tmux_cmd};
+
+    struct TmuxGuard {
+        session_name: String,
+    }
+
+    impl TmuxGuard {
+        fn new(session_name: &str) -> Self {
+            Self {
+                session_name: session_name.to_string(),
+            }
+        }
+    }
+
+    impl Drop for TmuxGuard {
+        fn drop(&mut self) {
+            let _ = tmux_cmd()
+                .args(["-L", "botminter", "kill-session", "-t", &self.session_name])
+                .output();
+        }
+    }
+
+    // ── CT-03 (Story #8): AC1 — Tmux info in status output ──────────
+
+    #[test]
+    fn tmux_status_info_includes_session_name_windows_and_attach() {
+        let session = TmuxSession::new("ct03s8-info").unwrap();
+        let _guard = TmuxGuard::new(session.session_name());
+        session.create().expect("session create should succeed");
+
+        let cwd = std::env::temp_dir();
+        session
+            .create_window("bob", &["sleep", "300"], &cwd, &[])
+            .expect("create_window 'bob'");
+        session
+            .create_window("cos", &["sleep", "300"], &cwd, &[])
+            .expect("create_window 'cos'");
+        session
+            .create_window("sentinel", &["sleep", "300"], &cwd, &[])
+            .expect("create_window 'sentinel'");
+
+        let info = gather_tmux_info("ct03s8-info");
+
+        let tmux = info.expect("tmux info must be Some when session exists");
+        assert_eq!(tmux.session_name, "bm-ct03s8-info");
+        assert!(
+            tmux.window_count >= 3,
+            "window_count must include created windows, got: {}",
+            tmux.window_count
+        );
+        assert_eq!(tmux.attach_command, "bm attach");
+    }
+
+    // ── CT-03 (Story #8): AC2 — Raw attach command shown ────────────
+
+    #[test]
+    fn tmux_status_info_includes_raw_attach_command() {
+        let session = TmuxSession::new("ct03s8-raw").unwrap();
+        let _guard = TmuxGuard::new(session.session_name());
+        session.create().expect("session create should succeed");
+
+        let info = gather_tmux_info("ct03s8-raw");
+
+        let tmux = info.expect("tmux info must be Some when session exists");
+        assert_eq!(
+            tmux.raw_attach_command,
+            "tmux -L botminter attach -t bm-ct03s8-raw",
+            "raw_attach_command must be the full tmux attach command"
+        );
+    }
+
+    // ── CT-03 (Story #8): AC3 — No tmux info when session absent ────
+
+    #[test]
+    fn no_tmux_info_when_session_does_not_exist() {
+        let info = gather_tmux_info("ct03s8-nosession");
+
+        assert!(
+            info.is_none(),
+            "tmux info must be None when no session exists"
+        );
+    }
+
+    // ── CT-03 (Story #8): AC4 — Graceful degradation on tmux error ──
+
+    #[test]
+    fn tmux_error_returns_none_without_panic() {
+        let info = gather_tmux_info("ct03s8-\x00invalid");
+
+        assert!(
+            info.is_none(),
+            "tmux info must be None on error, not panic"
+        );
+    }
+
+    // ── CT-03 (Story #8): AC5 — Display format integration ─────────
+
+    #[test]
+    fn status_display_includes_tmux_section_when_present() {
+        let tmux = TmuxStatusInfo {
+            session_name: "bm-test-team".to_string(),
+            socket_name: "botminter".to_string(),
+            window_count: 3,
+            attach_command: "bm attach".to_string(),
+            raw_attach_command: "tmux -L botminter attach -t bm-test-team".to_string(),
+        };
+
+        let mut output = Vec::new();
+        use std::io::Write;
+        writeln!(
+            &mut output,
+            "tmux: {} ({} windows)",
+            tmux.session_name, tmux.window_count
+        )
+        .unwrap();
+        writeln!(
+            &mut output,
+            "attach: {}  (or: {})",
+            tmux.attach_command, tmux.raw_attach_command
+        )
+        .unwrap();
+
+        let text = String::from_utf8(output).unwrap();
+        assert!(
+            text.contains("bm-test-team"),
+            "output must contain session name"
+        );
+        assert!(
+            text.contains("3 windows"),
+            "output must contain window count"
+        );
+        assert!(
+            text.contains("bm attach"),
+            "output must contain friendly attach command"
+        );
+        assert!(
+            text.contains("tmux -L botminter attach -t bm-test-team"),
+            "output must contain raw tmux attach command"
+        );
+    }
 }

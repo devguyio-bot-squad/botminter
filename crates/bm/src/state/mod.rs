@@ -2,7 +2,8 @@ mod dashboard;
 
 pub use dashboard::{
     gather_status, BridgeDisplay, BridgeIdentityRow, DaemonDisplay, MemberRow,
-    RalphMemberInfo, StatusInfo, SubmoduleRow, VerboseDisplay, WorkspaceVerbose,
+    RalphMemberInfo, StatusInfo, SubmoduleRow, TmuxStatusInfo, VerboseDisplay,
+    WorkspaceVerbose,
 };
 
 use std::collections::{HashMap, HashSet};

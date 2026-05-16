@@ -25,6 +25,16 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
     if !info.project_names.is_empty() {
         println!("Projects: {}", info.project_names.join(", "));
     }
+    if let Some(t) = &info.tmux {
+        println!(
+            "tmux: {} ({} windows)",
+            t.session_name, t.window_count
+        );
+        println!(
+            "attach: {}  (or: {})",
+            t.attach_command, t.raw_attach_command
+        );
+    }
     if let Some(d) = &info.daemon {
         match d.mode.as_str() {
             "webhook" => println!(
