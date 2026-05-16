@@ -17,9 +17,6 @@ pub enum SyncEvent {
     ChangesCommitted,
     PushedToRemote,
     NoChanges,
-    BranchAlreadyOnIt(String),
-    BranchCheckedOut(String),
-    BranchCreated(String),
     BranchMigrated(String),
     ProjectProvisioned(String),
 }
@@ -101,13 +98,15 @@ pub fn sync_workspace(
             result.events.push(SyncEvent::UpdatingSubmodule("team/".to_string()));
         }
         // Fetch and update to latest remote tracking branch
-        git_cmd(ws_root, &[
+        if let Err(e) = git_cmd(ws_root, &[
             "-c", "protocol.file.allow=always",
             "submodule", "update", "--remote", "--merge", "team",
-        ]).ok();
+        ]) {
+            eprintln!("Warning: failed to update team submodule: {:#}", e);
+        }
 
-        // Checkout member branch (avoid detached HEAD)
-        checkout_member_branch(&team_dir, member_dir_name, verbose, &mut result)?;
+        // Migrate from member branch to main if needed
+        migrate_to_main(&team_dir, &mut result)?;
     }
 
     // Update project submodules
@@ -121,13 +120,15 @@ pub fn sync_workspace(
                     if verbose {
                         result.events.push(SyncEvent::UpdatingSubmodule(project_path.clone()));
                     }
-                    git_cmd(ws_root, &[
+                    if let Err(e) = git_cmd(ws_root, &[
                         "-c", "protocol.file.allow=always",
                         "submodule", "update", "--remote", "--merge", &project_path,
-                    ]).ok();
+                    ]) {
+                        eprintln!("Warning: failed to update project submodule '{}': {:#}", project_name, e);
+                    }
 
-                    // Checkout member branch in project submodule
-                    checkout_member_branch(&entry.path(), member_dir_name, verbose, &mut result)?;
+                    // Migrate from member branch to main if needed
+                    migrate_to_main(&entry.path(), &mut result)?;
                 }
             }
         }
@@ -145,9 +146,7 @@ pub fn sync_workspace(
                 continue;
             }
             let submodule_path = format!("projects/{}", project_name);
-            match git_submodule_add(ws_root, fork_url, &submodule_path)
-                .and_then(|()| checkout_member_branch(&project_path, member_dir_name, verbose, &mut result))
-            {
+            match git_submodule_add(ws_root, fork_url, &submodule_path) {
                 Ok(()) => {
                     result.events.push(SyncEvent::ProjectProvisioned(project_name.to_string()));
                 }
@@ -276,44 +275,41 @@ pub fn sync_workspace(
     Ok(result)
 }
 
-/// Checks out the member branch in a submodule, creating it if needed.
-/// Avoids leaving the submodule in detached HEAD state.
-fn checkout_member_branch(sub_dir: &Path, member_dir_name: &str, verbose: bool, result: &mut SyncResult) -> Result<()> {
-    // Check current branch
+/// Migrates a submodule from any non-main branch to main.
+/// For legacy workspaces that used per-member branches.
+fn migrate_to_main(sub_dir: &Path, result: &mut SyncResult) -> Result<()> {
     let current = git_cmd_output(sub_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
         .unwrap_or_default();
     let current = current.trim();
 
-    if current == member_dir_name {
-        if verbose {
-            result.events.push(SyncEvent::BranchAlreadyOnIt(member_dir_name.to_string()));
-        }
+    if current == "main" {
         return Ok(());
     }
 
-    // Try checkout existing branch first
-    if git_cmd(sub_dir, &["checkout", member_dir_name]).is_ok() {
-        if verbose {
-            result.events.push(SyncEvent::BranchCheckedOut(member_dir_name.to_string()));
+    let old_branch = if current != "HEAD" {
+        Some(current.to_string())
+    } else {
+        None
+    };
+
+    if git_cmd(sub_dir, &["checkout", "main"]).is_err() {
+        if git_cmd(sub_dir, &["checkout", "-b", "main", "origin/main"]).is_err() {
+            eprintln!("Warning: could not checkout main in {}", sub_dir.display());
+            return Ok(());
         }
-        return Ok(());
     }
 
-    // Checkout failed — only create if the branch doesn't exist yet.
-    // If it exists, the failure was due to dirty working tree.
-    let branch_exists = git_cmd(sub_dir, &["rev-parse", "--verify", member_dir_name]).is_ok();
-    if branch_exists {
-        anyhow::bail!(
-            "Cannot switch to branch '{}': working tree has uncommitted changes. \
-             Commit or stash changes in the submodule first.",
-            member_dir_name
-        );
+    if let Some(old_branch) = old_branch {
+        result.events.push(SyncEvent::BranchMigrated(old_branch.clone()));
+        if git_cmd(sub_dir, &["branch", "-d", &old_branch]).is_err() {
+            eprintln!(
+                "Warning: branch '{}' has unmerged commits in {} — preserved",
+                old_branch,
+                sub_dir.display()
+            );
+        }
     }
 
-    git_cmd(sub_dir, &["checkout", "-b", member_dir_name])?;
-    if verbose {
-        result.events.push(SyncEvent::BranchCreated(member_dir_name.to_string()));
-    }
     Ok(())
 }
 
@@ -893,8 +889,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
-        // Precondition: team submodule is on a member branch (created by create_workspace_repo)
+        // Simulate a legacy workspace that has a member branch
         let team_sub = ws.join("team");
+        git_cmd(&team_sub, &["checkout", "-b", &member]).unwrap();
         let branch_before = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
         assert_eq!(
             branch_before.trim(), &member,
@@ -943,8 +940,9 @@ mod tests {
         create_workspace_repo(&params).unwrap();
         let ws = workspace_base.join(member);
 
-        // Precondition: project submodule is on member branch
+        // Simulate a legacy workspace with member branch in project submodule
         let proj_sub = ws.join("projects/migr-proj");
+        git_cmd(&proj_sub, &["checkout", "-b", member]).unwrap();
         let branch_before = git_cmd_output(&proj_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
         assert_eq!(
             branch_before.trim(), member,
@@ -973,9 +971,9 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
-        // Create a divergent commit on the member branch in team submodule
-        // so `git branch -d` would fail (unmerged)
+        // Simulate a legacy workspace with member branch, then create divergent commits
         let team_sub = ws.join("team");
+        git_cmd(&team_sub, &["checkout", "-b", &member]).unwrap();
         fs::write(team_sub.join("divergent.txt"), "unmerged work").unwrap();
         git_cmd(&team_sub, &["add", "divergent.txt"]).unwrap();
         git_cmd(&team_sub, &["commit", "-m", "divergent commit on member branch"]).unwrap();

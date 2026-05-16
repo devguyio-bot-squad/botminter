@@ -154,7 +154,7 @@ pub struct WorkspaceRepoParams<'a> {
 ///
 /// This replaces the old `.botminter/` clone model. The workspace is a git repo
 /// containing submodules: `team/` points to the team repo, and `projects/<name>/`
-/// points to project forks. Member branches are checked out in all submodules.
+/// points to project forks. All submodules stay on main.
 ///
 /// When `push` is true (i.e., `bm teams sync --repos`), a GitHub repo is
 /// created via `gh repo create`. When false, the workspace is local-only.
@@ -264,12 +264,6 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
             )
         })?;
 
-    // Checkout member branch in team submodule
-    let team_sub = member_ws.join("team");
-    if git_cmd(&team_sub, &["checkout", params.member_dir_name]).is_err() {
-        git_cmd(&team_sub, &["checkout", "-b", params.member_dir_name])?;
-    }
-
     // Add project submodules
     if !params.projects.is_empty() {
         let projects_dir = member_ws.join("projects");
@@ -286,12 +280,6 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
                         project_name, fork_url, fork_url
                     )
                 })?;
-
-            // Checkout member branch in project submodule
-            let proj_sub = member_ws.join("projects").join(project_name);
-            if git_cmd(&proj_sub, &["checkout", params.member_dir_name]).is_err() {
-                git_cmd(&proj_sub, &["checkout", "-b", params.member_dir_name])?;
-            }
         }
     }
 
