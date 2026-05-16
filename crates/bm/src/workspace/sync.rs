@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 
 use crate::profile::CodingAgentDef;
 use super::repo::assemble_agent_dir_submodule;
-use super::util::{copy_if_newer_verbose, git_cmd, git_cmd_output, git_submodule_add};
+use super::util::{copy_if_changed_verbose, git_cmd, git_cmd_output, git_submodule_add};
 
 /// Events emitted during workspace sync for the caller to display.
 #[derive(Debug)]
@@ -178,7 +178,7 @@ pub fn sync_workspace(
     ];
 
     for (src, dst, name) in &files_to_sync {
-        let copied = copy_if_newer_verbose(src, dst)?;
+        let copied = copy_if_changed_verbose(src, dst)?;
         if verbose {
             if copied {
                 result.events.push(SyncEvent::FileCopied(name.to_string()));
@@ -195,7 +195,7 @@ pub fn sync_workspace(
     let settings_dst = ws_root
         .join(&coding_agent.agent_dir)
         .join("settings.local.json");
-    let settings_copied = copy_if_newer_verbose(&settings_src, &settings_dst)?;
+    let settings_copied = copy_if_changed_verbose(&settings_src, &settings_dst)?;
     if verbose && settings_src.exists() {
         if settings_copied {
             result.events.push(SyncEvent::FileCopied("settings.local.json".to_string()));
@@ -346,27 +346,18 @@ mod tests {
             "v: 1"
         );
 
-        // Modify ralph.yml in team/ submodule (simulating upstream change)
+        // Modify ralph.yml in team/ submodule (simulating upstream change).
+        // No mtime manipulation — content-based copy_if_changed should detect
+        // the difference regardless of filesystem timestamps.
         let source = ws.join("team/members").join(&member).join("ralph.yml");
         fs::write(&source, "updated: true").unwrap();
-
-        // Ensure source is newer
-        let now = filetime::FileTime::from_unix_time(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64
-                + 2,
-            0,
-        );
-        filetime::set_file_mtime(&source, now).unwrap();
 
         sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
         assert_eq!(
             fs::read_to_string(ws.join("ralph.yml")).unwrap(),
             "updated: true",
-            "Sync should re-copy the updated ralph.yml"
+            "Sync should re-copy the updated ralph.yml based on content difference"
         );
     }
 
@@ -430,23 +421,13 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Modify a context file in the team submodule and commit it
-        // (simulating an upstream change that arrives via submodule update)
+        // (simulating an upstream change that arrives via submodule update).
+        // No mtime manipulation — content-based comparison handles this.
         let team_sub = ws.join("team");
         let source = team_sub.join("members").join(&member).join("ralph.yml");
         fs::write(&source, "updated: true").unwrap();
         git_cmd(&team_sub, &["add", "-A"]).unwrap();
         git_cmd(&team_sub, &["commit", "-m", "upstream change"]).unwrap();
-
-        // Ensure source is newer than workspace copy
-        let now = filetime::FileTime::from_unix_time(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64
-                + 2,
-            0,
-        );
-        filetime::set_file_mtime(&source, now).unwrap();
 
         sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
@@ -454,7 +435,7 @@ mod tests {
         assert_eq!(
             fs::read_to_string(ws.join("ralph.yml")).unwrap(),
             "updated: true",
-            "Sync should re-copy the updated ralph.yml"
+            "Sync should re-copy the updated ralph.yml based on content difference"
         );
 
         // Working tree should be clean after sync (changes committed)
@@ -484,6 +465,29 @@ mod tests {
             log_before.trim(),
             log_after.trim(),
             "No new commits should be created when nothing changed"
+        );
+    }
+
+    #[test]
+    fn sync_picks_up_content_change_despite_older_mtime() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Modify ralph.yml in team/ submodule (simulating upstream content change)
+        let source = ws.join("team/members").join(&member).join("ralph.yml");
+        fs::write(&source, "changed-by-submodule-update").unwrap();
+
+        // Set source mtime OLDER than dest — simulating git submodule checkout
+        // resetting timestamps to an older value (the core bug scenario).
+        let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
+        filetime::set_file_mtime(&source, old_time).unwrap();
+
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(ws.join("ralph.yml")).unwrap(),
+            "changed-by-submodule-update",
+            "AC-03: sync should detect content change despite source having older mtime"
         );
     }
 
