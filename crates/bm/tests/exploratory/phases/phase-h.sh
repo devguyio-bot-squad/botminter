@@ -678,7 +678,7 @@ fi
 
 # ── Tmux window preservation after bm stop ──
 # H37b: tmux windows still exist after stop (remain-on-exit)
-SESSION_NAME="bm-$TEAM_NAME"
+# SESSION_NAME already set above (H25b)
 TMUX_AFTER_STOP=$(tmux -L botminter list-windows -t "$SESSION_NAME" -F '#{window_name}' 2>/dev/null || echo "")
 if [ -n "$TMUX_AFTER_STOP" ]; then
     pass "H37b" "tmux windows preserved after stop (remain-on-exit): $(echo "$TMUX_AFTER_STOP" | tr '\n' ', ')"
