@@ -129,7 +129,7 @@ pub fn sync_team_workspaces(params: &TeamSyncParams) -> Result<TeamSyncResult> {
                 params.repos,
                 params.project_number,
                 params.github_repo,
-                &[],
+                &project_refs,
             )?;
             events.push(TeamSyncEvent::WorkspaceSynced {
                 name: member_dir_name.clone(),

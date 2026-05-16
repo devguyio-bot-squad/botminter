@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 
 use crate::profile::CodingAgentDef;
 use super::repo::assemble_agent_dir_submodule;
-use super::util::{copy_if_newer_verbose, git_cmd, git_cmd_output};
+use super::util::{copy_if_newer_verbose, git_cmd, git_cmd_output, git_submodule_add};
 
 /// Events emitted during workspace sync for the caller to display.
 #[derive(Debug)]
@@ -129,6 +129,40 @@ pub fn sync_workspace(
                     checkout_member_branch(&entry.path(), member_dir_name, verbose, &mut result)?;
                 }
             }
+        }
+    }
+
+    // Provision new project submodules from manifest
+    if !projects.is_empty() {
+        let projects_dir = ws_root.join("projects");
+        fs::create_dir_all(&projects_dir)
+            .context("Failed to create projects directory")?;
+
+        let mut provision_errors: Vec<String> = Vec::new();
+        for &(project_name, fork_url) in projects {
+            let project_path = projects_dir.join(project_name);
+            if project_path.is_dir() {
+                continue;
+            }
+            let submodule_path = format!("projects/{}", project_name);
+            match git_submodule_add(ws_root, fork_url, &submodule_path)
+                .and_then(|()| checkout_member_branch(&project_path, member_dir_name, verbose, &mut result))
+            {
+                Ok(()) => {
+                    result.events.push(SyncEvent::ProjectProvisioned(project_name.to_string()));
+                }
+                Err(e) => {
+                    let msg = format!(
+                        "Failed to provision project '{}' from {}: {:#}",
+                        project_name, fork_url, e
+                    );
+                    eprintln!("{}", msg);
+                    provision_errors.push(msg);
+                }
+            }
+        }
+        if !provision_errors.is_empty() && provision_errors.len() == projects.len() {
+            anyhow::bail!("All project provisioning failed:\n{}", provision_errors.join("\n"));
         }
     }
 
