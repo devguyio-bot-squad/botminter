@@ -74,8 +74,8 @@ pub(super) fn write_workspace_marker(ws_root: &Path, member_dir_name: &str) -> R
 /// re-assembling agent directory, and committing+pushing any changes.
 ///
 /// Uses the `team/` submodule model. Updates submodules to latest remote content,
-/// checks out member branches, re-copies context files when newer, and rebuilds
-/// agent dir symlinks idempotently.
+/// migrates legacy member branches to main, re-copies context files when newer,
+/// and rebuilds agent dir symlinks idempotently.
 ///
 /// Returns a `SyncResult` with events describing what happened. The caller
 /// decides whether and how to display these events (e.g., only in verbose mode).
