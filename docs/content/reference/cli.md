@@ -550,7 +550,7 @@ bm teams sync [--repos] [--bridge] [--all|-a] [-v] [-t <team>]
 - Discovers hired members and configured projects
 - For each member: creates or syncs a workspace repo
 - New workspace: creates a git repo with `team/` submodule (and `projects/<name>/` submodules), copies context files, assembles agent dir, writes `.gitignore` and `.botminter.workspace` marker
-- Existing workspace: updates submodules to latest, checks out member branches, re-copies context files when newer, re-assembles agent dir symlinks, commits and pushes changes
+- Existing workspace: updates submodules to latest, re-copies context files when newer, re-assembles agent dir symlinks, commits and pushes changes
 - Reports summary: "Synced N workspaces (M created, K updated)"
 
 ## Process lifecycle

@@ -38,8 +38,17 @@ Seventeen specialized hats are available for different phases of work. Board sca
 
 ### Workspace Layout
 
-<!-- BM:WORKSPACE_LAYOUT -->
-<!-- /BM:WORKSPACE_LAYOUT -->
+```
+project-repo-engineer/               # Project repo clone (CWD)
+  team/                           # Team repo clone
+    knowledge/, invariants/             # Team-level
+    members/{{member_dir}}/                    # Member config
+    projects/<project>/                 # Project-specific
+  PROMPT.md                      # Copy from team/members/{{member_dir}}/
+  context.md                     # Copy from team/members/{{member_dir}}/
+  ralph.yml                             # Copy
+  poll-log.txt                          # Board scan audit log
+```
 
 ### Knowledge Resolution
 

@@ -24,8 +24,19 @@ Board scanning is handled by an auto-inject skill, not a hat.
 
 ### Workspace Layout
 
-<!-- BM:WORKSPACE_LAYOUT -->
-<!-- /BM:WORKSPACE_LAYOUT -->
+```
+project-repo-sentinel/               # Project repo clone (CWD)
+  team/                           # Team repo clone
+    knowledge/, invariants/             # Team-level
+    members/{{member_dir}}/                    # Member config
+    projects/<project>/                 # Project-specific
+      knowledge/
+        merge-gate.md                   # Merge gate configuration
+  PROMPT.md                      # Copy from team/members/{{member_dir}}/
+  context.md                     # Copy from team/members/{{member_dir}}/
+  ralph.yml                             # Copy
+  poll-log.txt                          # Board scan audit log
+```
 
 ### Knowledge Resolution
 

@@ -15,16 +15,16 @@ parent-directory/
   my-team/                    # Team repo (human operates here)
   my-project-ha/                      # human-assistant workspace (project repo clone)
     team/                       # Team repo clone
-    PROMPT.md → team/members/human-assistant/PROMPT.md
-    context.md → team/members/human-assistant/context.md
+    PROMPT.md                      # Copy from team/members/human-assistant/
+    context.md                     # Copy from team/members/human-assistant/
 <!-- +agent:claude-code -->
     .claude/                          # Assembled from coding-agent/ layers
 <!-- -agent -->
     ralph.yml                         # Copy
   my-project-arch/                    # architect workspace (project repo clone)
     team/                       # Team repo clone
-    PROMPT.md → team/members/architect/PROMPT.md
-    context.md → team/members/architect/context.md
+    PROMPT.md                      # Copy from team/members/architect/
+    context.md                     # Copy from team/members/architect/
 <!-- +agent:claude-code -->
     .claude/                          # Assembled from coding-agent/ layers
 <!-- -agent -->
@@ -94,7 +94,7 @@ Skills, sub-agents, and settings are scoped across multiple levels using a `codi
 | What changes | How it reaches agents |
 |---|---|
 | Knowledge, invariants, PROCESS.md, team context.md | Auto — agents pull `team/` every scan, read directly |
-| Member PROMPT.md, context.md | Auto — workspace files are symlinks into `team/` |
+| Member PROMPT.md, context.md | **Manual** — requires `bm teams sync` (re-copy when source is newer) |
 <!-- +agent:claude-code -->
 | Skills, agents (all levels) | Auto — read via `team/` paths (skills.dirs) or symlinks (.claude/agents/) |
 <!-- -agent -->
