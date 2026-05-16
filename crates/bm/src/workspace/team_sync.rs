@@ -50,6 +50,7 @@ pub enum TeamSyncEvent {
     WorkspaceCreated(String),
     WorkspaceSynced { name: String, events: Vec<workspace::SyncEvent> },
     WorkspaceCreateFailed { name: String, error: String },
+    WorkspaceSyncFailed { name: String, error: String },
     RobotInjected { member: String, enabled: bool },
     BrainPromptSurfaced { member: String },
 }
@@ -419,4 +420,202 @@ fn inject_robot_for_member(
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::util::git_cmd;
+    use crate::workspace::repo::tests::{claude_code_agent, test_ws_params};
+    use crate::workspace::repo::create_workspace_repo;
+    use std::collections::HashMap;
+
+    fn setup_team_repo_two_members(tmp: &Path) -> PathBuf {
+        let team_repo = tmp.join("team_repo");
+        for m in &["arch-01", "arch-02"] {
+            let member_cfg = team_repo.join("members").join(m);
+            fs::create_dir_all(&member_cfg).unwrap();
+            fs::write(member_cfg.join("PROMPT.md"), "# P").unwrap();
+            fs::write(member_cfg.join("CLAUDE.md"), "# C").unwrap();
+            fs::write(member_cfg.join("ralph.yml"), "v: 1").unwrap();
+            fs::create_dir_all(member_cfg.join("coding-agent/agents")).unwrap();
+        }
+        fs::create_dir_all(team_repo.join("coding-agent/agents")).unwrap();
+
+        git_cmd(&team_repo, &["init", "-b", "main"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.email", "test@test"]).unwrap();
+        git_cmd(&team_repo, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(&team_repo, &["add", "-f", "-A"]).unwrap();
+        git_cmd(&team_repo, &["commit", "-m", "init"]).unwrap();
+
+        team_repo
+    }
+
+    fn empty_manifest() -> profile::ProfileManifest {
+        profile::ProfileManifest {
+            name: "test".into(),
+            display_name: "Test".into(),
+            description: "test".into(),
+            version: "1.0".into(),
+            schema_version: "1.0".into(),
+            roles: Vec::new(),
+            labels: Vec::new(),
+            statuses: Vec::new(),
+            projects: Vec::new(),
+            views: Vec::new(),
+            coding_agents: HashMap::new(),
+            default_coding_agent: String::new(),
+            bridges: Vec::new(),
+            bridge: None,
+            operator: None,
+            meetings: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn sync_all_continues_after_workspace_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_two_members(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+        let agent = claude_code_agent();
+
+        for member in &["arch-01", "arch-02"] {
+            let params = test_ws_params(&team_repo, &workspace_base, member, &[], &agent);
+            create_workspace_repo(&params).unwrap();
+        }
+
+        // Sabotage arch-01: corrupt git state so sync_workspace fails at git add
+        let ws1 = workspace_base.join("arch-01");
+        fs::remove_file(ws1.join(".git/HEAD")).unwrap();
+
+        let manifest = empty_manifest();
+        let params = TeamSyncParams {
+            team_repo: &team_repo,
+            team_path: &workspace_base,
+            team_name: "my-team",
+            manifest: &manifest,
+            coding_agent: &agent,
+            github_repo: None,
+            project_number: None,
+            repos: false,
+            verbose: false,
+            bridge_flag: false,
+            workzone: tmp.path(),
+            keyring_collection: None,
+        };
+
+        // AC-05: sync should succeed overall despite one workspace failure
+        let result = sync_team_workspaces(&params).unwrap();
+
+        // AC-05: second workspace should still be synced
+        assert!(
+            result.updated >= 1,
+            "at least one workspace should be synced, got updated={}",
+            result.updated
+        );
+
+        // AC-05: failed workspace should appear in failures list
+        assert!(
+            result.failures.contains(&"arch-01".to_string()),
+            "arch-01 should appear in failures: {:?}",
+            result.failures
+        );
+
+        // AC-06: WorkspaceSyncFailed event emitted with member name and error
+        let sync_failed = result.events.iter().find(|e| {
+            matches!(e, TeamSyncEvent::WorkspaceSyncFailed { name, .. } if name == "arch-01")
+        });
+        assert!(
+            sync_failed.is_some(),
+            "WorkspaceSyncFailed event should be emitted for arch-01"
+        );
+    }
+
+    #[test]
+    fn sync_all_push_failure_non_fatal() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = setup_team_repo_two_members(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+        let agent = claude_code_agent();
+
+        for member in &["arch-01", "arch-02"] {
+            let params = test_ws_params(&team_repo, &workspace_base, member, &[], &agent);
+            create_workspace_repo(&params).unwrap();
+        }
+
+        let ws1 = workspace_base.join("arch-01");
+        let ws2 = workspace_base.join("arch-02");
+
+        // Set up bare remote for team repo (needed for repos: true)
+        let bare_team = tmp.path().join("bare-team.git");
+        fs::create_dir_all(&bare_team).unwrap();
+        git_cmd(&bare_team, &["init", "--bare"]).unwrap();
+        git_cmd(&team_repo, &["remote", "add", "origin", bare_team.to_str().unwrap()]).unwrap();
+        git_cmd(&team_repo, &["push", "-u", "origin", "main"]).unwrap();
+
+        // Set up valid bare remote for workspace 2
+        let bare_ws2 = tmp.path().join("bare-ws2.git");
+        fs::create_dir_all(&bare_ws2).unwrap();
+        git_cmd(&bare_ws2, &["init", "--bare"]).unwrap();
+        git_cmd(&ws2, &["remote", "add", "origin", bare_ws2.to_str().unwrap()]).unwrap();
+        git_cmd(&ws2, &["push", "-u", "origin", "main"]).unwrap();
+
+        // Set workspace 1's remote to unreachable path (push will fail).
+        // Configure upstream tracking so `git push` attempts the remote
+        // rather than failing with "no upstream branch" error.
+        git_cmd(&ws1, &["remote", "add", "origin", "/nonexistent/bad/path"]).unwrap();
+        git_cmd(&ws1, &["config", "branch.main.remote", "origin"]).unwrap();
+        git_cmd(&ws1, &["config", "branch.main.merge", "refs/heads/main"]).unwrap();
+
+        // Modify team repo so sync detects changes and triggers commit+push
+        fs::write(team_repo.join("members/arch-01/ralph.yml"), "v: 2").unwrap();
+        fs::write(team_repo.join("members/arch-02/ralph.yml"), "v: 2").unwrap();
+        git_cmd(&team_repo, &["add", "-A"]).unwrap();
+        git_cmd(&team_repo, &["commit", "-m", "update configs"]).unwrap();
+        git_cmd(&team_repo, &["push"]).unwrap();
+
+        let manifest = empty_manifest();
+        let params = TeamSyncParams {
+            team_repo: &team_repo,
+            team_path: &workspace_base,
+            team_name: "my-team",
+            manifest: &manifest,
+            coding_agent: &agent,
+            github_repo: None,
+            project_number: None,
+            repos: true,
+            verbose: false,
+            bridge_flag: false,
+            workzone: tmp.path(),
+            keyring_collection: None,
+        };
+
+        // AC-05: sync should succeed overall despite push failure on one workspace
+        let result = sync_team_workspaces(&params).unwrap();
+
+        // AC-05: second workspace should be synced
+        assert!(
+            result.updated >= 1,
+            "at least one workspace should be synced, got updated={}",
+            result.updated
+        );
+
+        // AC-05: workspace with push failure should be in failures list
+        assert!(
+            result.failures.contains(&"arch-01".to_string()),
+            "arch-01 should appear in failures: {:?}",
+            result.failures
+        );
+
+        // AC-06: WorkspaceSyncFailed event emitted with member name
+        let sync_failed = result.events.iter().find(|e| {
+            matches!(e, TeamSyncEvent::WorkspaceSyncFailed { name, .. } if name == "arch-01")
+        });
+        assert!(
+            sync_failed.is_some(),
+            "WorkspaceSyncFailed event should be emitted for arch-01"
+        );
+    }
 }

@@ -99,6 +99,9 @@ fn display_sync_event(event: &TeamSyncEvent) {
             }
         }
         TeamSyncEvent::WorkspaceCreateFailed { name, error } => eprintln!("Error: {}: {}", name, error),
+        TeamSyncEvent::WorkspaceSyncFailed { name, error } => {
+            eprintln!("\u{26a0} Failed to sync workspace '{}': {}", name, error);
+        }
         TeamSyncEvent::RobotInjected { member, enabled } => println!("  RObot.enabled = {} for {}", enabled, member),
         TeamSyncEvent::BrainPromptSurfaced { member } => println!("  Brain prompt surfaced for {}", member),
     }
