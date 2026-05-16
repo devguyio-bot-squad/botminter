@@ -5,6 +5,7 @@ use anyhow::Result;
 use crate::bridge;
 use crate::config::{BotminterConfig, TeamEntry};
 use crate::daemon;
+use crate::formation::local::tmux::TmuxSession;
 use crate::profile;
 use crate::topology;
 use crate::workspace;
@@ -197,8 +198,22 @@ pub fn gather_status(
 // Helpers
 // ---------------------------------------------------------------------------
 
-fn gather_tmux_info(_team_name: &str) -> Option<TmuxStatusInfo> {
-    None
+fn gather_tmux_info(team_name: &str) -> Option<TmuxStatusInfo> {
+    let session = TmuxSession::new(team_name).ok()?;
+    if !session.exists() {
+        return None;
+    }
+    let info = session.session_info().ok()?;
+    Some(TmuxStatusInfo {
+        session_name: info.session_name,
+        socket_name: info.socket_name,
+        window_count: info.windows.len(),
+        attach_command: "bm attach".to_string(),
+        raw_attach_command: format!(
+            "tmux -L botminter attach -t {}",
+            session.session_name()
+        ),
+    })
 }
 
 fn gather_daemon_info(team_name: &str) -> Option<DaemonDisplay> {
