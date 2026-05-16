@@ -143,9 +143,9 @@ pub(super) fn copy_if_changed_verbose(src: &Path, dst: &Path) -> Result<bool> {
         return Ok(false);
     }
     let should_copy = if dst.exists() {
-        let src_mod = fs::metadata(src)?.modified()?;
-        let dst_mod = fs::metadata(dst)?.modified()?;
-        src_mod > dst_mod
+        let src_len = fs::metadata(src)?.len();
+        let dst_len = fs::metadata(dst)?.len();
+        src_len != dst_len || fs::read(src)? != fs::read(dst)?
     } else {
         true
     };
