@@ -205,7 +205,7 @@ pub fn sync_workspace(
     }
 
     // NOTE: settings.json (team-level) is copied unconditionally by
-    // assemble_agent_dir_submodule below — no need to copy_if_newer here.
+    // assemble_agent_dir_submodule below — no need to copy_if_changed here.
 
     // Discover project names from projects/ submodules
     let project_names: Vec<String> = if projects_dir.is_dir() {
@@ -224,7 +224,7 @@ pub fn sync_workspace(
     };
     let project_name_refs: Vec<&str> = project_names.iter().map(|s| s.as_str()).collect();
 
-    // Inject workspace context (unconditional — decoupled from copy_if_newer)
+    // Inject workspace context (unconditional — decoupled from copy_if_changed)
     super::context::inject_workspace_context(
         ws_root,
         member_dir_name,
