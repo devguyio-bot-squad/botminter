@@ -20,6 +20,7 @@ pub enum SyncEvent {
     BranchAlreadyOnIt(String),
     BranchCheckedOut(String),
     BranchCreated(String),
+    ProjectProvisioned(String),
 }
 
 /// Result of a workspace sync operation.
@@ -88,6 +89,7 @@ pub fn sync_workspace(
     push: bool,
     project_number: Option<u64>,
     github_repo: Option<&str>,
+    projects: &[(&str, &str)],
 ) -> Result<SyncResult> {
     let mut result = SyncResult::default();
     let team_dir = ws_root.join("team");
@@ -329,7 +331,7 @@ mod tests {
         );
         filetime::set_file_mtime(&source, now).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
         assert_eq!(
             fs::read_to_string(ws.join("ralph.yml")).unwrap(),
@@ -357,7 +359,7 @@ mod tests {
         fs::create_dir_all(&member_agents).unwrap();
         fs::write(member_agents.join("new-agent.md"), "# New Agent").unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
         let new_count = fs::read_dir(&agents_dir)
             .unwrap()
@@ -381,8 +383,8 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Run sync twice
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
         // Verify workspace is still correct
         assert!(ws.join("PROMPT.md").exists());
@@ -416,7 +418,7 @@ mod tests {
         );
         filetime::set_file_mtime(&source, now).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
         // The workspace ralph.yml should have the updated content
         assert_eq!(
@@ -440,12 +442,12 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Sync once — no changes expected
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
         // Count commits before and after a second sync
         let log_before = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
         let log_after = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
         assert_eq!(
@@ -466,7 +468,7 @@ mod tests {
         assert_eq!(branch.trim(), member, "team/ should be on member branch");
 
         // Sync and verify branch is still correct (not detached HEAD)
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
         let branch = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
         assert_eq!(
@@ -523,7 +525,7 @@ mod tests {
         assert!(!ws.join(".claude/settings.json").exists());
 
         // assemble_agent_dir_submodule always copies settings.json unconditionally
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
         assert!(
             ws.join(".claude/settings.json").exists(),
@@ -544,8 +546,8 @@ mod tests {
         // Count commits before and after sync (settings.json already up-to-date)
         let log_before = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
         let log_after = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
         assert_eq!(
@@ -566,7 +568,7 @@ mod tests {
         let inbox_content = r#"{"ts":"2026-03-22T12:00:00Z","from":"brain","message":"test message"}"#;
         fs::write(ralph_dir.join("loop-inbox.jsonl"), inbox_content).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
 
         let inbox_after = fs::read_to_string(ralph_dir.join("loop-inbox.jsonl")).unwrap();
         assert_eq!(
@@ -582,7 +584,7 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Verbose mode should complete without error
-        sync_workspace(&ws, &member, &agent, true, false, None, None).unwrap();
+        sync_workspace(&ws, &member, &agent, true, false, None, None, &[]).unwrap();
 
         // Workspace should still be valid
         assert!(ws.join("PROMPT.md").exists());
@@ -611,6 +613,7 @@ mod tests {
             false,
             Some(99),
             Some("testorg/test-team"),
+            &[],
         )
         .unwrap();
 
@@ -651,10 +654,10 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Run sync twice with context params
-        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo")).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo"), &[]).unwrap();
         let claude_1 = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo")).unwrap();
+        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo"), &[]).unwrap();
         let claude_2 = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
 
         assert_eq!(
@@ -667,5 +670,189 @@ mod tests {
             1,
             "Should have exactly one start marker after multiple syncs"
         );
+    }
+
+    // ── New-project provisioning tests (Issue #33) ──────────────────
+
+    fn setup_syncable_workspace_with_fork(tmp: &Path) -> (PathBuf, String, CodingAgentDef, PathBuf) {
+        let (ws, member, agent) = setup_syncable_workspace(tmp);
+        let fork = crate::workspace::repo::tests::setup_fork_repo(tmp, "new-project-fork");
+        (ws, member, agent, fork)
+    }
+
+    #[test]
+    fn sync_provisions_new_project_submodule() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
+        let fork_url = fork.to_str().unwrap();
+
+        sync_workspace(
+            &ws, &member, &agent, false, false, None, None,
+            &[("new-project", fork_url)],
+        ).unwrap();
+
+        let project_dir = ws.join("projects/new-project");
+        assert!(
+            project_dir.is_dir(),
+            "AC-01: new project should be provisioned as submodule at projects/new-project/"
+        );
+        assert!(
+            project_dir.join("README.md").exists(),
+            "AC-01: provisioned project should contain fork content"
+        );
+    }
+
+    #[test]
+    fn sync_provisions_project_on_member_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
+        let fork_url = fork.to_str().unwrap();
+
+        sync_workspace(
+            &ws, &member, &agent, false, false, None, None,
+            &[("new-project", fork_url)],
+        ).unwrap();
+
+        let project_dir = ws.join("projects/new-project");
+        assert!(
+            project_dir.is_dir(),
+            "AC-02: project must exist before checking branch"
+        );
+        let branch = git_cmd_output(&project_dir, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch.trim(), member,
+            "AC-02: provisioned project submodule should be on member branch, not detached HEAD"
+        );
+    }
+
+    #[test]
+    fn sync_existing_projects_unaffected_by_empty_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fork = crate::workspace::repo::tests::setup_fork_repo(tmp.path(), "existing-proj");
+        let fork_url_str = fork.to_str().unwrap().to_string();
+        let member = "arch-01";
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+        let agent = claude_code_agent();
+        let projects = [("existing-proj", fork_url_str.as_str())];
+        let params = test_ws_params(
+            &team_repo, &workspace_base, member,
+            &projects, &agent,
+        );
+        create_workspace_repo(&params).unwrap();
+        let ws = workspace_base.join(member);
+
+        // Sync with no new projects — existing should remain intact
+        sync_workspace(
+            &ws, member, &agent, false, false, None, None, &[],
+        ).unwrap();
+
+        assert!(
+            ws.join("projects/existing-proj").is_dir(),
+            "AC-03: existing project submodule should not be affected"
+        );
+        assert!(
+            ws.join("projects/existing-proj/README.md").exists(),
+            "AC-03: existing project content should be intact"
+        );
+    }
+
+    #[test]
+    fn sync_project_provisioning_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
+        let fork_url = fork.to_str().unwrap();
+
+        let projects = &[("new-project", fork_url)];
+
+        // First sync provisions it
+        sync_workspace(&ws, &member, &agent, false, false, None, None, projects).unwrap();
+        assert!(ws.join("projects/new-project").is_dir());
+
+        // Second sync should not error or duplicate
+        sync_workspace(&ws, &member, &agent, false, false, None, None, projects).unwrap();
+        assert!(
+            ws.join("projects/new-project").is_dir(),
+            "AC-04: project should still exist after idempotent re-sync"
+        );
+    }
+
+    #[test]
+    fn sync_emits_project_provisioned_event() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
+        let fork_url = fork.to_str().unwrap();
+
+        let result = sync_workspace(
+            &ws, &member, &agent, false, false, None, None,
+            &[("new-project", fork_url)],
+        ).unwrap();
+
+        let provisioned = result.events.iter().any(|e| matches!(e, SyncEvent::ProjectProvisioned(name) if name == "new-project"));
+        assert!(
+            provisioned,
+            "AC-06: SyncResult events should contain ProjectProvisioned for new-project"
+        );
+    }
+
+    #[test]
+    fn sync_partial_failure_first_project_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
+        let fork_url = fork.to_str().unwrap();
+
+        let result = sync_workspace(
+            &ws, &member, &agent, false, false, None, None,
+            &[("good-project", fork_url), ("bad-project", "/nonexistent/repo")],
+        );
+
+        // The function should not hard-fail — it should provision what it can
+        assert!(
+            result.is_ok(),
+            "AC-07: sync should not hard-fail when one project fails; got: {:?}",
+            result.err()
+        );
+        assert!(
+            ws.join("projects/good-project").is_dir(),
+            "AC-07: first project should be provisioned even when second fails"
+        );
+    }
+
+    #[test]
+    fn sync_provisioning_error_includes_project_name_and_url() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, _fork) = setup_syncable_workspace_with_fork(tmp.path());
+
+        let result = sync_workspace(
+            &ws, &member, &agent, false, false, None, None,
+            &[("bad-project", "/nonexistent/repo")],
+        );
+
+        // Whether the function returns Ok or Err, the error message should be actionable
+        match result {
+            Ok(r) => {
+                // If Ok, check events for error info
+                let has_error_info = format!("{:?}", r.events);
+                assert!(
+                    has_error_info.contains("bad-project") || has_error_info.contains("/nonexistent/repo"),
+                    "AC-08: error info should include project name or URL in events; got: {}",
+                    has_error_info
+                );
+            }
+            Err(e) => {
+                let msg = format!("{:#}", e);
+                assert!(
+                    msg.contains("bad-project"),
+                    "AC-08: error should include project name 'bad-project'; got: {}",
+                    msg
+                );
+                assert!(
+                    msg.contains("/nonexistent/repo"),
+                    "AC-08: error should include fork URL '/nonexistent/repo'; got: {}",
+                    msg
+                );
+            }
+        }
     }
 }

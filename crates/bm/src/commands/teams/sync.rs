@@ -116,5 +116,6 @@ fn display_workspace_event(e: &workspace::SyncEvent) {
         workspace::SyncEvent::BranchAlreadyOnIt(b) => println!("    Branch: {} (already on it)", b),
         workspace::SyncEvent::BranchCheckedOut(b) => println!("    Branch: {} (checked out)", b),
         workspace::SyncEvent::BranchCreated(b) => println!("    Branch: {} (created)", b),
+        workspace::SyncEvent::ProjectProvisioned(p) => println!("  Provisioned project: {}", p),
     }
 }
