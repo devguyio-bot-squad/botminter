@@ -250,8 +250,23 @@ pub fn build_meta_prompt(params: &MetaPromptParams) -> String {
 /// Injects GitHub App credentials into the current process environment.
 ///
 /// Returns `true` if credentials were found and injected, `false` otherwise.
-pub fn inject_app_credentials(_ws_path: &Path) -> bool {
-    false
+pub fn inject_app_credentials(ws_path: &Path) -> bool {
+    let gh_dir = ws_path.join(".config/gh");
+    let hosts_yml = gh_dir.join("hosts.yml");
+
+    if hosts_yml.exists() {
+        std::env::set_var("GH_CONFIG_DIR", &gh_dir);
+        std::env::remove_var("GH_TOKEN");
+        std::env::remove_var("GITHUB_TOKEN");
+        eprintln!("Using GitHub App identity (GH_CONFIG_DIR: {})", gh_dir.display());
+        true
+    } else if gh_dir.is_dir() {
+        eprintln!("Warning: App credential directory found but hosts.yml is missing. Using personal GitHub auth.");
+        false
+    } else {
+        eprintln!("Note: No App credentials found. Using personal GitHub auth. Run 'bm start' first to provision App credentials.");
+        false
+    }
 }
 
 /// Launches a chat session by writing the meta-prompt to a temp file,
@@ -269,6 +284,8 @@ pub fn launch_session(
 ) -> Result<()> {
     let manifest = crate::profile::read_team_repo_manifest(team_repo)?;
     let coding_agent = crate::profile::resolve_coding_agent(team, &manifest)?;
+
+    inject_app_credentials(&session.ws_path);
 
     let mut tmp_file = tempfile::Builder::new()
         .prefix("bm-session-")
