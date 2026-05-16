@@ -264,7 +264,7 @@ pub fn inject_app_credentials(ws_path: &Path) -> bool {
         eprintln!("Warning: App credential directory found but hosts.yml is missing. Using personal GitHub auth.");
         false
     } else {
-        eprintln!("Note: No App credentials found. Using personal GitHub auth. Run 'bm start' first to provision App credentials.");
+        eprintln!("No App credentials found. Using personal GitHub auth. Run 'bm start' first to provision App credentials.");
         false
     }
 }
