@@ -340,6 +340,38 @@ else
     note "H27" "Brain status" "output: $(echo "$STATUS_OUT" | tail -3 | tr '\n' ' ')"
 fi
 
+# ── Tmux verification after bm start ──
+# H25b: tmux session exists with has-session
+SESSION_NAME="bm-$TEAM_NAME"
+if tmux -L botminter has-session -t "$SESSION_NAME" 2>/dev/null; then
+    pass "H25b" "tmux has-session confirms session $SESSION_NAME exists"
+else
+    fail "H25b" "tmux has-session" "session $SESSION_NAME not found on botminter socket"
+fi
+
+# H25c: tmux list-windows returns member names
+TMUX_WINDOWS=$(tmux -L botminter list-windows -t "$SESSION_NAME" -F '#{window_name}' 2>/dev/null || echo "")
+if echo "$TMUX_WINDOWS" | grep -q "superman-alice"; then
+    pass "H25c" "tmux list-windows shows member window (superman-alice)"
+else
+    fail "H25c" "tmux list-windows" "expected 'superman-alice', got: $TMUX_WINDOWS"
+fi
+
+# H25d: bm status shows tmux info (session name + attach commands)
+if echo "$STATUS_OUT" | grep -q "$SESSION_NAME" && echo "$STATUS_OUT" | grep -q "bm attach"; then
+    pass "H25d" "bm status shows tmux session and attach command"
+else
+    fail "H25d" "bm status tmux info" "expected session name and 'bm attach', got: $(echo "$STATUS_OUT" | grep -i tmux | head -2 | tr '\n' ' ')"
+fi
+
+# H25e: bm attach stderr contains cheat sheet text
+ATTACH_OUT=$(bm attach 2>&1 || true)
+if echo "$ATTACH_OUT" | grep -q "Ctrl-b"; then
+    pass "H25e" "bm attach stderr shows cheat sheet (Ctrl-b keybindings)"
+else
+    fail "H25e" "bm attach cheat sheet" "expected Ctrl-b hints, got: $(echo "$ATTACH_OUT" | tail -5 | tr '\n' ' ')"
+fi
+
 # ── DM Discovery: Operator creates DM and brain auto-joins ──
 # This simulates the operator clicking "Message" on the member in Element.
 
@@ -642,6 +674,24 @@ if ! $STILL_ALIVE; then
     fi
 else
     fail "H37" "Process cleanup" "some processes still alive after force-kill"
+fi
+
+# ── Tmux window preservation after bm stop ──
+# H37b: tmux windows still exist after stop (remain-on-exit)
+SESSION_NAME="bm-$TEAM_NAME"
+TMUX_AFTER_STOP=$(tmux -L botminter list-windows -t "$SESSION_NAME" -F '#{window_name}' 2>/dev/null || echo "")
+if [ -n "$TMUX_AFTER_STOP" ]; then
+    pass "H37b" "tmux windows preserved after stop (remain-on-exit): $(echo "$TMUX_AFTER_STOP" | tr '\n' ', ')"
+else
+    fail "H37b" "tmux windows after stop" "list-windows returned empty — windows not preserved"
+fi
+
+# H37c: capture-pane retrieves scrollback from dead panes after stop
+CAPTURE_OUT=$(tmux -L botminter capture-pane -t "$SESSION_NAME" -p 2>/dev/null || echo "CAPTURE_FAILED")
+if [ "$CAPTURE_OUT" != "CAPTURE_FAILED" ]; then
+    pass "H37c" "capture-pane retrieves scrollback from dead pane after stop"
+else
+    note "H37c" "capture-pane" "could not capture pane content (session may have been destroyed)"
 fi
 
 # Kill ALL lingering brain-run and ACP processes from previous lifecycles.

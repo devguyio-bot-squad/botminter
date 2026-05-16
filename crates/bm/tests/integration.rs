@@ -2680,6 +2680,110 @@ fn attach_cheat_sheet_displayed_on_stderr() {
     }
 }
 
+// ── CT-04 (Story #8): tmux branding and config verification ─────────
+
+#[test]
+fn tmux_branding_status_left_contains_botminter() {
+    use bm::formation::local::tmux::TmuxSession;
+    use bm::formation::local::tmux::config::TmuxConfig;
+
+    TmuxConfig::ensure_written().unwrap();
+    let team_name = "ct04-branding-left";
+    let tmux = TmuxSession::new(team_name).unwrap();
+
+    struct Guard(String);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("tmux")
+                .args(["-L", "botminter", "kill-session", "-t", &self.0])
+                .output();
+        }
+    }
+    let _guard = Guard(tmux.session_name().to_string());
+    tmux.create().unwrap();
+
+    let output = std::process::Command::new("tmux")
+        .args(["-L", "botminter", "show-options", "-g", "status-left"])
+        .output()
+        .expect("tmux show-options should run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("botminter"),
+        "status-left should contain 'botminter' branding, got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn tmux_branding_list_windows_shows_member_names() {
+    use bm::formation::local::tmux::TmuxSession;
+    use bm::formation::local::tmux::config::TmuxConfig;
+
+    TmuxConfig::ensure_written().unwrap();
+    let team_name = "ct04-branding-win";
+    let tmux = TmuxSession::new(team_name).unwrap();
+
+    struct Guard(String);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("tmux")
+                .args(["-L", "botminter", "kill-session", "-t", &self.0])
+                .output();
+        }
+    }
+    let _guard = Guard(tmux.session_name().to_string());
+    tmux.create().unwrap();
+
+    let tmp_dir = tempfile::tempdir().unwrap();
+    tmux.create_window("engineer-alice", &["sleep", "3600"], tmp_dir.path(), &[]).unwrap();
+
+    let output = std::process::Command::new("tmux")
+        .args(["-L", "botminter", "list-windows", "-t", tmux.session_name(), "-F", "#{window_name}"])
+        .output()
+        .expect("list-windows should run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("engineer-alice"),
+        "list-windows should show member name 'engineer-alice', got: {}",
+        stdout
+    );
+}
+
+#[test]
+fn tmux_keybinding_hints_all_four_visible_in_status_right() {
+    use bm::formation::local::tmux::TmuxSession;
+    use bm::formation::local::tmux::config::TmuxConfig;
+
+    TmuxConfig::ensure_written().unwrap();
+    let team_name = "ct04-keybindings";
+    let tmux = TmuxSession::new(team_name).unwrap();
+
+    struct Guard(String);
+    impl Drop for Guard {
+        fn drop(&mut self) {
+            let _ = std::process::Command::new("tmux")
+                .args(["-L", "botminter", "kill-session", "-t", &self.0])
+                .output();
+        }
+    }
+    let _guard = Guard(tmux.session_name().to_string());
+    tmux.create().unwrap();
+
+    let output = std::process::Command::new("tmux")
+        .args(["-L", "botminter", "show-options", "-g", "status-right"])
+        .output()
+        .expect("tmux show-options should run");
+    let stdout = String::from_utf8_lossy(&output.stdout);
+
+    for hint in &["C-b n:next", "C-b p:prev", "C-b [:scroll", "C-b d:detach"] {
+        assert!(
+            stdout.contains(hint),
+            "status-right should contain keybinding hint '{}', got: {}",
+            hint, stdout
+        );
+    }
+}
+
 // ── bm init --non-interactive tests ──────────────────────────────────
 
 #[test]

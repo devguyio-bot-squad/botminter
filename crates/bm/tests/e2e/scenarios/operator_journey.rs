@@ -453,6 +453,138 @@ fn bridge_room_membership_verify_fn() -> impl Fn(&mut TestEnv) + Send + std::pan
     }
 }
 
+fn tmux_verify_after_start_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        // AC3: tmux session exists after start
+        let output = env.command("tmux")
+            .args(["-L", "botminter", "has-session", "-t", &format!("bm-{}", TEAM_NAME)])
+            .output();
+        assert!(
+            output.status.success(),
+            "tmux session bm-{} should exist after bm start, exit={}, stderr={}",
+            TEAM_NAME,
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+
+        // AC3: list-windows returns expected member windows
+        let output = env.command("tmux")
+            .args(["-L", "botminter", "list-windows", "-t", &format!("bm-{}", TEAM_NAME), "-F", "#{window_name}"])
+            .output();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        assert!(
+            stdout.contains(MEMBER_DIR),
+            "tmux list-windows should include member '{}', got: {}",
+            MEMBER_DIR, stdout
+        );
+
+        // AC1: branded status-left contains 'botminter'
+        let output = env.command("tmux")
+            .args(["-L", "botminter", "show-options", "-g", "status-left"])
+            .output();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        assert!(
+            stdout.contains("botminter"),
+            "tmux status-left should contain 'botminter' branding, got: {}",
+            stdout
+        );
+
+        // AC2: keybinding hints visible in status-right
+        let output = env.command("tmux")
+            .args(["-L", "botminter", "show-options", "-g", "status-right"])
+            .output();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        for hint in &["C-b n:next", "C-b p:prev", "C-b [:scroll", "C-b d:detach"] {
+            assert!(
+                stdout.contains(hint),
+                "tmux status-right should contain keybinding hint '{}', got: {}",
+                hint, stdout
+            );
+        }
+
+        // AC5: bm status shows tmux info
+        let stdout = env.command("bm")
+            .args(["status", "-t", TEAM_NAME])
+            .run();
+        assert!(
+            stdout.contains(&format!("bm-{}", TEAM_NAME)),
+            "bm status should show tmux session name 'bm-{}', got: {}",
+            TEAM_NAME, stdout
+        );
+        assert!(
+            stdout.contains("bm attach"),
+            "bm status should show 'bm attach' command, got: {}",
+            stdout
+        );
+        assert!(
+            stdout.contains("tmux -L botminter attach"),
+            "bm status should show raw tmux attach command, got: {}",
+            stdout
+        );
+    }
+}
+
+fn tmux_attach_succeeds_while_running_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        // AC4: bm attach should NOT fail with "No tmux session found" when session is running.
+        // In non-interactive E2E context, the actual tmux attach will fail because stdin
+        // is not a terminal, but it should attempt the attach (not bail early).
+        let output = env.command("bm")
+            .args(["attach", "-t", TEAM_NAME])
+            .output();
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        assert!(
+            !stderr.contains("No tmux session found"),
+            "bm attach should not say 'No tmux session found' when session is running, got: {}",
+            stderr
+        );
+        // Verify cheat sheet is displayed (proves attach path was reached)
+        assert!(
+            stderr.contains("Ctrl-b d"),
+            "bm attach stderr should contain cheat sheet with 'Ctrl-b d', got: {}",
+            stderr
+        );
+
+        // AC7: raw attach command from bm status should be functional
+        let status_stdout = env.command("bm")
+            .args(["status", "-t", TEAM_NAME])
+            .run();
+        // Extract the raw attach command and verify it resolves
+        assert!(
+            status_stdout.contains(&format!("tmux -L botminter attach -t bm-{}", TEAM_NAME)),
+            "bm status should show raw tmux attach command for verification, got: {}",
+            status_stdout
+        );
+        // Verify the raw command can reach the session (even if attach fails due to no terminal)
+        let output = env.command("tmux")
+            .args(["-L", "botminter", "has-session", "-t", &format!("bm-{}", TEAM_NAME)])
+            .output();
+        assert!(
+            output.status.success(),
+            "raw tmux command target session should exist"
+        );
+    }
+}
+
+fn tmux_windows_preserved_after_stop_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        // AC6: after bm stop, windows should still exist (remain-on-exit on)
+        let output = env.command("tmux")
+            .args(["-L", "botminter", "list-windows", "-t", &format!("bm-{}", TEAM_NAME)])
+            .output();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        assert!(
+            output.status.success(),
+            "tmux list-windows should still succeed after bm stop (windows preserved via remain-on-exit), stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            !stdout.is_empty(),
+            "tmux list-windows should return non-empty output after stop (dead panes preserved)"
+        );
+    }
+}
+
 fn start_skips_running_bridge_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         // Member is already running from start_status_healthy. Starting again should
@@ -1206,9 +1338,12 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("projects_sync_fresh", projects_sync_fn(gh_org.clone(), gh_token.clone()))
         .case("start_without_ralph_errors_fresh", start_without_ralph_errors_fn())
         .case("start_status_healthy_fresh", start_status_healthy_fn(gh_token.clone()))
+        .case("tmux_verify_after_start_fresh", tmux_verify_after_start_fn())
+        .case("tmux_attach_succeeds_fresh", tmux_attach_succeeds_while_running_fn())
         .case("start_skips_running_bridge_fresh", start_skips_running_bridge_fn(gh_token.clone()))
         .case("bridge_functional_fresh", bridge_functional_fn())
         .case("stop_clean_shutdown_fresh", stop_clean_shutdown_fn())
+        .case("tmux_windows_preserved_fresh", tmux_windows_preserved_after_stop_fn())
         .case("start_single_member_fresh", start_single_member_fn(gh_token.clone()))
         .case("stop_single_member_fresh", stop_single_member_fn())
         .case("stop_force_kills_fresh", stop_force_kills_fn(gh_token.clone()))
@@ -1296,9 +1431,12 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("projects_sync_existing", projects_sync_fn(gh_org.clone(), gh_token.clone()))
         .case("start_without_ralph_errors_existing", start_without_ralph_errors_fn())
         .case("start_status_healthy_existing", start_status_healthy_fn(gh_token.clone()))
+        .case("tmux_verify_after_start_existing", tmux_verify_after_start_fn())
+        .case("tmux_attach_succeeds_existing", tmux_attach_succeeds_while_running_fn())
         .case("start_skips_running_bridge_existing", start_skips_running_bridge_fn(gh_token.clone()))
         .case("bridge_functional_existing", bridge_functional_fn())
         .case("stop_clean_shutdown_existing", stop_clean_shutdown_fn())
+        .case("tmux_windows_preserved_existing", tmux_windows_preserved_after_stop_fn())
         .case("start_single_member_existing", start_single_member_fn(gh_token.clone()))
         .case("stop_single_member_existing", stop_single_member_fn())
         .case("stop_force_kills_existing", stop_force_kills_fn(gh_token.clone()))
@@ -1380,23 +1518,25 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
     //   15: inbox_lifecycle, 16: inbox_resync_preserves
     //   17: projects_sync
     //   18: start_without_ralph_errors
-    //   19: start_status_healthy, 20: start_skips_running, 21: bridge_functional
-    //   22: stop_clean_shutdown
-    //   23: start_single_member, 24: stop_single_member
-    //   25: stop_force_kills, 26: status_detects_crashed
-    //   27: members_list, 28: teams_list
-    //   29: daemon_cleanup
-    //   30: daemon_start_poll, 31: daemon_poll_launches, 32: daemon_stop_poll
-    //   33: daemon_start_webhook, 34: daemon_stop_webhook
-    //   35-38: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
-    //   39: bridge_stop
-    //   40: reset_home, 41: verify_board_survives_reset
-    // Second pass starts at 42, same shape as first pass
-    //   61: start_status_healthy, 62: start_skips_running, 63: bridge_functional
-    //   75: daemon_start_webhook, 76: daemon_stop_webhook
+    //   19: start_status_healthy, 20: tmux_verify_after_start, 21: tmux_attach_succeeds,
+    //       22: start_skips_running, 23: bridge_functional
+    //   24: stop_clean_shutdown, 25: tmux_windows_preserved
+    //   26: start_single_member, 27: stop_single_member
+    //   28: stop_force_kills, 29: status_detects_crashed
+    //   30: members_list, 31: teams_list
+    //   32: daemon_cleanup
+    //   33: daemon_start_poll, 34: daemon_poll_launches, 35: daemon_stop_poll
+    //   36: daemon_start_webhook, 37: daemon_stop_webhook
+    //   38-41: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
+    //   42: bridge_stop, 43: fire_member
+    //   44: reset_home, 45: verify_board_survives_reset
+    // Second pass starts at 46, same shape as first pass
+    //   65: start_status_healthy, 66: tmux_verify, 67: tmux_attach,
+    //       68: start_skips_running, 69: bridge_functional
+    //   82: daemon_start_webhook, 83: daemon_stop_webhook
     suite
-        .group(19, 21).group(33, 34)
-        .group(61, 63).group(75, 76)
+        .group(19, 23).group(36, 37)
+        .group(65, 69).group(82, 83)
 }
 
 pub fn scenario(config: &E2eConfig) -> Trial {
