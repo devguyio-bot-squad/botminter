@@ -69,6 +69,12 @@ is the authoritative source for forward rules.
 | 6 | **Manifest finalization**: `.botminter.yml` → `botminter.yml` with `name` field added | **Manifest reversal**: `botminter.yml` → `.botminter.yml` with `name` field stripped |
 | 7 | **Brain prompt rendering**: variables rendered into `brain-prompt.md` | **No reverse needed**: brain prompt is runtime-only, not backported |
 
+**Rule 3 heuristic (path vs prose):** Path patterns are strings containing
+`/` characters or appearing in YAML keys like `dirs:`, `path:`, `file:`.
+Prose content is running natural-language text in `instructions:` values.
+When ambiguous, replace and verify the result renders correctly with
+different member names.
+
 ### Detecting Values for Reverse-Templating
 
 Read `<team_repo_path>/members/<member>/botminter.yml` for each hired member
@@ -94,7 +100,11 @@ hire/sync time:
 ```
 
 Markers: `PROJECT_CONTEXT`, `WORKSPACE_LAYOUT`, `PROJECT_KNOWLEDGE`,
-`PROJECT_INVARIANTS`, `PROJECT_SKILL_DIRS` (in YAML: `# <!-- BM:... -->`).
+`PROJECT_INVARIANTS`, `PROJECT_SKILL_DIRS`.
+
+In YAML files (ralph.yml), markers use comment syntax:
+`# <!-- BM:PROJECT_SKILL_DIRS -->` / `# <!-- /BM:PROJECT_SKILL_DIRS -->`.
+The marker names are the same as in markdown.
 
 **Reverse**: Remove all content between marker pairs. Restore empty marker
 pairs as they appear in the profile source. Content OUTSIDE markers that was
@@ -104,7 +114,8 @@ added in the team repo is a candidate for backporting.
 
 ### Shell Scripts
 
-**Location**: `coding-agent/skills/*/scripts/`
+**Location**: Both team-level (`coding-agent/skills/*/scripts/`) and
+role-level (`roles/*/coding-agent/skills/*/scripts/`).
 **Strategy**: Diff and apply.
 
 1. Diff each script in the team repo against the profile source
@@ -208,6 +219,16 @@ Also applies to the team-level `CLAUDE.md` → profile `context.md`.
 **Strategy**: Diff and apply. Files here (guardrails, hat templates,
 orientation, reference docs) are generic.
 
+### brain/system-prompt.md
+
+**Location**: `brain/system-prompt.md`
+**Strategy**: Diff and apply, ignoring rendered variable changes.
+
+1. Diff the team repo's `brain/system-prompt.md` against the profile's
+2. Skip changes that are just rendered variables (`{{team_name}}`,
+   `{{member_name}}`, etc.) — those are runtime values, not content
+3. Backport structural or prose improvements to the template itself
+
 ## Cross-Member Propagation
 
 **This check is MANDATORY.** After identifying the delta for each member,
@@ -239,13 +260,16 @@ to sibling profiles. Run `ls profiles/` to list all profiles.
 **Shared artifacts** (likely need cross-profile propagation):
 - `coding-agent/skills/github-project/` (scripts and SKILL.md)
 - `coding-agent/skills/status-workflow/`
-- `coding-agent/skills/board-scanner/` (team-level copy)
+- `coding-agent/skills/board-scanner/` (team-level copy — not all profiles have this; check before propagating)
 - `knowledge/` documents
 - `invariants/`
 - `bridges/`
 - `formations/`
 - `ralph-prompts/`
 - `workflows/`
+- `specs/` (spec index and structure)
+- `skills/` (top-level profile-scoped skills, e.g., knowledge-manager)
+- `brain/` (system-prompt.md template — see artifact reference below)
 
 **Role-specific artifacts** (do NOT propagate — roles differ across profiles):
 - `roles/*/ralph.yml`
@@ -325,7 +349,7 @@ Verify agent-conditional tags are properly paired:
 ```bash
 for f in $(grep -rl "+agent:" "$PROFILE_DIR"); do
   opens=$(grep -c "+agent:" "$f")
-  closes=$(grep -c "\-agent" "$f")
+  closes=$(grep -cE '^\s*(<!--|#)\s*-agent' "$f")
   [ "$opens" = "$closes" ] || echo "FAIL: $f"
 done
 ```

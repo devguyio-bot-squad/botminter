@@ -14,13 +14,9 @@ console/.svelte-kit/
 # Secrets
 *.token
 *.pat
-# Claude Code local state (settings, worktrees, memory) — ignored
-# Skills subdirectory is committed (shared dev tools)
-.claude/settings.*
-.claude/worktrees/
-.claude/memory/
-.claude/plans/
-.claude/scheduled_tasks.json
+# Claude Code — ignore local state, commit shared dev tools (skills)
+.claude/
+!.claude/skills/
 .envrc
 
 # Ralph orchestrator runtime artifacts
