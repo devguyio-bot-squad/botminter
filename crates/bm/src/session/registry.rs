@@ -2,87 +2,11 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 
-/// Unique identifier for a session — short random alphanumeric string.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct SessionId(String);
-
-impl SessionId {
-    /// Generate a new unique session ID.
-    pub fn new() -> Self {
-        let full = Uuid::new_v4().simple().to_string();
-        Self(full[..8].to_string())
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Display for SessionId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.0)
-    }
-}
-
-/// Session type — affects metadata and retention policy, not lifecycle state machine.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SessionType {
-    Interactive,
-    Loop,
-    Brain,
-}
-
-/// Session lifecycle states per the state machine in the design doc.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub enum SessionState {
-    Creating,
-    Active,
-    Finalizing,
-    Completed,
-    Failed,
-    Killed,
-    Retained,
-}
-
-impl SessionState {
-    /// Returns true if transitioning from `self` to `next` is valid per the lifecycle state machine.
-    pub fn can_transition_to(&self, next: &SessionState) -> bool {
-        matches!(
-            (self, next),
-            (SessionState::Creating, SessionState::Active)
-                | (SessionState::Active, SessionState::Finalizing)
-                | (SessionState::Active, SessionState::Completed)
-                | (SessionState::Active, SessionState::Failed)
-                | (SessionState::Active, SessionState::Killed)
-                | (SessionState::Finalizing, SessionState::Completed)
-                | (SessionState::Finalizing, SessionState::Failed)
-                | (SessionState::Finalizing, SessionState::Killed)
-                | (SessionState::Completed, SessionState::Retained)
-                | (SessionState::Failed, SessionState::Retained)
-                | (SessionState::Killed, SessionState::Retained)
-        )
-    }
-}
-
-/// A persistent record of a tracked session.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SessionRecord {
-    pub session_id: SessionId,
-    pub member_name: String,
-    pub session_type: SessionType,
-    pub current_state: SessionState,
-    pub created_at: DateTime<Utc>,
-    pub state_transitioned_at: DateTime<Utc>,
-    pub agent_pid: Option<u32>,
-    pub workspace_path: Option<PathBuf>,
-}
+use super::types::{SessionId, SessionRecord, SessionState};
 
 /// On-disk serialization format for the registry.
-#[derive(Serialize, Deserialize)]
+#[derive(serde::Serialize, serde::Deserialize)]
 struct RegistryFile {
     sessions: Vec<SessionRecord>,
 }
@@ -118,6 +42,8 @@ impl SessionRegistry {
     }
 
     /// Atomically persist the registry to disk (write to temp file, then rename).
+    ///
+    /// Atomic rename prevents partial writes from corrupting the registry on crash.
     pub fn save(&self) -> Result<()> {
         let data = RegistryFile {
             sessions: self.sessions.values().cloned().collect(),
@@ -162,14 +88,14 @@ impl SessionRegistry {
 
         if !record.current_state.can_transition_to(&new_state) {
             return Err(anyhow!(
-                "Invalid transition: {:?} -> {:?}",
+                "Cannot transition from {} to {}",
                 record.current_state,
                 new_state
             ));
         }
 
         record.current_state = new_state;
-        record.state_transitioned_at = Utc::now();
+        record.state_transitioned_at = chrono::Utc::now();
         Ok(())
     }
 
@@ -185,6 +111,8 @@ impl SessionRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::types::{SessionState, SessionType};
+    use chrono::Utc;
     use std::thread;
 
     fn make_record(member: &str, session_type: SessionType) -> SessionRecord {
@@ -200,42 +128,12 @@ mod tests {
         }
     }
 
-    // AC-1: Session Identity — unique ID, correct initial fields
-    #[test]
-    fn new_session_assigns_unique_id_and_creating_state() {
-        let r1 = make_record("alice", SessionType::Interactive);
-        let r2 = make_record("alice", SessionType::Interactive);
-
-        assert_ne!(r1.session_id, r2.session_id, "session IDs must be globally unique");
-        assert_eq!(r1.current_state, SessionState::Creating);
-        assert_eq!(r1.member_name, "alice");
-    }
-
-    #[test]
-    fn session_id_is_short_alphanumeric() {
-        let id = SessionId::new();
-        let s = id.as_str();
-        assert!(!s.is_empty(), "SessionId must not be empty");
-        assert!(
-            s.len() <= 16,
-            "SessionId must be short (≤16 chars), got {} chars: {s}",
-            s.len()
-        );
-        assert!(
-            s.chars().all(|c| c.is_alphanumeric()),
-            "SessionId must be alphanumeric, got: {s}"
-        );
+    fn new_registry() -> SessionRegistry {
+        let tmp = tempfile::tempdir().unwrap();
+        SessionRegistry::new(tmp.path().join("registry.json"))
     }
 
     // AC-2: Valid State Transition — Creating → Active succeeds with timestamp recorded
-    #[test]
-    fn creating_can_transition_to_active() {
-        assert!(
-            SessionState::Creating.can_transition_to(&SessionState::Active),
-            "Creating -> Active must be a valid transition"
-        );
-    }
-
     #[test]
     fn update_state_to_active_records_transition_timestamp() {
         let tmp = tempfile::tempdir().unwrap();
@@ -257,15 +155,7 @@ mod tests {
         );
     }
 
-    // AC-3: Invalid State Transitions Rejected — Completed → Active returns error
-    #[test]
-    fn completed_cannot_transition_to_active() {
-        assert!(
-            !SessionState::Completed.can_transition_to(&SessionState::Active),
-            "Completed -> Active must be an invalid transition"
-        );
-    }
-
+    // AC-3: Invalid State Transitions Rejected — registry-level error messages
     #[test]
     fn update_state_rejects_invalid_transition_with_descriptive_error() {
         let tmp = tempfile::tempdir().unwrap();
@@ -276,22 +166,102 @@ mod tests {
         let id = record.session_id.clone();
         reg.register(record).unwrap();
 
-        // Walk to Completed via valid transitions
         reg.update_state(&id, SessionState::Active).unwrap();
         reg.update_state(&id, SessionState::Completed).unwrap();
 
-        // Attempt invalid back-transition
         let err = reg
             .update_state(&id, SessionState::Active)
             .expect_err("Completed -> Active must be rejected");
         let msg = err.to_string().to_lowercase();
         assert!(
-            msg.contains("invalid") || msg.contains("transition") || msg.contains("completed"),
+            msg.contains("transition") || msg.contains("completed"),
             "error must describe the invalid transition, got: {msg}"
         );
     }
 
-    // AC-4: Persistence Survives Restart — reload returns sessions with correct state and timestamps
+    // AC-3 (extended): All Active terminal paths are valid
+    #[test]
+    fn active_can_transition_to_failed_and_killed() {
+        for target in [SessionState::Failed, SessionState::Killed] {
+            let mut reg = new_registry();
+            let record = make_record("bob", SessionType::Loop);
+            let id = record.session_id.clone();
+            reg.register(record).unwrap();
+            reg.update_state(&id, SessionState::Active).unwrap();
+            reg.update_state(&id, target.clone())
+                .unwrap_or_else(|e| panic!("Active -> {target} failed: {e}"));
+            assert_eq!(reg.get(&id).unwrap().current_state, target);
+        }
+    }
+
+    // AC-3 (extended): Finalizing can resolve to Completed, Failed, or Killed
+    #[test]
+    fn finalizing_transitions_to_all_terminal_states() {
+        for target in [
+            SessionState::Completed,
+            SessionState::Failed,
+            SessionState::Killed,
+        ] {
+            let mut reg = new_registry();
+            let record = make_record("carol", SessionType::Brain);
+            let id = record.session_id.clone();
+            reg.register(record).unwrap();
+            reg.update_state(&id, SessionState::Active).unwrap();
+            reg.update_state(&id, SessionState::Finalizing).unwrap();
+            reg.update_state(&id, target.clone())
+                .unwrap_or_else(|e| panic!("Finalizing -> {target} failed: {e}"));
+            assert_eq!(reg.get(&id).unwrap().current_state, target);
+        }
+    }
+
+    // AC-3 (extended): All three terminal states can transition to Retained
+    #[test]
+    fn terminal_states_can_transition_to_retained() {
+        for terminal in [
+            SessionState::Completed,
+            SessionState::Failed,
+            SessionState::Killed,
+        ] {
+            let mut reg = new_registry();
+            let record = make_record("dan", SessionType::Interactive);
+            let id = record.session_id.clone();
+            reg.register(record).unwrap();
+            reg.update_state(&id, SessionState::Active).unwrap();
+            reg.update_state(&id, terminal.clone()).unwrap();
+            reg.update_state(&id, SessionState::Retained)
+                .unwrap_or_else(|e| panic!("{terminal} -> Retained failed: {e}"));
+            assert_eq!(reg.get(&id).unwrap().current_state, SessionState::Retained);
+        }
+    }
+
+    // CRUD: remove() works correctly
+    #[test]
+    fn remove_session_succeeds_and_makes_get_return_none() {
+        let mut reg = new_registry();
+        let record = make_record("eve", SessionType::Interactive);
+        let id = record.session_id.clone();
+        reg.register(record).unwrap();
+
+        assert!(reg.get(&id).is_some(), "session must exist before remove");
+        reg.remove(&id)
+            .expect("remove must succeed for existing session");
+        assert!(reg.get(&id).is_none(), "session must be gone after remove");
+    }
+
+    #[test]
+    fn remove_nonexistent_session_returns_error() {
+        let mut reg = new_registry();
+        let phantom_id = SessionId::new();
+        let err = reg
+            .remove(&phantom_id)
+            .expect_err("remove must fail for unknown session");
+        assert!(
+            err.to_string().to_lowercase().contains("not found"),
+            "error must say 'not found', got: {err}"
+        );
+    }
+
+    // AC-4: Persistence Survives Restart
     #[test]
     fn registry_persists_sessions_across_reload() {
         let tmp = tempfile::tempdir().unwrap();
@@ -308,7 +278,9 @@ mod tests {
         }
 
         let reg2 = SessionRegistry::load(path).unwrap();
-        let reloaded = reg2.get(&id).expect("session must survive a registry reload");
+        let reloaded = reg2
+            .get(&id)
+            .expect("session must survive a registry reload");
         assert_eq!(reloaded.current_state, SessionState::Active);
         assert_eq!(reloaded.member_name, "bob");
         assert_eq!(reloaded.session_type, SessionType::Loop);
@@ -320,7 +292,7 @@ mod tests {
         );
     }
 
-    // AC-5: Concurrent Read Safety — two parallel loads both return consistent data
+    // AC-5: Concurrent Read Safety
     #[test]
     fn concurrent_reads_return_consistent_data() {
         let tmp = tempfile::tempdir().unwrap();
@@ -342,30 +314,35 @@ mod tests {
         let count1 = t1.join().unwrap();
         let count2 = t2.join().unwrap();
 
-        assert_eq!(count1, 5, "first concurrent read returned {count1}, expected 5");
-        assert_eq!(count2, 5, "second concurrent read returned {count2}, expected 5");
+        assert_eq!(
+            count1, 5,
+            "first concurrent read returned {count1}, expected 5"
+        );
+        assert_eq!(
+            count2, 5,
+            "second concurrent read returned {count2}, expected 5"
+        );
     }
 
-    // AC-6: Unified State Machine — Interactive, Loop, and Brain types all follow the same lifecycle
+    // AC-6: Unified State Machine — all session types follow the same lifecycle
     #[test]
     fn all_session_types_follow_same_state_machine() {
-        for session_type in [SessionType::Interactive, SessionType::Loop, SessionType::Brain] {
-            let tmp = tempfile::tempdir().unwrap();
-            let path = tmp.path().join("registry.json");
-            let mut reg = SessionRegistry::new(path);
+        for session_type in [
+            SessionType::Interactive,
+            SessionType::Loop,
+            SessionType::Brain,
+        ] {
+            let mut reg = new_registry();
 
             let record = make_record("member", session_type.clone());
             let id = record.session_id.clone();
             reg.register(record).unwrap();
 
-            reg.update_state(&id, SessionState::Active).unwrap_or_else(|e| {
-                panic!("{session_type:?}: Creating -> Active failed: {e}")
-            });
+            reg.update_state(&id, SessionState::Active)
+                .unwrap_or_else(|e| panic!("{session_type:?}: Creating -> Active failed: {e}"));
 
             reg.update_state(&id, SessionState::Completed)
-                .unwrap_or_else(|e| {
-                    panic!("{session_type:?}: Active -> Completed failed: {e}")
-                });
+                .unwrap_or_else(|e| panic!("{session_type:?}: Active -> Completed failed: {e}"));
         }
     }
 }
