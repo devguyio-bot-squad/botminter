@@ -1,9 +1,10 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use uuid::Uuid;
 
 /// Unique identifier for a session — short random alphanumeric string.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -12,7 +13,8 @@ pub struct SessionId(String);
 impl SessionId {
     /// Generate a new unique session ID.
     pub fn new() -> Self {
-        todo!("generate short random alphanumeric session ID")
+        let full = Uuid::new_v4().simple().to_string();
+        Self(full[..8].to_string())
     }
 
     pub fn as_str(&self) -> &str {
@@ -49,7 +51,20 @@ pub enum SessionState {
 impl SessionState {
     /// Returns true if transitioning from `self` to `next` is valid per the lifecycle state machine.
     pub fn can_transition_to(&self, next: &SessionState) -> bool {
-        todo!("implement session lifecycle state machine transition table")
+        matches!(
+            (self, next),
+            (SessionState::Creating, SessionState::Active)
+                | (SessionState::Active, SessionState::Finalizing)
+                | (SessionState::Active, SessionState::Completed)
+                | (SessionState::Active, SessionState::Failed)
+                | (SessionState::Active, SessionState::Killed)
+                | (SessionState::Finalizing, SessionState::Completed)
+                | (SessionState::Finalizing, SessionState::Failed)
+                | (SessionState::Finalizing, SessionState::Killed)
+                | (SessionState::Completed, SessionState::Retained)
+                | (SessionState::Failed, SessionState::Retained)
+                | (SessionState::Killed, SessionState::Retained)
+        )
     }
 }
 
@@ -64,6 +79,12 @@ pub struct SessionRecord {
     pub state_transitioned_at: DateTime<Utc>,
     pub agent_pid: Option<u32>,
     pub workspace_path: Option<PathBuf>,
+}
+
+/// On-disk serialization format for the registry.
+#[derive(Serialize, Deserialize)]
+struct RegistryFile {
+    sessions: Vec<SessionRecord>,
 }
 
 /// Persistent registry of sessions backed by an atomic JSON file on disk.
@@ -83,37 +104,81 @@ impl SessionRegistry {
 
     /// Load a registry from disk, returning an empty registry if the file does not exist.
     pub fn load(path: PathBuf) -> Result<Self> {
-        todo!("deserialize registry from JSON file; return empty registry when file is absent")
+        if !path.exists() {
+            return Ok(Self::new(path));
+        }
+        let contents = std::fs::read_to_string(&path)?;
+        let data: RegistryFile = serde_json::from_str(&contents)?;
+        let sessions = data
+            .sessions
+            .into_iter()
+            .map(|r| (r.session_id.clone(), r))
+            .collect();
+        Ok(Self { path, sessions })
     }
 
     /// Atomically persist the registry to disk (write to temp file, then rename).
     pub fn save(&self) -> Result<()> {
-        todo!("serialize registry to a temp file beside `self.path`, then rename to `self.path`")
+        let data = RegistryFile {
+            sessions: self.sessions.values().cloned().collect(),
+        };
+        let json = serde_json::to_string_pretty(&data)?;
+
+        if let Some(parent) = self.path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tmp_path = self.path.with_extension("tmp");
+        std::fs::write(&tmp_path, json)?;
+        std::fs::rename(&tmp_path, &self.path)?;
+        Ok(())
     }
 
     /// Register a new session. The record's `current_state` must be `Creating`.
     pub fn register(&mut self, record: SessionRecord) -> Result<()> {
-        todo!("insert record; reject if a session with the same ID already exists")
+        let id = record.session_id.clone();
+        if self.sessions.contains_key(&id) {
+            return Err(anyhow!("Session {} already exists in registry", id));
+        }
+        self.sessions.insert(id, record);
+        Ok(())
     }
 
     /// Look up a session by ID.
     pub fn get(&self, id: &SessionId) -> Option<&SessionRecord> {
-        todo!("return reference to session record if present")
+        self.sessions.get(id)
     }
 
     /// Return all tracked sessions.
     pub fn list(&self) -> Vec<&SessionRecord> {
-        todo!("collect all session records into a Vec")
+        self.sessions.values().collect()
     }
 
     /// Validate and apply a state transition, recording the timestamp.
     pub fn update_state(&mut self, id: &SessionId, new_state: SessionState) -> Result<()> {
-        todo!("validate transition via SessionState::can_transition_to; update state and state_transitioned_at; return clear error for invalid transitions")
+        let record = self
+            .sessions
+            .get_mut(id)
+            .ok_or_else(|| anyhow!("Session {} not found", id))?;
+
+        if !record.current_state.can_transition_to(&new_state) {
+            return Err(anyhow!(
+                "Invalid transition: {:?} -> {:?}",
+                record.current_state,
+                new_state
+            ));
+        }
+
+        record.current_state = new_state;
+        record.state_transitioned_at = Utc::now();
+        Ok(())
     }
 
     /// Remove a session record from the registry.
     pub fn remove(&mut self, id: &SessionId) -> Result<()> {
-        todo!("remove session; return error if not found")
+        self.sessions
+            .remove(id)
+            .ok_or_else(|| anyhow!("Session {} not found", id))?;
+        Ok(())
     }
 }
 
