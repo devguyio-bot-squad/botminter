@@ -381,3 +381,218 @@ mod session_display_tests {
         );
     }
 }
+
+// AC-10 (extended) + AC-17: Tests for elapsed time, concurrent count, and session history.
+// These reference APIs that do not yet exist — compile errors are the expected RED state.
+#[cfg(test)]
+mod session_extended_display_tests {
+    use super::*;
+    use crate::daemon::{SessionHistoryInfo, SessionInfo, SessionsListResponse};
+
+    // Build a SessionInfo that includes the AC-10 extended fields:
+    // state_transitioned_at (for elapsed) and concurrent_count.
+    // These fields do NOT exist on SessionInfo yet → E0560 compile errors.
+    fn make_extended_session(
+        id: &str,
+        member: &str,
+        state_transitioned_at: &str,
+        concurrent_count: u32,
+    ) -> SessionInfo {
+        SessionInfo {
+            session_id: id.to_string(),
+            owning_member: member.to_string(),
+            session_type: "loop".to_string(),
+            current_state: "Active".to_string(),
+            start_time: "2026-05-31T00:00:00Z".to_string(),
+            workspace_path: None,
+            state_transitioned_at: state_transitioned_at.to_string(),
+            concurrent_count,
+        }
+    }
+
+    // Build a SessionHistoryInfo for AC-17 history display tests.
+    // SessionHistoryInfo does NOT exist in crate::daemon yet → E0412 compile error.
+    fn make_history_entry(
+        id: &str,
+        member: &str,
+        start: &str,
+        end: &str,
+        exit_normal: bool,
+    ) -> SessionHistoryInfo {
+        SessionHistoryInfo {
+            session_id: id.to_string(),
+            owning_member: member.to_string(),
+            session_type: "loop".to_string(),
+            start_time: start.to_string(),
+            end_time: end.to_string(),
+            exit_normal,
+        }
+    }
+
+    // AC-10: format_elapsed formats minute-scale durations as "Xm Ys"
+    // format_elapsed does NOT exist yet → E0425 compile error.
+    #[test]
+    fn format_elapsed_shows_minutes_for_short_duration() {
+        let s = format_elapsed(135); // 2m 15s
+        assert!(s.contains("2m"), "expected '2m' in elapsed string '{s}'");
+    }
+
+    // AC-10: format_elapsed formats hour-scale durations as "Xh Ym"
+    #[test]
+    fn format_elapsed_shows_hours_and_minutes() {
+        let s = format_elapsed(7335); // 2h 2m 15s
+        assert!(s.contains("2h"), "expected '2h' in elapsed string '{s}'");
+        assert!(s.contains("2m"), "expected '2m' in elapsed string '{s}'");
+    }
+
+    // AC-10: format_elapsed formats day-scale durations as "Xd Yh"
+    #[test]
+    fn format_elapsed_shows_days_for_large_duration() {
+        let s = format_elapsed(86400 + 3661); // 1d 1h 1m 1s
+        assert!(s.contains("1d"), "expected '1d' in elapsed string '{s}'");
+    }
+
+    // AC-10: status table shows elapsed time column for an active session.
+    // Uses state_transitioned_at to compute elapsed — field doesn't exist yet.
+    #[test]
+    fn status_shows_elapsed_time_in_sessions_table() {
+        let sessions = vec![make_extended_session(
+            "abc12345xyz",
+            "alice",
+            "2026-05-31T00:00:00Z",
+            1,
+        )];
+        let fetcher = || -> Result<SessionsListResponse> {
+            Ok(SessionsListResponse {
+                sessions: sessions.clone(),
+            })
+        };
+        let mut buf = Vec::new();
+        fetch_and_display_sessions(false, &mut buf, &fetcher).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(
+            output.contains('h') || output.contains('m') || output.contains('d'),
+            "output must contain an elapsed duration; got: {output}"
+        );
+    }
+
+    // AC-10: each session row shows the concurrent count for that member.
+    // alice has 2 active sessions → both rows show concurrent_count = 2.
+    #[test]
+    fn status_shows_concurrent_count_for_member_with_multiple_sessions() {
+        let ts = "2026-05-31T04:00:00Z";
+        let sessions = vec![
+            make_extended_session("sess0001", "alice", ts, 2),
+            make_extended_session("sess0002", "alice", ts, 2),
+            make_extended_session("sess0003", "bob", ts, 1),
+        ];
+        let fetcher = || -> Result<SessionsListResponse> {
+            Ok(SessionsListResponse {
+                sessions: sessions.clone(),
+            })
+        };
+        let mut buf = Vec::new();
+        fetch_and_display_sessions(false, &mut buf, &fetcher).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        // alice's two rows must both display concurrent count "2"
+        let count = output.matches('2').count();
+        assert!(
+            count >= 2,
+            "alice's 2 sessions must each show concurrent_count=2; got: {output}"
+        );
+    }
+
+    // AC-17: history display shows session with start time, end time, and exit indicator.
+    // fetch_and_display_history does NOT exist yet → E0425 compile error.
+    #[test]
+    fn history_display_shows_start_end_and_exit_status() {
+        let entries = vec![make_history_entry(
+            "done0001",
+            "alice",
+            "2026-05-31T00:00:00Z",
+            "2026-05-31T01:00:00Z",
+            true,
+        )];
+        let fetcher = move || -> Result<Vec<SessionHistoryInfo>> { Ok(entries.clone()) };
+        let mut buf = Vec::new();
+        fetch_and_display_history(false, None, None, &mut buf, &fetcher).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(
+            output.contains("done000"),
+            "output must include session id prefix; got: {output}"
+        );
+        assert!(
+            output.contains("01:00") || output.contains("2026-05-31 01:00"),
+            "output must include end time; got: {output}"
+        );
+        assert!(
+            output.contains("normal") || output.contains("ok") || output.contains("✓"),
+            "output must indicate normal exit; got: {output}"
+        );
+    }
+
+    // AC-17: --member filter shows only sessions belonging to the specified member.
+    #[test]
+    fn history_display_member_filter_returns_only_matching() {
+        let entries = vec![
+            make_history_entry(
+                "s001",
+                "alice",
+                "2026-05-31T00:00:00Z",
+                "2026-05-31T01:00:00Z",
+                true,
+            ),
+            make_history_entry(
+                "s002",
+                "bob",
+                "2026-05-31T00:00:00Z",
+                "2026-05-31T01:30:00Z",
+                false,
+            ),
+        ];
+        let fetcher = move || -> Result<Vec<SessionHistoryInfo>> { Ok(entries.clone()) };
+        let mut buf = Vec::new();
+        fetch_and_display_history(false, Some("alice"), None, &mut buf, &fetcher).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(output.contains("alice"), "alice must appear; got: {output}");
+        assert!(
+            !output.contains("bob"),
+            "bob must NOT appear when filtered to alice; got: {output}"
+        );
+    }
+
+    // AC-17: --since filter excludes sessions whose end_time is outside the window.
+    #[test]
+    fn history_display_since_filter_excludes_old_sessions() {
+        let entries = vec![
+            // recent: end_time within last 24h (relative to 2026-05-31T06:00:00Z)
+            make_history_entry(
+                "recent",
+                "alice",
+                "2026-05-30T12:00:00Z",
+                "2026-05-31T04:00:00Z",
+                true,
+            ),
+            // old: end_time 48h ago
+            make_history_entry(
+                "oldone",
+                "alice",
+                "2026-05-29T00:00:00Z",
+                "2026-05-29T01:00:00Z",
+                true,
+            ),
+        ];
+        let fetcher = move || -> Result<Vec<SessionHistoryInfo>> { Ok(entries.clone()) };
+        let mut buf = Vec::new();
+        fetch_and_display_history(false, None, Some("24h"), &mut buf, &fetcher).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(
+            output.contains("recent"),
+            "recent session must appear in 24h window; got: {output}"
+        );
+        assert!(
+            !output.contains("oldone"),
+            "old session must NOT appear in 24h window; got: {output}"
+        );
+    }
+}
