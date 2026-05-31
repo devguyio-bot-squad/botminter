@@ -123,6 +123,44 @@ pub struct RetriggerFinalizationResponse {
     pub error: Option<String>,
 }
 
+/// Response for GET /api/sessions/{id}/inspect.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InspectSessionResponse {
+    pub ok: bool,
+    pub session_id: String,
+    pub member_name: String,
+    pub session_type: String,
+    pub current_state: String,
+    pub workspace_path: Option<String>,
+    pub created_at: String,
+    pub state_transitioned_at: String,
+}
+
+/// Response for DELETE /api/sessions/{id}/cleanup.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CleanupSessionResponse {
+    pub ok: bool,
+    pub session_id: String,
+    pub error: Option<String>,
+}
+
+/// Response for DELETE /api/sessions/cleanup.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BulkCleanupResponse {
+    pub ok: bool,
+    pub removed: usize,
+    pub error: Option<String>,
+}
+
+/// Query params for DELETE /api/sessions/cleanup.
+#[allow(dead_code)]
+#[derive(Debug, Deserialize, Default)]
+pub struct BulkCleanupParams {
+    pub all: Option<bool>,
+    pub member: Option<String>,
+    pub older_than: Option<String>,
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 fn record_to_info_with_count(record: &SessionRecord, concurrent_count: u32) -> SessionInfo {
@@ -409,6 +447,152 @@ pub(super) async fn get_session_handler(
             Json(serde_json::json!({
                 "code": "session_not_found",
                 "error": "session not found"
+            })),
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "code": "internal_error",
+                "error": "internal error"
+            })),
+        ),
+    }
+}
+
+/// GET /api/sessions/{id}/inspect — return structured summary of a session.
+pub(super) async fn inspect_session_handler(
+    State(state): State<DaemonState>,
+    Path(session_id_str): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let session_id = SessionId::from_string(session_id_str.clone());
+    let manager = Arc::clone(&state.session_manager);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let m = manager.lock().unwrap();
+        m.inspect_session(&session_id)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(inspection)) => {
+            let session_type_str = match inspection.session_type {
+                SessionType::Loop => "loop",
+                SessionType::Brain => "brain",
+                SessionType::Interactive => "interactive",
+            };
+            let resp = InspectSessionResponse {
+                ok: true,
+                session_id: inspection.session_id.as_str().to_string(),
+                member_name: inspection.member_name,
+                session_type: session_type_str.to_string(),
+                current_state: inspection.current_state.to_string(),
+                workspace_path: inspection
+                    .workspace_path
+                    .map(|p| p.to_string_lossy().to_string()),
+                created_at: inspection.created_at.to_rfc3339(),
+                state_transitioned_at: inspection.state_transitioned_at.to_rfc3339(),
+            };
+            (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
+        }
+        Ok(Err(_)) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "code": "session_not_found",
+                "error": "session not found"
+            })),
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "code": "internal_error",
+                "error": "internal error"
+            })),
+        ),
+    }
+}
+
+/// DELETE /api/sessions/{id}/cleanup — remove a session's workspace and registry entry.
+pub(super) async fn cleanup_session_handler(
+    State(state): State<DaemonState>,
+    Path(session_id_str): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let session_id = SessionId::from_string(session_id_str.clone());
+    let manager = Arc::clone(&state.session_manager);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut m = manager.lock().unwrap();
+        m.cleanup_session(&session_id)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => {
+            let resp = CleanupSessionResponse {
+                ok: true,
+                session_id: session_id_str,
+                error: None,
+            };
+            (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
+        }
+        Ok(Err(_)) => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({
+                "code": "session_not_found",
+                "error": "session not found"
+            })),
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "code": "internal_error",
+                "error": "internal error"
+            })),
+        ),
+    }
+}
+
+/// DELETE /api/sessions/cleanup — bulk cleanup of retained sessions.
+///
+/// Query params: `all=true`, `member=<name>`, `older_than=<Nh>` (e.g. 48h).
+pub(super) async fn bulk_cleanup_handler(
+    State(state): State<DaemonState>,
+    Query(params): Query<BulkCleanupParams>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    use crate::session::manager::CleanupFilter;
+
+    let filter = if params.all.unwrap_or(false) {
+        CleanupFilter::All
+    } else if let Some(ref member) = params.member {
+        CleanupFilter::Member(member.clone())
+    } else if let Some(ref duration_str) = params.older_than {
+        let hours: u64 = duration_str.trim_end_matches('h').parse().unwrap_or(24);
+        CleanupFilter::OlderThan(std::time::Duration::from_secs(hours * 3600))
+    } else {
+        CleanupFilter::All
+    };
+
+    let manager = Arc::clone(&state.session_manager);
+    let result = tokio::task::spawn_blocking(move || {
+        let mut m = manager.lock().unwrap();
+        m.cleanup_sessions(filter)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(report)) => {
+            let resp = BulkCleanupResponse {
+                ok: true,
+                removed: report.removed,
+                error: None,
+            };
+            (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
+        }
+        Ok(Err(e)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "ok": false,
+                "code": "cleanup_failed",
+                "error": e.to_string()
             })),
         ),
         Err(_) => (

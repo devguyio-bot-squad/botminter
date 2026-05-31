@@ -7,7 +7,9 @@ pub mod types;
 pub use finalization::categorize::{categorize, Category, RemoteStatus, RepoContext, RepoKind};
 pub use finalization::subagent::recovery_branch_name;
 pub use lock::WorkItemLock;
-pub use manager::{DeactivationResult, DirtyRepo, SessionManager};
+pub use manager::{
+    CleanupFilter, CleanupReport, DeactivationResult, DirtyRepo, SessionInspection, SessionManager,
+};
 pub use types::{SessionId, SessionRecord, SessionState, SessionType};
 
 use std::path::Path;

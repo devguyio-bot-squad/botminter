@@ -385,6 +385,12 @@ pub enum Command {
         command: DebugCommand,
     },
 
+    /// Session inspection and cleanup
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
+
     /// Unknown subcommand (caught when not matching any static or dynamic command)
     #[command(external_subcommand)]
     External(Vec<OsString>),
@@ -841,6 +847,41 @@ pub enum BridgeRoomCommand {
 
     /// List rooms
     List {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SessionCommand {
+    /// Inspect a retained session's workspace state and metadata
+    Inspect {
+        /// Session ID to inspect
+        session_id: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Manually clean up one or more retained sessions
+    Cleanup {
+        /// Session ID (individual cleanup — omit for bulk)
+        session_id: Option<String>,
+
+        /// Clean up all retained sessions
+        #[arg(long)]
+        all: bool,
+
+        /// Clean up all retained sessions for a specific member
+        #[arg(long)]
+        member: Option<String>,
+
+        /// Clean up sessions older than the given duration (e.g. 48h)
+        #[arg(long)]
+        older_than: Option<String>,
+
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,

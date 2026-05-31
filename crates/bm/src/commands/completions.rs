@@ -126,8 +126,8 @@ pub fn build_cli_with_completions() -> clap::Command {
 
     let mut cmd = Cli::command();
     if !meetings.is_empty() {
-        let mut meetings_cmd = clap::Command::new("meetings")
-            .about("Meet with a team member for a specific purpose");
+        let mut meetings_cmd =
+            clap::Command::new("meetings").about("Meet with a team member for a specific purpose");
         for m in &meetings {
             let sub = super::meeting::build_meeting_subcommand(m)
                 .mut_arg("team", |a| a.add(make(teams.clone())));
@@ -219,9 +219,7 @@ pub fn build_cli_with_completions() -> clap::Command {
                 s.mut_arg("project", |a| a.add(make(projects)))
                     .mut_arg("team", |a| a.add(make(teams.clone())))
             })
-            .mut_subcommand("add", |s| {
-                s.mut_arg("team", |a| a.add(make(teams.clone())))
-            })
+            .mut_subcommand("add", |s| s.mut_arg("team", |a| a.add(make(teams.clone()))))
             .mut_subcommand("sync", |s| {
                 s.mut_arg("team", |a| a.add(make(teams.clone())))
             })
@@ -369,7 +367,7 @@ mod tests {
                         coding_agent: None,
                         project_number: None,
                         bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                        daemon: Default::default(),
                         vm: None,
                     },
                     TeamEntry {
@@ -381,7 +379,7 @@ mod tests {
                         coding_agent: None,
                         project_number: None,
                         bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                        daemon: Default::default(),
                         vm: None,
                     },
                 ],
@@ -409,7 +407,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                daemon: Default::default(),
                 vm: None,
             }),
             team_repo: None,
@@ -486,7 +484,8 @@ projects:
         use crate::cli::{
             BridgeCommand, BridgeIdentityCommand, BridgeRoomCommand, Command, CredentialsCommand,
             DaemonCommand, DebugCommand, EnvCommand, KnowledgeCommand, MembersCommand,
-            ProfilesCommand, ProjectsCommand, RolesCommand, RuntimeCommand, TeamsCommand,
+            ProfilesCommand, ProjectsCommand, RolesCommand, RuntimeCommand, SessionCommand,
+            TeamsCommand,
         };
 
         // This exhaustive match ensures that if a new Command variant is
@@ -570,6 +569,10 @@ projects:
                 Command::Attach { .. } => {}
                 Command::Debug { command } => match command {
                     DebugCommand::BrainLogs { .. } => {}
+                },
+                Command::Session { command } => match command {
+                    SessionCommand::Inspect { .. } => {}
+                    SessionCommand::Cleanup { .. } => {}
                 },
                 Command::External(_) => {}
                 Command::Completions { .. } => {}

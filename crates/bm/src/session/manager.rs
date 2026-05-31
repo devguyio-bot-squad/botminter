@@ -33,6 +33,30 @@ pub struct DeactivationResult {
     pub finalization_launched: bool,
 }
 
+/// Structured summary of a session returned by `inspect_session`.
+#[derive(Debug, Clone)]
+pub struct SessionInspection {
+    pub session_id: SessionId,
+    pub member_name: String,
+    pub session_type: SessionType,
+    pub current_state: SessionState,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub state_transitioned_at: chrono::DateTime<chrono::Utc>,
+    pub workspace_path: Option<std::path::PathBuf>,
+}
+
+/// Filter predicate for bulk session cleanup.
+pub enum CleanupFilter {
+    Member(String),
+    OlderThan(std::time::Duration),
+    All,
+}
+
+/// Result of a bulk cleanup operation.
+pub struct CleanupReport {
+    pub removed: usize,
+}
+
 /// Manages session lifecycle: creates sessions via the hydrator and tracks them in the registry.
 ///
 /// Also owns the `WorkItemLock` — `deactivate_session` always releases all locks held by the
@@ -238,6 +262,62 @@ impl SessionManager {
             let _ = retrigger_finalization(wp, id);
         }
         Ok(())
+    }
+
+    pub fn inspect_session(&self, id: &SessionId) -> Result<SessionInspection> {
+        let session = self
+            .registry
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("session {} not found", id))?
+            .clone();
+        Ok(SessionInspection {
+            session_id: session.session_id,
+            member_name: session.member_name,
+            session_type: session.session_type,
+            current_state: session.current_state,
+            created_at: session.created_at,
+            state_transitioned_at: session.state_transitioned_at,
+            workspace_path: session.workspace_path,
+        })
+    }
+
+    pub fn cleanup_session(&mut self, id: &SessionId) -> Result<()> {
+        let session = self
+            .registry
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("session {} not found", id))?
+            .clone();
+        if let Some(ref wp) = session.workspace_path {
+            if wp.exists() {
+                std::fs::remove_dir_all(wp)?;
+            }
+        }
+        self.registry.remove(id)?;
+        self.registry.save()
+    }
+
+    pub fn cleanup_sessions(&mut self, filter: CleanupFilter) -> Result<CleanupReport> {
+        let now = chrono::Utc::now();
+        let ids_to_remove: Vec<SessionId> = self
+            .registry
+            .list()
+            .into_iter()
+            .filter(|s| s.current_state == SessionState::Retained)
+            .filter(|s| match &filter {
+                CleanupFilter::Member(name) => &s.member_name == name,
+                CleanupFilter::OlderThan(duration) => {
+                    let age = now.signed_duration_since(s.state_transitioned_at);
+                    age.num_seconds() >= 0 && (age.num_seconds() as u64) > duration.as_secs()
+                }
+                CleanupFilter::All => true,
+            })
+            .map(|s| s.session_id.clone())
+            .collect();
+        let removed = ids_to_remove.len();
+        for id in ids_to_remove {
+            self.cleanup_session(&id)?;
+        }
+        Ok(CleanupReport { removed })
     }
 }
 

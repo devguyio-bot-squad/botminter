@@ -166,6 +166,18 @@ async fn run_daemon_async(
             "/api/sessions/{id}/finalize",
             post(session_api::retrigger_finalization_handler),
         )
+        .route(
+            "/api/sessions/{id}/inspect",
+            get(session_api::inspect_session_handler),
+        )
+        .route(
+            "/api/sessions/{id}/cleanup",
+            delete(session_api::cleanup_session_handler),
+        )
+        .route(
+            "/api/sessions/cleanup",
+            delete(session_api::bulk_cleanup_handler),
+        )
         .with_state(state.clone())
         .merge(web_router(web_state))
         .layer(cors);
