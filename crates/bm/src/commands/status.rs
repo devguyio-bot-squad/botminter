@@ -9,7 +9,6 @@ use crate::config;
 use crate::daemon::{DaemonClient, SessionHistoryInfo, SessionsListResponse};
 use crate::state::{self, MemberStatus};
 
-/// Handles `bm status [-t team] [-v] [--json] [--history] [--member <m>] [--since <d>]`.
 pub fn run(
     team_flag: Option<&str>,
     verbose: bool,
@@ -141,7 +140,6 @@ pub fn run(
         }
     }
 
-    // Sessions (AC-10) / History (AC-17)
     let team_name = team.name.clone();
     if history {
         let fetcher = move || DaemonClient::connect(&team_name)?.list_session_history();
@@ -154,11 +152,6 @@ pub fn run(
     Ok(())
 }
 
-/// Fetches sessions via `session_fetcher` and writes the session section to `writer`.
-///
-/// When `json` is true, writes `{"sessions":[...]}` (full IDs, no table).
-/// When the daemon is not reachable, writes "Sessions: none (daemon not running)" in
-/// text mode or `{"sessions":[]}` in JSON mode.
 pub(crate) fn fetch_and_display_sessions<W: Write>(
     json: bool,
     writer: &mut W,
@@ -229,9 +222,6 @@ pub(crate) fn fetch_and_display_sessions<W: Write>(
     Ok(())
 }
 
-/// Formats elapsed seconds as a human-readable duration string.
-///
-/// Examples: 135 → "2m 15s", 7335 → "2h 2m", 90061 → "1d 1h"
 pub(crate) fn format_elapsed(secs: u64) -> String {
     if secs >= 86400 {
         let days = secs / 86400;
@@ -274,7 +264,6 @@ fn parse_since_cutoff(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
     now.checked_sub_signed(chrono::Duration::seconds(secs))
 }
 
-/// Fetches session history via `history_fetcher`, applies filters, and writes to `writer`.
 pub(crate) fn fetch_and_display_history<W: Write>(
     json: bool,
     member_filter: Option<&str>,
@@ -538,16 +527,11 @@ mod session_display_tests {
     }
 }
 
-// AC-10 (extended) + AC-17: Tests for elapsed time, concurrent count, and session history.
-// These reference APIs that do not yet exist — compile errors are the expected RED state.
 #[cfg(test)]
 mod session_extended_display_tests {
     use super::*;
     use crate::daemon::{SessionHistoryInfo, SessionInfo, SessionsListResponse};
 
-    // Build a SessionInfo that includes the AC-10 extended fields:
-    // state_transitioned_at (for elapsed) and concurrent_count.
-    // These fields do NOT exist on SessionInfo yet → E0560 compile errors.
     fn make_extended_session(
         id: &str,
         member: &str,
@@ -566,8 +550,6 @@ mod session_extended_display_tests {
         }
     }
 
-    // Build a SessionHistoryInfo for AC-17 history display tests.
-    // SessionHistoryInfo does NOT exist in crate::daemon yet → E0412 compile error.
     fn make_history_entry(
         id: &str,
         member: &str,
@@ -586,7 +568,6 @@ mod session_extended_display_tests {
     }
 
     // AC-10: format_elapsed formats minute-scale durations as "Xm Ys"
-    // format_elapsed does NOT exist yet → E0425 compile error.
     #[test]
     fn format_elapsed_shows_minutes_for_short_duration() {
         let s = format_elapsed(135); // 2m 15s
@@ -608,8 +589,7 @@ mod session_extended_display_tests {
         assert!(s.contains("1d"), "expected '1d' in elapsed string '{s}'");
     }
 
-    // AC-10: status table shows elapsed time column for an active session.
-    // Uses state_transitioned_at to compute elapsed — field doesn't exist yet.
+    // AC-10: status table shows elapsed time column for an active session
     #[test]
     fn status_shows_elapsed_time_in_sessions_table() {
         let sessions = vec![make_extended_session(
@@ -658,8 +638,7 @@ mod session_extended_display_tests {
         );
     }
 
-    // AC-17: history display shows session with start time, end time, and exit indicator.
-    // fetch_and_display_history does NOT exist yet → E0425 compile error.
+    // AC-17: history display shows session with start time, end time, and exit indicator
     #[test]
     fn history_display_shows_start_end_and_exit_status() {
         let entries = vec![make_history_entry(
