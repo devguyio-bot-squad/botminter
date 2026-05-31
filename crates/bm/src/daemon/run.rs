@@ -102,7 +102,7 @@ async fn run_daemon_async(
     let mut session_manager = SessionManager::new(sessions_dir.clone(), registry_path)
         .context("Failed to initialise session manager")?;
 
-    // AC-25: Recover sessions whose agent process died between daemon runs.
+    // Recover sessions whose agent process died between daemon runs.
     match session_manager.recover_stale_sessions_with(is_pid_alive) {
         Ok(report) if report.recovered > 0 => {
             daemon_log(
@@ -215,7 +215,7 @@ async fn run_daemon_async(
         });
     }
 
-    // Spawn RetentionEngine background thread — runs hourly to expire old sessions (AC-20/21/26).
+    // Spawn RetentionEngine background thread — runs hourly to expire old sessions.
     {
         let retention_manager = Arc::clone(&state.session_manager);
         let retention_sessions_dir = sessions_dir.clone();
@@ -331,15 +331,12 @@ async fn run_daemon_async(
     Ok(())
 }
 
-/// Returns true if a process with the given PID exists and is not a zombie.
-///
-/// Uses `/proc/<pid>` to avoid `kill(-1, 0)` edge cases from overflow (u32::MAX casts to -1).
+// Uses /proc/<pid>/stat to avoid kill(-1, 0) edge cases when pid overflows i32.
 fn is_pid_alive(pid: u32) -> bool {
     // PIDs that cannot be valid positive pid_t values
     if pid == 0 || pid > i32::MAX as u32 {
         return false;
     }
-    // Check /proc/<pid>/stat: if it exists and the state field isn't 'Z', the process is alive.
     let stat_path = format!("/proc/{}/stat", pid);
     match std::fs::read_to_string(&stat_path) {
         Ok(stat) => {
@@ -355,7 +352,6 @@ fn is_pid_alive(pid: u32) -> bool {
     }
 }
 
-/// Recursively computes the total byte size of all files under `path`.
 fn dir_size(path: &std::path::Path) -> Result<u64> {
     if !path.exists() {
         return Ok(0);
@@ -381,7 +377,7 @@ mod daemon_startup_tests {
     use crate::session::manager::{RecoveryReport, SessionManager};
     use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
 
-    use super::is_pid_alive; // E0425: `is_pid_alive` not found in daemon/run.rs
+    use super::is_pid_alive;
 
     fn make_manager(tmp: &TempDir) -> SessionManager {
         let registry_path = tmp.path().join("registry.json");
