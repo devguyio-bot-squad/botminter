@@ -29,7 +29,7 @@ fn find_markdown_files(dir: &Path) -> Vec<PathBuf> {
         .filter_map(|e| e.ok())
     {
         let path = entry.path();
-        if path.is_file() && path.extension().map_or(false, |ext| ext == "md") {
+        if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
             files.push(path.to_path_buf());
         }
     }
@@ -244,11 +244,10 @@ fn test_team_knowledge_workspace_layout_updated() {
     for file in &knowledge_files {
         if let Ok(content) = fs::read_to_string(file) {
             // Check for session-aware path patterns
-            if content.contains("session") && (content.contains("workspace") || content.contains("layout")) {
-                if content.contains(".sessions/") || content.contains("ephemeral") {
-                    found_session_aware_paths = true;
-                    break;
-                }
+            if content.contains("session") && (content.contains("workspace") || content.contains("layout"))
+                && (content.contains(".sessions/") || content.contains("ephemeral")) {
+                found_session_aware_paths = true;
+                break;
             }
         }
     }
@@ -276,7 +275,7 @@ fn test_claude_md_workspace_context_updated() {
         }
 
         let content = fs::read_to_string(claude_file)
-            .expect(&format!("Should be able to read {}", claude_file.display()));
+            .unwrap_or_else(|_| panic!("Should be able to read {}", claude_file.display()));
 
         // Should mention session paths or session model
         assert!(
