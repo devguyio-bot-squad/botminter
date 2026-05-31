@@ -25,9 +25,7 @@ pub enum DaemonStatusInfo {
         config: Option<DaemonConfig>,
     },
     /// Daemon is not running.
-    NotRunning {
-        reason: &'static str,
-    },
+    NotRunning { reason: &'static str },
 }
 
 /// Starts a daemon for the given team as a detached child process.
@@ -52,8 +50,7 @@ pub fn start_daemon(
     // Check if already running
     let pid_file = paths.pid();
     if pid_file.exists() {
-        let pid_str =
-            fs::read_to_string(&pid_file).context("Failed to read daemon PID file")?;
+        let pid_str = fs::read_to_string(&pid_file).context("Failed to read daemon PID file")?;
         if let Ok(pid) = pid_str.trim().parse::<u32>() {
             if state::is_alive(pid) {
                 bail!(
@@ -80,9 +77,7 @@ pub fn start_daemon(
         .create(true)
         .append(true)
         .open(&log_file_path)
-        .with_context(|| {
-            format!("Failed to open log file at {}", log_file_path.display())
-        })?;
+        .with_context(|| format!("Failed to open log file at {}", log_file_path.display()))?;
 
     let log_file_err = log_file
         .try_clone()
@@ -166,8 +161,7 @@ pub fn stop_daemon(team_name: &str) -> Result<()> {
         bail!("Daemon not running for team '{}'", team_name);
     }
 
-    let pid_str =
-        fs::read_to_string(&pid_file).context("Failed to read daemon PID file")?;
+    let pid_str = fs::read_to_string(&pid_file).context("Failed to read daemon PID file")?;
     let pid: u32 = pid_str
         .trim()
         .parse()
@@ -212,8 +206,7 @@ pub fn query_status(team_name: &str) -> Result<DaemonStatusInfo> {
         });
     }
 
-    let pid_str =
-        fs::read_to_string(&pid_file).context("Failed to read daemon PID file")?;
+    let pid_str = fs::read_to_string(&pid_file).context("Failed to read daemon PID file")?;
     let pid: u32 = match pid_str.trim().parse() {
         Ok(p) => p,
         Err(_) => {
@@ -236,8 +229,7 @@ pub fn query_status(team_name: &str) -> Result<DaemonStatusInfo> {
     // Read daemon config for details
     let cfg_file = paths.config();
     let config = if cfg_file.exists() {
-        let contents =
-            fs::read_to_string(&cfg_file).context("Failed to read daemon config")?;
+        let contents = fs::read_to_string(&cfg_file).context("Failed to read daemon config")?;
         serde_json::from_str::<DaemonConfig>(&contents).ok()
     } else {
         None

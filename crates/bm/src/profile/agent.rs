@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 use super::extraction::should_filter;
 use super::manifest::{CodingAgentDef, ProfileManifest};
@@ -20,7 +20,8 @@ fn scan_agent_tags_in(profile_name: &str, base: &Path) -> Result<Vec<(String, Ve
         let available = list_profiles_from(base).unwrap_or_default().join(", ");
         bail!(
             "Profile '{}' not found. Available profiles: {}",
-            profile_name, available
+            profile_name,
+            available
         );
     }
 
@@ -36,8 +37,8 @@ fn scan_dir_for_tags_on_disk(
     root_path: &Path,
     results: &mut Vec<(String, Vec<String>)>,
 ) -> Result<()> {
-    for entry in fs::read_dir(dir)
-        .with_context(|| format!("Failed to read directory {}", dir.display()))?
+    for entry in
+        fs::read_dir(dir).with_context(|| format!("Failed to read directory {}", dir.display()))?
     {
         let entry = entry?;
         let path = entry.path();
@@ -120,9 +121,7 @@ pub fn resolve_coding_agent<'a>(
 pub fn resolve_agent_from_profiles() -> Result<CodingAgentDef> {
     let profiles = super::list_profiles()?;
     if profiles.is_empty() {
-        bail!(
-            "No profiles found on disk. Run `bm profiles init` to extract profiles."
-        );
+        bail!("No profiles found on disk. Run `bm profiles init` to extract profiles.");
     }
 
     for name in &profiles {
@@ -149,12 +148,8 @@ pub fn ensure_minty_initialized() -> Result<std::path::PathBuf> {
 
     if !minty_dir.join("prompt.md").exists() {
         eprintln!("Initializing Minty config...");
-        fs::create_dir_all(&minty_dir).with_context(|| {
-            format!(
-                "Failed to create minty directory {}",
-                minty_dir.display()
-            )
-        })?;
+        fs::create_dir_all(&minty_dir)
+            .with_context(|| format!("Failed to create minty directory {}", minty_dir.display()))?;
         super::extract_minty_to_disk(&minty_dir)?;
         eprintln!("Extracted Minty config to {}", minty_dir.display());
     }
@@ -171,7 +166,10 @@ mod tests {
     fn scan_agent_tags_finds_tagged_files() {
         let (_tmp, base) = setup_disk_profiles();
         let results = scan_agent_tags_in("scrum", &base).unwrap();
-        assert!(!results.is_empty(), "scrum profile should have tagged files");
+        assert!(
+            !results.is_empty(),
+            "scrum profile should have tagged files"
+        );
         let has_context = results.iter().any(|(path, _)| path == "context.md");
         assert!(has_context, "scrum should have tagged context.md");
     }
@@ -183,7 +181,9 @@ mod tests {
         for (path, agents) in &results {
             assert!(
                 agents.contains(&"claude-code".to_string()),
-                "File {} should reference claude-code agent, got {:?}", path, agents
+                "File {} should reference claude-code agent, got {:?}",
+                path,
+                agents
             );
         }
     }
@@ -193,7 +193,10 @@ mod tests {
         let (_tmp, base) = setup_disk_profiles();
         let results = scan_agent_tags_in("scrum", &base).unwrap();
         let has_ralph_yml = results.iter().any(|(path, _)| path.ends_with("ralph.yml"));
-        assert!(has_ralph_yml, "scrum profile should have tagged ralph.yml files");
+        assert!(
+            has_ralph_yml,
+            "scrum profile should have tagged ralph.yml files"
+        );
     }
 
     #[test]
@@ -201,7 +204,11 @@ mod tests {
         let (_tmp, base) = setup_disk_profiles();
         for name in crate::profile::list_profiles_from(&base).unwrap() {
             let results = scan_agent_tags_in(&name, &base).unwrap();
-            assert!(!results.is_empty(), "Profile '{}' should have tagged files", name);
+            assert!(
+                !results.is_empty(),
+                "Profile '{}' should have tagged files",
+                name
+            );
         }
     }
 
@@ -280,7 +287,7 @@ mod tests {
 
     #[test]
     fn tagged_context_md_files_have_balanced_tags() {
-        use crate::agent_tags::{CommentSyntax, tags_are_balanced};
+        use crate::agent_tags::{tags_are_balanced, CommentSyntax};
         let (_tmp, base) = setup_disk_profiles();
         for name in crate::profile::list_profiles_from(&base).unwrap() {
             let profile_dir = base.join(&name);
@@ -290,7 +297,8 @@ mod tests {
                     let content = fs::read_to_string(&file_path).unwrap();
                     assert!(
                         tags_are_balanced(&content, CommentSyntax::Html),
-                        "Unbalanced HTML agent tags in {}", path_str
+                        "Unbalanced HTML agent tags in {}",
+                        path_str
                     );
                 }
             }
@@ -299,7 +307,7 @@ mod tests {
 
     #[test]
     fn tagged_ralph_yml_files_have_balanced_tags() {
-        use crate::agent_tags::{CommentSyntax, tags_are_balanced};
+        use crate::agent_tags::{tags_are_balanced, CommentSyntax};
         let (_tmp, base) = setup_disk_profiles();
         for name in crate::profile::list_profiles_from(&base).unwrap() {
             let profile_dir = base.join(&name);
@@ -309,7 +317,8 @@ mod tests {
                     let content = fs::read_to_string(&file_path).unwrap();
                     assert!(
                         tags_are_balanced(&content, CommentSyntax::Hash),
-                        "Unbalanced hash agent tags in {}", path_str
+                        "Unbalanced hash agent tags in {}",
+                        path_str
                     );
                 }
             }
@@ -318,7 +327,7 @@ mod tests {
 
     #[test]
     fn filtering_context_md_for_claude_code_strips_only_tag_lines() {
-        use crate::agent_tags::{CommentSyntax, filter_agent_tags};
+        use crate::agent_tags::{filter_agent_tags, CommentSyntax};
         let (_tmp, base) = setup_disk_profiles();
         for name in crate::profile::list_profiles_from(&base).unwrap() {
             let profile_dir = base.join(&name);
@@ -329,11 +338,13 @@ mod tests {
                     let filtered = filter_agent_tags(&content, "claude-code", CommentSyntax::Html);
                     assert!(
                         !filtered.contains("+agent:"),
-                        "Filtered {} still contains +agent: tags", path_str
+                        "Filtered {} still contains +agent: tags",
+                        path_str
                     );
                     assert!(
                         !filtered.contains("<!-- -agent -->"),
-                        "Filtered {} still contains -agent tags", path_str
+                        "Filtered {} still contains -agent tags",
+                        path_str
                     );
                     for line in content.lines() {
                         if !line.trim().starts_with("<!-- +agent:")
@@ -341,7 +352,9 @@ mod tests {
                         {
                             assert!(
                                 filtered.contains(line),
-                                "Filtered {} is missing line: {}", path_str, line
+                                "Filtered {} is missing line: {}",
+                                path_str,
+                                line
                             );
                         }
                     }
@@ -352,30 +365,32 @@ mod tests {
 
     #[test]
     fn filtering_ralph_yml_for_claude_code_produces_valid_yaml() {
-        use crate::agent_tags::{CommentSyntax, filter_agent_tags};
+        use crate::agent_tags::{filter_agent_tags, CommentSyntax};
         let (_tmp, base) = setup_disk_profiles();
         for name in crate::profile::list_profiles_from(&base).unwrap() {
             let profile_dir = base.join(&name);
             for file_path in collect_files_recursive_disk(&profile_dir) {
                 let path_str = file_path.to_string_lossy().to_string();
-                if path_str.ends_with("ralph.yml")
-                    && !path_str.contains("formations/")
-                {
+                if path_str.ends_with("ralph.yml") && !path_str.contains("formations/") {
                     let content = fs::read_to_string(&file_path).unwrap();
                     let filtered = filter_agent_tags(&content, "claude-code", CommentSyntax::Hash);
                     let parsed: Result<serde_yml::Value, _> = serde_yml::from_str(&filtered);
                     assert!(
                         parsed.is_ok(),
-                        "Filtered {} is not valid YAML: {}", path_str,
+                        "Filtered {} is not valid YAML: {}",
+                        path_str,
                         parsed.unwrap_err()
                     );
                     let yaml = parsed.unwrap();
-                    let backend = yaml.get("cli")
+                    let backend = yaml
+                        .get("cli")
                         .and_then(|c: &serde_yml::Value| c.get("backend"))
                         .and_then(|b: &serde_yml::Value| b.as_str());
                     assert_eq!(
-                        backend, Some("claude"),
-                        "Filtered {} should have cli.backend: claude", path_str
+                        backend,
+                        Some("claude"),
+                        "Filtered {} should have cli.backend: claude",
+                        path_str
                     );
                 }
             }
@@ -384,7 +399,7 @@ mod tests {
 
     #[test]
     fn filtering_context_md_for_other_agent_excludes_claude_sections() {
-        use crate::agent_tags::{CommentSyntax, filter_agent_tags};
+        use crate::agent_tags::{filter_agent_tags, CommentSyntax};
         let (_tmp, base) = setup_disk_profiles();
         for name in crate::profile::list_profiles_from(&base).unwrap() {
             let profile_dir = base.join(&name);
@@ -398,7 +413,8 @@ mod tests {
                     let filtered = filter_agent_tags(&content, "gemini-cli", CommentSyntax::Html);
                     assert!(
                         !filtered.contains(".claude/"),
-                        "Filtering {} for gemini-cli should exclude .claude/ references", path_str
+                        "Filtering {} for gemini-cli should exclude .claude/ references",
+                        path_str
                     );
                 }
             }
@@ -407,15 +423,13 @@ mod tests {
 
     #[test]
     fn filtering_ralph_yml_for_other_agent_excludes_claude_backend() {
-        use crate::agent_tags::{CommentSyntax, filter_agent_tags};
+        use crate::agent_tags::{filter_agent_tags, CommentSyntax};
         let (_tmp, base) = setup_disk_profiles();
         for name in crate::profile::list_profiles_from(&base).unwrap() {
             let profile_dir = base.join(&name);
             for file_path in collect_files_recursive_disk(&profile_dir) {
                 let path_str = file_path.to_string_lossy().to_string();
-                if path_str.ends_with("ralph.yml")
-                    && !path_str.contains("formations/")
-                {
+                if path_str.ends_with("ralph.yml") && !path_str.contains("formations/") {
                     let content = fs::read_to_string(&file_path).unwrap();
                     if !content.contains("+agent:claude-code") {
                         continue;
@@ -423,7 +437,8 @@ mod tests {
                     let filtered = filter_agent_tags(&content, "gemini-cli", CommentSyntax::Hash);
                     assert!(
                         !filtered.contains("backend: claude"),
-                        "Filtering {} for gemini-cli should exclude backend: claude", path_str
+                        "Filtering {} for gemini-cli should exclude backend: claude",
+                        path_str
                     );
                 }
             }

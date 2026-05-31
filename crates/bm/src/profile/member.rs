@@ -130,8 +130,8 @@ pub fn auto_suffix(team_repo: &Path, role: &str) -> Result<String> {
 pub fn finalize_member_manifest(member_dir: &Path, name: &str) -> Result<()> {
     let template_path = member_dir.join(".botminter.yml");
     if template_path.exists() {
-        let contents = fs::read_to_string(&template_path)
-            .context("Failed to read .botminter.yml template")?;
+        let contents =
+            fs::read_to_string(&template_path).context("Failed to read .botminter.yml template")?;
 
         let mut value: serde_yml::Value =
             serde_yml::from_str(&contents).context("Failed to parse .botminter.yml")?;
@@ -147,8 +147,7 @@ pub fn finalize_member_manifest(member_dir: &Path, name: &str) -> Result<()> {
             serde_yml::to_string(&value).context("Failed to serialize member manifest")?;
 
         let manifest_path = member_dir.join("botminter.yml");
-        fs::write(&manifest_path, augmented)
-            .context("Failed to write member botminter.yml")?;
+        fs::write(&manifest_path, augmented).context("Failed to write member botminter.yml")?;
 
         fs::remove_file(&template_path).ok();
     }
@@ -201,9 +200,27 @@ fn is_text_file(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|e| e.to_str()),
         Some(
-            "md" | "yml" | "yaml" | "json" | "txt" | "sh" | "toml" | "graphql" | "env" | "cfg"
-                | "conf" | "ini" | "xml" | "html" | "css" | "js" | "ts" | "py" | "rs" | "go"
-                | "rb" | "dot"
+            "md" | "yml"
+                | "yaml"
+                | "json"
+                | "txt"
+                | "sh"
+                | "toml"
+                | "graphql"
+                | "env"
+                | "cfg"
+                | "conf"
+                | "ini"
+                | "xml"
+                | "html"
+                | "css"
+                | "js"
+                | "ts"
+                | "py"
+                | "rs"
+                | "go"
+                | "rb"
+                | "dot"
         )
     )
 }
@@ -283,7 +300,11 @@ mod tests {
 
         // Set up minimal git config so commits work in the temp HOME
         let gitconfig = home.path().join(".gitconfig");
-        fs::write(&gitconfig, "[user]\n\tname = Test\n\temail = test@test.com\n").unwrap();
+        fs::write(
+            &gitconfig,
+            "[user]\n\tname = Test\n\temail = test@test.com\n",
+        )
+        .unwrap();
 
         let team_tmp = tempfile::tempdir().unwrap();
         let team_repo = team_tmp.path();
@@ -296,7 +317,13 @@ mod tests {
 
         // Bootstrap a minimal team repo
         crate::formation::setup_new_team_repo(
-            team_repo, profile, &manifest, &[], &[], None, Some(&profiles_path),
+            team_repo,
+            profile,
+            &manifest,
+            &[],
+            &[],
+            None,
+            Some(&profiles_path),
         )
         .unwrap();
 
@@ -307,7 +334,10 @@ mod tests {
 
         // Second hire with same name — returns already_existed
         let r2 = hire_member(team_repo, profile, "engineer", Some("01"), coding_agent).unwrap();
-        assert!(r2.already_existed, "Second hire should detect existing member");
+        assert!(
+            r2.already_existed,
+            "Second hire should detect existing member"
+        );
         assert_eq!(r2.member_dir_name, "engineer-01");
         assert_eq!(r2.member_name, "01");
 

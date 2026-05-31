@@ -18,7 +18,15 @@ pub fn render(name: Option<String>, cpus: u32, memory: &str, disk: &str, _team: 
         .unwrap_or_else(|| "~/.config/botminter".to_string());
     print!(
         "{}",
-        lima::generate_template(&vm_name, cpus, memory, disk, &[&bm_config, &xdg_config], None, &[])
+        lima::generate_template(
+            &vm_name,
+            cpus,
+            memory,
+            disk,
+            &[&bm_config, &xdg_config],
+            None,
+            &[]
+        )
     );
 }
 
@@ -58,7 +66,15 @@ pub fn run(
         }
 
         let parsed_env = parse_env_vars(env_vars)?;
-        let result = lima.bootstrap(&vm_name, cpus, memory, disk, mounts, gh_token.as_deref(), &parsed_env)?;
+        let result = lima.bootstrap(
+            &vm_name,
+            cpus,
+            memory,
+            disk,
+            mounts,
+            gh_token.as_deref(),
+            &parsed_env,
+        )?;
 
         if result.created {
             eprintln!("VM '{}' created.", result.vm_name);
@@ -114,7 +130,9 @@ pub fn run(
                 collected_env.push((key.to_string(), value.to_string()));
             }
             _ => {
-                cliclack::log::warning("Invalid format. Use KEY=VALUE (e.g. ANTHROPIC_API_KEY=sk-ant-...)")?;
+                cliclack::log::warning(
+                    "Invalid format. Use KEY=VALUE (e.g. ANTHROPIC_API_KEY=sk-ant-...)",
+                )?;
             }
         }
     }
@@ -127,7 +145,11 @@ pub fn run(
 
     let summary = format!(
         "VM: {}\nCPUs: {}\nMemory: {}\nDisk: {}\nEnv vars: {}",
-        vm_name, cpus, memory, disk, collected_env.len(),
+        vm_name,
+        cpus,
+        memory,
+        disk,
+        collected_env.len(),
     );
     cliclack::log::info(summary)?;
 
@@ -142,7 +164,15 @@ pub fn run(
     let spinner = cliclack::spinner();
     spinner.start("Provisioning VM...");
 
-    let result = lima.bootstrap(&vm_name, cpus, &memory, &disk, mounts, gh_token.as_deref(), &collected_env)?;
+    let result = lima.bootstrap(
+        &vm_name,
+        cpus,
+        &memory,
+        &disk,
+        mounts,
+        gh_token.as_deref(),
+        &collected_env,
+    )?;
 
     if result.created && result.started {
         spinner.stop("VM created and started");
@@ -175,7 +205,9 @@ fn parse_env_vars(env_vars: &[String]) -> Result<Vec<(String, String)>> {
             s.split_once('=')
                 .filter(|(k, _)| !k.is_empty())
                 .map(|(k, v)| (k.to_string(), v.to_string()))
-                .ok_or_else(|| anyhow::anyhow!("Invalid --env value '{}'. Expected KEY=VALUE format.", s))
+                .ok_or_else(|| {
+                    anyhow::anyhow!("Invalid --env value '{}'. Expected KEY=VALUE format.", s)
+                })
         })
         .collect()
 }
@@ -186,9 +218,10 @@ pub fn delete(name: &str, force: bool) -> Result<()> {
     let lima = Lima::check_prerequisites()?;
 
     if !force && std::io::stdin().is_terminal() {
-        let confirm: bool = cliclack::confirm(format!("Delete VM '{}'? This cannot be undone.", name))
-            .initial_value(false)
-            .interact()?;
+        let confirm: bool =
+            cliclack::confirm(format!("Delete VM '{}'? This cannot be undone.", name))
+                .initial_value(false)
+                .interact()?;
         if !confirm {
             eprintln!("Aborted.");
             return Ok(());

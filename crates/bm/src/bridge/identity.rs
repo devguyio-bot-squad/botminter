@@ -192,8 +192,7 @@ mod tests {
     fn stub_bridge() -> (Bridge, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let state_path = tmp.path().join("bridge-state.json");
-        let bridge =
-            Bridge::new(stub_bridge_dir(), state_path, "test-team".to_string()).unwrap();
+        let bridge = Bridge::new(stub_bridge_dir(), state_path, "test-team".to_string()).unwrap();
         (bridge, tmp)
     }
 
@@ -202,9 +201,7 @@ mod tests {
         let (mut bridge, _tmp) = stub_bridge();
         let cred_store = InMemoryCredentialStore::new();
 
-        let result = bridge
-            .onboard_identity("alice", None, &cred_store)
-            .unwrap();
+        let result = bridge.onboard_identity("alice", None, &cred_store).unwrap();
 
         assert_eq!(result.username, "alice");
         assert_eq!(result.user_id, "stub-id");
@@ -221,12 +218,8 @@ mod tests {
         let (mut bridge, _tmp) = stub_bridge();
         let cred_store = InMemoryCredentialStore::new();
 
-        bridge
-            .onboard_identity("alice", None, &cred_store)
-            .unwrap();
-        let result = bridge
-            .onboard_identity("alice", None, &cred_store)
-            .unwrap();
+        bridge.onboard_identity("alice", None, &cred_store).unwrap();
+        let result = bridge.onboard_identity("alice", None, &cred_store).unwrap();
 
         assert_eq!(result.username, "alice");
         assert!(bridge.has_identity("alice"));
@@ -248,9 +241,7 @@ mod tests {
         let (mut bridge, _tmp) = stub_bridge();
         let cred_store = InMemoryCredentialStore::new();
 
-        bridge
-            .onboard_identity("alice", None, &cred_store)
-            .unwrap();
+        bridge.onboard_identity("alice", None, &cred_store).unwrap();
         let result = bridge.rotate_identity("alice", &cred_store).unwrap();
 
         assert!(result.keyring_warning.is_none());
@@ -272,9 +263,7 @@ mod tests {
         let (mut bridge, _tmp) = stub_bridge();
         let cred_store = InMemoryCredentialStore::new();
 
-        bridge
-            .onboard_identity("alice", None, &cred_store)
-            .unwrap();
+        bridge.onboard_identity("alice", None, &cred_store).unwrap();
         assert!(bridge.has_identity("alice"));
         assert!(cred_store.retrieve("alice").unwrap().is_some());
 

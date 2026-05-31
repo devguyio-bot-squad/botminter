@@ -1,6 +1,6 @@
 use anyhow::{Context, Result};
 use comfy_table::{
-    ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table,
+    modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, ContentArrangement, Table,
 };
 
 use crate::config;
@@ -48,9 +48,16 @@ pub fn show(project: &str, team_flag: Option<&str>) -> Result<()> {
         .with_context(|| {
             let available: Vec<&str> = manifest.projects.iter().map(|p| p.name.as_str()).collect();
             if available.is_empty() {
-                format!("Project '{}' not found. No projects configured — run `bm projects add <url>`.", project)
+                format!(
+                    "Project '{}' not found. No projects configured — run `bm projects add <url>`.",
+                    project
+                )
             } else {
-                format!("Project '{}' not found. Available projects: {}", project, available.join(", "))
+                format!(
+                    "Project '{}' not found. Available projects: {}",
+                    project,
+                    available.join(", ")
+                )
             }
         })?;
 
@@ -58,8 +65,14 @@ pub fn show(project: &str, team_flag: Option<&str>) -> Result<()> {
     println!("Fork URL: {}", proj.fork_url);
 
     let proj_dir = team_repo.join("projects").join(&proj.name);
-    display_file_list("Knowledge", &profile::list_files_in_dir(&proj_dir.join("knowledge")));
-    display_file_list("Invariants", &profile::list_files_in_dir(&proj_dir.join("invariants")));
+    display_file_list(
+        "Knowledge",
+        &profile::list_files_in_dir(&proj_dir.join("knowledge")),
+    );
+    display_file_list(
+        "Invariants",
+        &profile::list_files_in_dir(&proj_dir.join("invariants")),
+    );
     Ok(())
 }
 
@@ -68,11 +81,7 @@ pub fn add(url: &str, team_flag: Option<&str>) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
     let team_repo = team.path.join("team");
-    let name = git::add_project(
-        &team_repo,
-        url,
-        &team.github_repo,
-    )?;
+    let name = git::add_project(&team_repo, url, &team.github_repo)?;
     println!("Added project '{}' to team '{}'.", name, team.name);
 
     // Install all hired members' Apps on the new project repo (Req 17).
@@ -123,8 +132,7 @@ fn install_member_apps_on_repo(
             }
         };
 
-        let installation_id = match cred_store.retrieve(&credential_keys::installation_id(member))
-        {
+        let installation_id = match cred_store.retrieve(&credential_keys::installation_id(member)) {
             Ok(Some(id)) => id,
             Ok(None) => {
                 eprintln!("Warning: no installation ID for member '{member}', skipping App installation on {owner_repo}");
@@ -161,7 +169,12 @@ fn install_member_apps_on_repo(
         };
 
         eprintln!("Installing {member}'s App on {owner_repo}...");
-        if let Err(e) = manifest_flow::ensure_app_on_repos(&installation_id, &client_id, &private_key, &[owner_repo]) {
+        if let Err(e) = manifest_flow::ensure_app_on_repos(
+            &installation_id,
+            &client_id,
+            &private_key,
+            &[owner_repo],
+        ) {
             eprintln!("Warning: failed to install {member}'s App on {owner_repo}: {e}");
         }
     }
@@ -194,11 +207,22 @@ pub fn sync(team_flag: Option<&str>) -> Result<()> {
     println!("  6. To create the next view, click the tab dropdown → Duplicate view, then repeat from step 3");
     println!();
 
-    let name_width = result.views.iter().map(|v| v.name.len()).max().unwrap_or(4).max(4);
+    let name_width = result
+        .views
+        .iter()
+        .map(|v| v.name.len())
+        .max()
+        .unwrap_or(4)
+        .max(4);
     println!("  {:<width$}  Filter", "View", width = name_width);
     println!("  {:<width$}  ------", "----", width = name_width);
     for view in &result.views {
-        println!("  {:<width$}  {}", view.name, view.filter, width = name_width);
+        println!(
+            "  {:<width$}  {}",
+            view.name,
+            view.filter,
+            width = name_width
+        );
     }
     println!();
 

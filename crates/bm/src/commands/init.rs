@@ -19,7 +19,12 @@ enum ProjectChoice {
 
 /// Formats the "next steps" message shown after `bm init` completes.
 /// Uses a simple text format (no tables) to fit within cliclack's bordered frame.
-fn next_steps_message(team_name: &str, team_dir: &Path, team_repo: &Path, bridge_selected: bool) -> String {
+fn next_steps_message(
+    team_name: &str,
+    team_dir: &Path,
+    team_repo: &Path,
+    bridge_selected: bool,
+) -> String {
     let sync_cmd = if bridge_selected {
         "bm teams sync --all     Push team repo, provision workspaces and bridge"
     } else {
@@ -29,7 +34,9 @@ fn next_steps_message(team_name: &str, team_dir: &Path, team_repo: &Path, bridge
     let members_text = if summary.members.is_empty() {
         "Members: none".to_string()
     } else {
-        let list: Vec<String> = summary.members.iter()
+        let list: Vec<String> = summary
+            .members
+            .iter()
             .map(|(name, role)| format!("  {} ({})", name, role))
             .collect();
         format!("Members:\n{}", list.join("\n"))
@@ -37,7 +44,9 @@ fn next_steps_message(team_name: &str, team_dir: &Path, team_repo: &Path, bridge
     let projects_text = if summary.projects.is_empty() {
         "Projects: none".to_string()
     } else {
-        let list: Vec<String> = summary.projects.iter()
+        let list: Vec<String> = summary
+            .projects
+            .iter()
             .map(|p| format!("  {} — {}", p.name, p.fork_url))
             .collect();
         format!("Projects:\n{}", list.join("\n"))
@@ -75,10 +84,10 @@ pub fn run_non_interactive(
     workzone_override: Option<String>,
     credentials_file: Option<String>,
 ) -> Result<()> {
-    let selected_profile =
-        profile_name.ok_or_else(|| anyhow::anyhow!("--profile is required with --non-interactive"))?;
-    let team_name =
-        team_name.ok_or_else(|| anyhow::anyhow!("--team-name is required with --non-interactive"))?;
+    let selected_profile = profile_name
+        .ok_or_else(|| anyhow::anyhow!("--profile is required with --non-interactive"))?;
+    let team_name = team_name
+        .ok_or_else(|| anyhow::anyhow!("--team-name is required with --non-interactive"))?;
     let github_org =
         org.ok_or_else(|| anyhow::anyhow!("--org is required with --non-interactive"))?;
     let repo_name =
@@ -137,14 +146,14 @@ pub fn run_non_interactive(
         git::validate_token(&token)?;
         // Validate that the org is actually a GitHub Organization (not a personal account).
         // resolve_org_from_repo does `GET /users/{owner}` and checks `.type == "Organization"`.
-        git::manifest_flow::resolve_org_from_repo(
-            &format!("{}/{}", github_org, repo_name),
-        )?;
+        git::manifest_flow::resolve_org_from_repo(&format!("{}/{}", github_org, repo_name))?;
     }
 
     eprintln!(
         "Creating team '{}' with profile '{}' at {}",
-        team_name, selected_profile, team_dir.display()
+        team_name,
+        selected_profile,
+        team_dir.display()
     );
 
     fs::create_dir_all(&workzone)
@@ -162,12 +171,16 @@ pub fn run_non_interactive(
 
     if is_new_repo {
         formation::setup_new_team_repo(
-            &team_repo, &selected_profile, &manifest,
+            &team_repo,
+            &selected_profile,
+            &manifest,
             &[], // no members in non-interactive
-            &project.map(|url| {
-                let name = git::derive_project_name(&url);
-                vec![(name, url)]
-            }).unwrap_or_default(),
+            &project
+                .map(|url| {
+                    let name = git::derive_project_name(&url);
+                    vec![(name, url)]
+                })
+                .unwrap_or_default(),
             selected_bridge.as_deref(),
             None,
         )?;
@@ -181,7 +194,11 @@ pub fn run_non_interactive(
     }
 
     formation::register_team(
-        &team_name, &team_dir, &selected_profile, &github_repo, &workzone,
+        &team_name,
+        &team_dir,
+        &selected_profile,
+        &github_repo,
+        &workzone,
     )?;
 
     if !skip_github {
@@ -193,14 +210,18 @@ pub fn run_non_interactive(
         }
 
         let owner = github_repo.split('/').next().unwrap_or(&github_org);
-        let board_title = github_project_board
-            .ok_or_else(|| anyhow::anyhow!("--github-project-board is required with --non-interactive"))?;
+        let board_title = github_project_board.ok_or_else(|| {
+            anyhow::anyhow!("--github-project-board is required with --non-interactive")
+        })?;
 
         // Find existing board by title, or create one
         let project_number = {
             let projects = git::list_projects(owner)?;
             if let Some((number, _)) = projects.iter().find(|(_, t)| t == &board_title) {
-                eprintln!("Using existing project board '{}' (#{})", board_title, number);
+                eprintln!(
+                    "Using existing project board '{}' (#{})",
+                    board_title, number
+                );
                 git::sync_project_status_field(owner, *number, &manifest.statuses)?;
                 *number
             } else {
@@ -230,7 +251,10 @@ pub fn run_non_interactive(
         import_credentials_file(creds_path, &team_name)?;
     }
 
-    eprintln!("{}", next_steps_message(&team_name, &team_dir, &team_repo, selected_bridge.is_some()));
+    eprintln!(
+        "{}",
+        next_steps_message(&team_name, &team_dir, &team_repo, selected_bridge.is_some())
+    );
 
     Ok(())
 }
@@ -267,7 +291,7 @@ pub fn run() -> Result<()> {
          \n\
          Prerequisites:\n\
          • GitHub CLI authenticated (gh auth login)\n\
-         • A GitHub organization (personal accounts not supported)"
+         • A GitHub organization (personal accounts not supported)",
     )?;
 
     // Workzone location
@@ -306,7 +330,11 @@ pub fn run() -> Result<()> {
         .iter()
         .map(|name| {
             let manifest = profile::read_manifest(name).unwrap();
-            (name.clone(), manifest.display_name.clone(), manifest.description.clone())
+            (
+                name.clone(),
+                manifest.display_name.clone(),
+                manifest.description.clone(),
+            )
         })
         .collect();
 
@@ -321,8 +349,9 @@ pub fn run() -> Result<()> {
         .map(|s: &str| s.to_string())?;
 
     // GitHub integration — require existing `gh auth` session (no manual PAT prompt)
-    let token = git::detect_token_non_interactive()
-        .context("GitHub App identity requires an authenticated `gh` session.\nRun `gh auth login` first.")?;
+    let token = git::detect_token_non_interactive().context(
+        "GitHub App identity requires an authenticated `gh` session.\nRun `gh auth login` first.",
+    )?;
     let token_info = git::validate_token(&token)?;
     cliclack::log::info(format!("Authenticated as: {}", token_info.login))?;
 
@@ -337,10 +366,21 @@ pub fn run() -> Result<()> {
     // Bridge selection
     let selected_bridge: Option<String> = if !manifest.bridges.is_empty() {
         let mut bridge_items: Vec<(String, String, String)> = manifest
-            .bridges.iter()
-            .map(|b| (b.name.clone(), b.display_name.clone(), b.description.clone()))
+            .bridges
+            .iter()
+            .map(|b| {
+                (
+                    b.name.clone(),
+                    b.display_name.clone(),
+                    b.description.clone(),
+                )
+            })
             .collect();
-        bridge_items.push(("none".to_string(), "No bridge".to_string(), "Skip bridge configuration".to_string()));
+        bridge_items.push((
+            "none".to_string(),
+            "No bridge".to_string(),
+            "Skip bridge configuration".to_string(),
+        ));
 
         let items_ref: Vec<(&str, &str, &str)> = bridge_items
             .iter()
@@ -353,7 +393,11 @@ pub fn run() -> Result<()> {
             .interact()
             .map(|s: &str| s.to_string())?;
 
-        if choice == "none" { None } else { Some(choice) }
+        if choice == "none" {
+            None
+        } else {
+            Some(choice)
+        }
     } else {
         None
     };
@@ -374,12 +418,18 @@ pub fn run() -> Result<()> {
     // Summary
     let mut summary = format!(
         "Team: {}\nProfile: {}\nWorkzone: {}",
-        team_name, selected_profile, workzone.display()
+        team_name,
+        selected_profile,
+        workzone.display()
     );
     summary.push_str(&format!("\nGitHub: {}", github_repo));
     match &project_choice {
-        ProjectChoice::CreateNew => summary.push_str(&format!("\nProject board: new ({} Board)", team_name)),
-        ProjectChoice::UseExisting(n) => summary.push_str(&format!("\nProject board: existing (#{n})")),
+        ProjectChoice::CreateNew => {
+            summary.push_str(&format!("\nProject board: new ({} Board)", team_name))
+        }
+        ProjectChoice::UseExisting(n) => {
+            summary.push_str(&format!("\nProject board: existing (#{n})"))
+        }
     }
     if let Some(ref bridge_name) = selected_bridge {
         summary.push_str(&format!("\nBridge: {}", bridge_name));
@@ -419,8 +469,11 @@ pub fn run() -> Result<()> {
     if is_new_repo {
         spinner.start("Initializing git repository...");
         formation::setup_new_team_repo(
-            &team_repo, &selected_profile, &manifest,
-            &members_to_hire, &projects_to_add,
+            &team_repo,
+            &selected_profile,
+            &manifest,
+            &members_to_hire,
+            &projects_to_add,
             selected_bridge.as_deref(),
             None,
         )?;
@@ -434,7 +487,11 @@ pub fn run() -> Result<()> {
 
     spinner.start("Registering team...");
     formation::register_team(
-        &team_name, &team_dir, &selected_profile, &github_repo, &workzone,
+        &team_name,
+        &team_dir,
+        &selected_profile,
+        &github_repo,
+        &workzone,
     )?;
 
     // Bootstrap labels
@@ -442,17 +499,21 @@ pub fn run() -> Result<()> {
     if let Err(e) = git::bootstrap_labels(&github_repo, &manifest.labels) {
         spinner.stop("Label bootstrap failed");
         let label_cmds: Vec<String> = manifest
-            .labels.iter()
-            .map(|l| format!(
-                "gh label create '{}' --color '{}' --description '{}' --force --repo {}",
-                l.name, l.color, l.description, github_repo,
-            ))
+            .labels
+            .iter()
+            .map(|l| {
+                format!(
+                    "gh label create '{}' --color '{}' --description '{}' --force --repo {}",
+                    l.name, l.color, l.description, github_repo,
+                )
+            })
             .collect();
         bail!(
             "Failed to bootstrap labels: {}\n\n\
              To fix, run these commands manually:\n  {}\n\n\
              Make sure your token has Issues (Write) permission.",
-            e, label_cmds.join("\n  "),
+            e,
+            label_cmds.join("\n  "),
         );
     }
 
@@ -476,7 +537,9 @@ pub fn run() -> Result<()> {
                          bm projects sync\n\n\
                          Make sure your token has the \"project\" scope (classic PAT) \
                          or \"Organization projects: Admin\" (fine-grained PAT).",
-                        e, owner, team_name,
+                        e,
+                        owner,
+                        team_name,
                     );
                 }
             }
@@ -499,7 +562,10 @@ pub fn run() -> Result<()> {
     }
 
     if !manifest.views.is_empty() {
-        let project_url = format!("https://github.com/orgs/{}/projects/{}", owner, project_number);
+        let project_url = format!(
+            "https://github.com/orgs/{}/projects/{}",
+            owner, project_number
+        );
         cliclack::log::info(format!("Board: {}", project_url))?;
     }
 
@@ -540,43 +606,43 @@ pub fn run() -> Result<()> {
                        2. Install it on your organization"
                 ))?;
 
-                let browser_available: bool = cliclack::confirm(
-                    "Is a browser available on this machine?"
-                )
-                .initial_value(true)
-                .interact()?;
+                let browser_available: bool =
+                    cliclack::confirm("Is a browser available on this machine?")
+                        .initial_value(true)
+                        .interact()?;
 
-                let mut server = match manifest_flow::prepare_manifest_flow(
-                    &manifest_flow::ManifestFlowParams {
+                let mut server =
+                    match manifest_flow::prepare_manifest_flow(&manifest_flow::ManifestFlowParams {
                         app_name: app_name.clone(),
                         org: github_org.clone(),
                         team_repo_url: team_repo_url.clone(),
                         github_api_base: std::env::var("BM_GITHUB_API_BASE").ok(),
                         github_web_base: std::env::var("BM_GITHUB_WEB_BASE").ok(),
-                    },
-                ) {
-                    Ok(s) => s,
-                    Err(e) => {
-                        eprintln!(
+                    }) {
+                        Ok(s) => s,
+                        Err(e) => {
+                            eprintln!(
                             "Warning: could not start manifest flow for {member_dir_name}: {e}\n\
                              Use `bm hire {role} --name {name}` to create the App later."
                         );
-                        continue;
-                    }
-                };
+                            continue;
+                        }
+                    };
 
                 let flow_result = if browser_available {
                     cliclack::log::info(format!(
                         "Click this link to create the GitHub App:\n\
                          \n\
-                           {}", server.start_url,
+                           {}",
+                        server.start_url,
                     ))?;
                     server.run()
                 } else {
                     server.open_browser = false;
                     server.stdin_fallback = true;
 
-                    let port = server.start_url
+                    let port = server
+                        .start_url
                         .strip_prefix("http://127.0.0.1:")
                         .and_then(|s| s.split('/').next())
                         .unwrap_or("PORT");
@@ -620,7 +686,10 @@ pub fn run() -> Result<()> {
                             installation_id: flow_result.installation_id,
                         };
                         match member_lifecycle::setup_app_credentials(
-                            team, &member_dir_name, &creds, None,
+                            team,
+                            &member_dir_name,
+                            &creds,
+                            None,
                         ) {
                             Ok(_) => {
                                 cliclack::log::info(format!(
@@ -647,7 +716,12 @@ pub fn run() -> Result<()> {
     }
 
     spinner.stop("Done!");
-    cliclack::log::info(next_steps_message(&team_name, &team_dir, &team_repo, selected_bridge.is_some()))?;
+    cliclack::log::info(next_steps_message(
+        &team_name,
+        &team_dir,
+        &team_repo,
+        selected_bridge.is_some(),
+    ))?;
     cliclack::outro("Ready to go!")?;
 
     Ok(())
@@ -675,7 +749,8 @@ fn select_github_org() -> Result<String> {
         select_items.push((org.clone(), org.clone(), "Organization".to_string()));
     }
     select_items.push((
-        "__other__".to_string(), "Other (type org name)".to_string(),
+        "__other__".to_string(),
+        "Other (type org name)".to_string(),
         "Enter an org name not listed above".to_string(),
     ));
 
@@ -693,7 +768,11 @@ fn select_github_org() -> Result<String> {
         let org: String = cliclack::input("Organization name")
             .placeholder("my-org")
             .validate(|input: &String| {
-                if input.is_empty() { Err("Organization name cannot be empty") } else { Ok(()) }
+                if input.is_empty() {
+                    Err("Organization name cannot be empty")
+                } else {
+                    Ok(())
+                }
             })
             .interact()?;
         // Validate via GitHub API that the entered name is actually an Organization
@@ -710,9 +789,11 @@ fn select_or_create_repo(owner: &str, team_name: &str) -> Result<(String, bool)>
     let default_name = format!("{}-team", team_name);
     let create_label = format!("Create new repo ({})", default_name);
 
-    let mut select_items: Vec<(String, String, String)> = vec![
-        ("__create__".to_string(), create_label, "Create a new private repository".to_string()),
-    ];
+    let mut select_items: Vec<(String, String, String)> = vec![(
+        "__create__".to_string(),
+        create_label,
+        "Create a new private repository".to_string(),
+    )];
     for repo in &repos {
         select_items.push((repo.clone(), repo.clone(), String::new()));
     }
@@ -744,11 +825,16 @@ fn select_or_create_project(owner: &str, team_name: &str) -> Result<ProjectChoic
     let create_label = format!("Create new board ({})", default_title);
 
     let mut select_items: Vec<(String, String, String)> = vec![(
-        "__create__".to_string(), create_label,
+        "__create__".to_string(),
+        create_label,
         "Create a new GitHub Project board".to_string(),
     )];
     for (number, title) in &projects {
-        select_items.push((number.to_string(), format!("{} (#{number})", title), String::new()));
+        select_items.push((
+            number.to_string(),
+            format!("{} (#{number})", title),
+            String::new(),
+        ));
     }
 
     let items_ref: Vec<(&str, &str, &str)> = select_items
@@ -781,10 +867,8 @@ fn collect_members(roles: &[String]) -> Result<Vec<(String, String)>> {
 
     let mut members = Vec::new();
     loop {
-        let role_items: Vec<(&str, &str, &str)> = roles
-            .iter()
-            .map(|r| (r.as_str(), r.as_str(), ""))
-            .collect();
+        let role_items: Vec<(&str, &str, &str)> =
+            roles.iter().map(|r| (r.as_str(), r.as_str(), "")).collect();
 
         let role: String = cliclack::select("Select role")
             .items(&role_items)
@@ -807,7 +891,8 @@ fn collect_members(roles: &[String]) -> Result<Vec<(String, String)>> {
         members.push((role.clone(), name));
 
         // Default to "yes" as long as there are roles without a hired member
-        let hired_roles: std::collections::HashSet<&str> = members.iter().map(|(r, _)| r.as_str()).collect();
+        let hired_roles: std::collections::HashSet<&str> =
+            members.iter().map(|(r, _)| r.as_str()).collect();
         let all_covered = roles.iter().all(|r| hired_roles.contains(r.as_str()));
         let more: bool = cliclack::confirm("Hire another member?")
             .initial_value(!all_covered)
@@ -880,10 +965,8 @@ fn select_project_repo(org: &str) -> Result<String> {
         return prompt_project_url();
     }
 
-    let items_ref: Vec<(&str, &str, &str)> = repos
-        .iter()
-        .map(|r| (r.as_str(), r.as_str(), ""))
-        .collect();
+    let items_ref: Vec<(&str, &str, &str)> =
+        repos.iter().map(|r| (r.as_str(), r.as_str(), "")).collect();
 
     let selected: &str = cliclack::select("Select project repo (type to filter)")
         .items(&items_ref)
@@ -919,7 +1002,8 @@ fn import_credentials_file(path: &str, team_name: &str) -> Result<()> {
     let doc: serde_json::Value = serde_yml::from_str(&content)
         .with_context(|| format!("Failed to parse credentials file: {path}"))?;
 
-    let members = doc.get("members")
+    let members = doc
+        .get("members")
         .and_then(|m| m.as_object())
         .context("Credentials file must have a top-level 'members' key with member entries")?;
 
@@ -942,18 +1026,24 @@ fn import_credentials_file(path: &str, team_name: &str) -> Result<()> {
         // Determine if nested (github_app key present) or flat format
         let app_section = entry.get("github_app").unwrap_or(entry);
 
-        let app_id = app_section.get("app_id")
+        let app_id = app_section
+            .get("app_id")
             .and_then(|v| v.as_str())
             .context(format!("Missing 'app_id' for member '{member_name}'"))?;
-        let client_id = app_section.get("client_id")
+        let client_id = app_section
+            .get("client_id")
             .and_then(|v| v.as_str())
             .context(format!("Missing 'client_id' for member '{member_name}'"))?;
-        let private_key = app_section.get("private_key")
+        let private_key = app_section
+            .get("private_key")
             .and_then(|v| v.as_str())
             .context(format!("Missing 'private_key' for member '{member_name}'"))?;
-        let installation_id = app_section.get("installation_id")
+        let installation_id = app_section
+            .get("installation_id")
             .and_then(|v| v.as_str())
-            .context(format!("Missing 'installation_id' for member '{member_name}'"))?;
+            .context(format!(
+                "Missing 'installation_id' for member '{member_name}'"
+            ))?;
 
         let cred_store = f.credential_store(formation::CredentialDomain::GitHubApp {
             team_name: team_name.to_string(),
@@ -967,7 +1057,11 @@ fn import_credentials_file(path: &str, team_name: &str) -> Result<()> {
             installation_id: installation_id.to_string(),
         };
 
-        git::manifest_flow::store_pregenerated_credentials(cred_store.as_ref(), member_name, &creds)?;
+        git::manifest_flow::store_pregenerated_credentials(
+            cred_store.as_ref(),
+            member_name,
+            &creds,
+        )?;
         eprintln!("Imported App credentials for member '{member_name}'.");
 
         // Import bridge credentials if present
@@ -1040,7 +1134,10 @@ app_id: "123"
 client_id: "Iv1.abc"
 "#;
         let doc: serde_json::Value = serde_yml::from_str(yaml).unwrap();
-        assert!(doc.get("members").is_none(), "Should not have a 'members' key");
+        assert!(
+            doc.get("members").is_none(),
+            "Should not have a 'members' key"
+        );
     }
 
     #[test]

@@ -47,10 +47,7 @@ pub async fn team_sync(
     }
 }
 
-fn do_sync(
-    config_path: &std::path::Path,
-    team_name: &str,
-) -> anyhow::Result<SyncResponse> {
+fn do_sync(config_path: &std::path::Path, team_name: &str) -> anyhow::Result<SyncResponse> {
     let cfg = config::load_from(config_path)?;
 
     let team = cfg
@@ -114,7 +111,9 @@ fn do_sync(
 
     let message = format!(
         "Sync complete: {} created, {} updated, {} failures",
-        result.created, result.updated, result.failures.len()
+        result.created,
+        result.updated,
+        result.failures.len()
     );
 
     Ok(SyncResponse {
@@ -134,8 +133,8 @@ pub struct SyncResponse {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::web::web_router;
     use crate::web::state::WebState;
+    use crate::web::web_router;
 
     use axum::body::Body;
     use axum::http::Request;
@@ -170,11 +169,7 @@ mod tests {
     async fn sync_team_not_found_returns_404_or_error() {
         let tmp = tempfile::tempdir().unwrap();
         let config_path = tmp.path().join("config.yml");
-        std::fs::write(
-            &config_path,
-            "workzone: /tmp\nteams: []\n",
-        )
-        .unwrap();
+        std::fs::write(&config_path, "workzone: /tmp\nteams: []\n").unwrap();
 
         let app = test_app(config_path);
         let resp = app
@@ -189,7 +184,9 @@ mod tests {
             .unwrap();
 
         assert_eq!(resp.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert!(json["error"].as_str().unwrap().contains("not found"));
     }
@@ -225,7 +222,13 @@ projects: []
         std::fs::write(team_repo.join("botminter.yml"), manifest).unwrap();
 
         let config_path = tmp.path().join("config.yml");
-        write_config(&config_path, "my-team", &team_dir, "test-profile", "org/repo");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_dir,
+            "test-profile",
+            "org/repo",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -240,7 +243,9 @@ projects: []
             .unwrap();
 
         let status = resp.status();
-        let body = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
         assert_eq!(
             status,

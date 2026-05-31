@@ -1,6 +1,6 @@
 use anyhow::Result;
 
-use super::credential::{CredentialStore, resolve_credential_from_store};
+use super::credential::{resolve_credential_from_store, CredentialStore};
 use super::env_var_suffix;
 use super::manifest::{BridgeIdentity, BridgeRoom};
 use super::Bridge;
@@ -47,7 +47,11 @@ impl Bridge {
     /// After provisioning, creates a team room if `rooms` is empty (or was cleared
     /// due to verify failures) and the manifest has a room spec.
     /// Caller must call `save()` to persist state changes.
-    pub fn provision(&mut self, members: &[super::BridgeMember], cred_store: &dyn CredentialStore) -> Result<ProvisionResult> {
+    pub fn provision(
+        &mut self,
+        members: &[super::BridgeMember],
+        cred_store: &dyn CredentialStore,
+    ) -> Result<ProvisionResult> {
         let mut results = Vec::new();
         // Track whether any verify failed — indicates possible volume loss,
         // which means rooms in state are also stale and need re-creation.
@@ -61,7 +65,10 @@ impl Bridge {
                 if has_cred.is_some() || self.manifest.spec.bridge_type == "external" {
                     // External bridges: trust local state (no verify).
                     if self.manifest.spec.bridge_type == "external" {
-                        results.push((member.name.clone(), ProvisionMemberResult::AlreadyProvisioned));
+                        results.push((
+                            member.name.clone(),
+                            ProvisionMemberResult::AlreadyProvisioned,
+                        ));
                         continue;
                     }
                     // Local bridges with verify recipe: confirm credentials are
@@ -82,10 +89,7 @@ impl Bridge {
                             continue;
                         }
                         // Verify failed — stale credentials (e.g., volume loss).
-                        eprintln!(
-                            "  verify failed for {} — re-provisioning",
-                            member.name
-                        );
+                        eprintln!("  verify failed for {} — re-provisioning", member.name);
                         any_verify_failed = true;
                         self.state.identities.remove(&member.name);
                         // Fall through to re-onboard below
@@ -123,10 +127,7 @@ impl Bridge {
                     .as_str()
                     .unwrap_or(member.name.as_str())
                     .to_string();
-                let user_id = config["user_id"]
-                    .as_str()
-                    .unwrap_or("")
-                    .to_string();
+                let user_id = config["user_id"].as_str().unwrap_or("").to_string();
                 let token = config["token"].as_str().map(|s| s.to_string());
 
                 self.state.identities.insert(
@@ -191,10 +192,7 @@ impl Bridge {
             if let Some(ref room_spec) = self.manifest.spec.room {
                 let room_name = format!("{}-general", self.team_name);
                 let create_recipe = room_spec.create.clone();
-                let room_result = self.invoke_recipe(
-                    &create_recipe,
-                    &[&room_name],
-                )?;
+                let room_result = self.invoke_recipe(&create_recipe, &[&room_name])?;
 
                 let room_id = room_result
                     .as_ref()
@@ -214,6 +212,9 @@ impl Bridge {
         self.state.bridge_name = Some(self.manifest.metadata.name.clone());
         self.state.bridge_type = Some(self.manifest.spec.bridge_type.clone());
 
-        Ok(ProvisionResult { members: results, room_created })
+        Ok(ProvisionResult {
+            members: results,
+            room_created,
+        })
     }
 }

@@ -38,8 +38,12 @@ pub fn surface_brain_prompt(
         return Ok(false);
     }
 
-    let template = fs::read_to_string(&template_path)
-        .with_context(|| format!("Failed to read brain template at {}", template_path.display()))?;
+    let template = fs::read_to_string(&template_path).with_context(|| {
+        format!(
+            "Failed to read brain template at {}",
+            template_path.display()
+        )
+    })?;
 
     let rendered = render_brain_prompt(&template, vars);
 
@@ -51,8 +55,12 @@ pub fn surface_brain_prompt(
     let envelope_src = team_repo.join("brain").join("envelope.md");
     if envelope_src.exists() {
         let envelope_dst = ws_root.join("brain-envelope.md");
-        fs::copy(&envelope_src, &envelope_dst)
-            .with_context(|| format!("Failed to copy brain envelope to {}", envelope_dst.display()))?;
+        fs::copy(&envelope_src, &envelope_dst).with_context(|| {
+            format!(
+                "Failed to copy brain envelope to {}",
+                envelope_dst.display()
+            )
+        })?;
     }
 
     Ok(true)

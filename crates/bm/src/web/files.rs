@@ -17,9 +17,7 @@ pub async fn read_file(
 ) -> impl IntoResponse {
     match do_read_file(&state, &team_name, &file_path) {
         Ok(resp) => (StatusCode::OK, Json(serde_json::json!(resp))).into_response(),
-        Err((status, msg)) => {
-            (status, Json(serde_json::json!({ "error": msg }))).into_response()
-        }
+        Err((status, msg)) => (status, Json(serde_json::json!({ "error": msg }))).into_response(),
     }
 }
 
@@ -31,9 +29,7 @@ pub async fn write_file(
 ) -> impl IntoResponse {
     match do_write_file(&state, &team_name, &file_path, &body.content).await {
         Ok(resp) => (StatusCode::OK, Json(serde_json::json!(resp))).into_response(),
-        Err((status, msg)) => {
-            (status, Json(serde_json::json!({ "error": msg }))).into_response()
-        }
+        Err((status, msg)) => (status, Json(serde_json::json!({ "error": msg }))).into_response(),
     }
 }
 
@@ -46,9 +42,7 @@ pub async fn list_tree(
     let rel_path = params.path.as_deref().unwrap_or("");
     match do_list_tree(&state, &team_name, rel_path) {
         Ok(resp) => (StatusCode::OK, Json(serde_json::json!(resp))).into_response(),
-        Err((status, msg)) => {
-            (status, Json(serde_json::json!({ "error": msg }))).into_response()
-        }
+        Err((status, msg)) => (status, Json(serde_json::json!({ "error": msg }))).into_response(),
     }
 }
 
@@ -59,10 +53,7 @@ pub async fn list_tree(
 fn safe_resolve(team_path: &Path, relative: &str) -> Result<PathBuf, (StatusCode, String)> {
     // Reject empty paths
     if relative.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "File path is required".to_string(),
-        ));
+        return Err((StatusCode::BAD_REQUEST, "File path is required".to_string()));
     }
 
     // Reject absolute paths
@@ -137,10 +128,7 @@ fn safe_resolve_for_write(
     relative: &str,
 ) -> Result<PathBuf, (StatusCode, String)> {
     if relative.is_empty() {
-        return Err((
-            StatusCode::BAD_REQUEST,
-            "File path is required".to_string(),
-        ));
+        return Err((StatusCode::BAD_REQUEST, "File path is required".to_string()));
     }
 
     if relative.starts_with('/') || relative.starts_with('\\') {
@@ -179,12 +167,9 @@ fn safe_resolve_for_write(
     let target = team_path.join(&decoded);
 
     // For write operations, canonicalize the parent directory (which must exist)
-    let parent = target.parent().ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            "Invalid file path".to_string(),
-        )
-    })?;
+    let parent = target
+        .parent()
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Invalid file path".to_string()))?;
 
     if !parent.exists() {
         return Err((
@@ -208,12 +193,9 @@ fn safe_resolve_for_write(
     }
 
     // Return the canonical parent joined with the filename
-    let filename = target.file_name().ok_or_else(|| {
-        (
-            StatusCode::BAD_REQUEST,
-            "Invalid file path".to_string(),
-        )
-    })?;
+    let filename = target
+        .file_name()
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Invalid file path".to_string()))?;
 
     Ok(canonical_parent.join(filename))
 }
@@ -225,10 +207,7 @@ fn percent_decode(input: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                &input[i + 1..i + 3],
-                16,
-            ) {
+            if let Ok(byte) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
                 result.push(byte as char);
                 i += 3;
                 continue;
@@ -242,13 +221,9 @@ fn percent_decode(input: &str) -> String {
 
 // ── Handlers ──────────────────────────────────────────
 
-fn resolve_team_path(
-    state: &WebState,
-    team_name: &str,
-) -> Result<PathBuf, (StatusCode, String)> {
-    let cfg = config::load_from(&state.config_path).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, e.to_string())
-    })?;
+fn resolve_team_path(state: &WebState, team_name: &str) -> Result<PathBuf, (StatusCode, String)> {
+    let cfg = config::load_from(&state.config_path)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     let team = cfg
         .teams
         .iter()
@@ -430,13 +405,7 @@ async fn git_commit(repo_path: &Path, file_path: &str) -> anyhow::Result<String>
     // git commit -m "console: update <path>"
     let msg = format!("console: update {}", file_path);
     let commit_output = tokio::process::Command::new("git")
-        .args([
-            "-C",
-            &repo_path.to_string_lossy(),
-            "commit",
-            "-m",
-            &msg,
-        ])
+        .args(["-C", &repo_path.to_string_lossy(), "commit", "-m", &msg])
         .output()
         .await?;
 
@@ -456,7 +425,9 @@ async fn git_commit(repo_path: &Path, file_path: &str) -> anyhow::Result<String>
         anyhow::bail!("git rev-parse failed: {}", stderr);
     }
 
-    Ok(String::from_utf8_lossy(&rev_output.stdout).trim().to_string())
+    Ok(String::from_utf8_lossy(&rev_output.stdout)
+        .trim()
+        .to_string())
 }
 
 // ── Types ──────────────────────────────────────────
@@ -513,8 +484,9 @@ mod tests {
     fn setup_fixture_team(tmp: &Path) -> PathBuf {
         let team_dir = tmp.join("my-team");
         let team_repo = team_dir.join("team");
-        let fixture_base = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo");
+        let fixture_base = Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo",
+        );
         copy_dir_recursive(&fixture_base, &team_repo);
         team_dir
     }
@@ -549,13 +521,7 @@ mod tests {
             .output()
             .unwrap();
         std::process::Command::new("git")
-            .args([
-                "-C",
-                &path.to_string_lossy(),
-                "config",
-                "user.name",
-                "Test",
-            ])
+            .args(["-C", &path.to_string_lossy(), "config", "user.name", "Test"])
             .output()
             .unwrap();
         std::process::Command::new("git")
@@ -563,13 +529,7 @@ mod tests {
             .output()
             .unwrap();
         std::process::Command::new("git")
-            .args([
-                "-C",
-                &path.to_string_lossy(),
-                "commit",
-                "-m",
-                "initial",
-            ])
+            .args(["-C", &path.to_string_lossy(), "commit", "-m", "initial"])
             .output()
             .unwrap();
     }
@@ -600,7 +560,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                daemon: Default::default(),
                 vm: None,
             }],
             vms: Vec::new(),
@@ -614,7 +574,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -644,7 +610,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -670,7 +642,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -691,7 +669,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -712,7 +696,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         // %2e = '.' so %2e%2e = '..'
@@ -734,7 +724,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         // We can't put /etc/passwd in a URL path param easily since axum
         // treats the leading / differently. Instead test via the handler directly.
@@ -752,7 +748,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         // Create a symlink inside team repo that points outside
         let link_path = team_path.join("evil-link");
@@ -788,7 +790,13 @@ mod tests {
         let team_path = setup_fixture_team(tmp.path());
         git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -814,7 +822,13 @@ mod tests {
         let team_path = setup_fixture_team(tmp.path());
         git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -840,7 +854,13 @@ mod tests {
         let team_path = setup_fixture_team(tmp.path());
         git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let state = super::super::state::WebState {
             config_path: Arc::new(config_path),
@@ -858,7 +878,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -879,7 +905,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -901,7 +933,13 @@ mod tests {
         let team_path = setup_fixture_team(tmp.path());
         git_init(&team_path.join("team"));
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path.clone());
         let new_content = "# Updated\nNew content here\n";
@@ -938,7 +976,13 @@ mod tests {
 
         // Verify git log contains the commit message
         let log_output = std::process::Command::new("git")
-            .args(["-C", &team_repo_path.to_string_lossy(), "log", "--oneline", "-1"])
+            .args([
+                "-C",
+                &team_repo_path.to_string_lossy(),
+                "log",
+                "--oneline",
+                "-1",
+            ])
             .output()
             .unwrap();
         let log_line = String::from_utf8_lossy(&log_output.stdout);
@@ -973,7 +1017,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -1033,7 +1083,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app

@@ -91,7 +91,6 @@ impl std::fmt::Display for AcpError {
 
 impl std::error::Error for AcpError {}
 
-
 #[cfg(test)]
 mod tests {
     use super::*;

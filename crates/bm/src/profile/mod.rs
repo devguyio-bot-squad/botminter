@@ -9,19 +9,19 @@ mod team_repo;
 pub use agent::{
     ensure_minty_initialized, resolve_agent_from_profiles, resolve_coding_agent, scan_agent_tags,
 };
+pub use embedded::minty::extract_minty_to_disk;
 pub use embedded::{
     extract_embedded_to_disk, extract_single_profile_to_disk, list_embedded_profiles,
     list_embedded_roles, minty_dir,
 };
-pub use embedded::minty::extract_minty_to_disk;
-pub use extraction::{extract_member_to, extract_profile_from, extract_profile_to};
 pub(crate) use extraction::extract_member_from;
-pub use member::{auto_suffix, finalize_member_manifest, hire_member, HireResult};
-pub(crate) use member::render_member_placeholders;
+pub use extraction::{extract_member_to, extract_profile_from, extract_profile_to};
 pub use manifest::{
-    BridgeDef, CodingAgentDef, LabelDef, Meeting, OperatorDef, ProfileManifest,
-    ProjectDef, RoleDef, StatusDef, ViewDef,
+    BridgeDef, CodingAgentDef, LabelDef, Meeting, OperatorDef, ProfileManifest, ProjectDef,
+    RoleDef, StatusDef, ViewDef,
 };
+pub(crate) use member::render_member_placeholders;
+pub use member::{auto_suffix, finalize_member_manifest, hire_member, HireResult};
 pub use team_repo::{
     augment_manifest_with_projects, credentials_env, detect_meetings, discover_member_dirs,
     gather_team_summary, infer_role_from_dir, list_files_in_dir, list_scope_files, list_subdirs,
@@ -33,7 +33,7 @@ use std::fs;
 use std::io::{self, BufRead, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 /// Result of checking/initializing profiles.
 #[derive(Debug)]
@@ -43,7 +43,11 @@ pub enum ProfileInitResult {
     /// Profiles were freshly initialized (first time).
     Initialized { count: usize, path: PathBuf },
     /// Profiles were updated due to version mismatches.
-    Updated { count: usize, path: PathBuf, mismatches: Vec<ProfileVersionMismatch> },
+    Updated {
+        count: usize,
+        path: PathBuf,
+        mismatches: Vec<ProfileVersionMismatch>,
+    },
     /// User declined the update prompt.
     Declined,
     /// User declined initial setup.
@@ -127,9 +131,7 @@ pub fn read_manifest(name: &str) -> Result<ProfileManifest> {
 pub fn read_manifest_from(name: &str, base: &Path) -> Result<ProfileManifest> {
     let path = base.join(name).join("botminter.yml");
     let contents = fs::read_to_string(&path).with_context(|| {
-        let available = list_profiles_from(base)
-            .unwrap_or_default()
-            .join(", ");
+        let available = list_profiles_from(base).unwrap_or_default().join(", ");
         format!(
             "Profile '{}' not found at {}. Available profiles: {}",
             name,
@@ -216,7 +218,8 @@ fn ensure_profiles_initialized_with(
                     Err(_) => String::new(), // missing/corrupt → treat as mismatch
                 };
                 if on_disk_ver != embedded_ver {
-                    let is_downgrade = compare_versions(&on_disk_ver, &embedded_ver) == std::cmp::Ordering::Greater;
+                    let is_downgrade = compare_versions(&on_disk_ver, &embedded_ver)
+                        == std::cmp::Ordering::Greater;
                     mismatches.push(ProfileVersionMismatch {
                         name,
                         on_disk_version: on_disk_ver,
@@ -246,7 +249,11 @@ fn ensure_profiles_initialized_with(
                     } else {
                         format!("v{}", m.on_disk_version)
                     };
-                    let downgrade_label = if m.is_downgrade { " \u{26a0} this is a downgrade" } else { "" };
+                    let downgrade_label = if m.is_downgrade {
+                        " \u{26a0} this is a downgrade"
+                    } else {
+                        ""
+                    };
                     writeln!(
                         writer,
                         "Profile '{}': found {}, installing v{}{}",
@@ -339,10 +346,7 @@ pub fn require_current_schema(team_name: &str, team_schema: &str) -> Result<()> 
 ///
 /// This encapsulates the manifest-read-and-validate pattern used by multiple commands
 /// (start, hire, teams sync).
-pub fn validate_team_manifest(
-    team_repo: &Path,
-    team_profile: &str,
-) -> Result<TeamManifestInfo> {
+pub fn validate_team_manifest(team_repo: &Path, team_profile: &str) -> Result<TeamManifestInfo> {
     let manifest_path = team_repo.join("botminter.yml");
     if !manifest_path.exists() {
         bail!(
@@ -350,8 +354,8 @@ pub fn validate_team_manifest(
             team_repo.display()
         );
     }
-    let manifest_contents = std::fs::read_to_string(&manifest_path)
-        .context("Failed to read team botminter.yml")?;
+    let manifest_contents =
+        std::fs::read_to_string(&manifest_path).context("Failed to read team botminter.yml")?;
     let team_manifest: serde_yml::Value =
         serde_yml::from_str(&manifest_contents).context("Failed to parse team botminter.yml")?;
     let schema_version = team_manifest["schema_version"]
@@ -672,7 +676,9 @@ mod tests {
         let manifest = read_manifest_from("scrum", &base).unwrap();
         let po_view = manifest.views.iter().find(|v| v.name == "PO").unwrap();
         let resolved = po_view.resolve_statuses(&manifest.statuses);
-        assert!(resolved.iter().all(|s| s.starts_with("po:") || s == "done" || s == "error"));
+        assert!(resolved
+            .iter()
+            .all(|s| s.starts_with("po:") || s == "done" || s == "error"));
         assert!(resolved.contains(&"po:triage".to_string()));
         assert!(resolved.contains(&"po:merge".to_string()));
         assert!(resolved.contains(&"done".to_string()));
@@ -687,11 +693,13 @@ mod tests {
             let resolved = view.resolve_statuses(&manifest.statuses);
             assert!(
                 resolved.contains(&"done".to_string()),
-                "View '{}' missing 'done'", view.name
+                "View '{}' missing 'done'",
+                view.name
             );
             assert!(
                 resolved.contains(&"error".to_string()),
-                "View '{}' missing 'error'", view.name
+                "View '{}' missing 'error'",
+                view.name
             );
         }
     }
@@ -705,11 +713,13 @@ mod tests {
             let manifest = read_manifest_from(&name, &base).unwrap();
             assert!(
                 !manifest.coding_agents.is_empty(),
-                "Profile '{}' has no coding_agents", name
+                "Profile '{}' has no coding_agents",
+                name
             );
             assert!(
                 !manifest.default_coding_agent.is_empty(),
-                "Profile '{}' has no default_coding_agent", name
+                "Profile '{}' has no default_coding_agent",
+                name
             );
         }
     }
@@ -720,7 +730,11 @@ mod tests {
         for name in list_profiles_from(&base).unwrap() {
             let manifest = read_manifest_from(&name, &base).unwrap();
             let agent = manifest.coding_agents.get("claude-code");
-            assert!(agent.is_some(), "Profile '{}' missing claude-code agent", name);
+            assert!(
+                agent.is_some(),
+                "Profile '{}' missing claude-code agent",
+                name
+            );
             let agent = agent.unwrap();
             assert_eq!(agent.name, "claude-code");
             assert_eq!(agent.display_name, "Claude Code");
@@ -737,7 +751,8 @@ mod tests {
             let manifest = read_manifest_from(&name, &base).unwrap();
             assert_eq!(
                 manifest.default_coding_agent, "claude-code",
-                "Profile '{}' default_coding_agent is not claude-code", name
+                "Profile '{}' default_coding_agent is not claude-code",
+                name
             );
         }
     }
@@ -749,7 +764,8 @@ mod tests {
             let manifest = read_manifest_from(&name, &base).unwrap();
             assert_eq!(
                 manifest.schema_version, "1.0",
-                "Profile '{}' schema_version changed from 1.0", name
+                "Profile '{}' schema_version changed from 1.0",
+                name
             );
         }
     }
@@ -760,7 +776,8 @@ mod tests {
         let path_str = dir.to_string_lossy();
         assert!(
             path_str.contains("botminter") && path_str.contains("profiles"),
-            "profiles_dir should contain botminter/profiles: got {}", path_str
+            "profiles_dir should contain botminter/profiles: got {}",
+            path_str
         );
     }
 
@@ -770,7 +787,8 @@ mod tests {
     fn ensure_profiles_initialized_skips_when_profiles_exist() {
         let (_tmp, base) = setup_disk_profiles();
         let mut reader = io::Cursor::new(b"");
-        let result = ensure_profiles_initialized_with(&base, true, false, &mut reader, &mut io::sink());
+        let result =
+            ensure_profiles_initialized_with(&base, true, false, &mut reader, &mut io::sink());
         assert!(result.is_ok(), "Should return Ok when profiles exist");
     }
 
@@ -779,8 +797,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let profiles_path = tmp.path().join("profiles");
         let mut reader = io::Cursor::new(b"y\n");
-        let result = ensure_profiles_initialized_with(&profiles_path, true, false, &mut reader, &mut io::sink());
-        assert!(result.is_ok(), "Should succeed after yes: {:?}", result.err());
+        let result = ensure_profiles_initialized_with(
+            &profiles_path,
+            true,
+            false,
+            &mut reader,
+            &mut io::sink(),
+        );
+        assert!(
+            result.is_ok(),
+            "Should succeed after yes: {:?}",
+            result.err()
+        );
 
         let names = list_profiles_from(&profiles_path).unwrap();
         assert!(!names.is_empty(), "Profiles should be extracted");
@@ -791,7 +819,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let profiles_path = tmp.path().join("profiles");
         let mut reader = io::Cursor::new(b"\n");
-        let result = ensure_profiles_initialized_with(&profiles_path, true, false, &mut reader, &mut io::sink());
+        let result = ensure_profiles_initialized_with(
+            &profiles_path,
+            true,
+            false,
+            &mut reader,
+            &mut io::sink(),
+        );
         assert!(result.is_ok(), "Empty enter (default Y) should extract");
 
         let names = list_profiles_from(&profiles_path).unwrap();
@@ -803,8 +837,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let profiles_path = tmp.path().join("profiles");
         let mut reader = io::Cursor::new(b"");
-        let result = ensure_profiles_initialized_with(&profiles_path, false, false, &mut reader, &mut io::sink());
-        assert!(result.is_ok(), "Non-TTY should auto-init: {:?}", result.err());
+        let result = ensure_profiles_initialized_with(
+            &profiles_path,
+            false,
+            false,
+            &mut reader,
+            &mut io::sink(),
+        );
+        assert!(
+            result.is_ok(),
+            "Non-TTY should auto-init: {:?}",
+            result.err()
+        );
 
         let names = list_profiles_from(&profiles_path).unwrap();
         assert!(!names.is_empty(), "Non-TTY should extract profiles");
@@ -816,7 +860,13 @@ mod tests {
         let profiles_path = tmp.path().join("profiles");
         fs::create_dir_all(&profiles_path).unwrap();
         let mut reader = io::Cursor::new(b"");
-        let result = ensure_profiles_initialized_with(&profiles_path, false, false, &mut reader, &mut io::sink());
+        let result = ensure_profiles_initialized_with(
+            &profiles_path,
+            false,
+            false,
+            &mut reader,
+            &mut io::sink(),
+        );
         assert!(result.is_ok());
 
         let names = list_profiles_from(&profiles_path).unwrap();
@@ -845,7 +895,14 @@ mod tests {
         }
 
         let mut reader = io::Cursor::new(b"");
-        ensure_profiles_initialized_with(&profiles_path, false, false, &mut reader, &mut io::sink()).unwrap();
+        ensure_profiles_initialized_with(
+            &profiles_path,
+            false,
+            false,
+            &mut reader,
+            &mut io::sink(),
+        )
+        .unwrap();
 
         for name in embedded::list_embedded_profiles() {
             let roles = profiles_path.join(&name).join("roles");
@@ -868,7 +925,10 @@ mod tests {
         let manifest_path = profiles_path.join(sample).join("botminter.yml");
         let content = fs::read_to_string(&manifest_path).unwrap();
         let modified = content.replace(
-            &format!("version: \"{}\"", embedded::embedded_profile_version(sample).unwrap()),
+            &format!(
+                "version: \"{}\"",
+                embedded::embedded_profile_version(sample).unwrap()
+            ),
             "version: \"0.0.0\"",
         );
         fs::write(&manifest_path, &modified).unwrap();
@@ -879,7 +939,14 @@ mod tests {
         }
 
         let mut reader = io::Cursor::new(b"");
-        ensure_profiles_initialized_with(&profiles_path, false, false, &mut reader, &mut io::sink()).unwrap();
+        ensure_profiles_initialized_with(
+            &profiles_path,
+            false,
+            false,
+            &mut reader,
+            &mut io::sink(),
+        )
+        .unwrap();
 
         let restored = fs::read_to_string(&manifest_path).unwrap();
         assert!(
@@ -900,7 +967,14 @@ mod tests {
         fs::write(&sentinel, "keep-me").unwrap();
 
         let mut reader = io::Cursor::new(b"");
-        ensure_profiles_initialized_with(&profiles_path, false, false, &mut reader, &mut io::sink()).unwrap();
+        ensure_profiles_initialized_with(
+            &profiles_path,
+            false,
+            false,
+            &mut reader,
+            &mut io::sink(),
+        )
+        .unwrap();
 
         assert!(
             sentinel.exists(),
@@ -919,17 +993,24 @@ mod tests {
         let manifest_path = profiles_path.join(sample).join("botminter.yml");
         let content = fs::read_to_string(&manifest_path).unwrap();
         let modified = content.replace(
-            &format!("version: \"{}\"", embedded::embedded_profile_version(sample).unwrap()),
+            &format!(
+                "version: \"{}\"",
+                embedded::embedded_profile_version(sample).unwrap()
+            ),
             "version: \"0.0.0\"",
         );
         fs::write(&manifest_path, &modified).unwrap();
 
         let mut reader = io::Cursor::new(b"y\n");
-        ensure_profiles_initialized_with(&profiles_path, true, false, &mut reader, &mut io::sink()).unwrap();
+        ensure_profiles_initialized_with(&profiles_path, true, false, &mut reader, &mut io::sink())
+            .unwrap();
 
         let restored = fs::read_to_string(&manifest_path).unwrap();
         assert!(
-            restored.contains(&format!("version: \"{}\"", embedded::embedded_profile_version(sample).unwrap())),
+            restored.contains(&format!(
+                "version: \"{}\"",
+                embedded::embedded_profile_version(sample).unwrap()
+            )),
             "botminter.yml should have embedded version after user confirmed update"
         );
     }
@@ -945,13 +1026,17 @@ mod tests {
         let manifest_path = profiles_path.join(sample).join("botminter.yml");
         let content = fs::read_to_string(&manifest_path).unwrap();
         let modified = content.replace(
-            &format!("version: \"{}\"", embedded::embedded_profile_version(sample).unwrap()),
+            &format!(
+                "version: \"{}\"",
+                embedded::embedded_profile_version(sample).unwrap()
+            ),
             "version: \"0.0.0\"",
         );
         fs::write(&manifest_path, &modified).unwrap();
 
         let mut reader = io::Cursor::new(b"n\n");
-        ensure_profiles_initialized_with(&profiles_path, true, false, &mut reader, &mut io::sink()).unwrap();
+        ensure_profiles_initialized_with(&profiles_path, true, false, &mut reader, &mut io::sink())
+            .unwrap();
 
         let preserved = fs::read_to_string(&manifest_path).unwrap();
         assert!(
@@ -971,17 +1056,24 @@ mod tests {
         let manifest_path = profiles_path.join(sample).join("botminter.yml");
         let content = fs::read_to_string(&manifest_path).unwrap();
         let modified = content.replace(
-            &format!("version: \"{}\"", embedded::embedded_profile_version(sample).unwrap()),
+            &format!(
+                "version: \"{}\"",
+                embedded::embedded_profile_version(sample).unwrap()
+            ),
             "version: \"0.0.0\"",
         );
         fs::write(&manifest_path, &modified).unwrap();
 
         let mut reader = io::Cursor::new(b"");
-        ensure_profiles_initialized_with(&profiles_path, true, true, &mut reader, &mut io::sink()).unwrap();
+        ensure_profiles_initialized_with(&profiles_path, true, true, &mut reader, &mut io::sink())
+            .unwrap();
 
         let restored = fs::read_to_string(&manifest_path).unwrap();
         assert!(
-            restored.contains(&format!("version: \"{}\"", embedded::embedded_profile_version(sample).unwrap())),
+            restored.contains(&format!(
+                "version: \"{}\"",
+                embedded::embedded_profile_version(sample).unwrap()
+            )),
             "botminter.yml should have embedded version after force update"
         );
     }
@@ -995,8 +1087,16 @@ mod tests {
             let manifest = read_manifest_from(&name, &base).unwrap();
             if !manifest.bridges.is_empty() {
                 for bridge in &manifest.bridges {
-                    assert!(!bridge.name.is_empty(), "Bridge name should not be empty in profile '{}'", name);
-                    assert!(!bridge.bridge_type.is_empty(), "Bridge type should not be empty in profile '{}'", name);
+                    assert!(
+                        !bridge.name.is_empty(),
+                        "Bridge name should not be empty in profile '{}'",
+                        name
+                    );
+                    assert!(
+                        !bridge.bridge_type.is_empty(),
+                        "Bridge type should not be empty in profile '{}'",
+                        name
+                    );
                 }
             }
         }
@@ -1012,18 +1112,24 @@ mod tests {
             for meeting in &manifest.meetings {
                 assert!(
                     !meeting.name.is_empty(),
-                    "Meeting name should not be empty in profile '{}'", name
+                    "Meeting name should not be empty in profile '{}'",
+                    name
                 );
                 assert!(
                     !meeting.instructions.trim().is_empty(),
                     "Meeting '{}' instructions should not be empty in profile '{}'",
-                    meeting.name, name
+                    meeting.name,
+                    name
                 );
-                let valid_roles: Vec<&str> = manifest.roles.iter().map(|r| r.name.as_str()).collect();
+                let valid_roles: Vec<&str> =
+                    manifest.roles.iter().map(|r| r.name.as_str()).collect();
                 assert!(
                     valid_roles.contains(&meeting.member.as_str()),
                     "Meeting '{}' member '{}' is not a valid role in profile '{}'. Valid: {:?}",
-                    meeting.name, meeting.member, name, valid_roles
+                    meeting.name,
+                    meeting.member,
+                    name,
+                    valid_roles
                 );
             }
         }

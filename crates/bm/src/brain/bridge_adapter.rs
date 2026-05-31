@@ -117,7 +117,9 @@ impl MatrixBridgeReader {
                 tracing::warn!(error = %e, "Failed to join room (may already be joined)");
             }
         } else {
-            tracing::info!("Bridge reader starting in DM discovery mode — waiting for operator invite");
+            tracing::info!(
+                "Bridge reader starting in DM discovery mode — waiting for operator invite"
+            );
         }
 
         // Do an initial sync with timeout=0 to get the `since` token
@@ -259,10 +261,7 @@ impl MatrixBridgeReader {
     /// Perform an initial sync with `timeout=0` to get the `since` token
     /// without processing historical messages.
     async fn initial_sync(&self) -> Result<String, BridgeAdapterError> {
-        let url = format!(
-            "{}/_matrix/client/v3/sync",
-            self.config.homeserver_url
-        );
+        let url = format!("{}/_matrix/client/v3/sync", self.config.homeserver_url);
 
         let resp = self
             .client
@@ -296,14 +295,10 @@ impl MatrixBridgeReader {
         &self,
         since: Option<&str>,
     ) -> Result<(String, SyncResponse), BridgeAdapterError> {
-        let url = format!(
-            "{}/_matrix/client/v3/sync",
-            self.config.homeserver_url
-        );
+        let url = format!("{}/_matrix/client/v3/sync", self.config.homeserver_url);
 
         let filter = self.sync_filter();
-        let mut params: Vec<(&str, &str)> =
-            vec![("timeout", "30000"), ("filter", &filter)];
+        let mut params: Vec<(&str, &str)> = vec![("timeout", "30000"), ("filter", &filter)];
         if let Some(since) = since {
             params.push(("since", since));
         }
@@ -416,7 +411,10 @@ impl MatrixBridgeReader {
                 "room_id": room_id,
                 "discovered_at": chrono::Utc::now().to_rfc3339(),
             });
-            if let Err(e) = std::fs::write(&dm_file, serde_json::to_string_pretty(&json).unwrap_or_default()) {
+            if let Err(e) = std::fs::write(
+                &dm_file,
+                serde_json::to_string_pretty(&json).unwrap_or_default(),
+            ) {
                 tracing::warn!(error = %e, "Failed to persist DM room ID to {}", dm_file.display());
             } else {
                 tracing::info!(path = %dm_file.display(), "Persisted DM room ID");
@@ -566,8 +564,7 @@ impl MatrixBridgeWriter {
                 Ok(resp) => {
                     let status = resp.status();
                     let resp_body = resp.text().await.unwrap_or_default();
-                    if attempt < MAX_RETRIES
-                        && (status.is_server_error() || status.as_u16() == 429)
+                    if attempt < MAX_RETRIES && (status.is_server_error() || status.as_u16() == 429)
                     {
                         tracing::warn!(
                             status = %status,
@@ -907,10 +904,8 @@ mod tests {
 
     #[test]
     fn extract_ignores_wrong_room() {
-        let sync = make_sync_with_messages(
-            "!room_a:localhost",
-            vec![("@alice:localhost", "hello")],
-        );
+        let sync =
+            make_sync_with_messages("!room_a:localhost", vec![("@alice:localhost", "hello")]);
 
         let messages = extract_room_messages(&sync, "!room_b:localhost", "@me:localhost");
         assert!(messages.is_empty());
@@ -978,10 +973,7 @@ mod tests {
             rooms: Some(SyncRooms {
                 join: Some({
                     let mut m = std::collections::HashMap::new();
-                    m.insert(
-                        "!r:localhost".into(),
-                        JoinedRoom { timeline: None },
-                    );
+                    m.insert("!r:localhost".into(), JoinedRoom { timeline: None });
                     m
                 }),
                 invite: None,
@@ -1012,10 +1004,7 @@ mod tests {
 
     // ── Test helpers ────────────────────────────────────────────────
 
-    fn make_sync_with_messages(
-        room_id: &str,
-        messages: Vec<(&str, &str)>,
-    ) -> SyncResponse {
+    fn make_sync_with_messages(room_id: &str, messages: Vec<(&str, &str)>) -> SyncResponse {
         let events = messages
             .into_iter()
             .map(|(sender, body)| TimelineEvent {
@@ -1073,12 +1062,16 @@ mod tests {
     #[test]
     fn extract_chat_content_multiline() {
         let text = "<bm-chat>\nLine 1\nLine 2\nLine 3\n</bm-chat>";
-        assert_eq!(extract_chat_content(text), Some("Line 1\nLine 2\nLine 3".into()));
+        assert_eq!(
+            extract_chat_content(text),
+            Some("Line 1\nLine 2\nLine 3".into())
+        );
     }
 
     #[test]
     fn extract_chat_content_ignores_surrounding() {
-        let text = "internal stuff <bm-response><bm-chat>visible</bm-chat></bm-response> more internal";
+        let text =
+            "internal stuff <bm-response><bm-chat>visible</bm-chat></bm-response> more internal";
         assert_eq!(extract_chat_content(text), Some("visible".into()));
     }
 }

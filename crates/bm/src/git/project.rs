@@ -4,8 +4,7 @@ use std::path::Path;
 use anyhow::{bail, Context, Result};
 
 use super::{
-    create_github_label, derive_project_name, run_git,
-    sync_project_status_field, verify_fork_url,
+    create_github_label, derive_project_name, run_git, sync_project_status_field, verify_fork_url,
 };
 use crate::config::TeamEntry;
 use crate::profile;
@@ -13,11 +12,7 @@ use crate::profile;
 /// Adds a project to the team repo: verifies URL, creates GitHub label,
 /// updates manifest, creates project directories, and commits.
 /// Returns the derived project name.
-pub fn add_project(
-    team_repo: &Path,
-    url: &str,
-    github_repo: &str,
-) -> Result<String> {
+pub fn add_project(team_repo: &Path, url: &str, github_repo: &str) -> Result<String> {
     let manifest_path = team_repo.join("botminter.yml");
     let mut manifest = profile::read_team_repo_manifest(team_repo)?;
 
@@ -44,8 +39,7 @@ pub fn add_project(
         fork_url: url.to_string(),
     });
 
-    let contents =
-        serde_yml::to_string(&manifest).context("Failed to serialize botminter.yml")?;
+    let contents = serde_yml::to_string(&manifest).context("Failed to serialize botminter.yml")?;
     fs::write(&manifest_path, contents).context("Failed to write botminter.yml")?;
 
     let proj_dir = team_repo.join("projects").join(&name);
@@ -81,10 +75,7 @@ pub struct ViewDisplay {
 
 /// Syncs the GitHub Project board's Status field options with the profile,
 /// then returns view data for display.
-pub fn sync_project_board(
-    team_repo: &Path,
-    team: &TeamEntry,
-) -> Result<ProjectSyncResult> {
+pub fn sync_project_board(team_repo: &Path, team: &TeamEntry) -> Result<ProjectSyncResult> {
     let manifest = profile::read_team_repo_manifest(team_repo)?;
 
     let owner = team

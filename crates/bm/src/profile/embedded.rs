@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
-use include_dir::{Dir, include_dir};
+use include_dir::{include_dir, Dir};
 
 static PROFILES: Dir<'static> = include_dir!("$BM_PROFILES_DIR");
 
@@ -78,21 +78,16 @@ pub fn list_embedded_roles(name: &str) -> Vec<String> {
 /// filtering or renaming. Binary files and text files are both written as-is.
 fn write_dir_verbatim(dir: &Dir<'_>, base_target: &Path, root_path: &Path) -> Result<()> {
     for file in dir.files() {
-        let rel = file
-            .path()
-            .strip_prefix(root_path)
-            .unwrap_or(file.path());
+        let rel = file.path().strip_prefix(root_path).unwrap_or(file.path());
         let target_path = base_target.join(rel);
 
         if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create directory {}", parent.display())
-            })?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {}", parent.display()))?;
         }
 
-        fs::write(&target_path, file.contents()).with_context(|| {
-            format!("Failed to write {}", target_path.display())
-        })?;
+        fs::write(&target_path, file.contents())
+            .with_context(|| format!("Failed to write {}", target_path.display()))?;
     }
 
     for sub_dir in dir.dirs() {
@@ -108,7 +103,7 @@ pub(crate) mod minty {
     use std::path::Path;
 
     use anyhow::{Context, Result};
-    use include_dir::{Dir, include_dir};
+    use include_dir::{include_dir, Dir};
 
     static MINTY: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/../../minty");
 
@@ -122,21 +117,16 @@ pub(crate) mod minty {
     /// filtering or renaming.
     fn write_dir_verbatim(dir: &Dir<'_>, base_target: &Path, root_path: &Path) -> Result<()> {
         for file in dir.files() {
-            let rel = file
-                .path()
-                .strip_prefix(root_path)
-                .unwrap_or(file.path());
+            let rel = file.path().strip_prefix(root_path).unwrap_or(file.path());
             let target_path = base_target.join(rel);
 
             if let Some(parent) = target_path.parent() {
-                fs::create_dir_all(parent).with_context(|| {
-                    format!("Failed to create directory {}", parent.display())
-                })?;
+                fs::create_dir_all(parent)
+                    .with_context(|| format!("Failed to create directory {}", parent.display()))?;
             }
 
-            fs::write(&target_path, file.contents()).with_context(|| {
-                format!("Failed to write {}", target_path.display())
-            })?;
+            fs::write(&target_path, file.contents())
+                .with_context(|| format!("Failed to write {}", target_path.display()))?;
         }
 
         for sub_dir in dir.dirs() {
@@ -179,7 +169,8 @@ mod tests {
         for name in &expected_profiles {
             assert!(
                 tmp.path().join(name).is_dir(),
-                "Profile '{}' should be extracted as a directory", name
+                "Profile '{}' should be extracted as a directory",
+                name
             );
         }
     }
@@ -191,7 +182,11 @@ mod tests {
 
         for name in list_embedded_profiles() {
             let manifest_path = tmp.path().join(&name).join("botminter.yml");
-            assert!(manifest_path.exists(), "Profile '{}' should have botminter.yml", name);
+            assert!(
+                manifest_path.exists(),
+                "Profile '{}' should have botminter.yml",
+                name
+            );
             let contents = std::fs::read_to_string(&manifest_path).unwrap();
             let manifest: crate::profile::ProfileManifest = serde_yml::from_str(&contents).unwrap();
             assert_eq!(manifest.name, name);
@@ -206,12 +201,13 @@ mod tests {
         let profile = &list_embedded_profiles()[0];
         let embedded_dir = embedded_profiles();
         let file_path = format!("{}/botminter.yml", profile);
-        let embedded_bytes = embedded_dir
-            .get_file(&file_path)
-            .unwrap()
-            .contents();
+        let embedded_bytes = embedded_dir.get_file(&file_path).unwrap().contents();
         let disk = std::fs::read(tmp.path().join(profile).join("botminter.yml")).unwrap();
-        assert_eq!(embedded_bytes, disk.as_slice(), "Extracted content should be byte-identical");
+        assert_eq!(
+            embedded_bytes,
+            disk.as_slice(),
+            "Extracted content should be byte-identical"
+        );
     }
 
     #[test]
@@ -221,10 +217,15 @@ mod tests {
 
         for name in list_embedded_profiles() {
             let context_path = tmp.path().join(&name).join("context.md");
-            assert!(context_path.exists(), "Profile '{}' should keep context.md (not renamed)", name);
+            assert!(
+                context_path.exists(),
+                "Profile '{}' should keep context.md (not renamed)",
+                name
+            );
             assert!(
                 !tmp.path().join(&name).join("CLAUDE.md").exists(),
-                "Profile '{}' should not have CLAUDE.md (no rename during init)", name
+                "Profile '{}' should not have CLAUDE.md (no rename during init)",
+                name
             );
         }
     }
@@ -243,7 +244,10 @@ mod tests {
             .unwrap()
             .contents_utf8()
             .unwrap();
-        assert_eq!(content, embedded_content, "Agent tags should be preserved verbatim");
+        assert_eq!(
+            content, embedded_content,
+            "Agent tags should be preserved verbatim"
+        );
     }
 
     #[test]
@@ -253,8 +257,16 @@ mod tests {
 
         for name in list_embedded_profiles() {
             let schema_dir = tmp.path().join(&name).join(".schema");
-            assert!(schema_dir.is_dir(), "Profile '{}' should have .schema/ directory", name);
-            assert!(schema_dir.join("v1.yml").exists(), "Profile '{}' should have .schema/v1.yml", name);
+            assert!(
+                schema_dir.is_dir(),
+                "Profile '{}' should have .schema/ directory",
+                name
+            );
+            assert!(
+                schema_dir.join("v1.yml").exists(),
+                "Profile '{}' should have .schema/v1.yml",
+                name
+            );
         }
     }
 
@@ -265,7 +277,11 @@ mod tests {
 
         for name in list_embedded_profiles() {
             let roles_dir = tmp.path().join(&name).join("roles");
-            assert!(roles_dir.is_dir(), "Profile '{}' should have roles/ directory", name);
+            assert!(
+                roles_dir.is_dir(),
+                "Profile '{}' should have roles/ directory",
+                name
+            );
         }
     }
 
@@ -277,7 +293,10 @@ mod tests {
 
         let profile = &list_embedded_profiles()[0];
         assert!(nested.is_dir(), "Nested target should be created");
-        assert!(nested.join(profile).join("botminter.yml").exists(), "Profiles should be extracted into nested target");
+        assert!(
+            nested.join(profile).join("botminter.yml").exists(),
+            "Profiles should be extracted into nested target"
+        );
     }
 
     #[test]
@@ -287,18 +306,21 @@ mod tests {
             let manifest = crate::profile::read_manifest_from(&name, &base).unwrap();
             assert!(
                 !manifest.default_coding_agent.is_empty(),
-                "Profile '{}' should declare a default_coding_agent", name
+                "Profile '{}' should declare a default_coding_agent",
+                name
             );
             let agent = manifest.coding_agents.get(&manifest.default_coding_agent);
             assert!(
                 agent.is_some(),
                 "Profile '{}' default_coding_agent '{}' should exist in coding_agents map",
-                name, manifest.default_coding_agent
+                name,
+                manifest.default_coding_agent
             );
             let agent = agent.unwrap();
             assert_eq!(
                 agent.context_file, "CLAUDE.md",
-                "Profile '{}' default agent should have CLAUDE.md context_file", name
+                "Profile '{}' default agent should have CLAUDE.md context_file",
+                name
             );
         }
     }
@@ -309,7 +331,8 @@ mod tests {
         for profile_name in list_embedded_profiles() {
             // Read the manifest to get all statuses dynamically
             let manifest_path = format!("{}/botminter.yml", profile_name);
-            let manifest_file = embedded.get_file(&manifest_path)
+            let manifest_file = embedded
+                .get_file(&manifest_path)
                 .unwrap_or_else(|| panic!("Profile '{}' should have botminter.yml", profile_name));
             let manifest: crate::profile::ProfileManifest =
                 serde_yml::from_str(manifest_file.contents_utf8().unwrap()).unwrap();
@@ -319,20 +342,24 @@ mod tests {
             let workflows_dir = embedded.get_dir(&workflows_path);
             assert!(
                 workflows_dir.is_some(),
-                "Profile '{}' should have a workflows/ directory", profile_name
+                "Profile '{}' should have a workflows/ directory",
+                profile_name
             );
             let workflows_dir = workflows_dir.unwrap();
 
-            let dot_files: Vec<_> = workflows_dir.files()
-                .filter(|f| f.path().extension().map_or(false, |e| e == "dot"))
+            let dot_files: Vec<_> = workflows_dir
+                .files()
+                .filter(|f| f.path().extension().is_some_and(|e| e == "dot"))
                 .collect();
             assert!(
                 !dot_files.is_empty(),
-                "Profile '{}' should have at least one .dot file in workflows/", profile_name
+                "Profile '{}' should have at least one .dot file in workflows/",
+                profile_name
             );
 
             // Concatenate all DOT file contents
-            let all_dot_content: String = dot_files.iter()
+            let all_dot_content: String = dot_files
+                .iter()
                 .map(|f| f.contents_utf8().unwrap())
                 .collect::<Vec<_>>()
                 .join("\n");
@@ -342,7 +369,8 @@ mod tests {
                 assert!(
                     all_dot_content.contains(&format!("\"{}\"", status.name)),
                     "Profile '{}': status '{}' not found in any workflow DOT file",
-                    profile_name, status.name
+                    profile_name,
+                    status.name
                 );
             }
         }
@@ -353,11 +381,12 @@ mod tests {
         let embedded = embedded_profiles();
         for profile_name in list_embedded_profiles() {
             let workflows_path = format!("{}/workflows", profile_name);
-            let workflows_dir = embedded.get_dir(&workflows_path)
+            let workflows_dir = embedded
+                .get_dir(&workflows_path)
                 .unwrap_or_else(|| panic!("Profile '{}' should have workflows/", profile_name));
 
             for file in workflows_dir.files() {
-                if file.path().extension().map_or(true, |e| e != "dot") {
+                if file.path().extension().is_none_or(|e| e != "dot") {
                     continue;
                 }
                 let content = file.contents_utf8().unwrap();
@@ -367,12 +396,14 @@ mod tests {
                 assert!(
                     content.contains("digraph "),
                     "Profile '{}' file '{}' should contain a digraph declaration",
-                    profile_name, filename
+                    profile_name,
+                    filename
                 );
                 assert!(
                     content.contains("rankdir=LR"),
                     "Profile '{}' file '{}' should use left-to-right layout",
-                    profile_name, filename
+                    profile_name,
+                    filename
                 );
 
                 // Balanced braces

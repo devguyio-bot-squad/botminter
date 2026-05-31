@@ -1,7 +1,7 @@
 use std::fs;
 use std::path::Path;
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 
 use super::manifest::CodingAgentDef;
 use super::{list_profiles_from, list_roles_from, profiles_dir};
@@ -46,17 +46,24 @@ pub fn extract_profile_from(
         let available = list_profiles_from(base).unwrap_or_default().join(", ");
         bail!(
             "Profile '{}' not found. Available profiles: {}",
-            profile_name, available
+            profile_name,
+            available
         );
     }
 
-    extract_dir_recursive_from_disk(&profile_dir, target, &profile_dir, coding_agent, &|rel_path| {
-        let first = rel_path
-            .components()
-            .next()
-            .map(|c| c.as_os_str().to_string_lossy().to_string());
-        matches!(first.as_deref(), Some("roles") | Some(".schema"))
-    })?;
+    extract_dir_recursive_from_disk(
+        &profile_dir,
+        target,
+        &profile_dir,
+        coding_agent,
+        &|rel_path| {
+            let first = rel_path
+                .components()
+                .next()
+                .map(|c| c.as_os_str().to_string_lossy().to_string());
+            matches!(first.as_deref(), Some("roles") | Some(".schema"))
+        },
+    )?;
 
     Ok(())
 }
@@ -84,10 +91,14 @@ pub(crate) fn extract_member_from(
 ) -> Result<()> {
     let member_dir = base.join(profile_name).join("roles").join(role);
     if !member_dir.is_dir() {
-        let roles = list_roles_from(profile_name, base).unwrap_or_default().join(", ");
+        let roles = list_roles_from(profile_name, base)
+            .unwrap_or_default()
+            .join(", ");
         bail!(
             "Role '{}' not available in profile '{}'. Available roles: {}",
-            role, profile_name, roles
+            role,
+            profile_name,
+            roles
         );
     }
 
@@ -142,9 +153,8 @@ fn extract_dir_recursive_from_disk(
         };
 
         if let Some(parent) = target_path.parent() {
-            fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create directory {}", parent.display())
-            })?;
+            fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {}", parent.display()))?;
         }
 
         // Filter text files through agent tag pipeline; copy others verbatim
@@ -160,12 +170,15 @@ fn extract_dir_recursive_from_disk(
             } else {
                 filtered
             };
-            fs::write(&target_path, filtered.as_bytes()).with_context(|| {
-                format!("Failed to write {}", target_path.display())
-            })?;
+            fs::write(&target_path, filtered.as_bytes())
+                .with_context(|| format!("Failed to write {}", target_path.display()))?;
         } else {
             fs::copy(&path, &target_path).with_context(|| {
-                format!("Failed to copy {} to {}", path.display(), target_path.display())
+                format!(
+                    "Failed to copy {} to {}",
+                    path.display(),
+                    target_path.display()
+                )
             })?;
         }
     }
@@ -200,7 +213,14 @@ mod tests {
     fn extract_member_copies_skeleton() {
         let (_profiles_tmp, base) = setup_disk_profiles();
         let output = tempfile::tempdir().unwrap();
-        extract_member_from(&base, "scrum", "architect", output.path(), &claude_code_agent()).unwrap();
+        extract_member_from(
+            &base,
+            "scrum",
+            "architect",
+            output.path(),
+            &claude_code_agent(),
+        )
+        .unwrap();
 
         assert!(output.path().join(".botminter.yml").exists());
         assert!(output.path().join("PROMPT.md").exists());
@@ -215,8 +235,13 @@ mod tests {
         let output = tempfile::tempdir().unwrap();
         let profiles = crate::profile::list_profiles_from(&base).unwrap();
         let profile_name = &profiles[0];
-        let result =
-            extract_member_from(&base, profile_name, "nonexistent", output.path(), &claude_code_agent());
+        let result = extract_member_from(
+            &base,
+            profile_name,
+            "nonexistent",
+            output.path(),
+            &claude_code_agent(),
+        );
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
         assert!(
@@ -243,8 +268,14 @@ mod tests {
 
         assert!(output.path().join("skills").is_dir());
         assert!(output.path().join("formations").is_dir());
-        assert!(output.path().join("skills/knowledge-manager/SKILL.md").exists());
-        assert!(output.path().join("formations/local/formation.yml").exists());
+        assert!(output
+            .path()
+            .join("skills/knowledge-manager/SKILL.md")
+            .exists());
+        assert!(output
+            .path()
+            .join("formations/local/formation.yml")
+            .exists());
         assert!(output.path().join("formations/k8s/formation.yml").exists());
         assert!(output.path().join("formations/k8s/ralph.yml").exists());
         assert!(output.path().join("formations/k8s/PROMPT.md").exists());
@@ -254,12 +285,24 @@ mod tests {
     fn extract_profile_scrum_compact_includes_expected_dirs() {
         let (_profiles_tmp, base) = setup_disk_profiles();
         let output = tempfile::tempdir().unwrap();
-        extract_profile_from(&base, "agentic-sdlc-minimal", output.path(), &claude_code_agent()).unwrap();
+        extract_profile_from(
+            &base,
+            "agentic-sdlc-minimal",
+            output.path(),
+            &claude_code_agent(),
+        )
+        .unwrap();
 
         assert!(output.path().join("skills").is_dir());
         assert!(output.path().join("formations").is_dir());
-        assert!(output.path().join("skills/knowledge-manager/SKILL.md").exists());
-        assert!(output.path().join("formations/local/formation.yml").exists());
+        assert!(output
+            .path()
+            .join("skills/knowledge-manager/SKILL.md")
+            .exists());
+        assert!(output
+            .path()
+            .join("formations/local/formation.yml")
+            .exists());
     }
 
     #[test]
@@ -269,9 +312,18 @@ mod tests {
         extract_profile_from(&base, "scrum", output.path(), &claude_code_agent()).unwrap();
 
         let content = std::fs::read_to_string(output.path().join("CLAUDE.md")).unwrap();
-        assert!(!content.contains("+agent:"), "Extracted CLAUDE.md should not contain +agent: tags");
-        assert!(!content.contains("<!-- -agent -->"), "Extracted CLAUDE.md should not contain -agent close tags");
-        assert!(content.len() > 50, "Extracted CLAUDE.md should have substantial content");
+        assert!(
+            !content.contains("+agent:"),
+            "Extracted CLAUDE.md should not contain +agent: tags"
+        );
+        assert!(
+            !content.contains("<!-- -agent -->"),
+            "Extracted CLAUDE.md should not contain -agent close tags"
+        );
+        assert!(
+            content.len() > 50,
+            "Extracted CLAUDE.md should have substantial content"
+        );
     }
 
     #[test]
@@ -288,9 +340,16 @@ mod tests {
                     let ralph_yml = entry.path().join("ralph.yml");
                     if ralph_yml.exists() {
                         let content = std::fs::read_to_string(&ralph_yml).unwrap();
-                        assert!(!content.contains("+agent:"), "Formation ralph.yml should not contain +agent: tags");
+                        assert!(
+                            !content.contains("+agent:"),
+                            "Formation ralph.yml should not contain +agent: tags"
+                        );
                         let parsed: Result<serde_yml::Value, _> = serde_yml::from_str(&content);
-                        assert!(parsed.is_ok(), "Formation ralph.yml should be valid YAML after filtering: {}", parsed.unwrap_err());
+                        assert!(
+                            parsed.is_ok(),
+                            "Formation ralph.yml should be valid YAML after filtering: {}",
+                            parsed.unwrap_err()
+                        );
                     }
                 }
             }
@@ -301,27 +360,64 @@ mod tests {
     fn extract_member_claude_md_is_filtered() {
         let (_profiles_tmp, base) = setup_disk_profiles();
         let output = tempfile::tempdir().unwrap();
-        extract_member_from(&base, "scrum", "architect", output.path(), &claude_code_agent()).unwrap();
+        extract_member_from(
+            &base,
+            "scrum",
+            "architect",
+            output.path(),
+            &claude_code_agent(),
+        )
+        .unwrap();
 
         let content = std::fs::read_to_string(output.path().join("CLAUDE.md")).unwrap();
-        assert!(!content.contains("+agent:"), "Extracted member CLAUDE.md should not contain +agent: tags");
-        assert!(!content.contains("<!-- -agent -->"), "Extracted member CLAUDE.md should not contain -agent close tags");
+        assert!(
+            !content.contains("+agent:"),
+            "Extracted member CLAUDE.md should not contain +agent: tags"
+        );
+        assert!(
+            !content.contains("<!-- -agent -->"),
+            "Extracted member CLAUDE.md should not contain -agent close tags"
+        );
     }
 
     #[test]
     fn extract_member_ralph_yml_is_filtered() {
         let (_profiles_tmp, base) = setup_disk_profiles();
         let output = tempfile::tempdir().unwrap();
-        extract_member_from(&base, "scrum", "architect", output.path(), &claude_code_agent()).unwrap();
+        extract_member_from(
+            &base,
+            "scrum",
+            "architect",
+            output.path(),
+            &claude_code_agent(),
+        )
+        .unwrap();
 
         let content = std::fs::read_to_string(output.path().join("ralph.yml")).unwrap();
-        assert!(!content.contains("+agent:"), "Extracted member ralph.yml should not contain +agent: tags");
-        assert!(!content.contains("# -agent"), "Extracted member ralph.yml should not contain -agent close tags");
+        assert!(
+            !content.contains("+agent:"),
+            "Extracted member ralph.yml should not contain +agent: tags"
+        );
+        assert!(
+            !content.contains("# -agent"),
+            "Extracted member ralph.yml should not contain -agent close tags"
+        );
         let parsed: Result<serde_yml::Value, _> = serde_yml::from_str(&content);
-        assert!(parsed.is_ok(), "Extracted ralph.yml should be valid YAML: {}", parsed.unwrap_err());
+        assert!(
+            parsed.is_ok(),
+            "Extracted ralph.yml should be valid YAML: {}",
+            parsed.unwrap_err()
+        );
         let yaml = parsed.unwrap();
-        let backend = yaml.get("cli").and_then(|c: &serde_yml::Value| c.get("backend")).and_then(|b: &serde_yml::Value| b.as_str());
-        assert_eq!(backend, Some("claude"), "Extracted ralph.yml should have cli.backend: claude");
+        let backend = yaml
+            .get("cli")
+            .and_then(|c: &serde_yml::Value| c.get("backend"))
+            .and_then(|b: &serde_yml::Value| b.as_str());
+        assert_eq!(
+            backend,
+            Some("claude"),
+            "Extracted ralph.yml should have cli.backend: claude"
+        );
     }
 
     #[test]
@@ -332,10 +428,22 @@ mod tests {
             let output = tempfile::tempdir().unwrap();
             extract_profile_from(&base, &profile, output.path(), &claude_code_agent()).unwrap();
 
-            assert!(output.path().join("agreements").is_dir(), "{profile}: agreements/ should exist");
-            assert!(output.path().join("agreements/decisions").is_dir(), "{profile}: agreements/decisions/ should exist");
-            assert!(output.path().join("agreements/retros").is_dir(), "{profile}: agreements/retros/ should exist");
-            assert!(output.path().join("agreements/norms").is_dir(), "{profile}: agreements/norms/ should exist");
+            assert!(
+                output.path().join("agreements").is_dir(),
+                "{profile}: agreements/ should exist"
+            );
+            assert!(
+                output.path().join("agreements/decisions").is_dir(),
+                "{profile}: agreements/decisions/ should exist"
+            );
+            assert!(
+                output.path().join("agreements/retros").is_dir(),
+                "{profile}: agreements/retros/ should exist"
+            );
+            assert!(
+                output.path().join("agreements/norms").is_dir(),
+                "{profile}: agreements/norms/ should exist"
+            );
         }
     }
 
@@ -347,9 +455,18 @@ mod tests {
             let output = tempfile::tempdir().unwrap();
             extract_profile_from(&base, &profile, output.path(), &claude_code_agent()).unwrap();
 
-            assert!(output.path().join("agreements/decisions/.gitkeep").exists(), "{profile}: decisions/.gitkeep should exist");
-            assert!(output.path().join("agreements/retros/.gitkeep").exists(), "{profile}: retros/.gitkeep should exist");
-            assert!(output.path().join("agreements/norms/.gitkeep").exists(), "{profile}: norms/.gitkeep should exist");
+            assert!(
+                output.path().join("agreements/decisions/.gitkeep").exists(),
+                "{profile}: decisions/.gitkeep should exist"
+            );
+            assert!(
+                output.path().join("agreements/retros/.gitkeep").exists(),
+                "{profile}: retros/.gitkeep should exist"
+            );
+            assert!(
+                output.path().join("agreements/norms/.gitkeep").exists(),
+                "{profile}: norms/.gitkeep should exist"
+            );
         }
     }
 
@@ -362,12 +479,24 @@ mod tests {
             extract_profile_from(&base, &profile, output.path(), &claude_code_agent()).unwrap();
 
             let knowledge_path = output.path().join("knowledge/team-agreements.md");
-            assert!(knowledge_path.exists(), "{profile}: knowledge/team-agreements.md should exist");
+            assert!(
+                knowledge_path.exists(),
+                "{profile}: knowledge/team-agreements.md should exist"
+            );
 
             let content = std::fs::read_to_string(&knowledge_path).unwrap();
-            assert!(content.contains("decisions/"), "{profile}: should document decisions/ subdir");
-            assert!(content.contains("retros/"), "{profile}: should document retros/ subdir");
-            assert!(content.contains("norms/"), "{profile}: should document norms/ subdir");
+            assert!(
+                content.contains("decisions/"),
+                "{profile}: should document decisions/ subdir"
+            );
+            assert!(
+                content.contains("retros/"),
+                "{profile}: should document retros/ subdir"
+            );
+            assert!(
+                content.contains("norms/"),
+                "{profile}: should document norms/ subdir"
+            );
         }
     }
 
@@ -379,17 +508,43 @@ mod tests {
             let output = tempfile::tempdir().unwrap();
             extract_profile_from(&base, &profile, output.path(), &claude_code_agent()).unwrap();
 
-            let content = std::fs::read_to_string(output.path().join("knowledge/team-agreements.md")).unwrap();
+            let content =
+                std::fs::read_to_string(output.path().join("knowledge/team-agreements.md"))
+                    .unwrap();
             // Verify frontmatter fields are documented
-            assert!(content.contains("id"), "{profile}: should document id field");
-            assert!(content.contains("type"), "{profile}: should document type field");
-            assert!(content.contains("status"), "{profile}: should document status field");
-            assert!(content.contains("date"), "{profile}: should document date field");
-            assert!(content.contains("participants"), "{profile}: should document participants field");
+            assert!(
+                content.contains("id"),
+                "{profile}: should document id field"
+            );
+            assert!(
+                content.contains("type"),
+                "{profile}: should document type field"
+            );
+            assert!(
+                content.contains("status"),
+                "{profile}: should document status field"
+            );
+            assert!(
+                content.contains("date"),
+                "{profile}: should document date field"
+            );
+            assert!(
+                content.contains("participants"),
+                "{profile}: should document participants field"
+            );
             // Verify lifecycle states
-            assert!(content.contains("proposed"), "{profile}: should document proposed status");
-            assert!(content.contains("accepted"), "{profile}: should document accepted status");
-            assert!(content.contains("superseded"), "{profile}: should document superseded status");
+            assert!(
+                content.contains("proposed"),
+                "{profile}: should document proposed status"
+            );
+            assert!(
+                content.contains("accepted"),
+                "{profile}: should document accepted status"
+            );
+            assert!(
+                content.contains("superseded"),
+                "{profile}: should document superseded status"
+            );
         }
     }
 
@@ -403,8 +558,14 @@ mod tests {
 
             let content = std::fs::read_to_string(output.path().join("PROCESS.md")).unwrap();
             let lower = content.to_lowercase();
-            assert!(lower.contains("agreements"), "{profile}: PROCESS.md should reference agreements");
-            assert!(lower.contains("team agreements"), "{profile}: PROCESS.md should reference team agreements convention");
+            assert!(
+                lower.contains("agreements"),
+                "{profile}: PROCESS.md should reference agreements"
+            );
+            assert!(
+                lower.contains("team agreements"),
+                "{profile}: PROCESS.md should reference team agreements convention"
+            );
         }
     }
 
@@ -423,12 +584,24 @@ mod tests {
         let output = tempfile::tempdir().unwrap();
         extract_profile_from(&base, "scrum", output.path(), &mock_agent).unwrap();
 
-        assert!(output.path().join("GEMINI.md").exists(), "Mock agent should produce GEMINI.md");
-        assert!(!output.path().join("CLAUDE.md").exists(), "Mock agent should not produce CLAUDE.md");
-        assert!(!output.path().join("context.md").exists(), "Mock agent should not produce context.md");
+        assert!(
+            output.path().join("GEMINI.md").exists(),
+            "Mock agent should produce GEMINI.md"
+        );
+        assert!(
+            !output.path().join("CLAUDE.md").exists(),
+            "Mock agent should not produce CLAUDE.md"
+        );
+        assert!(
+            !output.path().join("context.md").exists(),
+            "Mock agent should not produce context.md"
+        );
 
         let content = std::fs::read_to_string(output.path().join("GEMINI.md")).unwrap();
-        assert!(!content.contains("+agent:"), "GEMINI.md should not contain agent tags");
+        assert!(
+            !content.contains("+agent:"),
+            "GEMINI.md should not contain agent tags"
+        );
     }
 
     #[test]
@@ -446,9 +619,18 @@ mod tests {
         let output = tempfile::tempdir().unwrap();
         extract_member_from(&base, "scrum", "architect", output.path(), &mock_agent).unwrap();
 
-        assert!(output.path().join("GEMINI.md").exists(), "Mock agent should produce GEMINI.md in member dir");
-        assert!(!output.path().join("CLAUDE.md").exists(), "Mock agent should not produce CLAUDE.md in member dir");
-        assert!(!output.path().join("context.md").exists(), "Mock agent should not produce context.md in member dir");
+        assert!(
+            output.path().join("GEMINI.md").exists(),
+            "Mock agent should produce GEMINI.md in member dir"
+        );
+        assert!(
+            !output.path().join("CLAUDE.md").exists(),
+            "Mock agent should not produce CLAUDE.md in member dir"
+        );
+        assert!(
+            !output.path().join("context.md").exists(),
+            "Mock agent should not produce context.md in member dir"
+        );
     }
 
     #[test]
@@ -468,7 +650,14 @@ mod tests {
     fn extract_member_replaces_context_md_references_in_content() {
         let (_profiles_tmp, base) = setup_disk_profiles();
         let output = tempfile::tempdir().unwrap();
-        extract_member_from(&base, "scrum", "architect", output.path(), &claude_code_agent()).unwrap();
+        extract_member_from(
+            &base,
+            "scrum",
+            "architect",
+            output.path(),
+            &claude_code_agent(),
+        )
+        .unwrap();
 
         let content = std::fs::read_to_string(output.path().join("CLAUDE.md")).unwrap();
         assert!(
@@ -496,7 +685,11 @@ mod tests {
         assert!(
             !content.contains("context.md"),
             "Extracted GEMINI.md should not contain any 'context.md' references, got: {}",
-            content.lines().filter(|l| l.contains("context.md")).collect::<Vec<_>>().join("\n")
+            content
+                .lines()
+                .filter(|l| l.contains("context.md"))
+                .collect::<Vec<_>>()
+                .join("\n")
         );
     }
 
@@ -512,10 +705,22 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
-            let skill_path = output.path().join("coding-agent/skills/retrospective/SKILL.md");
-            assert!(skill_path.exists(), "{profile}: retrospective/SKILL.md should exist after member extraction");
+            let skill_path = output
+                .path()
+                .join("coding-agent/skills/retrospective/SKILL.md");
+            assert!(
+                skill_path.exists(),
+                "{profile}: retrospective/SKILL.md should exist after member extraction"
+            );
         }
     }
 
@@ -529,24 +734,35 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let ralph_yml_path = output.path().join("ralph.yml");
             let content = std::fs::read_to_string(&ralph_yml_path)
                 .unwrap_or_else(|_| panic!("{profile}: chief-of-staff ralph.yml should exist"));
             let yaml: serde_yml::Value = serde_yml::from_str(&content).unwrap();
-            let dirs = yaml.get("skills")
+            let dirs = yaml
+                .get("skills")
                 .and_then(|s| s.get("dirs"))
                 .and_then(|d| d.as_sequence())
                 .unwrap_or_else(|| panic!("{profile}: skills.dirs should be a sequence"));
 
             let has_skill_dir = dirs.iter().any(|d| {
-                d.as_str().map_or(false, |s| {
+                d.as_str().is_some_and(|s| {
                     s.contains("chief-of-staff/coding-agent/skills")
                         || s.contains("{{member_dir}}/coding-agent/skills")
                 })
             });
-            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills");
+            assert!(
+                has_skill_dir,
+                "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills"
+            );
         }
     }
 
@@ -560,26 +776,55 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/retrospective/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/retrospective/SKILL.md"),
+            )
+            .unwrap();
 
             // Extract frontmatter between --- delimiters
             let parts: Vec<&str> = content.splitn(3, "---").collect();
-            assert!(parts.len() >= 3, "{profile}: SKILL.md should have YAML frontmatter");
+            assert!(
+                parts.len() >= 3,
+                "{profile}: SKILL.md should have YAML frontmatter"
+            );
             let frontmatter = parts[1];
 
             let yaml: serde_yml::Value = serde_yml::from_str(frontmatter).unwrap();
 
             let name = yaml.get("name").and_then(|n| n.as_str());
-            assert_eq!(name, Some("retrospective"), "{profile}: name should be 'retrospective'");
+            assert_eq!(
+                name,
+                Some("retrospective"),
+                "{profile}: name should be 'retrospective'"
+            );
 
-            let desc = yaml.get("description").and_then(|d| d.as_str()).unwrap_or("");
-            assert!(!desc.is_empty(), "{profile}: description should be non-empty");
-            assert!(desc.len() < 1024, "{profile}: description should be under 1024 chars");
-            assert!(!desc.contains('<') && !desc.contains('>'), "{profile}: no XML angle brackets");
+            let desc = yaml
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("");
+            assert!(
+                !desc.is_empty(),
+                "{profile}: description should be non-empty"
+            );
+            assert!(
+                desc.len() < 1024,
+                "{profile}: description should be under 1024 chars"
+            );
+            assert!(
+                !desc.contains('<') && !desc.contains('>'),
+                "{profile}: no XML angle brackets"
+            );
 
             let desc_lower = desc.to_lowercase();
             assert!(
@@ -603,17 +848,30 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/retrospective/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/retrospective/SKILL.md"),
+            )
+            .unwrap();
 
             // Strip frontmatter
             let parts: Vec<&str> = content.splitn(3, "---").collect();
             let body = if parts.len() >= 3 { parts[2] } else { &content };
             let word_count = body.split_whitespace().count();
-            assert!(word_count < 5000, "{profile}: SKILL.md body has {word_count} words, must be under 5000");
+            assert!(
+                word_count < 5000,
+                "{profile}: SKILL.md body has {word_count} words, must be under 5000"
+            );
         }
     }
 
@@ -627,20 +885,42 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/retrospective/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/retrospective/SKILL.md"),
+            )
+            .unwrap();
             let lower = content.to_lowercase();
 
-            assert!(lower.contains("scope"), "{profile}: should cover retro scope");
-            assert!(lower.contains("went well"), "{profile}: should cover what went well");
             assert!(
-                lower.contains("didn\u{2019}t go well") || lower.contains("didn't go well") || lower.contains("pain point") || lower.contains("improvement"),
+                lower.contains("scope"),
+                "{profile}: should cover retro scope"
+            );
+            assert!(
+                lower.contains("went well"),
+                "{profile}: should cover what went well"
+            );
+            assert!(
+                lower.contains("didn\u{2019}t go well")
+                    || lower.contains("didn't go well")
+                    || lower.contains("pain point")
+                    || lower.contains("improvement"),
                 "{profile}: should cover what didn't go well"
             );
-            assert!(lower.contains("action item"), "{profile}: should cover action items");
+            assert!(
+                lower.contains("action item"),
+                "{profile}: should cover action items"
+            );
         }
     }
 
@@ -654,17 +934,42 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/retrospective/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/retrospective/SKILL.md"),
+            )
+            .unwrap();
 
-            assert!(content.contains("process-change"), "{profile}: should document process-change type");
-            assert!(content.contains("role-change"), "{profile}: should document role-change type");
-            assert!(content.contains("member-tuning"), "{profile}: should document member-tuning type");
-            assert!(content.contains("knowledge-update"), "{profile}: should document knowledge-update type");
-            assert!(content.contains("norm"), "{profile}: should document norm type");
+            assert!(
+                content.contains("process-change"),
+                "{profile}: should document process-change type"
+            );
+            assert!(
+                content.contains("role-change"),
+                "{profile}: should document role-change type"
+            );
+            assert!(
+                content.contains("member-tuning"),
+                "{profile}: should document member-tuning type"
+            );
+            assert!(
+                content.contains("knowledge-update"),
+                "{profile}: should document knowledge-update type"
+            );
+            assert!(
+                content.contains("norm"),
+                "{profile}: should document norm type"
+            );
         }
     }
 
@@ -678,14 +983,30 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/retrospective/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/retrospective/SKILL.md"),
+            )
+            .unwrap();
 
-            assert!(content.contains("agreements/retros/"), "{profile}: should reference agreements/retros/ output path");
-            assert!(content.contains("agreements/norms/"), "{profile}: should reference agreements/norms/ path");
+            assert!(
+                content.contains("agreements/retros/"),
+                "{profile}: should reference agreements/retros/ output path"
+            );
+            assert!(
+                content.contains("agreements/norms/"),
+                "{profile}: should reference agreements/norms/ path"
+            );
         }
     }
 
@@ -699,10 +1020,22 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
-            let readme_path = output.path().join("coding-agent/skills/retrospective/README.md");
-            assert!(!readme_path.exists(), "{profile}: retrospective/ should NOT have a README.md");
+            let readme_path = output
+                .path()
+                .join("coding-agent/skills/retrospective/README.md");
+            assert!(
+                !readme_path.exists(),
+                "{profile}: retrospective/ should NOT have a README.md"
+            );
         }
     }
 
@@ -718,10 +1051,22 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
-            let skill_path = output.path().join("coding-agent/skills/role-management/SKILL.md");
-            assert!(skill_path.exists(), "{profile}: role-management/SKILL.md should exist after member extraction");
+            let skill_path = output
+                .path()
+                .join("coding-agent/skills/role-management/SKILL.md");
+            assert!(
+                skill_path.exists(),
+                "{profile}: role-management/SKILL.md should exist after member extraction"
+            );
         }
     }
 
@@ -735,24 +1080,35 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let ralph_yml_path = output.path().join("ralph.yml");
             let content = std::fs::read_to_string(&ralph_yml_path)
                 .unwrap_or_else(|_| panic!("{profile}: chief-of-staff ralph.yml should exist"));
             let yaml: serde_yml::Value = serde_yml::from_str(&content).unwrap();
-            let dirs = yaml.get("skills")
+            let dirs = yaml
+                .get("skills")
                 .and_then(|s| s.get("dirs"))
                 .and_then(|d| d.as_sequence())
                 .unwrap_or_else(|| panic!("{profile}: skills.dirs should be a sequence"));
 
             let has_skill_dir = dirs.iter().any(|d| {
-                d.as_str().map_or(false, |s| {
+                d.as_str().is_some_and(|s| {
                     s.contains("chief-of-staff/coding-agent/skills")
                         || s.contains("{{member_dir}}/coding-agent/skills")
                 })
             });
-            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills");
+            assert!(
+                has_skill_dir,
+                "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills"
+            );
         }
     }
 
@@ -766,25 +1122,54 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/role-management/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/role-management/SKILL.md"),
+            )
+            .unwrap();
 
             let parts: Vec<&str> = content.splitn(3, "---").collect();
-            assert!(parts.len() >= 3, "{profile}: SKILL.md should have YAML frontmatter");
+            assert!(
+                parts.len() >= 3,
+                "{profile}: SKILL.md should have YAML frontmatter"
+            );
             let frontmatter = parts[1];
 
             let yaml: serde_yml::Value = serde_yml::from_str(frontmatter).unwrap();
 
             let name = yaml.get("name").and_then(|n| n.as_str());
-            assert_eq!(name, Some("role-management"), "{profile}: name should be 'role-management'");
+            assert_eq!(
+                name,
+                Some("role-management"),
+                "{profile}: name should be 'role-management'"
+            );
 
-            let desc = yaml.get("description").and_then(|d| d.as_str()).unwrap_or("");
-            assert!(!desc.is_empty(), "{profile}: description should be non-empty");
-            assert!(desc.len() < 1024, "{profile}: description should be under 1024 chars");
-            assert!(!desc.contains('<') && !desc.contains('>'), "{profile}: no XML angle brackets");
+            let desc = yaml
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("");
+            assert!(
+                !desc.is_empty(),
+                "{profile}: description should be non-empty"
+            );
+            assert!(
+                desc.len() < 1024,
+                "{profile}: description should be under 1024 chars"
+            );
+            assert!(
+                !desc.contains('<') && !desc.contains('>'),
+                "{profile}: no XML angle brackets"
+            );
 
             let desc_lower = desc.to_lowercase();
             assert!(
@@ -808,16 +1193,29 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/role-management/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/role-management/SKILL.md"),
+            )
+            .unwrap();
 
             let parts: Vec<&str> = content.splitn(3, "---").collect();
             let body = if parts.len() >= 3 { parts[2] } else { &content };
             let word_count = body.split_whitespace().count();
-            assert!(word_count < 5000, "{profile}: SKILL.md body has {word_count} words, must be under 5000");
+            assert!(
+                word_count < 5000,
+                "{profile}: SKILL.md body has {word_count} words, must be under 5000"
+            );
         }
     }
 
@@ -831,17 +1229,39 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/role-management/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/role-management/SKILL.md"),
+            )
+            .unwrap();
             let lower = content.to_lowercase();
 
-            assert!(lower.contains("list role"), "{profile}: should cover list roles operation");
-            assert!(lower.contains("add role"), "{profile}: should cover add role operation");
-            assert!(lower.contains("remove role"), "{profile}: should cover remove role operation");
-            assert!(lower.contains("inspect role"), "{profile}: should cover inspect role operation");
+            assert!(
+                lower.contains("list role"),
+                "{profile}: should cover list roles operation"
+            );
+            assert!(
+                lower.contains("add role"),
+                "{profile}: should cover add role operation"
+            );
+            assert!(
+                lower.contains("remove role"),
+                "{profile}: should cover remove role operation"
+            );
+            assert!(
+                lower.contains("inspect role"),
+                "{profile}: should cover inspect role operation"
+            );
         }
     }
 
@@ -855,17 +1275,39 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/role-management/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/role-management/SKILL.md"),
+            )
+            .unwrap();
             let lower = content.to_lowercase();
 
-            assert!(lower.contains("impact"), "{profile}: should cover impact analysis");
-            assert!(lower.contains("status"), "{profile}: impact analysis should mention statuses");
-            assert!(lower.contains("hat"), "{profile}: impact analysis should mention hats");
-            assert!(lower.contains("knowledge"), "{profile}: impact analysis should mention knowledge");
+            assert!(
+                lower.contains("impact"),
+                "{profile}: should cover impact analysis"
+            );
+            assert!(
+                lower.contains("status"),
+                "{profile}: impact analysis should mention statuses"
+            );
+            assert!(
+                lower.contains("hat"),
+                "{profile}: impact analysis should mention hats"
+            );
+            assert!(
+                lower.contains("knowledge"),
+                "{profile}: impact analysis should mention knowledge"
+            );
         }
     }
 
@@ -879,13 +1321,26 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/role-management/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/role-management/SKILL.md"),
+            )
+            .unwrap();
 
-            assert!(content.contains("agreements/decisions/"), "{profile}: should reference agreements/decisions/ path");
+            assert!(
+                content.contains("agreements/decisions/"),
+                "{profile}: should reference agreements/decisions/ path"
+            );
         }
     }
 
@@ -899,10 +1354,22 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
-            let readme_path = output.path().join("coding-agent/skills/role-management/README.md");
-            assert!(!readme_path.exists(), "{profile}: role-management/ should NOT have a README.md");
+            let readme_path = output
+                .path()
+                .join("coding-agent/skills/role-management/README.md");
+            assert!(
+                !readme_path.exists(),
+                "{profile}: role-management/ should NOT have a README.md"
+            );
         }
     }
 
@@ -918,10 +1385,22 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
-            let skill_path = output.path().join("coding-agent/skills/member-tuning/SKILL.md");
-            assert!(skill_path.exists(), "{profile}: member-tuning/SKILL.md should exist after member extraction");
+            let skill_path = output
+                .path()
+                .join("coding-agent/skills/member-tuning/SKILL.md");
+            assert!(
+                skill_path.exists(),
+                "{profile}: member-tuning/SKILL.md should exist after member extraction"
+            );
         }
     }
 
@@ -935,24 +1414,35 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let ralph_yml_path = output.path().join("ralph.yml");
             let content = std::fs::read_to_string(&ralph_yml_path)
                 .unwrap_or_else(|_| panic!("{profile}: chief-of-staff ralph.yml should exist"));
             let yaml: serde_yml::Value = serde_yml::from_str(&content).unwrap();
-            let dirs = yaml.get("skills")
+            let dirs = yaml
+                .get("skills")
                 .and_then(|s| s.get("dirs"))
                 .and_then(|d| d.as_sequence())
                 .unwrap_or_else(|| panic!("{profile}: skills.dirs should be a sequence"));
 
             let has_skill_dir = dirs.iter().any(|d| {
-                d.as_str().map_or(false, |s| {
+                d.as_str().is_some_and(|s| {
                     s.contains("chief-of-staff/coding-agent/skills")
                         || s.contains("{{member_dir}}/coding-agent/skills")
                 })
             });
-            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills");
+            assert!(
+                has_skill_dir,
+                "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills"
+            );
         }
     }
 
@@ -966,29 +1456,60 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/member-tuning/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/member-tuning/SKILL.md"),
+            )
+            .unwrap();
 
             let parts: Vec<&str> = content.splitn(3, "---").collect();
-            assert!(parts.len() >= 3, "{profile}: SKILL.md should have YAML frontmatter");
+            assert!(
+                parts.len() >= 3,
+                "{profile}: SKILL.md should have YAML frontmatter"
+            );
             let frontmatter = parts[1];
 
             let yaml: serde_yml::Value = serde_yml::from_str(frontmatter).unwrap();
 
             let name = yaml.get("name").and_then(|n| n.as_str());
-            assert_eq!(name, Some("member-tuning"), "{profile}: name should be 'member-tuning'");
+            assert_eq!(
+                name,
+                Some("member-tuning"),
+                "{profile}: name should be 'member-tuning'"
+            );
 
-            let desc = yaml.get("description").and_then(|d| d.as_str()).unwrap_or("");
-            assert!(!desc.is_empty(), "{profile}: description should be non-empty");
-            assert!(desc.len() < 1024, "{profile}: description should be under 1024 chars");
-            assert!(!desc.contains('<') && !desc.contains('>'), "{profile}: no XML angle brackets");
+            let desc = yaml
+                .get("description")
+                .and_then(|d| d.as_str())
+                .unwrap_or("");
+            assert!(
+                !desc.is_empty(),
+                "{profile}: description should be non-empty"
+            );
+            assert!(
+                desc.len() < 1024,
+                "{profile}: description should be under 1024 chars"
+            );
+            assert!(
+                !desc.contains('<') && !desc.contains('>'),
+                "{profile}: no XML angle brackets"
+            );
 
             let desc_lower = desc.to_lowercase();
             assert!(
-                desc_lower.contains("tun") || desc_lower.contains("troubleshoot") || desc_lower.contains("diagnostic"),
+                desc_lower.contains("tun")
+                    || desc_lower.contains("troubleshoot")
+                    || desc_lower.contains("diagnostic"),
                 "{profile}: description should mention tuning, troubleshoot, or diagnostic"
             );
             assert!(
@@ -1008,16 +1529,29 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/member-tuning/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/member-tuning/SKILL.md"),
+            )
+            .unwrap();
 
             let parts: Vec<&str> = content.splitn(3, "---").collect();
             let body = if parts.len() >= 3 { parts[2] } else { &content };
             let word_count = body.split_whitespace().count();
-            assert!(word_count < 5000, "{profile}: SKILL.md body has {word_count} words, must be under 5000");
+            assert!(
+                word_count < 5000,
+                "{profile}: SKILL.md body has {word_count} words, must be under 5000"
+            );
         }
     }
 
@@ -1031,17 +1565,42 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/member-tuning/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/member-tuning/SKILL.md"),
+            )
+            .unwrap();
 
-            assert!(content.contains("PROMPT.md"), "{profile}: should cover PROMPT.md artifact");
-            assert!(content.contains("CLAUDE.md"), "{profile}: should cover CLAUDE.md artifact");
-            assert!(content.contains("ralph.yml") || content.contains("hats"), "{profile}: should cover hats/ralph.yml artifact");
-            assert!(content.contains("skills"), "{profile}: should cover skills artifact");
-            assert!(content.contains("PROCESS.md"), "{profile}: should cover PROCESS.md artifact");
+            assert!(
+                content.contains("PROMPT.md"),
+                "{profile}: should cover PROMPT.md artifact"
+            );
+            assert!(
+                content.contains("CLAUDE.md"),
+                "{profile}: should cover CLAUDE.md artifact"
+            );
+            assert!(
+                content.contains("ralph.yml") || content.contains("hats"),
+                "{profile}: should cover hats/ralph.yml artifact"
+            );
+            assert!(
+                content.contains("skills"),
+                "{profile}: should cover skills artifact"
+            );
+            assert!(
+                content.contains("PROCESS.md"),
+                "{profile}: should cover PROCESS.md artifact"
+            );
         }
     }
 
@@ -1055,11 +1614,21 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/member-tuning/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/member-tuning/SKILL.md"),
+            )
+            .unwrap();
             let lower = content.to_lowercase();
 
             assert!(
@@ -1083,16 +1652,31 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/member-tuning/SKILL.md")
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/member-tuning/SKILL.md"),
+            )
+            .unwrap();
             let lower = content.to_lowercase();
 
-            assert!(lower.contains("sync"), "{profile}: should mention sync for propagation");
             assert!(
-                lower.contains("restart") || lower.contains("bm stop") || lower.contains("bm start"),
+                lower.contains("sync"),
+                "{profile}: should mention sync for propagation"
+            );
+            assert!(
+                lower.contains("restart")
+                    || lower.contains("bm stop")
+                    || lower.contains("bm start"),
                 "{profile}: should mention restart for propagation"
             );
         }
@@ -1108,10 +1692,22 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
-            let readme_path = output.path().join("coding-agent/skills/member-tuning/README.md");
-            assert!(!readme_path.exists(), "{profile}: member-tuning/ should NOT have a README.md");
+            let readme_path = output
+                .path()
+                .join("coding-agent/skills/member-tuning/README.md");
+            assert!(
+                !readme_path.exists(),
+                "{profile}: member-tuning/ should NOT have a README.md"
+            );
         }
     }
 
@@ -1127,10 +1723,22 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
-            let skill_path = output.path().join("coding-agent/skills/process-evolution/SKILL.md");
-            assert!(skill_path.exists(), "{profile}: process-evolution/SKILL.md should exist after member extraction");
+            let skill_path = output
+                .path()
+                .join("coding-agent/skills/process-evolution/SKILL.md");
+            assert!(
+                skill_path.exists(),
+                "{profile}: process-evolution/SKILL.md should exist after member extraction"
+            );
         }
     }
 
@@ -1144,14 +1752,26 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let ralph_yml = std::fs::read_to_string(output.path().join("ralph.yml")).unwrap();
             let has_skill_dir = ralph_yml.lines().any(|line| {
                 let trimmed = line.trim().trim_start_matches("- ");
-                trimmed.contains("skills") && (trimmed.contains("chief-of-staff") || trimmed.contains("coding-agent/skills"))
+                trimmed.contains("skills")
+                    && (trimmed.contains("chief-of-staff")
+                        || trimmed.contains("coding-agent/skills"))
             });
-            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills");
+            assert!(
+                has_skill_dir,
+                "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills"
+            );
         }
     }
 
@@ -1165,19 +1785,37 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/process-evolution/SKILL.md"),
+            )
+            .unwrap();
 
-            assert!(content.starts_with("---"), "{profile}: SKILL.md must start with YAML frontmatter");
-            assert!(content.contains("name: process-evolution"), "{profile}: frontmatter must have name: process-evolution");
+            assert!(
+                content.starts_with("---"),
+                "{profile}: SKILL.md must start with YAML frontmatter"
+            );
+            assert!(
+                content.contains("name: process-evolution"),
+                "{profile}: frontmatter must have name: process-evolution"
+            );
 
             let desc_area = &content[..content.find("\n---\n").unwrap_or(content.len())];
             let desc_lower = desc_area.to_lowercase();
             assert!(
-                desc_lower.contains("process") || desc_lower.contains("workflow") || desc_lower.contains("status"),
+                desc_lower.contains("process")
+                    || desc_lower.contains("workflow")
+                    || desc_lower.contains("status"),
                 "{profile}: description should mention process, workflow, or status triggers"
             );
         }
@@ -1193,14 +1831,27 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/process-evolution/SKILL.md"),
+            )
+            .unwrap();
             let body = content.splitn(3, "---").nth(2).unwrap_or("");
             let word_count = body.split_whitespace().count();
-            assert!(word_count < 5000, "{profile}: SKILL.md body has {word_count} words, must be under 5000");
+            assert!(
+                word_count < 5000,
+                "{profile}: SKILL.md body has {word_count} words, must be under 5000"
+            );
         }
     }
 
@@ -1214,15 +1865,34 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/process-evolution/SKILL.md"),
+            )
+            .unwrap();
             let lower = content.to_lowercase();
-            assert!(lower.contains("show") && lower.contains("current process"), "{profile}: should cover showing current process");
-            assert!(lower.contains("adding a status"), "{profile}: should cover adding a status");
-            assert!(lower.contains("removing a status"), "{profile}: should cover removing a status");
+            assert!(
+                lower.contains("show") && lower.contains("current process"),
+                "{profile}: should cover showing current process"
+            );
+            assert!(
+                lower.contains("adding a status"),
+                "{profile}: should cover adding a status"
+            );
+            assert!(
+                lower.contains("removing a status"),
+                "{profile}: should cover removing a status"
+            );
         }
     }
 
@@ -1236,15 +1906,34 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/process-evolution/SKILL.md"),
+            )
+            .unwrap();
             let lower = content.to_lowercase();
-            assert!(lower.contains("orphan"), "{profile}: should include orphan status validation");
-            assert!(lower.contains("dead") || lower.contains("dead-end") || lower.contains("dead end"), "{profile}: should include dead-end validation");
-            assert!(lower.contains("loop"), "{profile}: should include loop validation");
+            assert!(
+                lower.contains("orphan"),
+                "{profile}: should include orphan status validation"
+            );
+            assert!(
+                lower.contains("dead") || lower.contains("dead-end") || lower.contains("dead end"),
+                "{profile}: should include dead-end validation"
+            );
+            assert!(
+                lower.contains("loop"),
+                "{profile}: should include loop validation"
+            );
         }
     }
 
@@ -1258,12 +1947,25 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/process-evolution/SKILL.md"),
-            ).unwrap();
-            assert!(content.contains("agreements/decisions"), "{profile}: should reference agreements/decisions for recording changes");
+                output
+                    .path()
+                    .join("coding-agent/skills/process-evolution/SKILL.md"),
+            )
+            .unwrap();
+            assert!(
+                content.contains("agreements/decisions"),
+                "{profile}: should reference agreements/decisions for recording changes"
+            );
         }
     }
 
@@ -1277,10 +1979,22 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
-            let readme_path = output.path().join("coding-agent/skills/process-evolution/README.md");
-            assert!(!readme_path.exists(), "{profile}: process-evolution/ should NOT have a README.md");
+            let readme_path = output
+                .path()
+                .join("coding-agent/skills/process-evolution/README.md");
+            assert!(
+                !readme_path.exists(),
+                "{profile}: process-evolution/ should NOT have a README.md"
+            );
         }
     }
 
@@ -1296,10 +2010,22 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
-            let skill_path = output.path().join("coding-agent/skills/team-design/SKILL.md");
-            assert!(skill_path.exists(), "{profile}: team-design/SKILL.md should exist after member extraction");
+            let skill_path = output
+                .path()
+                .join("coding-agent/skills/team-design/SKILL.md");
+            assert!(
+                skill_path.exists(),
+                "{profile}: team-design/SKILL.md should exist after member extraction"
+            );
         }
     }
 
@@ -1313,14 +2039,26 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let ralph_yml = std::fs::read_to_string(output.path().join("ralph.yml")).unwrap();
             let has_skill_dir = ralph_yml.lines().any(|line| {
                 let trimmed = line.trim().trim_start_matches("- ");
-                trimmed.contains("skills") && (trimmed.contains("chief-of-staff") || trimmed.contains("coding-agent/skills"))
+                trimmed.contains("skills")
+                    && (trimmed.contains("chief-of-staff")
+                        || trimmed.contains("coding-agent/skills"))
             });
-            assert!(has_skill_dir, "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills");
+            assert!(
+                has_skill_dir,
+                "{profile}: ralph.yml skills.dirs should cover chief-of-staff skills"
+            );
         }
     }
 
@@ -1334,14 +2072,30 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/team-design/SKILL.md"),
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/team-design/SKILL.md"),
+            )
+            .unwrap();
 
-            assert!(content.starts_with("---"), "{profile}: SKILL.md must start with YAML frontmatter");
-            assert!(content.contains("name: team-design"), "{profile}: frontmatter must have name: team-design");
+            assert!(
+                content.starts_with("---"),
+                "{profile}: SKILL.md must start with YAML frontmatter"
+            );
+            assert!(
+                content.contains("name: team-design"),
+                "{profile}: frontmatter must have name: team-design"
+            );
 
             let desc_area = &content[..content.find("\n---\n").unwrap_or(content.len())];
             let desc_lower = desc_area.to_lowercase();
@@ -1362,10 +2116,22 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
-            let readme_path = output.path().join("coding-agent/skills/team-design/README.md");
-            assert!(!readme_path.exists(), "{profile}: team-design/ should NOT have a README.md");
+            let readme_path = output
+                .path()
+                .join("coding-agent/skills/team-design/README.md");
+            assert!(
+                !readme_path.exists(),
+                "{profile}: team-design/ should NOT have a README.md"
+            );
         }
     }
 
@@ -1379,14 +2145,27 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/team-design/SKILL.md"),
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/team-design/SKILL.md"),
+            )
+            .unwrap();
             let body = content.splitn(3, "---").nth(2).unwrap_or("");
             let word_count = body.split_whitespace().count();
-            assert!(word_count < 5000, "{profile}: SKILL.md body has {word_count} words, must be under 5000");
+            assert!(
+                word_count < 5000,
+                "{profile}: SKILL.md body has {word_count} words, must be under 5000"
+            );
         }
     }
 
@@ -1400,16 +2179,38 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/team-design/SKILL.md"),
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/team-design/SKILL.md"),
+            )
+            .unwrap();
             let lower = content.to_lowercase();
-            assert!(lower.contains("retrospective"), "{profile}: routing table should reference retrospective");
-            assert!(lower.contains("role-management"), "{profile}: routing table should reference role-management");
-            assert!(lower.contains("member-tuning"), "{profile}: routing table should reference member-tuning");
-            assert!(lower.contains("process-evolution"), "{profile}: routing table should reference process-evolution");
+            assert!(
+                lower.contains("retrospective"),
+                "{profile}: routing table should reference retrospective"
+            );
+            assert!(
+                lower.contains("role-management"),
+                "{profile}: routing table should reference role-management"
+            );
+            assert!(
+                lower.contains("member-tuning"),
+                "{profile}: routing table should reference member-tuning"
+            );
+            assert!(
+                lower.contains("process-evolution"),
+                "{profile}: routing table should reference process-evolution"
+            );
         }
     }
 
@@ -1423,11 +2224,21 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/team-design/SKILL.md"),
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/team-design/SKILL.md"),
+            )
+            .unwrap();
             assert!(
                 content.contains("ralph tools skill load"),
                 "{profile}: should reference 'ralph tools skill load' for delegation to sub-skills"
@@ -1445,15 +2256,34 @@ mod tests {
                 continue;
             }
             let output = tempfile::tempdir().unwrap();
-            extract_member_from(&base, &profile, "chief-of-staff", output.path(), &claude_code_agent()).unwrap();
+            extract_member_from(
+                &base,
+                &profile,
+                "chief-of-staff",
+                output.path(),
+                &claude_code_agent(),
+            )
+            .unwrap();
 
             let content = std::fs::read_to_string(
-                output.path().join("coding-agent/skills/team-design/SKILL.md"),
-            ).unwrap();
+                output
+                    .path()
+                    .join("coding-agent/skills/team-design/SKILL.md"),
+            )
+            .unwrap();
             let lower = content.to_lowercase();
-            assert!(lower.contains("dashboard"), "{profile}: should include dashboard section");
-            assert!(lower.contains("roles") && lower.contains("members"), "{profile}: dashboard should cover roles and members");
-            assert!(lower.contains("agreements") || lower.contains("action items"), "{profile}: dashboard should cover agreements or action items");
+            assert!(
+                lower.contains("dashboard"),
+                "{profile}: should include dashboard section"
+            );
+            assert!(
+                lower.contains("roles") && lower.contains("members"),
+                "{profile}: dashboard should cover roles and members"
+            );
+            assert!(
+                lower.contains("agreements") || lower.contains("action items"),
+                "{profile}: dashboard should cover agreements or action items"
+            );
         }
     }
 
@@ -1467,36 +2297,60 @@ mod tests {
     #[test]
     fn minty_profile_design_skill_exists() {
         let path = minty_skill_path();
-        assert!(path.exists(), "minty/.claude/skills/profile-design/SKILL.md should exist in source tree");
+        assert!(
+            path.exists(),
+            "minty/.claude/skills/profile-design/SKILL.md should exist in source tree"
+        );
     }
 
     #[test]
     fn minty_profile_design_skill_has_valid_frontmatter() {
         let content = std::fs::read_to_string(minty_skill_path()).unwrap();
-        assert!(content.starts_with("---"), "SKILL.md should start with YAML frontmatter delimiter");
+        assert!(
+            content.starts_with("---"),
+            "SKILL.md should start with YAML frontmatter delimiter"
+        );
 
-        let end = content[3..].find("---").expect("SKILL.md should have closing frontmatter delimiter");
+        let end = content[3..]
+            .find("---")
+            .expect("SKILL.md should have closing frontmatter delimiter");
         let frontmatter = &content[3..3 + end];
 
-        assert!(frontmatter.contains("name: profile-design"), "frontmatter should have name: profile-design");
-        assert!(frontmatter.contains("description:"), "frontmatter should have description field");
+        assert!(
+            frontmatter.contains("name: profile-design"),
+            "frontmatter should have name: profile-design"
+        );
+        assert!(
+            frontmatter.contains("description:"),
+            "frontmatter should have description field"
+        );
 
         // Extract description content (multi-line YAML scalar)
         let desc_start = frontmatter.find("description:").unwrap();
         let desc_section = &frontmatter[desc_start..];
         // Find next top-level key or end
-        let desc_end = desc_section[12..].find("\nmetadata:")
+        let desc_end = desc_section[12..]
+            .find("\nmetadata:")
             .or_else(|| desc_section[12..].find("\nlicense:"))
             .unwrap_or(desc_section.len() - 12);
         let description = &desc_section[12..12 + desc_end];
         // Strip YAML block scalar indicators (>-, |-, etc.) before checking content
-        let desc_flat: String = description.lines()
+        let desc_flat: String = description
+            .lines()
             .map(|l| l.trim())
             .filter(|l| *l != ">-" && *l != "|-" && *l != ">" && *l != "|")
-            .collect::<Vec<_>>().join(" ");
+            .collect::<Vec<_>>()
+            .join(" ");
 
-        assert!(desc_flat.len() < 1024, "description should be under 1024 characters, got {}", desc_flat.len());
-        assert!(!desc_flat.contains('<') && !desc_flat.contains('>'), "description must not contain XML angle brackets");
+        assert!(
+            desc_flat.len() < 1024,
+            "description should be under 1024 characters, got {}",
+            desc_flat.len()
+        );
+        assert!(
+            !desc_flat.contains('<') && !desc_flat.contains('>'),
+            "description must not contain XML angle brackets"
+        );
         assert!(
             desc_flat.to_lowercase().contains("use when"),
             "description should include 'Use when' trigger phrase"
@@ -1507,7 +2361,10 @@ mod tests {
     fn minty_profile_design_skill_no_readme() {
         let readme_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../minty/.claude/skills/profile-design/README.md");
-        assert!(!readme_path.exists(), "No README.md should exist in the profile-design skill folder");
+        assert!(
+            !readme_path.exists(),
+            "No README.md should exist in the profile-design skill folder"
+        );
     }
 
     #[test]
@@ -1516,7 +2373,10 @@ mod tests {
         let end_of_frontmatter = content[3..].find("---").unwrap() + 3 + 3;
         let body = &content[end_of_frontmatter..];
         let word_count = body.split_whitespace().count();
-        assert!(word_count < 5000, "SKILL.md body should be under 5000 words, got {word_count}");
+        assert!(
+            word_count < 5000,
+            "SKILL.md body should be under 5000 words, got {word_count}"
+        );
     }
 
     #[test]
@@ -1525,11 +2385,23 @@ mod tests {
         let lower = content.to_lowercase();
 
         assert!(lower.contains("browse"), "should cover browse operation");
-        assert!(lower.contains("role") && lower.contains("design"), "should cover role design operation");
-        assert!(lower.contains("process") && lower.contains("design"), "should cover process design operation");
-        assert!(lower.contains("hat") && lower.contains("design"), "should cover hat design operation");
+        assert!(
+            lower.contains("role") && lower.contains("design"),
+            "should cover role design operation"
+        );
+        assert!(
+            lower.contains("process") && lower.contains("design"),
+            "should cover process design operation"
+        );
+        assert!(
+            lower.contains("hat") && lower.contains("design"),
+            "should cover hat design operation"
+        );
         assert!(lower.contains("fork"), "should cover fork operation");
-        assert!(lower.contains("troubleshoot"), "should cover troubleshoot operation");
+        assert!(
+            lower.contains("troubleshoot"),
+            "should cover troubleshoot operation"
+        );
     }
 
     #[test]
@@ -1537,10 +2409,22 @@ mod tests {
         let content = std::fs::read_to_string(minty_skill_path()).unwrap();
         let lower = content.to_lowercase();
 
-        assert!(lower.contains("validation"), "should include validation section");
-        assert!(lower.contains("statuses") || lower.contains("status"), "validation should check statuses");
-        assert!(lower.contains("hat trigger") || lower.contains("triggers"), "validation should check hat triggers");
-        assert!(lower.contains("skeleton") || lower.contains("prompt.md"), "validation should check skeleton files");
+        assert!(
+            lower.contains("validation"),
+            "should include validation section"
+        );
+        assert!(
+            lower.contains("statuses") || lower.contains("status"),
+            "validation should check statuses"
+        );
+        assert!(
+            lower.contains("hat trigger") || lower.contains("triggers"),
+            "validation should check hat triggers"
+        );
+        assert!(
+            lower.contains("skeleton") || lower.contains("prompt.md"),
+            "validation should check skeleton files"
+        );
     }
 
     #[test]
@@ -1548,9 +2432,18 @@ mod tests {
         let content = std::fs::read_to_string(minty_skill_path()).unwrap();
         let lower = content.to_lowercase();
 
-        assert!(lower.contains("troubleshoot"), "should include troubleshooting section");
-        assert!(lower.contains("diagnostic") || lower.contains("diagnose"), "should include diagnostic procedures");
-        assert!(lower.contains("symptom") || lower.contains("common issues"), "should describe symptoms or common issues");
+        assert!(
+            lower.contains("troubleshoot"),
+            "should include troubleshooting section"
+        );
+        assert!(
+            lower.contains("diagnostic") || lower.contains("diagnose"),
+            "should include diagnostic procedures"
+        );
+        assert!(
+            lower.contains("symptom") || lower.contains("common issues"),
+            "should describe symptoms or common issues"
+        );
     }
 
     #[test]

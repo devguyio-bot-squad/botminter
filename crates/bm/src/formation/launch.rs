@@ -68,9 +68,9 @@ pub fn launch_ralph(
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
 
-    let child = cmd.spawn().with_context(|| {
-        format!("Failed to spawn ralph in {}", workspace.display())
-    })?;
+    let child = cmd
+        .spawn()
+        .with_context(|| format!("Failed to spawn ralph in {}", workspace.display()))?;
 
     let pid = child.id();
     reap_child(child);
@@ -97,19 +97,15 @@ pub struct BrainLaunchConfig<'a> {
 /// Spawns `bm brain-run` as a background process, which runs the multiplexer
 /// event loop (ACP session + event watcher + heartbeat). Returns the child PID.
 pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
-    let bm_binary = std::env::current_exe()
-        .context("Failed to determine bm binary path")?;
+    let bm_binary = std::env::current_exe().context("Failed to determine bm binary path")?;
 
     let mut cmd = Command::new(&bm_binary);
-    cmd.args([
-        "brain-run",
-        "--workspace",
-    ])
-    .arg(config.workspace)
-    .arg("--system-prompt")
-    .arg(config.system_prompt_path)
-    .current_dir(config.workspace)
-    .env_remove("CLAUDECODE");
+    cmd.args(["brain-run", "--workspace"])
+        .arg(config.workspace)
+        .arg("--system-prompt")
+        .arg(config.system_prompt_path)
+        .current_dir(config.workspace)
+        .env_remove("CLAUDECODE");
 
     // App-credential members use GH_CONFIG_DIR (daemon-managed hosts.yml).
     // Members without App creds rely on the host's `gh auth` session.
@@ -158,8 +154,12 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
 
     // Detach from current process group — redirect stderr to log file for diagnostics.
     let log_path = config.workspace.join("brain-stderr.log");
-    let log_file = std::fs::File::create(&log_path)
-        .with_context(|| format!("Failed to create brain stderr log at {}", log_path.display()))?;
+    let log_file = std::fs::File::create(&log_path).with_context(|| {
+        format!(
+            "Failed to create brain stderr log at {}",
+            log_path.display()
+        )
+    })?;
     cmd.stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::from(log_file));
@@ -213,8 +213,8 @@ pub fn check_robot_enabled_mismatch(
         .and_then(|r| r.get("enabled"))
         .and_then(|e| e.as_bool())
     {
-        Some(false) => true,  // Mismatch: has cred but disabled
-        _ => false,           // Either enabled or not set at all
+        Some(false) => true, // Mismatch: has cred but disabled
+        _ => false,          // Either enabled or not set at all
     }
 }
 
@@ -233,8 +233,14 @@ mod tests {
         // via resolve_credential_from_store() in the member loop.
 
         // Verify launch_ralph compiles with bridge-type-aware parameters + gh_config_dir
-        let _: fn(&std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32> =
-            launch_ralph;
+        #[allow(clippy::type_complexity)]
+        let _: fn(
+            &std::path::Path,
+            Option<&str>,
+            Option<&str>,
+            Option<&str>,
+            Option<&std::path::Path>,
+        ) -> Result<u32> = launch_ralph;
     }
 
     #[test]

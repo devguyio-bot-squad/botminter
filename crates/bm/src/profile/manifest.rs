@@ -167,13 +167,34 @@ mod tests {
 
     fn sample_statuses() -> Vec<StatusDef> {
         vec![
-            StatusDef { name: "po:triage".into(), description: "".into() },
-            StatusDef { name: "po:backlog".into(), description: "".into() },
-            StatusDef { name: "arch:design".into(), description: "".into() },
-            StatusDef { name: "arch:plan".into(), description: "".into() },
-            StatusDef { name: "dev:implement".into(), description: "".into() },
-            StatusDef { name: "done".into(), description: "".into() },
-            StatusDef { name: "error".into(), description: "".into() },
+            StatusDef {
+                name: "po:triage".into(),
+                description: "".into(),
+            },
+            StatusDef {
+                name: "po:backlog".into(),
+                description: "".into(),
+            },
+            StatusDef {
+                name: "arch:design".into(),
+                description: "".into(),
+            },
+            StatusDef {
+                name: "arch:plan".into(),
+                description: "".into(),
+            },
+            StatusDef {
+                name: "dev:implement".into(),
+                description: "".into(),
+            },
+            StatusDef {
+                name: "done".into(),
+                description: "".into(),
+            },
+            StatusDef {
+                name: "error".into(),
+                description: "".into(),
+            },
         ]
     }
 
@@ -196,7 +217,10 @@ mod tests {
             also_include: vec![],
         };
         let resolved = view.resolve_statuses(&sample_statuses());
-        assert_eq!(resolved, vec!["po:triage", "po:backlog", "arch:design", "arch:plan"]);
+        assert_eq!(
+            resolved,
+            vec!["po:triage", "po:backlog", "arch:design", "arch:plan"]
+        );
     }
 
     #[test]

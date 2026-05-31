@@ -22,13 +22,14 @@ fn main() {
         profiles_src
     };
 
-    let profiles_dir = fs::canonicalize(&profiles_dir)
-        .unwrap_or_else(|e| panic!("Failed to canonicalize profiles dir {:?}: {}", profiles_dir, e));
+    let profiles_dir = fs::canonicalize(&profiles_dir).unwrap_or_else(|e| {
+        panic!(
+            "Failed to canonicalize profiles dir {:?}: {}",
+            profiles_dir, e
+        )
+    });
 
-    println!(
-        "cargo:rustc-env=BM_PROFILES_DIR={}",
-        profiles_dir.display()
-    );
+    println!("cargo:rustc-env=BM_PROFILES_DIR={}", profiles_dir.display());
     println!("cargo:rerun-if-changed=../../profiles");
 
     emit_git_version(&manifest_dir);
@@ -55,10 +56,7 @@ fn emit_git_version(manifest_dir: &Path) {
         .current_dir(&repo_root)
         .output()
         .is_ok_and(|o| {
-            o.status.success()
-                && String::from_utf8_lossy(&o.stdout)
-                    .trim()
-                    .starts_with('v')
+            o.status.success() && String::from_utf8_lossy(&o.stdout).trim().starts_with('v')
         });
 
     if is_release_tag {
@@ -113,9 +111,9 @@ fn strip_bridges(manifest_path: &Path) {
     while i < lines.len() {
         let line = lines[i];
         // Check if this is a bridge entry to strip: "  - name: <bridge>"
-        let should_strip = STRIPPED_BRIDGES.iter().any(|b| {
-            line.trim() == format!("- name: {}", b)
-        });
+        let should_strip = STRIPPED_BRIDGES
+            .iter()
+            .any(|b| line.trim() == format!("- name: {}", b));
 
         if should_strip {
             // Skip this line and all indented lines that follow (display_name, description, type)

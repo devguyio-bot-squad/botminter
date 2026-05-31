@@ -1,7 +1,9 @@
 use std::fmt::Write;
 
 use anyhow::Result;
-use comfy_table::{ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
+use comfy_table::{
+    modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, ContentArrangement, Table,
+};
 
 use crate::bridge;
 use crate::config;
@@ -45,8 +47,15 @@ pub fn show(name: Option<&str>, team_flag: Option<&str>) -> Result<()> {
         println!("GitHub: {}", team.github_repo);
     }
     if let Some(number) = team.project_number {
-        let owner = team.github_repo.split('/').next().unwrap_or(&team.github_repo);
-        println!("Board: https://github.com/orgs/{}/projects/{}", owner, number);
+        let owner = team
+            .github_repo
+            .split('/')
+            .next()
+            .unwrap_or(&team.github_repo);
+        println!(
+            "Board: https://github.com/orgs/{}/projects/{}",
+            owner, number
+        );
     }
     println!("Path: {}", team.path.display());
     println!("Default: {}", if is_default { "yes" } else { "no" });

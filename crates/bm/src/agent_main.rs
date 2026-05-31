@@ -2,7 +2,10 @@ use std::process;
 
 use clap::Parser;
 
-use bm::agent_cli::{AgentCli, AgentCommand, ClaudeCommand, ClaudeHookCommand, InboxCommand, InboxFormat, LoopCommand};
+use bm::agent_cli::{
+    AgentCli, AgentCommand, ClaudeCommand, ClaudeHookCommand, InboxCommand, InboxFormat,
+    LoopCommand,
+};
 use bm::brain::inbox;
 use bm::daemon::{DaemonClient, StartLoopRequest};
 
@@ -23,8 +26,9 @@ fn main() {
 
 fn run_inbox(command: InboxCommand) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let root = inbox::discover_workspace_root(&cwd)
-        .ok_or_else(|| anyhow::anyhow!("Not in a BotMinter workspace (no .botminter.workspace found)"))?;
+    let root = inbox::discover_workspace_root(&cwd).ok_or_else(|| {
+        anyhow::anyhow!("Not in a BotMinter workspace (no .botminter.workspace found)")
+    })?;
     let path = inbox::inbox_path(&root);
 
     match command {
@@ -113,8 +117,7 @@ fn run_claude_hook(command: ClaudeHookCommand) -> anyhow::Result<()> {
 /// Without this, the brain tends to run background tools and then keep
 /// making more tool calls without ever sending a text response to the
 /// chat, leaving the user waiting indefinitely.
-const POST_TOOL_NUDGE: &str =
-    "If the user is waiting for a response, respond to them now.";
+const POST_TOOL_NUDGE: &str = "If the user is waiting for a response, respond to them now.";
 
 fn try_post_tool_use() -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;

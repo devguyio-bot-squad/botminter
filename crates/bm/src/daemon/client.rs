@@ -400,9 +400,6 @@ fn load_daemon_config(paths: &DaemonPaths) -> Result<DaemonConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::daemon::api::{
-        MemberLaunchedInfo, MemberSkippedInfo, MemberStatusInfo, MemberStoppedInfo,
-    };
 
     #[test]
     fn load_daemon_config_missing_file() {

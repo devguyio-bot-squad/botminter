@@ -90,11 +90,7 @@ pub struct RalphMemberInfo {
 // ---------------------------------------------------------------------------
 
 /// Gathers all status dashboard data. Cleans up crashed entries as a side effect.
-pub fn gather_status(
-    team: &TeamEntry,
-    cfg: &BotminterConfig,
-    verbose: bool,
-) -> Result<StatusInfo> {
+pub fn gather_status(team: &TeamEntry, cfg: &BotminterConfig, verbose: bool) -> Result<StatusInfo> {
     let team_repo = team.path.join("team");
     let team_name = &team.name;
 
@@ -158,11 +154,7 @@ pub fn gather_status(
 
     // Verbose
     let verbose_display = if verbose {
-        Some(gather_verbose(
-            &member_dirs,
-            &team.path,
-            team_name,
-        )?)
+        Some(gather_verbose(&member_dirs, &team.path, team_name)?)
     } else {
         None
     };
@@ -187,10 +179,7 @@ fn gather_daemon_info(team_name: &str) -> Option<DaemonDisplay> {
     match daemon::query_status(team_name) {
         Ok(daemon::DaemonStatusInfo::Running { pid, config }) => Some(DaemonDisplay {
             pid,
-            mode: config
-                .as_ref()
-                .map(|c| c.mode.clone())
-                .unwrap_or_default(),
+            mode: config.as_ref().map(|c| c.mode.clone()).unwrap_or_default(),
             port: config.as_ref().map(|c| c.port).unwrap_or(0),
             interval_secs: config.as_ref().map(|c| c.interval_secs).unwrap_or(0),
         }),

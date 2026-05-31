@@ -179,11 +179,9 @@ pub(super) async fn start_members_handler(
             let paths_for_refresh = Arc::clone(&state.paths);
 
             for member in &start_result.launched {
-                if let Ok(cached) = cache_app_credentials(
-                    &team_name_for_cache,
-                    &member.name,
-                    &member.pid,
-                ) {
+                if let Ok(cached) =
+                    cache_app_credentials(&team_name_for_cache, &member.name, &member.pid)
+                {
                     let member_name = member.name.clone();
                     app_creds
                         .lock()
@@ -340,7 +338,10 @@ async fn run_token_refresh_loop(
             daemon_log(
                 paths,
                 "INFO",
-                &format!("Token refresh loop stopping for member '{}'", creds.member_name),
+                &format!(
+                    "Token refresh loop stopping for member '{}'",
+                    creds.member_name
+                ),
             );
             break;
         }
@@ -406,7 +407,10 @@ async fn run_token_refresh_loop(
                     daemon_log(
                         paths,
                         "ERROR",
-                        &format!("Token refresh task panicked for '{}': {}", creds.member_name, e),
+                        &format!(
+                            "Token refresh task panicked for '{}': {}",
+                            creds.member_name, e
+                        ),
                     );
                     return; // Unrecoverable — exit
                 }
@@ -470,12 +474,7 @@ pub(super) async fn stop_members_handler(
     let team_entry = Arc::clone(&state.team_entry);
 
     let result = tokio::task::spawn_blocking(move || {
-        formation::stop_local_members(
-            &team_entry,
-            &cfg,
-            req.member.as_deref(),
-            req.force,
-        )
+        formation::stop_local_members(&team_entry, &cfg, req.member.as_deref(), req.force)
     })
     .await;
 
@@ -533,9 +532,7 @@ pub(super) async fn stop_members_handler(
 }
 
 /// GET /api/members — returns member status.
-pub(super) async fn list_members_handler(
-    State(state): State<DaemonState>,
-) -> impl IntoResponse {
+pub(super) async fn list_members_handler(State(state): State<DaemonState>) -> impl IntoResponse {
     let team_name = state.team_name.clone();
 
     let result = tokio::task::spawn_blocking(move || {
@@ -547,10 +544,7 @@ pub(super) async fn list_members_handler(
             .iter()
             .filter(|(key, _)| key.starts_with(&team_prefix))
             .map(|(key, rt)| {
-                let name = key
-                    .strip_prefix(&team_prefix)
-                    .unwrap_or(key)
-                    .to_string();
+                let name = key.strip_prefix(&team_prefix).unwrap_or(key).to_string();
                 let alive = state::is_alive(rt.pid);
                 MemberStatusInfo {
                     name,
@@ -606,9 +600,7 @@ pub(super) async fn list_members_handler(
 }
 
 /// GET /api/health — enhanced health check with daemon metadata.
-pub(super) async fn health_check_handler(
-    State(state): State<DaemonState>,
-) -> impl IntoResponse {
+pub(super) async fn health_check_handler(State(state): State<DaemonState>) -> impl IntoResponse {
     let team_name = state.team_name.clone();
     let mode = state.mode.clone();
     let started_at = state.started_at;
@@ -674,9 +666,7 @@ pub(super) async fn start_loop_handler(
     .await;
 
     match result {
-        Ok(Ok(resp)) => {
-            (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response()
-        }
+        Ok(Ok(resp)) => (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response(),
         Ok(Err(e)) => {
             daemon_log(&paths, "ERROR", &format!("API start loop failed: {}", e));
             let resp = StartLoopResponse {
@@ -742,12 +732,11 @@ fn start_loop_blocking(
 
     // Resolve App credentials for the member (same path as member start)
     let local_formation = crate::formation::local::create_local_formation(team_name)?;
-    let app_cred_store = local_formation.credential_store(
-        crate::formation::CredentialDomain::GitHubApp {
+    let app_cred_store =
+        local_formation.credential_store(crate::formation::CredentialDomain::GitHubApp {
             team_name: team_name.to_string(),
             member_name: String::new(),
-        },
-    )?;
+        })?;
     let gh_config_dir = match crate::formation::start_members::resolve_app_credentials_and_deliver(
         app_cred_store.as_ref(),
         local_formation.as_ref(),
@@ -777,9 +766,9 @@ fn start_loop_blocking(
         cmd.env_remove("GITHUB_TOKEN");
     }
 
-    let child = cmd.spawn().with_context(|| {
-        format!("Failed to spawn ralph loop in {}", ws.display())
-    })?;
+    let child = cmd
+        .spawn()
+        .with_context(|| format!("Failed to spawn ralph loop in {}", ws.display()))?;
 
     let pid = child.id();
     crate::formation::reap_child(child);
@@ -929,9 +918,7 @@ mod tests {
 
     #[test]
     fn members_status_with_no_members() {
-        let resp = MembersStatusResponse {
-            members: vec![],
-        };
+        let resp = MembersStatusResponse { members: vec![] };
         let json = serde_json::to_value(&resp).unwrap();
         assert!(json["members"].as_array().unwrap().is_empty());
     }

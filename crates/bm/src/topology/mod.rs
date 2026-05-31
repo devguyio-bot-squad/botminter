@@ -144,7 +144,10 @@ mod tests {
         match &member.endpoint {
             Endpoint::Local { pid, workspace } => {
                 assert_eq!(*pid, 12345);
-                assert_eq!(workspace, &PathBuf::from("/tmp/ws/architect-alice/my-project"));
+                assert_eq!(
+                    workspace,
+                    &PathBuf::from("/tmp/ws/architect-alice/my-project")
+                );
             }
             other => panic!("Expected Local endpoint, got {:?}", other),
         }
@@ -235,7 +238,10 @@ mod tests {
     fn topology_path_construction() {
         let workzone = Path::new("/home/user/workzone");
         let result = topology_path(workzone, "my-team");
-        assert_eq!(result, PathBuf::from("/home/user/workzone/my-team/topology.json"));
+        assert_eq!(
+            result,
+            PathBuf::from("/home/user/workzone/my-team/topology.json")
+        );
     }
 
     #[test]

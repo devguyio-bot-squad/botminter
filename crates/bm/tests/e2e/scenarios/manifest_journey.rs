@@ -60,13 +60,19 @@ fn setup_fn(
         let workzone = env.home.join("workspaces");
         env.command("bm")
             .args([
-                "init", "--non-interactive",
-                "--profile", PROFILE,
-                "--team-name", TEAM_NAME,
-                "--org", "test-org",
-                "--repo", "test-repo",
+                "init",
+                "--non-interactive",
+                "--profile",
+                PROFILE,
+                "--team-name",
+                TEAM_NAME,
+                "--org",
+                "test-org",
+                "--repo",
+                "test-repo",
                 "--skip-github",
-                "--workzone", &workzone.to_string_lossy(),
+                "--workzone",
+                &workzone.to_string_lossy(),
             ])
             .run();
         eprintln!("  team created locally");
@@ -83,9 +89,7 @@ fn hire_fn(
         // Spawn `bm hire` as a background process — it blocks on the manifest flow.
         // No --reuse-app: this exercises the interactive manifest flow.
         let mut child = Command::new(bm_bin)
-            .args([
-                "hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME,
-            ])
+            .args(["hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME])
             .envs(env.resolved_env("bm"))
             .env("BM_GITHUB_API_BASE", &mock_base)
             .env("BM_GITHUB_WEB_BASE", &mock_base)
@@ -132,7 +136,10 @@ fn hire_fn(
             .unwrap();
 
         let body = retry_get(&http, &start_url, 20);
-        assert!(body.contains("manifest-form"), "/start should contain the form");
+        assert!(
+            body.contains("manifest-form"),
+            "/start should contain the form"
+        );
 
         // Parse form action and manifest from HTML
         let form_action = extract_attr(&body, "action");
@@ -145,9 +152,19 @@ fn hire_fn(
             .form(&[("manifest", &manifest)])
             .send()
             .unwrap();
-        assert!(resp.status().is_redirection(), "mock should redirect, got {}", resp.status());
+        assert!(
+            resp.status().is_redirection(),
+            "mock should redirect, got {}",
+            resp.status()
+        );
 
-        let callback_url = resp.headers().get("location").unwrap().to_str().unwrap().to_string();
+        let callback_url = resp
+            .headers()
+            .get("location")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
         eprintln!("  callback: {callback_url}");
 
         // Follow redirect to /callback (triggers code exchange with mock)
@@ -159,7 +176,10 @@ fn hire_fn(
         let stderr_lines = stderr_drain.join().unwrap_or_default();
         let full_stderr = stderr_lines.join("\n");
 
-        assert!(exit.success(), "bm hire should succeed. stderr:\n{full_stderr}");
+        assert!(
+            exit.success(),
+            "bm hire should succeed. stderr:\n{full_stderr}"
+        );
         assert!(
             full_stderr.contains("GitHub App created and installed successfully")
                 || full_stderr.contains("credentials stored"),

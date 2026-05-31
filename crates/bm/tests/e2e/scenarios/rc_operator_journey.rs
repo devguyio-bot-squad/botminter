@@ -9,10 +9,7 @@ use std::fs;
 
 use libtest_mimic::Trial;
 
-use super::super::helpers::{
-    cleanup_project_boards, find_free_port,
-    E2eConfig, GithubSuite,
-};
+use super::super::helpers::{cleanup_project_boards, find_free_port, E2eConfig, GithubSuite};
 use super::super::rocketchat::RcPodGuard;
 use super::super::telegram;
 use super::super::test_env::TestEnv;
@@ -33,7 +30,12 @@ fn init_with_rc_bridge_fn(
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let workzone = env.home.join("workspaces");
-        let repo_name = env.repo_full_name.split('/').next_back().unwrap().to_string();
+        let repo_name = env
+            .repo_full_name
+            .split('/')
+            .next_back()
+            .unwrap()
+            .to_string();
         let board_title = format!("{} Board", TEAM_NAME);
 
         env.command("bm")
@@ -94,14 +96,24 @@ fn hire_member_fn(
     app_private_key_file: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args([
-                "hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME,
+                "hire",
+                ROLE,
+                "--name",
+                MEMBER_NAME,
+                "-t",
+                TEAM_NAME,
                 "--reuse-app",
-                "--app-id", &app_id,
-                "--client-id", &app_client_id,
-                "--private-key-file", &app_private_key_file,
-                "--installation-id", &app_installation_id,
+                "--app-id",
+                &app_id,
+                "--client-id",
+                &app_client_id,
+                "--private-key-file",
+                &app_private_key_file,
+                "--installation-id",
+                &app_installation_id,
             ])
             .run();
         assert!(
@@ -163,10 +175,14 @@ fn bridge_start_idempotent_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let port = env.get_export("rc_port").expect("rc_port not set").to_string();
+        let port = env
+            .get_export("rc_port")
+            .expect("rc_port not set")
+            .to_string();
 
         // Bridge is already running from the previous step. Starting again should skip.
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args(["bridge", "start", "-t", TEAM_NAME])
             .env("RC_PORT", &port)
             .run();
@@ -182,9 +198,13 @@ fn identity_add_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let port = env.get_export("rc_port").expect("rc_port not set").to_string();
+        let port = env
+            .get_export("rc_port")
+            .expect("rc_port not set")
+            .to_string();
 
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args(["bridge", "identity", "add", MEMBER_DIR, "-t", TEAM_NAME])
             .env("RC_PORT", &port)
             .run();
@@ -213,17 +233,13 @@ fn room_create_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let port = env.get_export("rc_port").expect("rc_port not set").to_string();
+        let port = env
+            .get_export("rc_port")
+            .expect("rc_port not set")
+            .to_string();
 
         env.command("bm")
-            .args([
-                "bridge",
-                "room",
-                "create",
-                "e2e-team",
-                "-t",
-                TEAM_NAME,
-            ])
+            .args(["bridge", "room", "create", "e2e-team", "-t", TEAM_NAME])
             .env("RC_PORT", &port)
             .run();
 
@@ -247,7 +263,10 @@ fn sync_bridge_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let port = env.get_export("rc_port").expect("rc_port not set").to_string();
+        let port = env
+            .get_export("rc_port")
+            .expect("rc_port not set")
+            .to_string();
 
         env.command("bm")
             .args(["teams", "sync", "--bridge", "-t", TEAM_NAME])
@@ -259,11 +278,7 @@ fn sync_bridge_fn(
             .run();
 
         // Verify workspace was created and ralph.yml has RObot.rocketchat config
-        let ws = env
-            .home
-            .join("workspaces")
-            .join(TEAM_NAME)
-            .join(MEMBER_DIR);
+        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
         assert!(
             ws.join(".botminter.workspace").exists(),
             "workspace should have marker file"
@@ -273,8 +288,7 @@ fn sync_bridge_fn(
         assert!(ralph_yml_path.exists(), "ralph.yml should exist");
 
         let ralph_contents = fs::read_to_string(&ralph_yml_path).unwrap();
-        let ralph_doc: serde_yml::Value =
-            serde_yml::from_str(&ralph_contents).unwrap();
+        let ralph_doc: serde_yml::Value = serde_yml::from_str(&ralph_contents).unwrap();
 
         assert_eq!(
             ralph_doc["RObot"]["enabled"].as_bool(),
@@ -312,7 +326,8 @@ fn bridge_health_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args(["bridge", "status", "-t", TEAM_NAME])
             .run();
         assert!(
@@ -326,7 +341,10 @@ fn bridge_stop_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let port = env.get_export("rc_port").expect("rc_port not set").to_string();
+        let port = env
+            .get_export("rc_port")
+            .expect("rc_port not set")
+            .to_string();
 
         env.command("bm")
             .args(["bridge", "stop", "-t", TEAM_NAME])
@@ -334,8 +352,13 @@ fn bridge_stop_fn(
             .run();
 
         // Recreate guard from saved state, then consume it to prevent Drop cleanup
-        let guard_name = env.get_export("rc_guard_name").expect("rc_guard_name not set").to_string();
-        let guard_port: u16 = env.get_export("rc_guard_port").expect("rc_guard_port not set")
+        let guard_name = env
+            .get_export("rc_guard_name")
+            .expect("rc_guard_name not set")
+            .to_string();
+        let guard_port: u16 = env
+            .get_export("rc_guard_port")
+            .expect("rc_guard_port not set")
             .parse()
             .unwrap();
         let guard = RcPodGuard::from_existing(guard_name, guard_port);
@@ -384,9 +407,21 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
             "01_init_with_rc_bridge",
             init_with_rc_bridge_fn(gh_org.clone(), gh_token.clone()),
         )
-        .case("02_hire_member", hire_member_fn(gh_token.clone(), app_id.clone(), app_client_id.clone(), app_installation_id.clone(), app_private_key_file.clone()))
+        .case(
+            "02_hire_member",
+            hire_member_fn(
+                gh_token.clone(),
+                app_id.clone(),
+                app_client_id.clone(),
+                app_installation_id.clone(),
+                app_private_key_file.clone(),
+            ),
+        )
         .case("03_bridge_start", bridge_start_fn(gh_token.clone()))
-        .case("03b_bridge_start_idempotent", bridge_start_idempotent_fn(gh_token.clone()))
+        .case(
+            "03b_bridge_start_idempotent",
+            bridge_start_idempotent_fn(gh_token.clone()),
+        )
         .case("04_identity_add", identity_add_fn(gh_token.clone()))
         .case("05_room_create", room_create_fn(gh_token.clone()))
         .case("06_sync_bridge", sync_bridge_fn(gh_token.clone()))
@@ -401,27 +436,26 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
 
                 // Force-remove RC pod if it's still around
                 let pod_name = format!("bm-rc-{}", TEAM_NAME);
-                let _ = env.command("podman")
+                let _ = env
+                    .command("podman")
                     .args(["pod", "rm", "-f", &pod_name])
                     .output();
 
                 // Delete team repo
-                let _ = env.command("gh")
+                let _ = env
+                    .command("gh")
                     .args(["repo", "delete", &env.repo_full_name, "--yes"])
                     .output();
 
                 // Delete workspace repo
                 let ws_repo = format!("{}/{}-{}", gh_org_c, TEAM_NAME, MEMBER_DIR);
-                let _ = env.command("gh")
+                let _ = env
+                    .command("gh")
                     .args(["repo", "delete", &ws_repo, "--yes"])
                     .output();
 
                 // Clean up project boards
-                cleanup_project_boards(
-                    &gh_org_c,
-                    &gh_token_c,
-                    TEAM_NAME,
-                );
+                cleanup_project_boards(&gh_org_c, &gh_token_c, TEAM_NAME);
             }
         })
         // Group bridge start through stop as atomic (cases 2-7, 0-indexed)

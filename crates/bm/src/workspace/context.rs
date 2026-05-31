@@ -130,10 +130,8 @@ fn inject_section_with_markers(
     start_marker: &str,
     end_marker: &str,
 ) -> String {
-    if let (Some(start_idx), Some(end_idx)) = (
-        content.find(start_marker),
-        content.find(end_marker),
-    ) {
+    if let (Some(start_idx), Some(end_idx)) = (content.find(start_marker), content.find(end_marker))
+    {
         let before = content[..start_idx].trim_end();
         let after_end = end_idx + end_marker.len();
         let after = content[after_end..].trim_start_matches('\n');
@@ -223,8 +221,7 @@ pub fn inject_project_skill_dirs(ralph_yml_path: &Path, projects: &[&str]) -> Re
     if !ralph_yml_path.exists() {
         return Ok(());
     }
-    let content = fs::read_to_string(ralph_yml_path)
-        .context("Failed to read ralph.yml")?;
+    let content = fs::read_to_string(ralph_yml_path).context("Failed to read ralph.yml")?;
 
     if !content.contains(PROJECT_SKILL_DIRS_START) {
         return Ok(());
@@ -242,10 +239,12 @@ pub fn inject_project_skill_dirs(ralph_yml_path: &Path, projects: &[&str]) -> Re
     );
 
     let new_content = inject_section_with_markers(
-        &content, &section, PROJECT_SKILL_DIRS_START, PROJECT_SKILL_DIRS_END,
+        &content,
+        &section,
+        PROJECT_SKILL_DIRS_START,
+        PROJECT_SKILL_DIRS_END,
     );
-    fs::write(ralph_yml_path, new_content)
-        .context("Failed to write ralph.yml")?;
+    fs::write(ralph_yml_path, new_content).context("Failed to write ralph.yml")?;
     Ok(())
 }
 
@@ -264,14 +263,16 @@ pub fn inject_project_sections(
     if !context_path.exists() {
         return Ok(());
     }
-    let mut content = fs::read_to_string(context_path)
-        .context("Failed to read context file")?;
+    let mut content = fs::read_to_string(context_path).context("Failed to read context file")?;
 
     // Workspace layout
     if content.contains(WORKSPACE_LAYOUT_START) {
         let section = render_workspace_layout(member_dir_name, projects);
         content = inject_section_with_markers(
-            &content, &section, WORKSPACE_LAYOUT_START, WORKSPACE_LAYOUT_END,
+            &content,
+            &section,
+            WORKSPACE_LAYOUT_START,
+            WORKSPACE_LAYOUT_END,
         );
     }
 
@@ -279,7 +280,10 @@ pub fn inject_project_sections(
     if content.contains(PROJECT_CONTEXT_START) {
         let section = render_project_context(projects);
         content = inject_section_with_markers(
-            &content, &section, PROJECT_CONTEXT_START, PROJECT_CONTEXT_END,
+            &content,
+            &section,
+            PROJECT_CONTEXT_START,
+            PROJECT_CONTEXT_END,
         );
     }
 
@@ -287,7 +291,10 @@ pub fn inject_project_sections(
     if content.contains(PROJECT_KNOWLEDGE_START) {
         let section = render_project_knowledge(projects, member_dir_name);
         content = inject_section_with_markers(
-            &content, &section, PROJECT_KNOWLEDGE_START, PROJECT_KNOWLEDGE_END,
+            &content,
+            &section,
+            PROJECT_KNOWLEDGE_START,
+            PROJECT_KNOWLEDGE_END,
         );
     }
 
@@ -295,12 +302,14 @@ pub fn inject_project_sections(
     if content.contains(PROJECT_INVARIANTS_START) {
         let section = render_project_invariants(projects);
         content = inject_section_with_markers(
-            &content, &section, PROJECT_INVARIANTS_START, PROJECT_INVARIANTS_END,
+            &content,
+            &section,
+            PROJECT_INVARIANTS_START,
+            PROJECT_INVARIANTS_END,
         );
     }
 
-    fs::write(context_path, content)
-        .context("Failed to write context file")?;
+    fs::write(context_path, content).context("Failed to write context file")?;
     Ok(())
 }
 
@@ -308,14 +317,23 @@ fn render_workspace_layout(member_dir_name: &str, projects: &[&str]) -> String {
     let mut tree = String::new();
     tree.push_str(&format!("{WORKSPACE_LAYOUT_START}\n"));
     tree.push_str("```\n");
-    tree.push_str(&format!("{}/               # Workspace (CWD)\n", member_dir_name));
+    tree.push_str(&format!(
+        "{}/               # Workspace (CWD)\n",
+        member_dir_name
+    ));
     tree.push_str("  team/                           # Team repo (submodule)\n");
     tree.push_str("    knowledge/, invariants/        # Team-level\n");
-    tree.push_str(&format!("    members/{}/           # Member config\n", member_dir_name));
+    tree.push_str(&format!(
+        "    members/{}/           # Member config\n",
+        member_dir_name
+    ));
     if !projects.is_empty() {
         tree.push_str("  projects/\n");
         for p in projects {
-            tree.push_str(&format!("    {}/                   # Project (submodule)\n", p));
+            tree.push_str(&format!(
+                "    {}/                   # Project (submodule)\n",
+                p
+            ));
         }
     }
     tree.push_str("  PROMPT.md\n");
@@ -349,7 +367,10 @@ fn render_project_knowledge(projects: &[&str], member_dir_name: &str) -> String 
     let mut s = String::new();
     s.push_str(&format!("{PROJECT_KNOWLEDGE_START}\n"));
     for p in projects {
-        s.push_str(&format!("| Project knowledge ({}) | `team/projects/{}/knowledge/` |\n", p, p));
+        s.push_str(&format!(
+            "| Project knowledge ({}) | `team/projects/{}/knowledge/` |\n",
+            p, p
+        ));
     }
     for p in projects {
         s.push_str(&format!(
@@ -365,7 +386,10 @@ fn render_project_invariants(projects: &[&str]) -> String {
     let mut s = String::new();
     s.push_str(&format!("{PROJECT_INVARIANTS_START}\n"));
     for p in projects {
-        s.push_str(&format!("| Project invariants ({}) | `team/projects/{}/invariants/` |\n", p, p));
+        s.push_str(&format!(
+            "| Project invariants ({}) | `team/projects/{}/invariants/` |\n",
+            p, p
+        ));
     }
     s.push_str(PROJECT_INVARIANTS_END);
     s
@@ -417,7 +441,8 @@ mod tests {
     #[test]
     fn inject_section_replaces_existing_markers() {
         let content = "# Header\n\n<!-- BM:WORKSPACE_CONTEXT -->\nold content\n<!-- /BM:WORKSPACE_CONTEXT -->\n";
-        let section = "<!-- BM:WORKSPACE_CONTEXT -->\nnew content\n<!-- /BM:WORKSPACE_CONTEXT -->\n";
+        let section =
+            "<!-- BM:WORKSPACE_CONTEXT -->\nnew content\n<!-- /BM:WORKSPACE_CONTEXT -->\n";
         let result = inject_section(content, section);
         assert!(result.contains("new content"));
         assert!(!result.contains("old content"));
@@ -436,7 +461,10 @@ mod tests {
 
         let first = inject_section(original, &section);
         let second = inject_section(&first, &section);
-        assert_eq!(first, second, "Re-injection should produce identical content");
+        assert_eq!(
+            first, second,
+            "Re-injection should produce identical content"
+        );
     }
 
     #[test]
@@ -541,7 +569,11 @@ mod tests {
 
         // Create context file and workspace marker
         fs::write(ws_root.join("CLAUDE.md"), "# My Context\n\nSome content.\n").unwrap();
-        fs::write(ws_root.join(".botminter.workspace"), "member: superman-bob\n").unwrap();
+        fs::write(
+            ws_root.join(".botminter.workspace"),
+            "member: superman-bob\n",
+        )
+        .unwrap();
 
         inject_workspace_context(
             ws_root,
@@ -604,7 +636,10 @@ mod tests {
         let (claude_1, marker_1) = run();
         let (claude_2, marker_2) = run();
 
-        assert_eq!(claude_1, claude_2, "CLAUDE.md should be identical after re-injection");
+        assert_eq!(
+            claude_1, claude_2,
+            "CLAUDE.md should be identical after re-injection"
+        );
         assert_eq!(
             marker_1, marker_2,
             ".botminter.workspace should be identical after re-injection"

@@ -17,9 +17,8 @@ pub fn list(team_flag: Option<&str>, scope_filter: Option<&str>) -> Result<()> {
     println!("Team: {} (schema {})", team.name, team_schema);
     println!();
 
-    let show_scope = |scope: &str| -> bool {
-        scope_filter.is_none() || scope_filter == Some(scope)
-    };
+    let show_scope =
+        |scope: &str| -> bool { scope_filter.is_none() || scope_filter == Some(scope) };
 
     if show_scope("team") {
         println!("Team scope:");
@@ -91,8 +90,8 @@ pub fn show(path: &str, team_flag: Option<&str>) -> Result<()> {
         bail!("File not found: {}", path);
     }
 
-    let contents = fs::read_to_string(&file_path)
-        .with_context(|| format!("Failed to read {}", path))?;
+    let contents =
+        fs::read_to_string(&file_path).with_context(|| format!("Failed to read {}", path))?;
     print!("{}", contents);
 
     Ok(())
@@ -159,9 +158,7 @@ mod tests {
 
     #[test]
     fn valid_project_invariant_path() {
-        assert!(
-            profile::validate_knowledge_path("projects/my-project/invariants/test.md").is_ok()
-        );
+        assert!(profile::validate_knowledge_path("projects/my-project/invariants/test.md").is_ok());
     }
 
     #[test]

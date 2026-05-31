@@ -42,16 +42,35 @@ pub enum TeamSyncEvent {
     NoMembers,
     GitPush,
     NoBridge,
-    BridgeAutoStart { name: String, result: bridge::BridgeStartResult },
-    BridgeAutoStartSkipped { reason: String },
-    BridgeProvisionMember { name: String, result: bridge::ProvisionMemberResult },
+    BridgeAutoStart {
+        name: String,
+        result: bridge::BridgeStartResult,
+    },
+    BridgeAutoStartSkipped {
+        reason: String,
+    },
+    BridgeProvisionMember {
+        name: String,
+        result: bridge::ProvisionMemberResult,
+    },
     BridgeRoomCreated(String),
     BridgeSaved,
     WorkspaceCreated(String),
-    WorkspaceSynced { name: String, events: Vec<workspace::SyncEvent> },
-    WorkspaceCreateFailed { name: String, error: String },
-    RobotInjected { member: String, enabled: bool },
-    BrainPromptSurfaced { member: String },
+    WorkspaceSynced {
+        name: String,
+        events: Vec<workspace::SyncEvent>,
+    },
+    WorkspaceCreateFailed {
+        name: String,
+        error: String,
+    },
+    RobotInjected {
+        member: String,
+        enabled: bool,
+    },
+    BrainPromptSurfaced {
+        member: String,
+    },
 }
 
 // ── Sync orchestration ──────────────────────────────────────────────
@@ -100,9 +119,7 @@ pub fn sync_team_workspaces(params: &TeamSyncParams) -> Result<TeamSyncResult> {
 
     // Build remote ops for push mode
     let gh_ops = if params.repos {
-        crate::git::detect_token().map(|token| GhRemoteOps {
-            gh_token: token,
-        })
+        crate::git::detect_token().map(|token| GhRemoteOps { gh_token: token })
     } else {
         None
     };
@@ -233,14 +250,14 @@ fn provision_bridge(
     bridge_members.sort_by(|a, b| a.name.cmp(&b.name));
 
     let bstate_path = bridge::state_path(params.workzone, params.team_name);
-    let mut b = Bridge::new(bdir.clone(), bstate_path.clone(), params.team_name.to_string())?;
+    let mut b = Bridge::new(
+        bdir.clone(),
+        bstate_path.clone(),
+        params.team_name.to_string(),
+    )?;
 
-    let cred_store = LocalCredentialStore::new(
-        params.team_name,
-        b.bridge_name(),
-        bstate_path,
-    )
-    .with_collection(params.keyring_collection.clone());
+    let cred_store = LocalCredentialStore::new(params.team_name, b.bridge_name(), bstate_path)
+        .with_collection(params.keyring_collection.clone());
 
     // Ensure local bridge is running before provisioning.
     // Always call start() — it's idempotent: health-checks first and
@@ -297,7 +314,11 @@ fn build_robot_context(
         None => return Ok(None),
     };
     let bstate_path = bridge::state_path(params.workzone, params.team_name);
-    let b = Bridge::new(bdir.clone(), bstate_path.clone(), params.team_name.to_string())?;
+    let b = Bridge::new(
+        bdir.clone(),
+        bstate_path.clone(),
+        params.team_name.to_string(),
+    )?;
     let store = LocalCredentialStore::new(params.team_name, b.bridge_name(), bstate_path)
         .with_collection(params.keyring_collection.clone());
     Ok(Some(RobotContext {
@@ -320,8 +341,7 @@ fn surface_brain_prompt_for_member(
         .map(|(org, repo)| (org.to_string(), repo.to_string()))
         .unwrap_or_default();
 
-    let role = brain::read_member_role(team_repo, member_dir_name)
-        .unwrap_or_default();
+    let role = brain::read_member_role(team_repo, member_dir_name).unwrap_or_default();
     let member_name = brain::read_member_name(team_repo, member_dir_name);
 
     // Read the template from the team repo root (extracted from profile)
@@ -364,8 +384,8 @@ fn inject_robot_for_member(
         return Ok(());
     }
 
-    let has_cred = bridge::resolve_credential_from_store(member_dir_name, &ctx.cred_store)?
-        .is_some();
+    let has_cred =
+        bridge::resolve_credential_from_store(member_dir_name, &ctx.cred_store)?.is_some();
 
     // Build bridge config for RC/tuwunel bridges
     let bridge_config = {
@@ -375,16 +395,8 @@ fn inject_robot_for_member(
                 .bridge
                 .member_user_id(member_dir_name)
                 .unwrap_or_default();
-            let room_id = ctx
-                .bridge
-                .default_room_id()
-                .unwrap_or_default()
-                .to_string();
-            let server_url = ctx
-                .bridge
-                .service_url()
-                .unwrap_or_default()
-                .to_string();
+            let room_id = ctx.bridge.default_room_id().unwrap_or_default().to_string();
+            let server_url = ctx.bridge.service_url().unwrap_or_default().to_string();
             let operator_id = params
                 .manifest
                 .operator

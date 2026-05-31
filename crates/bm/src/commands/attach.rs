@@ -38,11 +38,16 @@ pub fn run(team: Option<&str>) -> Result<()> {
         VmStatus::Running => {}
         VmStatus::Stopped(_) => {
             if std::io::stdin().is_terminal() {
-                let start: bool = cliclack::confirm(format!("VM '{}' is not running. Start it?", vm_name))
-                    .initial_value(true)
-                    .interact()?;
+                let start: bool =
+                    cliclack::confirm(format!("VM '{}' is not running. Start it?", vm_name))
+                        .initial_value(true)
+                        .interact()?;
                 if !start {
-                    bail!("VM '{}' is not running. Start it with `limactl start {}`.", vm_name, vm_name);
+                    bail!(
+                        "VM '{}' is not running. Start it with `limactl start {}`.",
+                        vm_name,
+                        vm_name
+                    );
                 }
             }
             eprintln!("Starting VM '{}'...", vm_name);
@@ -135,8 +140,12 @@ mod tests {
     fn resolve_vm_team_flag_with_vm() {
         let cfg = make_config(
             vec![
-                VmEntry { name: "vm-a".to_string() },
-                VmEntry { name: "vm-b".to_string() },
+                VmEntry {
+                    name: "vm-a".to_string(),
+                },
+                VmEntry {
+                    name: "vm-b".to_string(),
+                },
             ],
             vec![make_team("alpha", Some("vm-a"))],
             None,
@@ -162,8 +171,12 @@ mod tests {
     fn resolve_vm_default_team_with_vm() {
         let cfg = make_config(
             vec![
-                VmEntry { name: "vm-x".to_string() },
-                VmEntry { name: "vm-y".to_string() },
+                VmEntry {
+                    name: "vm-x".to_string(),
+                },
+                VmEntry {
+                    name: "vm-y".to_string(),
+                },
             ],
             vec![make_team("default-team", Some("vm-y"))],
             Some("default-team".to_string()),
@@ -176,8 +189,12 @@ mod tests {
     fn resolve_vm_multiple_vms_no_team_errors() {
         let cfg = make_config(
             vec![
-                VmEntry { name: "vm-1".to_string() },
-                VmEntry { name: "vm-2".to_string() },
+                VmEntry {
+                    name: "vm-1".to_string(),
+                },
+                VmEntry {
+                    name: "vm-2".to_string(),
+                },
             ],
             vec![],
             None,

@@ -76,7 +76,13 @@ impl TestEnv {
         let home_td = tempfile::tempdir().unwrap();
         let home = home_td.keep(); // keep() equivalent
 
-        let env = Self::build(home.clone(), gh_token, gh_org, repo_full_name, Ownership::Fresh(home.clone()));
+        let env = Self::build(
+            home.clone(),
+            gh_token,
+            gh_org,
+            repo_full_name,
+            Ownership::Fresh(home.clone()),
+        );
         env.clear(); // delete any stale snapshot
         env
     }
@@ -163,10 +169,7 @@ impl TestEnv {
             lines
         );
         let dbus_addr = lines[0].trim().to_string();
-        let dbus_pid: u32 = lines[1]
-            .trim()
-            .parse()
-            .expect("invalid dbus-daemon PID");
+        let dbus_pid: u32 = lines[1].trim().parse().expect("invalid dbus-daemon PID");
 
         // g. Start gnome-keyring-daemon on isolated D-Bus
         Self::start_keyring_daemon_with_env(&dbus_addr, &runtime_dir, &data_dir);
@@ -177,9 +180,15 @@ impl TestEnv {
         base.insert("GH_TOKEN".to_string(), gh_token.to_string());
         base.insert("PATH".to_string(), path);
         base.insert("GIT_AUTHOR_NAME".to_string(), "BM E2E".to_string());
-        base.insert("GIT_AUTHOR_EMAIL".to_string(), "e2e@botminter.test".to_string());
+        base.insert(
+            "GIT_AUTHOR_EMAIL".to_string(),
+            "e2e@botminter.test".to_string(),
+        );
         base.insert("GIT_COMMITTER_NAME".to_string(), "BM E2E".to_string());
-        base.insert("GIT_COMMITTER_EMAIL".to_string(), "e2e@botminter.test".to_string());
+        base.insert(
+            "GIT_COMMITTER_EMAIL".to_string(),
+            "e2e@botminter.test".to_string(),
+        );
         // No DBUS/XDG vars in base — commands inherit real values from originals.
         // Isolation is handled by BM_KEYRING_DBUS include for bm only.
 
@@ -399,8 +408,7 @@ impl TestEnv {
         // Re-bootstrap profiles
         let profiles_base = self.home.join(".config").join("botminter").join("profiles");
         fs::create_dir_all(&profiles_base).unwrap();
-        bm::profile::extract_embedded_to_disk(&profiles_base)
-            .expect("Failed to extract profiles");
+        bm::profile::extract_embedded_to_disk(&profiles_base).expect("Failed to extract profiles");
 
         // Re-setup git auth
         fs::write(
@@ -436,10 +444,14 @@ impl Drop for TestEnv {
                             if let Ok(pid_str) = fs::read_to_string(&path) {
                                 if let Ok(pid) = pid_str.trim().parse::<i32>() {
                                     eprintln!("  TestEnv: killing daemon PID {}", pid);
-                                    unsafe { libc::kill(pid, libc::SIGTERM); }
+                                    unsafe {
+                                        libc::kill(pid, libc::SIGTERM);
+                                    }
                                     // Brief wait for graceful shutdown
                                     std::thread::sleep(Duration::from_millis(500));
-                                    unsafe { libc::kill(pid, libc::SIGKILL); }
+                                    unsafe {
+                                        libc::kill(pid, libc::SIGKILL);
+                                    }
                                 }
                             }
                             let _ = fs::remove_file(&path);

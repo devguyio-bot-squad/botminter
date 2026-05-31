@@ -19,10 +19,7 @@ pub struct RobotBridgeConfig {
 /// Sets `RObot.enabled` in a ralph.yml file based on credential availability.
 ///
 /// Thin wrapper around `inject_robot_config` for backward compatibility.
-pub fn inject_robot_enabled(
-    ralph_yml_path: &Path,
-    member_has_credentials: bool,
-) -> Result<()> {
+pub fn inject_robot_enabled(ralph_yml_path: &Path, member_has_credentials: bool) -> Result<()> {
     inject_robot_config(ralph_yml_path, member_has_credentials, None, None)
 }
 
@@ -60,7 +57,11 @@ pub fn inject_robot_config(
 
     // Set RObot.enabled and timeout_seconds
     doc["RObot"]["enabled"] = serde_yml::Value::Bool(member_has_credentials);
-    if member_has_credentials && !doc["RObot"].get("timeout_seconds").is_some_and(|v| v.is_number()) {
+    if member_has_credentials
+        && !doc["RObot"]
+            .get("timeout_seconds")
+            .is_some_and(|v| v.is_number())
+    {
         doc["RObot"]["timeout_seconds"] = serde_yml::Value::Number(serde_yml::Number::from(600u64));
     }
 
@@ -68,7 +69,10 @@ pub fn inject_robot_config(
     if bridge_type == Some("rocketchat") && member_has_credentials {
         if let Some(config) = bridge_config {
             // Ensure RObot.rocketchat section exists
-            if !doc["RObot"].get("rocketchat").is_some_and(|v| v.is_mapping()) {
+            if !doc["RObot"]
+                .get("rocketchat")
+                .is_some_and(|v| v.is_mapping())
+            {
                 doc["RObot"]["rocketchat"] = serde_yml::Value::Mapping(serde_yml::Mapping::new());
             }
 
@@ -94,8 +98,7 @@ pub fn inject_robot_config(
 
             doc["RObot"]["matrix"]["bot_user_id"] =
                 serde_yml::Value::String(config.bot_user_id.clone());
-            doc["RObot"]["matrix"]["room_id"] =
-                serde_yml::Value::String(config.room_id.clone());
+            doc["RObot"]["matrix"]["room_id"] = serde_yml::Value::String(config.room_id.clone());
             doc["RObot"]["matrix"]["homeserver_url"] =
                 serde_yml::Value::String(config.server_url.clone());
 
@@ -147,10 +150,7 @@ mod tests {
             doc["RObot"]["rocketchat"]["server_url"].as_str(),
             Some("http://127.0.0.1:3000")
         );
-        assert_eq!(
-            doc["RObot"]["operator_id"].as_str(),
-            Some("op789")
-        );
+        assert_eq!(doc["RObot"]["operator_id"].as_str(), Some("op789"));
         assert_eq!(
             doc["RObot"]["timeout_seconds"].as_u64(),
             Some(600),

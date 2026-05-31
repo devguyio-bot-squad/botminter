@@ -21,20 +21,14 @@ pub struct RcPodGuard {
 impl RcPodGuard {
     /// Wraps an already-running pod (created by `bm bridge start`).
     pub fn new(pod_name: String, port: u16) -> Self {
-        eprintln!(
-            "RcPodGuard created: pod={} port={}",
-            pod_name, port
-        );
+        eprintln!("RcPodGuard created: pod={} port={}", pod_name, port);
         RcPodGuard { pod_name, port }
     }
 
     /// Alias for `new` -- used by progressive mode to reconnect to a pod
     /// from a previous run.
     pub fn from_existing(pod_name: String, port: u16) -> Self {
-        eprintln!(
-            "RcPodGuard from_existing: pod={} port={}",
-            pod_name, port
-        );
+        eprintln!("RcPodGuard from_existing: pod={} port={}", pod_name, port);
         RcPodGuard { pod_name, port }
     }
 
@@ -62,10 +56,7 @@ impl RcPodGuard {
 
 impl Drop for RcPodGuard {
     fn drop(&mut self) {
-        eprintln!(
-            "RcPodGuard dropping: force-removing pod {}",
-            self.pod_name
-        );
+        eprintln!("RcPodGuard dropping: force-removing pod {}", self.pod_name);
         let _ = Command::new("podman")
             .args(["pod", "rm", "-f", &self.pod_name])
             .output();

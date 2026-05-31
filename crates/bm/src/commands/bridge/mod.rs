@@ -28,9 +28,7 @@ pub(super) fn resolve_bridge(team_flag: Option<&str>) -> Result<Option<BridgeCon
     let keyring_collection = cfg.keyring_collection.clone();
 
     if which::which("just").is_err() {
-        anyhow::bail!(
-            "Bridge commands require 'just'. Install it: https://just.systems/"
-        );
+        anyhow::bail!("Bridge commands require 'just'. Install it: https://just.systems/");
     }
 
     match bridge::discover(&team_repo, &team_name)? {
@@ -52,7 +50,10 @@ pub(super) fn make_bridge(ctx: &BridgeContext) -> Result<Bridge> {
     Bridge::new(ctx.bridge_dir.clone(), state_path, ctx.team_name.clone())
 }
 
-pub(super) fn make_credential_store(ctx: &BridgeContext, bridge_name: &str) -> LocalCredentialStore {
+pub(super) fn make_credential_store(
+    ctx: &BridgeContext,
+    bridge_name: &str,
+) -> LocalCredentialStore {
     let state_path = bridge::state_path(&ctx.workzone, &ctx.team_name);
     LocalCredentialStore::new(&ctx.team_name, bridge_name, state_path)
         .with_collection(ctx.keyring_collection.clone())

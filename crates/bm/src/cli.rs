@@ -264,11 +264,15 @@ pub enum Command {
         autonomous: bool,
     },
 
-    /// Launch Minty, the BotMinter interactive assistant
+    /// Migrate permanent workspaces to ephemeral session model
     Minty {
         /// Team to operate on (gives Minty team-specific context)
         #[arg(short, long)]
         team: Option<String>,
+
+        /// Discover existing permanent workspaces without migrating
+        #[arg(long)]
+        discover: bool,
 
         /// Run the coding agent in autonomous mode (skip permission prompts)
         #[arg(short, long)]

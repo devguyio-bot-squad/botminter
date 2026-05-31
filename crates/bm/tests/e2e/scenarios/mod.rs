@@ -36,15 +36,17 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
 
 fn targeted_suites(filter: &Option<String>) -> Vec<&'static str> {
     match filter {
-        Some(name) => {
-            match ALL_SUITES.iter().find(|s| **s == name.as_str()) {
-                Some(s) => vec![s],
-                None => {
-                    eprintln!("Unknown suite '{}'. Available: {}", name, ALL_SUITES.join(", "));
-                    std::process::exit(1);
-                }
+        Some(name) => match ALL_SUITES.iter().find(|s| **s == name.as_str()) {
+            Some(s) => vec![s],
+            None => {
+                eprintln!(
+                    "Unknown suite '{}'. Available: {}",
+                    name,
+                    ALL_SUITES.join(", ")
+                );
+                std::process::exit(1);
             }
-        }
+        },
         None => ALL_SUITES.to_vec(),
     }
 }
