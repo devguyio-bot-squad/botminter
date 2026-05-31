@@ -1,18 +1,70 @@
 use std::path::Path;
+use std::process::Command;
 
 use anyhow::{bail, Result};
+
+pub const DEFAULT_MAX_RETRIES: usize = 3;
 
 /// Attempt to push `branch` to `remote` from `repo`, retrying with a
 /// fetch+rebase cycle whenever the push is rejected due to non-fast-forward.
 /// Returns `Err` if the push fails for any other reason, or after
 /// `max_retries` rebase+retry cycles all fail.
 pub fn push_with_rebase_retry(
-    _repo: &Path,
-    _remote: &str,
-    _branch: &str,
-    _max_retries: usize,
+    repo: &Path,
+    remote: &str,
+    branch: &str,
+    max_retries: usize,
 ) -> Result<()> {
-    bail!("not implemented")
+    for attempt in 0..=max_retries {
+        let out = Command::new("git")
+            .args(["push", remote, branch])
+            .current_dir(repo)
+            .output()?;
+
+        if out.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let is_nff = stderr.contains("non-fast-forward") || stderr.contains("[rejected]");
+
+        if !is_nff {
+            bail!("git push failed (non-retryable): {}", stderr.trim());
+        }
+
+        if attempt == max_retries {
+            bail!(
+                "Push failed after {} rebase+retry attempts on branch '{}'",
+                max_retries,
+                branch
+            );
+        }
+
+        let fetch = Command::new("git")
+            .args(["fetch", remote])
+            .current_dir(repo)
+            .output()?;
+        if !fetch.status.success() {
+            bail!(
+                "git fetch failed: {}",
+                String::from_utf8_lossy(&fetch.stderr).trim()
+            );
+        }
+
+        let rebase_target = format!("{remote}/{branch}");
+        let rebase = Command::new("git")
+            .args(["rebase", &rebase_target])
+            .current_dir(repo)
+            .output()?;
+        if !rebase.status.success() {
+            bail!(
+                "git rebase failed during push retry: {}",
+                String::from_utf8_lossy(&rebase.stderr).trim()
+            );
+        }
+    }
+
+    unreachable!()
 }
 
 #[cfg(test)]
