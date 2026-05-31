@@ -41,6 +41,8 @@ mod finalization_subagent_tests {
     use std::ffi::OsStr;
     use std::path::PathBuf;
 
+    use crate::session::types::SessionId;
+
     use super::*;
 
     #[test]
@@ -91,6 +93,20 @@ mod finalization_subagent_tests {
         assert!(
             agent_file.exists(),
             "profiles/agentic-sdlc-planning/coding-agent/agents/finalization.md must exist"
+        );
+    }
+
+    #[test]
+    fn retrigger_finalization_is_not_a_stub() {
+        // Call with future signature: retrigger_finalization(&workspace, &session_id)
+        // This will NOT compile with the current 1-arg signature -> compilation failure = RED.
+        // GREEN will change the signature to match.
+        let workspace = PathBuf::from("/nonexistent/workspace-retrigger-test");
+        let session_id = SessionId::from_string("sess-retrigger-stub-check".to_string());
+        let result = retrigger_finalization(&workspace, &session_id);
+        assert!(
+            result.is_err(),
+            "retrigger_finalization must attempt to spawn a process, not return Ok(()) as a stub; got Ok(())"
         );
     }
 }
