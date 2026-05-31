@@ -281,6 +281,80 @@ async fn run_daemon_async(
     Ok(())
 }
 
+#[cfg(test)]
+mod daemon_startup_tests {
+    use chrono::Utc;
+    use tempfile::TempDir;
+
+    use crate::session::manager::{RecoveryReport, SessionManager};
+    use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
+
+    use super::is_pid_alive; // E0425: `is_pid_alive` not found in daemon/run.rs
+
+    fn make_manager(tmp: &TempDir) -> SessionManager {
+        let registry_path = tmp.path().join("registry.json");
+        SessionManager::new(tmp.path().to_path_buf(), registry_path).unwrap()
+    }
+
+    // AC-25: Active session with dead PID is marked Failed when recover_stale_sessions_with
+    // is called with is_pid_alive at daemon startup.
+    #[test]
+    fn daemon_startup_recovery_marks_dead_pid_sessions_failed() {
+        let tmp = TempDir::new().unwrap();
+        let mut manager = make_manager(&tmp);
+
+        // PID u32::MAX is guaranteed to never be alive (invalid on all platforms)
+        let dead_pid = u32::MAX;
+        let id = SessionId::new();
+        let record = SessionRecord {
+            session_id: id.clone(),
+            member_name: "alice".to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Active,
+            created_at: Utc::now(),
+            state_transitioned_at: Utc::now(),
+            agent_pid: Some(dead_pid),
+            workspace_path: None,
+        };
+        manager.registry.register(record).unwrap();
+        manager.registry.save().unwrap();
+
+        let report: RecoveryReport = manager
+            .recover_stale_sessions_with(is_pid_alive)
+            .unwrap();
+
+        assert_eq!(
+            report.recovered, 1,
+            "dead-PID session must be marked Failed at startup"
+        );
+        let recovered = manager.registry.get(&id).unwrap();
+        assert_eq!(
+            recovered.current_state,
+            SessionState::Failed,
+            "recovered session must be in Failed state"
+        );
+    }
+
+    // is_pid_alive must return false for a known-impossible PID.
+    #[test]
+    fn is_pid_alive_returns_false_for_dead_pid() {
+        assert!(
+            !is_pid_alive(u32::MAX),
+            "is_pid_alive must return false for PID u32::MAX (impossible)"
+        );
+    }
+
+    // is_pid_alive must return true for the current process.
+    #[test]
+    fn is_pid_alive_returns_true_for_current_process() {
+        let pid = std::process::id();
+        assert!(
+            is_pid_alive(pid),
+            "is_pid_alive must return true for the current running process"
+        );
+    }
+}
+
 /// Waits for SIGTERM or SIGINT, then sets the shutdown flag.
 async fn shutdown_signal(shutdown: Arc<AtomicBool>) {
     let ctrl_c = tokio::signal::ctrl_c();
