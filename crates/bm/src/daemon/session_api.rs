@@ -1163,4 +1163,75 @@ mod tests {
             response.status()
         );
     }
+
+    // AC-17: GET /api/sessions/history returns terminal sessions with correct exit_normal flags
+    #[tokio::test]
+    async fn history_handler_returns_terminal_sessions() {
+        use axum::body::{to_bytes, Body};
+        use axum::http::Request;
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let state = make_test_state();
+
+        {
+            let mut mgr = state.session_manager.lock().unwrap();
+            let completed = mgr
+                .create_session("alice", crate::session::SessionType::Loop)
+                .unwrap();
+            let failed = mgr
+                .create_session("bob", crate::session::SessionType::Brain)
+                .unwrap();
+            mgr.registry
+                .update_state(
+                    &completed.session_id,
+                    crate::session::SessionState::Completed,
+                )
+                .unwrap();
+            mgr.registry.save().unwrap();
+            mgr.registry
+                .update_state(&failed.session_id, crate::session::SessionState::Failed)
+                .unwrap();
+            mgr.registry.save().unwrap();
+        }
+
+        let app = axum::Router::new()
+            .route("/api/sessions/history", get(list_session_history_handler))
+            .with_state(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/api/sessions/history")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "GET /api/sessions/history must return 200 OK"
+        );
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let sessions: Vec<SessionHistoryInfo> = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(
+            sessions.len(),
+            2,
+            "history endpoint must return both terminal sessions"
+        );
+        let alice = sessions
+            .iter()
+            .find(|s| s.owning_member == "alice")
+            .unwrap();
+        let bob = sessions.iter().find(|s| s.owning_member == "bob").unwrap();
+        assert!(
+            alice.exit_normal,
+            "Completed session must have exit_normal=true"
+        );
+        assert!(
+            !bob.exit_normal,
+            "Failed session must have exit_normal=false"
+        );
+    }
 }

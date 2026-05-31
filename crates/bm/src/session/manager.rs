@@ -621,6 +621,57 @@ mod tests {
             "deactivated session must not be in active list"
         );
     }
+
+    // AC-17: list_terminal returns only terminal-state sessions (Completed, Failed, Killed)
+    #[test]
+    fn list_terminal_returns_only_terminal_state_sessions() {
+        let (mut manager, _tmp) = make_manager();
+
+        let active_record = manager
+            .create_session("alice", SessionType::Loop)
+            .expect("create active session");
+        let completed_record = manager
+            .create_session("bob", SessionType::Brain)
+            .expect("create completed session");
+        let failed_record = manager
+            .create_session("carol", SessionType::Interactive)
+            .expect("create failed session");
+
+        // Drive bob → Completed
+        manager
+            .registry
+            .update_state(&completed_record.session_id, SessionState::Completed)
+            .unwrap();
+        manager.registry.save().unwrap();
+
+        // Drive carol → Failed
+        manager
+            .registry
+            .update_state(&failed_record.session_id, SessionState::Failed)
+            .unwrap();
+        manager.registry.save().unwrap();
+
+        let terminal = manager.list_terminal();
+
+        assert_eq!(
+            terminal.len(),
+            2,
+            "only terminal sessions (Completed, Failed) must be returned by list_terminal"
+        );
+        let ids: Vec<_> = terminal.iter().map(|s| &s.session_id).collect();
+        assert!(
+            !ids.contains(&&active_record.session_id),
+            "Active session must not appear in list_terminal"
+        );
+        assert!(
+            ids.contains(&&completed_record.session_id),
+            "Completed session must appear in list_terminal"
+        );
+        assert!(
+            ids.contains(&&failed_record.session_id),
+            "Failed session must appear in list_terminal"
+        );
+    }
 }
 
 #[cfg(test)]
