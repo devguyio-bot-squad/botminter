@@ -2,7 +2,9 @@ use std::collections::HashMap;
 use std::io::IsTerminal;
 
 use anyhow::Result;
-use comfy_table::{ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
+use comfy_table::{
+    modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, ContentArrangement, Table,
+};
 
 use crate::bridge::{self, BridgeIdentity, CredentialStore};
 
@@ -19,10 +21,13 @@ pub fn identity_add(username: &str, team_flag: Option<&str>) -> Result<()> {
 
     let token_override = if bridge.is_external() && std::io::stdin().is_terminal() {
         let display_name = bridge.display_name().to_string();
-        let token: String = cliclack::input(format!(
-            "{} bot token for {}", display_name, username
-        )).interact()?;
-        if token.is_empty() { None } else { Some(token) }
+        let token: String =
+            cliclack::input(format!("{} bot token for {}", display_name, username)).interact()?;
+        if token.is_empty() {
+            None
+        } else {
+            Some(token)
+        }
     } else {
         None
     };
@@ -108,10 +113,7 @@ pub fn identity_show(username: &str, reveal: bool, team_flag: Option<&str>) -> R
             }
         }
         Ok(None) => {
-            let env_var = format!(
-                "BM_BRIDGE_TOKEN_{}",
-                bridge::env_var_suffix_pub(username)
-            );
+            let env_var = format!("BM_BRIDGE_TOKEN_{}", bridge::env_var_suffix_pub(username));
             println!("Token:      (not in keyring — set {} env var)", env_var);
         }
         Err(e) => println!("Token:      (keyring error: {})", e),

@@ -125,8 +125,9 @@ mod tests {
     fn setup_fixture_team(tmp: &std::path::Path) -> std::path::PathBuf {
         let team_dir = tmp.join("my-team");
         let team_repo = team_dir.join("team");
-        let fixture_base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo");
+        let fixture_base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo",
+        );
         copy_dir_recursive(&fixture_base, &team_repo);
         team_dir
     }
@@ -171,7 +172,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                daemon: Default::default(),
                 vm: None,
             }],
             vms: Vec::new(),
@@ -224,23 +225,18 @@ mod tests {
 
         // Workflows — should match DOT files in fixture
         let workflows = data["workflows"].as_array().unwrap();
-        let expected_dot_files: Vec<String> = fs::read_dir(team_path.join("team").join("workflows"))
-            .unwrap()
-            .filter_map(|e| e.ok())
-            .filter(|e| {
-                e.path()
-                    .extension()
-                    .map(|ext| ext == "dot")
-                    .unwrap_or(false)
-            })
-            .map(|e| {
-                e.path()
-                    .file_stem()
-                    .unwrap()
-                    .to_string_lossy()
-                    .to_string()
-            })
-            .collect();
+        let expected_dot_files: Vec<String> =
+            fs::read_dir(team_path.join("team").join("workflows"))
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .map(|ext| ext == "dot")
+                        .unwrap_or(false)
+                })
+                .map(|e| e.path().file_stem().unwrap().to_string_lossy().to_string())
+                .collect();
         assert_eq!(
             workflows.len(),
             expected_dot_files.len(),

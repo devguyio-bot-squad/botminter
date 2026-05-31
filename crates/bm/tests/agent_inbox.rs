@@ -37,7 +37,11 @@ fn write_and_peek_shows_message() {
         .args(["inbox", "write", "fix CI please"])
         .output()
         .expect("run write");
-    assert!(out.status.success(), "write should succeed: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "write should succeed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 
     // Peek should show the message
     let out = agent_cmd(&ws)
@@ -46,8 +50,14 @@ fn write_and_peek_shows_message() {
         .expect("run peek");
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("fix CI please"), "peek should contain message, got: {stdout}");
-    assert!(stdout.contains("brain"), "peek should show sender, got: {stdout}");
+    assert!(
+        stdout.contains("fix CI please"),
+        "peek should contain message, got: {stdout}"
+    );
+    assert!(
+        stdout.contains("brain"),
+        "peek should show sender, got: {stdout}"
+    );
 }
 
 // --- Test 2: read + consume ---
@@ -80,7 +90,10 @@ fn read_json_consumes_messages() {
         .output()
         .expect("peek");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("No pending messages"), "inbox should be empty after read, got: {stdout}");
+    assert!(
+        stdout.contains("No pending messages"),
+        "inbox should be empty after read, got: {stdout}"
+    );
 }
 
 // --- Test 3: read --format hook ---
@@ -101,9 +114,15 @@ fn read_hook_format_returns_additional_context() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("valid JSON");
-    assert!(parsed["additionalContext"].is_string(), "should have additionalContext key");
+    assert!(
+        parsed["additionalContext"].is_string(),
+        "should have additionalContext key"
+    );
     let ctx = parsed["additionalContext"].as_str().unwrap();
-    assert!(ctx.contains("redirect to API"), "additionalContext should contain message");
+    assert!(
+        ctx.contains("redirect to API"),
+        "additionalContext should contain message"
+    );
 }
 
 // --- Test 4: empty write rejected ---
@@ -118,7 +137,10 @@ fn empty_write_rejected() {
         .expect("write empty");
     assert!(!out.status.success(), "empty write should fail");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.to_lowercase().contains("empty"), "should mention empty, got: {stderr}");
+    assert!(
+        stderr.to_lowercase().contains("empty"),
+        "should mention empty, got: {stderr}"
+    );
 }
 
 // --- Test 5: whitespace-only write rejected ---
@@ -133,7 +155,10 @@ fn whitespace_only_write_rejected() {
         .expect("write whitespace");
     assert!(!out.status.success(), "whitespace-only write should fail");
     let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(stderr.to_lowercase().contains("empty"), "should mention empty, got: {stderr}");
+    assert!(
+        stderr.to_lowercase().contains("empty"),
+        "should mention empty, got: {stderr}"
+    );
 }
 
 // --- Test 6: outside workspace rejected ---
@@ -171,7 +196,10 @@ fn hook_graceful_outside_workspace() {
         .output()
         .expect("hook outside workspace");
     assert!(out.status.success(), "hook should always exit 0");
-    assert!(out.stdout.is_empty(), "hook should produce no output outside workspace");
+    assert!(
+        out.stdout.is_empty(),
+        "hook should produce no output outside workspace"
+    );
 }
 
 // --- Test 8: hook empty inbox ---
@@ -187,9 +215,13 @@ fn hook_empty_inbox_nudge() {
     assert!(out.status.success(), "hook should exit 0");
     // Even with no inbox messages, the hook outputs a response nudge
     let stdout = String::from_utf8_lossy(&out.stdout);
-    let json: serde_json::Value = serde_json::from_str(stdout.trim()).expect("should be valid JSON");
+    let json: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("should be valid JSON");
     assert!(
-        json["additionalContext"].as_str().unwrap().contains("respond"),
+        json["additionalContext"]
+            .as_str()
+            .unwrap()
+            .contains("respond"),
         "nudge should mention responding to user"
     );
 }
@@ -214,7 +246,9 @@ fn hook_delivers_and_consumes_messages() {
     assert!(out.status.success());
     let stdout = String::from_utf8_lossy(&out.stdout);
     let parsed: serde_json::Value = serde_json::from_str(stdout.trim()).expect("valid JSON");
-    let ctx = parsed["additionalContext"].as_str().expect("additionalContext key");
+    let ctx = parsed["additionalContext"]
+        .as_str()
+        .expect("additionalContext key");
     assert!(ctx.contains("focus on tests"), "should contain message");
 
     // Peek should show empty (consumed)
@@ -223,7 +257,10 @@ fn hook_delivers_and_consumes_messages() {
         .output()
         .expect("peek after hook");
     let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(stdout.contains("No pending messages"), "inbox should be empty after hook, got: {stdout}");
+    assert!(
+        stdout.contains("No pending messages"),
+        "inbox should be empty after hook, got: {stdout}"
+    );
 }
 
 // --- Test 10: hook corrupted file ---
@@ -240,7 +277,10 @@ fn hook_graceful_with_corrupted_file() {
         .args(["claude", "hook", "post-tool-use"])
         .output()
         .expect("hook with corrupted file");
-    assert!(out.status.success(), "hook should always exit 0 even with corrupted file");
+    assert!(
+        out.status.success(),
+        "hook should always exit 0 even with corrupted file"
+    );
 }
 
 // --- Test 11: loop start requires BM_TEAM_NAME ---
@@ -254,7 +294,10 @@ fn loop_start_requires_team_name_env() {
         .args(["loop", "start", "Implement issue #1"])
         .output()
         .expect("loop start without BM_TEAM_NAME");
-    assert!(!out.status.success(), "loop start should fail without BM_TEAM_NAME");
+    assert!(
+        !out.status.success(),
+        "loop start should fail without BM_TEAM_NAME"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("BM_TEAM_NAME"),
@@ -273,7 +316,10 @@ fn loop_start_no_daemon_fails() {
         .args(["loop", "start", "Implement issue #2"])
         .output()
         .expect("loop start with no daemon");
-    assert!(!out.status.success(), "loop start should fail when no daemon running");
+    assert!(
+        !out.status.success(),
+        "loop start should fail when no daemon running"
+    );
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("Daemon") || stderr.contains("config") || stderr.contains("not found"),

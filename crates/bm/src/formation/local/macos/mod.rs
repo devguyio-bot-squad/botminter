@@ -2,12 +2,12 @@ use std::path::Path;
 
 use anyhow::{bail, Result};
 
+use crate::formation::start_members::StartResult;
+use crate::formation::stop_members::StopResult;
 use crate::formation::{
     CredentialDomain, EnvironmentStatus, Formation, KeyValueCredentialStore, MemberHandle,
     MemberStatus, SetupParams, StartParams, StopParams,
 };
-use crate::formation::start_members::StartResult;
-use crate::formation::stop_members::StopResult;
 
 /// macOS local formation — not yet supported.
 ///

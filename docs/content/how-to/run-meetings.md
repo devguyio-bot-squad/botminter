@@ -6,7 +6,7 @@ This guide covers running meetings with your team members and defining custom me
 
 - A team initialized with a profile that defines meetings (e.g., `agentic-sdlc-planning`)
 - At least one member hired for the role referenced by the meeting
-- Workspaces provisioned (`bm teams sync`)
+- Workspaces provisioned (`bm start`)
 
 ## Running a meeting
 
@@ -169,7 +169,7 @@ To test changes to the profile source (for future teams), edit `~/.config/botmin
 : The meeting references a role (e.g., `engineer`) but no member of that role is hired. Run `bm hire <role>` first.
 
 **"No workspace found"**
-: Run `bm teams sync` to provision workspaces before running meetings.
+: Run `bm start` to provision workspaces before running meetings.
 
 ## Related topics
 

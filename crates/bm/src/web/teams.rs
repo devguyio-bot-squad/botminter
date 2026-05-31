@@ -79,7 +79,7 @@ mod tests {
                     coding_agent: None,
                     project_number: None,
                     bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                    daemon: Default::default(),
                     vm: None,
                 },
                 config::TeamEntry {
@@ -94,7 +94,7 @@ mod tests {
                     coding_agent: None,
                     project_number: Some(42),
                     bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                    daemon: Default::default(),
                     vm: None,
                 },
             ],

@@ -110,10 +110,10 @@ This tells BotMinter which codebase your agents will clone and work in. The URL 
 Once you have members hired and projects added, provision the workspaces:
 
 ```bash
-bm teams sync --repos
+bm start --repos
 ```
 
-This is where the setup becomes real. `bm teams sync` does the following for each hired member:
+This is where the setup becomes real. `bm start` does the following for each hired member:
 
 - **Pushes the team repo** to GitHub (with `--repos`) so agents can coordinate via issues
 - **Creates a workspace directory** per member × project
@@ -122,7 +122,7 @@ This is where the setup becomes real. `bm teams sync` does the following for eac
 - **Copies context files** — copies `PROMPT.md`, `CLAUDE.md`, and `ralph.yml` from the team submodule to the workspace root
 - **Assembles `.claude/agents/`** — merges agent definitions from `team/` submodule paths via symlinks
 
-If you've already pushed the team repo, you can run `bm teams sync` without `--repos`.
+If you've already pushed the team repo, you can run `bm start` without `--repos`.
 
 ## Step 4: Set up the Project board
 

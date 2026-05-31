@@ -37,13 +37,18 @@ pub fn launch_members_oneshot(
     // Discover all members, then filter to enabled ones.
     let members_dir = team_repo.join("members");
     let all_members = workspace::list_member_dirs(&members_dir)?;
-    let enabled_members: Vec<&str> = all_members.iter()
+    let enabled_members: Vec<&str> = all_members
+        .iter()
         .filter(|m| enabled.contains(&format!("{}/{}", team_name, m)))
         .map(|m| m.as_str())
         .collect();
 
     if enabled_members.is_empty() {
-        daemon_log(paths, "DEBUG", "No enabled members match discovered members");
+        daemon_log(
+            paths,
+            "DEBUG",
+            "No enabled members match discovered members",
+        );
         return Ok(0);
     }
 
@@ -55,15 +60,23 @@ pub fn launch_members_oneshot(
             &cfg,
             &team_repo,
             Some(member),
-            true,   // no_bridge — daemon doesn't manage bridge lifecycle
-            None,   // no formation override
+            true, // no_bridge — daemon doesn't manage bridge lifecycle
+            None, // no formation override
         )?;
 
         for m in &result.launched {
-            daemon_log(paths, "INFO", &format!("{}: launched (PID {})", m.name, m.pid));
+            daemon_log(
+                paths,
+                "INFO",
+                &format!("{}: launched (PID {})", m.name, m.pid),
+            );
         }
         for m in &result.skipped {
-            daemon_log(paths, "INFO", &format!("{}: already running (PID {})", m.name, m.pid));
+            daemon_log(
+                paths,
+                "INFO",
+                &format!("{}: already running (PID {})", m.name, m.pid),
+            );
         }
         for m in &result.errors {
             daemon_log(paths, "ERROR", &format!("{}: {}", m.name, m.error));
@@ -75,11 +88,7 @@ pub fn launch_members_oneshot(
 }
 
 /// Launches members one-shot with logging.
-pub fn handle_member_launch(
-    team_name: &str,
-    paths: &DaemonPaths,
-    shutdown: &Arc<AtomicBool>,
-) {
+pub fn handle_member_launch(team_name: &str, paths: &DaemonPaths, shutdown: &Arc<AtomicBool>) {
     match launch_members_oneshot(team_name, paths, shutdown) {
         Ok(count) => {
             daemon_log(
@@ -89,11 +98,7 @@ pub fn handle_member_launch(
             );
         }
         Err(e) => {
-            daemon_log(
-                paths,
-                "ERROR",
-                &format!("Member launch failed: {}", e),
-            );
+            daemon_log(paths, "ERROR", &format!("Member launch failed: {}", e));
         }
     }
 }

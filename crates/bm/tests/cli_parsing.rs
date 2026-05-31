@@ -89,7 +89,8 @@ fn team_flag_short_and_long() {
         let output = bm(tmp.path()).args(*args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
         assert_ne!(
-            code, CLAP_PARSE_ERROR_CODE,
+            code,
+            CLAP_PARSE_ERROR_CODE,
             "command `bm {}` should not have a parsing error (exit 2), stderr: {}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
@@ -101,14 +102,12 @@ fn team_flag_short_and_long() {
 fn force_flag_on_stop() {
     let tmp = tempfile::tempdir().unwrap();
     // --force and -f are both defined via #[arg(short, long)] on Stop
-    for args in [
-        vec!["stop", "--force"],
-        vec!["stop", "-f"],
-    ] {
+    for args in [vec!["stop", "--force"], vec!["stop", "-f"]] {
         let output = bm(tmp.path()).args(&args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
         assert_ne!(
-            code, CLAP_PARSE_ERROR_CODE,
+            code,
+            CLAP_PARSE_ERROR_CODE,
             "`bm {}` should not be a parse error, stderr: {}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
@@ -119,10 +118,14 @@ fn force_flag_on_stop() {
 #[test]
 fn sync_repos_flag() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["teams", "sync", "--repos"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["teams", "sync", "--repos"])
+        .output()
+        .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm teams sync --repos` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -131,10 +134,14 @@ fn sync_repos_flag() {
 #[test]
 fn sync_bridge_flag() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["teams", "sync", "--bridge"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["teams", "sync", "--bridge"])
+        .output()
+        .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm teams sync --bridge` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -143,14 +150,12 @@ fn sync_bridge_flag() {
 #[test]
 fn sync_all_flag_long_and_short() {
     let tmp = tempfile::tempdir().unwrap();
-    for args in [
-        vec!["teams", "sync", "--all"],
-        vec!["teams", "sync", "-a"],
-    ] {
+    for args in [vec!["teams", "sync", "--all"], vec!["teams", "sync", "-a"]] {
         let output = bm(tmp.path()).args(&args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
         assert_ne!(
-            code, CLAP_PARSE_ERROR_CODE,
+            code,
+            CLAP_PARSE_ERROR_CODE,
             "`bm {}` should not be a parse error, stderr: {}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
@@ -161,10 +166,14 @@ fn sync_all_flag_long_and_short() {
 #[test]
 fn sync_repos_and_bridge_together() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["teams", "sync", "--repos", "--bridge"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["teams", "sync", "--repos", "--bridge"])
+        .output()
+        .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm teams sync --repos --bridge` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -173,7 +182,10 @@ fn sync_repos_and_bridge_together() {
 #[test]
 fn sync_push_flag_removed() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["teams", "sync", "--push"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["teams", "sync", "--push"])
+        .output()
+        .unwrap();
     assert_eq!(
         output.status.code(),
         Some(CLAP_PARSE_ERROR_CODE),
@@ -187,7 +199,8 @@ fn sync_no_flags_default() {
     let output = bm(tmp.path()).args(["teams", "sync"]).output().unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm teams sync` (no flags) should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -197,14 +210,12 @@ fn sync_no_flags_default() {
 fn verbose_flag_on_status() {
     let tmp = tempfile::tempdir().unwrap();
     // -v and --verbose are both defined via #[arg(short, long)] on Status
-    for args in [
-        vec!["status", "-v"],
-        vec!["status", "--verbose"],
-    ] {
+    for args in [vec!["status", "-v"], vec!["status", "--verbose"]] {
         let output = bm(tmp.path()).args(&args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
         assert_ne!(
-            code, CLAP_PARSE_ERROR_CODE,
+            code,
+            CLAP_PARSE_ERROR_CODE,
             "`bm {}` should not be a parse error, stderr: {}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
@@ -224,7 +235,8 @@ fn verbose_flag_on_sync() {
         let output = bm(tmp.path()).args(&args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
         assert_ne!(
-            code, CLAP_PARSE_ERROR_CODE,
+            code,
+            CLAP_PARSE_ERROR_CODE,
             "`bm {}` should not be a parse error, stderr: {}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
@@ -242,7 +254,8 @@ fn name_flag_on_hire() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm hire somerole --name alice` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -271,7 +284,10 @@ fn hire_requires_role_argument() {
 #[test]
 fn profiles_describe_requires_profile_name() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["profiles", "describe"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["profiles", "describe"])
+        .output()
+        .unwrap();
     assert_eq!(
         output.status.code(),
         Some(CLAP_PARSE_ERROR_CODE),
@@ -280,9 +296,7 @@ fn profiles_describe_requires_profile_name() {
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("<PROFILE>")
-            || stderr.contains("profile")
-            || stderr.contains("required"),
+        stderr.contains("<PROFILE>") || stderr.contains("profile") || stderr.contains("required"),
         "error should mention the missing profile argument, stderr:\n{}",
         stderr
     );
@@ -309,7 +323,10 @@ fn projects_add_requires_url() {
 #[test]
 fn projects_sync_help_works() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["projects", "sync", "--help"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["projects", "sync", "--help"])
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
         "bm projects sync --help should exit 0"
@@ -329,10 +346,7 @@ fn projects_sync_help_works() {
 fn unknown_subcommand_errors() {
     let tmp = tempfile::tempdir().unwrap();
     let output = bm(tmp.path()).args(["foobar"]).output().unwrap();
-    assert!(
-        !output.status.success(),
-        "bm foobar should exit non-zero"
-    );
+    assert!(!output.status.success(), "bm foobar should exit non-zero");
 
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -344,7 +358,10 @@ fn unknown_subcommand_errors() {
 #[test]
 fn unknown_flag_errors() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["status", "--foobar"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["status", "--foobar"])
+        .output()
+        .unwrap();
     assert_eq!(
         output.status.code(),
         Some(CLAP_PARSE_ERROR_CODE),
@@ -355,7 +372,10 @@ fn unknown_flag_errors() {
 #[test]
 fn completions_requires_valid_shell() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["completions", "notashell"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["completions", "notashell"])
+        .output()
+        .unwrap();
     assert!(
         !output.status.success(),
         "bm completions notashell should exit non-zero"
@@ -459,13 +479,11 @@ fn daemon_start_flags_parsed() {
         vec!["daemon", "start", "--interval", "30"],
         vec!["daemon", "start", "-t", "myteam"],
     ] {
-        let output = bm(tmp.path())
-            .args(&args)
-            .output()
-            .unwrap();
+        let output = bm(tmp.path()).args(&args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
         assert_ne!(
-            code, CLAP_PARSE_ERROR_CODE,
+            code,
+            CLAP_PARSE_ERROR_CODE,
             "`bm {}` should not be a parse error, stderr: {}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
@@ -481,10 +499,7 @@ fn daemon_stop_flags_parsed() {
         .output()
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
-    assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
-        "daemon stop -t should parse"
-    );
+    assert_ne!(code, CLAP_PARSE_ERROR_CODE, "daemon stop -t should parse");
 }
 
 #[test]
@@ -495,10 +510,7 @@ fn daemon_status_flags_parsed() {
         .output()
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
-    assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
-        "daemon status -t should parse"
-    );
+    assert_ne!(code, CLAP_PARSE_ERROR_CODE, "daemon status -t should parse");
 }
 
 // ── Show/describe subcommand parsing (6 tests) ───────────────────────
@@ -506,7 +518,10 @@ fn daemon_status_flags_parsed() {
 #[test]
 fn teams_show_help_works() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["teams", "show", "--help"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["teams", "show", "--help"])
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
         "bm teams show --help should exit 0"
@@ -523,10 +538,14 @@ fn teams_show_help_works() {
 #[test]
 fn teams_show_with_name_parses() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["teams", "show", "my-team"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["teams", "show", "my-team"])
+        .output()
+        .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm teams show my-team` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -541,7 +560,8 @@ fn teams_show_with_team_flag_parses() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm teams show -t my-team` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -567,7 +587,8 @@ fn members_show_with_member_parses() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm members show architect-01` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -576,7 +597,10 @@ fn members_show_with_member_parses() {
 #[test]
 fn projects_list_help_works() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["projects", "list", "--help"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["projects", "list", "--help"])
+        .output()
+        .unwrap();
     assert!(
         output.status.success(),
         "bm projects list --help should exit 0"
@@ -603,7 +627,8 @@ fn projects_show_with_project_parses() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm projects show my-app` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -631,7 +656,10 @@ fn subcommand_help_shows_new_commands() {
     );
 
     // Projects help should show list, show, add, sync
-    let output = bm(tmp.path()).args(["projects", "--help"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["projects", "--help"])
+        .output()
+        .unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
         stdout.contains("list"),
@@ -660,7 +688,10 @@ fn profiles_describe_show_tags_outputs_tagged_files() {
         .env("XDG_CONFIG_HOME", profiles_tmp.path())
         .output()
         .unwrap();
-    assert!(output.status.success(), "bm profiles describe scrum --show-tags should succeed");
+    assert!(
+        output.status.success(),
+        "bm profiles describe scrum --show-tags should succeed"
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -693,7 +724,10 @@ fn profiles_describe_without_show_tags_omits_tag_section() {
         .env("XDG_CONFIG_HOME", profiles_tmp.path())
         .output()
         .unwrap();
-    assert!(output.status.success(), "bm profiles describe scrum should succeed");
+    assert!(
+        output.status.success(),
+        "bm profiles describe scrum should succeed"
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -731,7 +765,10 @@ fn profiles_init_extracts_to_temp_dir() {
         "scrum profile should be extracted"
     );
     assert!(
-        profiles_dir.join("agentic-sdlc-minimal").join("botminter.yml").exists(),
+        profiles_dir
+            .join("agentic-sdlc-minimal")
+            .join("botminter.yml")
+            .exists(),
         "agentic-sdlc-minimal profile should be extracted"
     );
 }
@@ -896,18 +933,24 @@ fn init_bridge_flag_parses() {
         .args([
             "init",
             "--non-interactive",
-            "--profile", "agentic-sdlc-minimal",
-            "--team-name", "test",
-            "--org", "testorg",
-            "--repo", "testrepo",
-            "--bridge", "telegram",
+            "--profile",
+            "agentic-sdlc-minimal",
+            "--team-name",
+            "test",
+            "--org",
+            "testorg",
+            "--repo",
+            "testrepo",
+            "--bridge",
+            "telegram",
             "--skip-github",
         ])
         .output()
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm init --non-interactive --bridge telegram` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -920,17 +963,22 @@ fn init_without_bridge_flag_parses() {
         .args([
             "init",
             "--non-interactive",
-            "--profile", "agentic-sdlc-minimal",
-            "--team-name", "test",
-            "--org", "testorg",
-            "--repo", "testrepo",
+            "--profile",
+            "agentic-sdlc-minimal",
+            "--team-name",
+            "test",
+            "--org",
+            "testorg",
+            "--repo",
+            "testrepo",
             "--skip-github",
         ])
         .output()
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm init --non-interactive` without --bridge should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -944,7 +992,8 @@ fn parse_bridge_start() {
     let output = bm(tmp.path()).args(["bridge", "start"]).output().unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm bridge start` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -959,7 +1008,8 @@ fn parse_bridge_start_team() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm bridge start -t myteam` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -971,7 +1021,8 @@ fn parse_bridge_stop() {
     let output = bm(tmp.path()).args(["bridge", "stop"]).output().unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm bridge stop` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -983,7 +1034,8 @@ fn parse_bridge_status() {
     let output = bm(tmp.path()).args(["bridge", "status"]).output().unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm bridge status` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -998,7 +1050,8 @@ fn parse_bridge_identity_add() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm bridge identity add testuser` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1013,7 +1066,8 @@ fn parse_bridge_identity_rotate() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm bridge identity rotate testuser` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1028,7 +1082,8 @@ fn parse_bridge_identity_remove() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm bridge identity remove testuser` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1043,7 +1098,8 @@ fn parse_bridge_identity_list() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm bridge identity list` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1058,7 +1114,8 @@ fn parse_bridge_room_create() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm bridge room create general` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1073,7 +1130,8 @@ fn parse_bridge_room_list() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm bridge room list` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1183,10 +1241,14 @@ fn chat_help_shows_flags() {
 #[test]
 fn chat_with_member_parses() {
     let tmp = tempfile::tempdir().unwrap();
-    let output = bm(tmp.path()).args(["chat", "architect-01"]).output().unwrap();
+    let output = bm(tmp.path())
+        .args(["chat", "architect-01"])
+        .output()
+        .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm chat architect-01` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1209,7 +1271,8 @@ fn chat_with_all_flags_parses() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm chat` with all flags should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1225,7 +1288,8 @@ fn chat_team_flag_short_and_long() {
         let output = bm(tmp.path()).args(&args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
         assert_ne!(
-            code, CLAP_PARSE_ERROR_CODE,
+            code,
+            CLAP_PARSE_ERROR_CODE,
             "`bm {}` should not be a parse error, stderr: {}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)
@@ -1255,7 +1319,8 @@ fn minty_no_args_parses() {
     let output = bm(tmp.path()).args(["minty"]).output().unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm minty` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1270,7 +1335,8 @@ fn minty_with_team_flag_parses() {
         .unwrap();
     let code = output.status.code().unwrap_or(-1);
     assert_ne!(
-        code, CLAP_PARSE_ERROR_CODE,
+        code,
+        CLAP_PARSE_ERROR_CODE,
         "`bm minty -t my-team` should not be a parse error, stderr: {}",
         String::from_utf8_lossy(&output.stderr)
     );
@@ -1286,7 +1352,8 @@ fn minty_team_flag_short_and_long() {
         let output = bm(tmp.path()).args(&args).output().unwrap();
         let code = output.status.code().unwrap_or(-1);
         assert_ne!(
-            code, CLAP_PARSE_ERROR_CODE,
+            code,
+            CLAP_PARSE_ERROR_CODE,
             "`bm {}` should not be a parse error, stderr: {}",
             args.join(" "),
             String::from_utf8_lossy(&output.stderr)

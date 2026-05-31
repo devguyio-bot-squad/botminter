@@ -283,6 +283,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "walkdir",
  "which",
 ]
 

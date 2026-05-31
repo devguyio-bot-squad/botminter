@@ -21,16 +21,19 @@ pub fn export(output: &str, team_flag: Option<&str>) -> Result<()> {
     // Enumerate hired members from team repo
     let members = workspace::list_member_dirs(&team_repo.join("members"))?;
     if members.is_empty() {
-        bail!("No members found in team '{}'. Nothing to export.", team.name);
+        bail!(
+            "No members found in team '{}'. Nothing to export.",
+            team.name
+        );
     }
 
     let formation = formation::create_local_formation(&team.name)?;
 
     // Discover bridge (may be None if no bridge configured)
     let bridge_dir = bridge::discover(&team_repo, &team.name)?;
-    let bridge_name = bridge_dir.as_ref().and_then(|dir| {
-        bridge::load_manifest(dir).ok().map(|m| m.metadata.name)
-    });
+    let bridge_name = bridge_dir
+        .as_ref()
+        .and_then(|dir| bridge::load_manifest(dir).ok().map(|m| m.metadata.name));
 
     // Build YAML document
     let mut members_yaml = serde_json::Map::new();
@@ -57,10 +60,7 @@ pub fn export(output: &str, team_flag: Option<&str>) -> Result<()> {
             github_app.insert("client_id".into(), serde_json::Value::String(cid));
             github_app.insert("private_key".into(), serde_json::Value::String(pk));
             github_app.insert("installation_id".into(), serde_json::Value::String(iid));
-            member_entry.insert(
-                "github_app".into(),
-                serde_json::Value::Object(github_app),
-            );
+            member_entry.insert("github_app".into(), serde_json::Value::Object(github_app));
         } else {
             eprintln!(
                 "Warning: Incomplete GitHub App credentials for member '{}' (skipping App section).",
@@ -81,10 +81,7 @@ pub fn export(output: &str, team_flag: Option<&str>) -> Result<()> {
             if let Some(token) = bridge_store.retrieve(member)? {
                 let mut bridge_section = serde_json::Map::new();
                 bridge_section.insert("token".into(), serde_json::Value::String(token));
-                member_entry.insert(
-                    "bridge".into(),
-                    serde_json::Value::Object(bridge_section),
-                );
+                member_entry.insert("bridge".into(), serde_json::Value::Object(bridge_section));
             }
         }
 
@@ -98,8 +95,8 @@ pub fn export(output: &str, team_flag: Option<&str>) -> Result<()> {
         "members": serde_json::Value::Object(members_yaml),
     });
 
-    let yaml_content = serde_yml::to_string(&doc)
-        .context("Failed to serialize credentials to YAML")?;
+    let yaml_content =
+        serde_yml::to_string(&doc).context("Failed to serialize credentials to YAML")?;
 
     // Write file
     fs::write(output, &yaml_content)
@@ -117,7 +114,11 @@ pub fn export(output: &str, team_flag: Option<&str>) -> Result<()> {
         output
     );
 
-    println!("Exported credentials for {} member(s) to '{}'.", members.len(), output);
+    println!(
+        "Exported credentials for {} member(s) to '{}'.",
+        members.len(),
+        output
+    );
 
     Ok(())
 }
@@ -136,9 +137,20 @@ mod tests {
         let mut superman_entry = serde_json::Map::new();
         let mut github_app = serde_json::Map::new();
         github_app.insert("app_id".into(), serde_json::Value::String("123456".into()));
-        github_app.insert("client_id".into(), serde_json::Value::String("Iv1.abc".into()));
-        github_app.insert("private_key".into(), serde_json::Value::String("-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----".into()));
-        github_app.insert("installation_id".into(), serde_json::Value::String("789012".into()));
+        github_app.insert(
+            "client_id".into(),
+            serde_json::Value::String("Iv1.abc".into()),
+        );
+        github_app.insert(
+            "private_key".into(),
+            serde_json::Value::String(
+                "-----BEGIN RSA PRIVATE KEY-----\nfake\n-----END RSA PRIVATE KEY-----".into(),
+            ),
+        );
+        github_app.insert(
+            "installation_id".into(),
+            serde_json::Value::String("789012".into()),
+        );
         superman_entry.insert("github_app".into(), serde_json::Value::Object(github_app));
 
         let mut bridge_section = serde_json::Map::new();
@@ -160,9 +172,18 @@ mod tests {
 
         let superman = &parsed["members"]["superman"];
         assert_eq!(superman["github_app"]["app_id"].as_str().unwrap(), "123456");
-        assert_eq!(superman["github_app"]["client_id"].as_str().unwrap(), "Iv1.abc");
-        assert!(superman["github_app"]["private_key"].as_str().unwrap().contains("BEGIN RSA PRIVATE KEY"));
-        assert_eq!(superman["github_app"]["installation_id"].as_str().unwrap(), "789012");
+        assert_eq!(
+            superman["github_app"]["client_id"].as_str().unwrap(),
+            "Iv1.abc"
+        );
+        assert!(superman["github_app"]["private_key"]
+            .as_str()
+            .unwrap()
+            .contains("BEGIN RSA PRIVATE KEY"));
+        assert_eq!(
+            superman["github_app"]["installation_id"].as_str().unwrap(),
+            "789012"
+        );
         assert_eq!(superman["bridge"]["token"].as_str().unwrap(), "syt_xxx");
     }
 
@@ -172,26 +193,37 @@ mod tests {
         let creds = PreGeneratedCredentials {
             app_id: "111".into(),
             client_id: "Iv1.xyz".into(),
-            private_key: "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----".into(),
+            private_key: "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----"
+                .into(),
             installation_id: "222".into(),
         };
         manifest_flow::store_pregenerated_credentials(&store, "member-a", &creds).unwrap();
 
         // Read back using credential_keys
         assert_eq!(
-            store.retrieve(&credential_keys::app_id("member-a")).unwrap(),
+            store
+                .retrieve(&credential_keys::app_id("member-a"))
+                .unwrap(),
             Some("111".to_string())
         );
         assert_eq!(
-            store.retrieve(&credential_keys::client_id("member-a")).unwrap(),
+            store
+                .retrieve(&credential_keys::client_id("member-a"))
+                .unwrap(),
             Some("Iv1.xyz".to_string())
         );
         assert_eq!(
-            store.retrieve(&credential_keys::private_key("member-a")).unwrap(),
-            Some("-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----".to_string())
+            store
+                .retrieve(&credential_keys::private_key("member-a"))
+                .unwrap(),
+            Some(
+                "-----BEGIN RSA PRIVATE KEY-----\ntest\n-----END RSA PRIVATE KEY-----".to_string()
+            )
         );
         assert_eq!(
-            store.retrieve(&credential_keys::installation_id("member-a")).unwrap(),
+            store
+                .retrieve(&credential_keys::installation_id("member-a"))
+                .unwrap(),
             Some("222".to_string())
         );
     }

@@ -56,25 +56,23 @@ pub fn run_meeting(meeting: &Meeting, matches: &clap::ArgMatches) -> Result<()> 
         .get_many::<String>("user_input")
         .map(|vals| vals.cloned().collect::<Vec<_>>().join(" "));
 
-    let initial_prompt = chat::build_meeting_prompt(
-        meeting.prompt.as_deref(),
-        user_input.as_deref(),
-    );
-    let session = chat::prepare_meeting_session(
-        &team.path,
-        &member,
-        &meeting.instructions,
-    )?;
+    let initial_prompt =
+        chat::build_meeting_prompt(meeting.prompt.as_deref(), user_input.as_deref());
+    let session = chat::prepare_meeting_session(&team.path, &member, &meeting.instructions)?;
 
-    chat::launch_session(&session, team, &team_repo, &member, initial_prompt.as_deref(), autonomous)
+    chat::launch_session(
+        &session,
+        team,
+        &team_repo,
+        &member,
+        initial_prompt.as_deref(),
+        autonomous,
+    )
 }
 
 /// Handle `External(Vec<OsString>)` — unknown subcommands.
 pub fn run_external(args: Vec<OsString>) -> Result<()> {
-    let cmd_name = args
-        .first()
-        .and_then(|s| s.to_str())
-        .unwrap_or("<unknown>");
+    let cmd_name = args.first().and_then(|s| s.to_str()).unwrap_or("<unknown>");
 
     bail!(
         "Unknown command '{}'.\n\
@@ -204,10 +202,7 @@ mod tests {
     #[test]
     fn prompt_combined_with_user_input() {
         let m = planning_meeting();
-        let prompt = chat::build_meeting_prompt(
-            m.prompt.as_deref(),
-            Some("plan the auth feature"),
-        );
+        let prompt = chat::build_meeting_prompt(m.prompt.as_deref(), Some("plan the auth feature"));
         assert_eq!(prompt, Some("start plan the auth feature".into()));
     }
 

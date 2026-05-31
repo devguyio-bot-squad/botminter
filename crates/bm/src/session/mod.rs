@@ -1,3 +1,18 @@
+pub(crate) mod finalization;
+pub mod lock;
+pub mod manager;
+pub mod registry;
+pub mod retention;
+pub mod types;
+
+pub use finalization::categorize::{categorize, Category, RemoteStatus, RepoContext, RepoKind};
+pub use finalization::subagent::recovery_branch_name;
+pub use lock::WorkItemLock;
+pub use manager::{
+    CleanupFilter, CleanupReport, DeactivationResult, DirtyRepo, SessionInspection, SessionManager,
+};
+pub use types::{SessionId, SessionRecord, SessionState, SessionType};
+
 use std::path::Path;
 use std::process::{Command, ExitStatus};
 
@@ -91,9 +106,13 @@ pub fn oneshot_ralph_session(
     _ralph_yml_path: &Path,
     env_vars: &[(String, String)],
 ) -> Result<ExitStatus> {
-    oneshot_ralph_session_with_check(working_dir, prompt_path, _ralph_yml_path, env_vars, |name| {
-        which::which(name).map(|_| ())
-    })
+    oneshot_ralph_session_with_check(
+        working_dir,
+        prompt_path,
+        _ralph_yml_path,
+        env_vars,
+        |name| which::which(name).map(|_| ()),
+    )
 }
 
 /// Internal helper that accepts a binary-check closure for testability.
@@ -129,9 +148,7 @@ where
     // One-shot: stdin null, stdout/stderr inherited for logging
     cmd.stdin(std::process::Stdio::null());
 
-    let status = cmd
-        .status()
-        .context("Failed to launch Ralph session")?;
+    let status = cmd.status().context("Failed to launch Ralph session")?;
 
     Ok(status)
 }
@@ -150,13 +167,9 @@ mod tests {
         let skill_path = tmp.path().join("SKILL.md");
         std::fs::write(&skill_path, "# Test skill").unwrap();
 
-        let err = interactive_claude_session_with_check(
-            tmp.path(),
-            &skill_path,
-            &[],
-            binary_not_found,
-        )
-        .expect_err("should error when claude binary not found");
+        let err =
+            interactive_claude_session_with_check(tmp.path(), &skill_path, &[], binary_not_found)
+                .expect_err("should error when claude binary not found");
 
         let msg = err.to_string();
         assert!(

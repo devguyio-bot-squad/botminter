@@ -1,5 +1,7 @@
 use anyhow::Result;
-use comfy_table::{ContentArrangement, Table, presets::UTF8_FULL_CONDENSED, modifiers::UTF8_ROUND_CORNERS};
+use comfy_table::{
+    modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, ContentArrangement, Table,
+};
 
 use crate::profile;
 
@@ -53,9 +55,7 @@ pub fn describe(name: &str, show_tags: bool) -> Result<()> {
         .collect();
 
     for role in &roles {
-        let desc = role_descriptions
-            .get(role.as_str())
-            .unwrap_or(&"");
+        let desc = role_descriptions.get(role.as_str()).unwrap_or(&"");
         println!("  {:<20} {}", role, desc);
     }
 
@@ -79,7 +79,12 @@ pub fn describe(name: &str, show_tags: bool) -> Result<()> {
             };
             println!(
                 "  {}{:<14} {} — context: {}, dir: {}, binary: {}",
-                key, default_marker, agent.display_name, agent.context_file, agent.agent_dir, agent.binary
+                key,
+                default_marker,
+                agent.display_name,
+                agent.context_file,
+                agent.agent_dir,
+                agent.binary
             );
         }
     }
@@ -88,7 +93,10 @@ pub fn describe(name: &str, show_tags: bool) -> Result<()> {
         println!();
         println!("Bridges ({}):", manifest.bridges.len());
         for bridge in &manifest.bridges {
-            println!("  {:<20} {} [{}] — {}", bridge.name, bridge.display_name, bridge.bridge_type, bridge.description);
+            println!(
+                "  {:<20} {} [{}] — {}",
+                bridge.name, bridge.display_name, bridge.bridge_type, bridge.description
+            );
         }
     }
 
@@ -98,7 +106,10 @@ pub fn describe(name: &str, show_tags: bool) -> Result<()> {
         if tagged_files.is_empty() {
             println!("Coding-Agent Dependent Files: none");
         } else {
-            println!("Coding-Agent Dependent Files ({} files):", tagged_files.len());
+            println!(
+                "Coding-Agent Dependent Files ({} files):",
+                tagged_files.len()
+            );
             for (path, agents) in &tagged_files {
                 println!("  {} ({})", path, agents.join(", "));
             }

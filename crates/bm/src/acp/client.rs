@@ -1,13 +1,12 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use sacp::role::acp::{Agent, Client};
 use sacp::schema::{
     ContentBlock, ContentChunk, InitializeRequest, NewSessionRequest, PromptRequest,
-    ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest,
-    RequestPermissionResponse, SelectedPermissionOutcome, SessionNotification, SessionUpdate,
-    TextContent,
+    ProtocolVersion, RequestPermissionOutcome, RequestPermissionRequest, RequestPermissionResponse,
+    SelectedPermissionOutcome, SessionNotification, SessionUpdate, TextContent,
 };
-use sacp::role::acp::{Agent, Client};
 use sacp::ConnectionTo;
 use tokio::process::{Child, Command};
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -86,9 +85,9 @@ impl AcpClient {
             cmd.env(key, value);
         }
 
-        let mut child = cmd.spawn().map_err(|e| {
-            AcpError::SpawnFailed(format!("{}: {e}", config.binary))
-        })?;
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| AcpError::SpawnFailed(format!("{}: {e}", config.binary)))?;
 
         let child_stdin = child
             .stdin
@@ -225,8 +224,7 @@ impl AcpClient {
         event_tx: mpsc::Sender<AcpEvent>,
         permission_handler: PermissionHandler,
     ) {
-        let transport =
-            sacp::ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
+        let transport = sacp::ByteStreams::new(child_stdin.compat_write(), child_stdout.compat());
 
         let event_tx_for_notif = event_tx.clone();
 
@@ -460,7 +458,7 @@ mod tests {
     #[test]
     fn stop_reason_serialization() {
         let reason = StopReason::EndTurn;
-        let json = serde_json::to_value(&reason).unwrap();
+        let json = serde_json::to_value(reason).unwrap();
         assert_eq!(json, "end_turn");
 
         let deserialized: StopReason = serde_json::from_value(json).unwrap();
@@ -500,8 +498,7 @@ mod tests {
         assert!(json["outcome"].is_object());
 
         // Cancelled outcome
-        let response =
-            RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled);
+        let response = RequestPermissionResponse::new(RequestPermissionOutcome::Cancelled);
         let json = serde_json::to_value(&response).unwrap();
         assert!(json["outcome"].is_string() || json["outcome"].is_object());
     }

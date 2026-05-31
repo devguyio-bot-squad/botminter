@@ -80,10 +80,7 @@ impl DaemonPaths {
     pub fn member_log(&self, member_name: &str) -> Result<PathBuf> {
         let logs_dir = self.config_dir.join("logs");
         fs::create_dir_all(&logs_dir)?;
-        Ok(logs_dir.join(format!(
-            "member-{}-{}.log",
-            self.team_name, member_name
-        )))
+        Ok(logs_dir.join(format!("member-{}-{}.log", self.team_name, member_name)))
     }
 }
 
@@ -109,19 +106,13 @@ pub fn save_poll_state(path: &Path, state: &PollState) {
 pub fn read_team_schema(team_repo: &Path) -> Result<String> {
     let manifest_path = team_repo.join("botminter.yml");
     if !manifest_path.exists() {
-        anyhow::bail!(
-            "Team repo at {} has no botminter.yml",
-            team_repo.display()
-        );
+        anyhow::bail!("Team repo at {} has no botminter.yml", team_repo.display());
     }
     let contents =
         fs::read_to_string(&manifest_path).context("Failed to read team botminter.yml")?;
     let val: serde_yml::Value =
         serde_yml::from_str(&contents).context("Failed to parse team botminter.yml")?;
-    Ok(val["schema_version"]
-        .as_str()
-        .unwrap_or("")
-        .to_string())
+    Ok(val["schema_version"].as_str().unwrap_or("").to_string())
 }
 
 #[cfg(test)]

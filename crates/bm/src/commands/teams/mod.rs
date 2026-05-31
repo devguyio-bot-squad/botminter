@@ -2,7 +2,9 @@ mod show;
 mod sync;
 
 use anyhow::Result;
-use comfy_table::{ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
+use comfy_table::{
+    modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, ContentArrangement, Table,
+};
 
 use crate::config;
 use crate::profile;
@@ -23,7 +25,9 @@ pub fn list() -> Result<()> {
         .load_preset(UTF8_FULL_CONDENSED)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::DynamicFullWidth)
-        .set_header(vec!["Team", "Profile", "GitHub", "Members", "Projects", "Default"]);
+        .set_header(vec![
+            "Team", "Profile", "GitHub", "Members", "Projects", "Default",
+        ]);
 
     for team in &cfg.teams {
         let is_default = cfg.default_team.as_ref() == Some(&team.name);

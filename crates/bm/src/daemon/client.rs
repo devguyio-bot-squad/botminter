@@ -8,6 +8,11 @@ use super::api::{
     StartMembersRequest, StartMembersResponse, StopMembersRequest, StopMembersResponse,
 };
 use super::config::{DaemonConfig, DaemonPaths};
+use super::session_api::{
+    BulkCleanupResponse, CleanupSessionResponse, ForceStopResponse, InspectSessionResponse,
+    RetriggerFinalizationResponse, SessionHistoryInfo, SessionInfo, SessionsListResponse,
+    StartSessionRequest, StartSessionResponse, StopSessionResponse,
+};
 use crate::state;
 
 /// HTTP client for communicating with a running daemon.
@@ -151,6 +156,230 @@ impl DaemonClient {
         resp.json::<HealthResponse>()
             .context("Failed to parse health response")
     }
+
+    /// POST /api/sessions/start — create and register a new session for `member`.
+    pub fn start_session(&self, member: &str, session_type: &str) -> Result<StartSessionResponse> {
+        let url = format!("{}/api/sessions/start", self.base_url);
+        let req = StartSessionRequest {
+            member: member.to_string(),
+            session_type: session_type.to_string(),
+        };
+        let resp = self
+            .client
+            .post(&url)
+            .json(&req)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session start: {}", status, body);
+        }
+
+        resp.json::<StartSessionResponse>()
+            .context("Failed to parse session start response")
+    }
+
+    /// POST /api/sessions/{id}/stop — stop the agent and deactivate the session.
+    pub fn stop_session(&self, session_id: &str) -> Result<StopSessionResponse> {
+        let url = format!("{}/api/sessions/{}/stop", self.base_url, session_id);
+        let resp = self
+            .client
+            .post(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session stop: {}", status, body);
+        }
+
+        resp.json::<StopSessionResponse>()
+            .context("Failed to parse session stop response")
+    }
+
+    /// GET /api/sessions — list all active sessions.
+    pub fn list_sessions(&self) -> Result<SessionsListResponse> {
+        let url = format!("{}/api/sessions", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session list: {}", status, body);
+        }
+
+        resp.json::<SessionsListResponse>()
+            .context("Failed to parse session list response")
+    }
+
+    /// GET /api/sessions/history — list completed/terminated sessions.
+    pub fn list_session_history(&self) -> Result<Vec<SessionHistoryInfo>> {
+        let url = format!("{}/api/sessions/history", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session history: {}", status, body);
+        }
+
+        resp.json::<Vec<SessionHistoryInfo>>()
+            .context("Failed to parse session history response")
+    }
+
+    /// GET /api/sessions/{id} — get a single session by ID.
+    pub fn get_session(&self, session_id: &str) -> Result<SessionInfo> {
+        let url = format!("{}/api/sessions/{}", self.base_url, session_id);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session get: {}", status, body);
+        }
+
+        resp.json::<SessionInfo>()
+            .context("Failed to parse session get response")
+    }
+
+    /// DELETE /api/sessions/{id}?force=true — force-stop a session immediately.
+    ///
+    /// Transitions Active → Killed or Finalizing → Killed without finalization.
+    pub fn force_stop_session(&self, session_id: &str) -> Result<ForceStopResponse> {
+        let url = format!("{}/api/sessions/{}?force=true", self.base_url, session_id);
+        let resp = self
+            .client
+            .delete(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for force stop: {}", status, body);
+        }
+
+        resp.json::<ForceStopResponse>()
+            .context("Failed to parse force stop response")
+    }
+
+    /// POST /api/sessions/{id}/finalize — re-trigger finalization on a Retained session.
+    pub fn retrigger_finalization(
+        &self,
+        session_id: &str,
+    ) -> Result<RetriggerFinalizationResponse> {
+        let url = format!("{}/api/sessions/{}/finalize", self.base_url, session_id);
+        let resp = self
+            .client
+            .post(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!(
+                "Daemon returned {} for retrigger finalization: {}",
+                status,
+                body
+            );
+        }
+
+        resp.json::<RetriggerFinalizationResponse>()
+            .context("Failed to parse retrigger finalization response")
+    }
+
+    /// GET /api/sessions/{id}/inspect — return structured summary of a session.
+    pub fn inspect_session(&self, session_id: &str) -> Result<InspectSessionResponse> {
+        let url = format!("{}/api/sessions/{}/inspect", self.base_url, session_id);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session inspect: {}", status, body);
+        }
+
+        resp.json::<InspectSessionResponse>()
+            .context("Failed to parse session inspect response")
+    }
+
+    /// DELETE /api/sessions/{id}/cleanup — remove a session's workspace and registry entry.
+    pub fn cleanup_session(&self, session_id: &str) -> Result<CleanupSessionResponse> {
+        let url = format!("{}/api/sessions/{}/cleanup", self.base_url, session_id);
+        let resp = self
+            .client
+            .delete(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session cleanup: {}", status, body);
+        }
+
+        resp.json::<CleanupSessionResponse>()
+            .context("Failed to parse session cleanup response")
+    }
+
+    /// DELETE /api/sessions/cleanup — bulk cleanup of retained sessions.
+    pub fn bulk_cleanup_sessions(
+        &self,
+        all: bool,
+        member: Option<&str>,
+        older_than: Option<&str>,
+    ) -> Result<BulkCleanupResponse> {
+        let mut url = format!("{}/api/sessions/cleanup", self.base_url);
+        let mut sep = '?';
+        if all {
+            url.push(sep);
+            url.push_str("all=true");
+            sep = '&';
+        }
+        if let Some(m) = member {
+            url.push(sep);
+            url.push_str(&format!("member={m}"));
+            sep = '&';
+        }
+        if let Some(d) = older_than {
+            url.push(sep);
+            url.push_str(&format!("older_than={d}"));
+        }
+        let resp = self
+            .client
+            .delete(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for bulk cleanup: {}", status, body);
+        }
+
+        resp.json::<BulkCleanupResponse>()
+            .context("Failed to parse bulk cleanup response")
+    }
 }
 
 /// Reads the daemon config file for a team.
@@ -171,21 +400,16 @@ fn load_daemon_config(paths: &DaemonPaths) -> Result<DaemonConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::daemon::api::{
-        MemberLaunchedInfo, MemberSkippedInfo, MemberStatusInfo, MemberStoppedInfo,
-    };
 
     #[test]
     fn load_daemon_config_missing_file() {
         let paths = DaemonPaths::new_with_dir("test-team", "/tmp/nonexistent-dir-12345");
         let result = load_daemon_config(&paths);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Daemon config not found")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Daemon config not found"));
     }
 
     #[test]
@@ -219,12 +443,10 @@ mod tests {
 
         let result = load_daemon_config(&paths);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to parse daemon config")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to parse daemon config"));
     }
 
     #[test]
@@ -399,5 +621,325 @@ mod tests {
         assert!(resp.loop_id.is_none());
         assert!(resp.pid.is_none());
         assert_eq!(resp.error, Some("no workspace found".to_string()));
+    }
+
+    // ── Session API type serde tests ─────────────────────────────────────────
+
+    // AC-1/8: StartSessionRequest serializes member and session_type fields
+    #[test]
+    fn session_start_request_serializes_member_and_type() {
+        let req = StartSessionRequest {
+            member: "alice".to_string(),
+            session_type: "interactive".to_string(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["member"], "alice");
+        assert_eq!(parsed["session_type"], "interactive");
+    }
+
+    // AC-1: StartSessionResponse deserializes ok+session fields
+    #[test]
+    fn session_start_response_ok_deserializes_with_session_info() {
+        let json = serde_json::json!({
+            "ok": true,
+            "session": {
+                "session_id": "abc12345",
+                "owning_member": "alice",
+                "session_type": "interactive",
+                "current_state": "Active",
+                "start_time": "2026-05-31T00:00:00Z",
+                "workspace_path": "/tmp/ws/alice"
+            },
+            "error": null
+        });
+        let resp: StartSessionResponse = serde_json::from_value(json).unwrap();
+        assert!(resp.ok);
+        let session = resp.session.expect("session must be present on ok=true");
+        assert_eq!(session.session_id, "abc12345");
+        assert_eq!(session.owning_member, "alice");
+        assert_eq!(session.current_state, "Active");
+    }
+
+    // AC-6: SessionsListResponse deserializes sessions array
+    #[test]
+    fn session_list_response_deserializes_sessions_array() {
+        let json = serde_json::json!({
+            "sessions": [
+                {
+                    "session_id": "abc12345",
+                    "owning_member": "alice",
+                    "session_type": "interactive",
+                    "current_state": "Active",
+                    "start_time": "2026-05-31T00:00:00Z",
+                    "workspace_path": null
+                },
+                {
+                    "session_id": "def67890",
+                    "owning_member": "bob",
+                    "session_type": "loop",
+                    "current_state": "Active",
+                    "start_time": "2026-05-31T01:00:00Z",
+                    "workspace_path": null
+                }
+            ]
+        });
+        let resp: SessionsListResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(resp.sessions.len(), 2);
+        assert_eq!(resp.sessions[0].session_id, "abc12345");
+        assert_eq!(resp.sessions[1].owning_member, "bob");
+    }
+
+    // AC-7: StopSessionResponse deserializes with structured dirty_repos
+    #[test]
+    fn session_stop_response_deserializes_structured_dirty_repos() {
+        let json = serde_json::json!({
+            "ok": true,
+            "dirty_repos": [
+                {
+                    "name": "my-project",
+                    "has_uncommitted": true,
+                    "unpushed_branches": ["feature/x", "hotfix/z"]
+                }
+            ],
+            "error": null
+        });
+        let resp: StopSessionResponse = serde_json::from_value(json).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.dirty_repos.len(), 1);
+        assert_eq!(resp.dirty_repos[0].name, "my-project");
+        assert!(resp.dirty_repos[0].has_uncommitted);
+        assert_eq!(
+            resp.dirty_repos[0].unpushed_branches,
+            vec!["feature/x", "hotfix/z"]
+        );
+    }
+
+    // AC-7: StopSessionResponse with empty dirty_repos (clean workspace)
+    #[test]
+    fn session_stop_response_empty_dirty_repos_for_clean_workspace() {
+        let json = serde_json::json!({
+            "ok": true,
+            "dirty_repos": [],
+            "error": null
+        });
+        let resp: StopSessionResponse = serde_json::from_value(json).unwrap();
+        assert!(resp.ok);
+        assert!(resp.dirty_repos.is_empty());
+    }
+
+    // ── Session client behavioral tests ─────────────────────────────────────────
+    //
+    // These tests start a lightweight in-process HTTP server with stub session
+    // routes and verify that DaemonClient methods produce correct requests and
+    // parse responses correctly.
+
+    static SESSION_SERVER_BASE_URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+    /// Starts a stub axum server with session API routes and returns its base URL.
+    /// The server starts once per test process (OnceLock) on a random port.
+    fn session_server_base_url() -> String {
+        SESSION_SERVER_BASE_URL
+            .get_or_init(|| {
+                use axum::extract::Path;
+                use axum::routing::{delete, get, post};
+                use axum::Json;
+
+                async fn stub_start_session(
+                    Json(req): Json<serde_json::Value>,
+                ) -> Json<serde_json::Value> {
+                    let member = req["member"].as_str().unwrap_or("unknown").to_string();
+                    let session_type = req["session_type"].as_str().unwrap_or("loop").to_string();
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "session": {
+                            "session_id": format!("stub-{member}-{session_type}"),
+                            "owning_member": member,
+                            "session_type": session_type,
+                            "current_state": "Active",
+                            "start_time": "2026-05-31T00:00:00Z",
+                            "workspace_path": null
+                        },
+                        "error": null
+                    }))
+                }
+
+                async fn stub_list_sessions() -> Json<serde_json::Value> {
+                    Json(serde_json::json!({ "sessions": [] }))
+                }
+
+                async fn stub_stop_session(Path(_id): Path<String>) -> Json<serde_json::Value> {
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "dirty_repos": [],
+                        "error": null
+                    }))
+                }
+
+                async fn stub_get_session(Path(id): Path<String>) -> Json<serde_json::Value> {
+                    Json(serde_json::json!({
+                        "session_id": id,
+                        "owning_member": "stub-member",
+                        "session_type": "loop",
+                        "current_state": "Active",
+                        "start_time": "2026-05-31T00:00:00Z",
+                        "workspace_path": null
+                    }))
+                }
+
+                async fn stub_inspect_session(Path(id): Path<String>) -> Json<serde_json::Value> {
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "session_id": id,
+                        "member_name": "stub-member",
+                        "session_type": "loop",
+                        "current_state": "Retained",
+                        "workspace_path": null,
+                        "created_at": "2026-05-31T00:00:00Z",
+                        "state_transitioned_at": "2026-05-31T00:00:00Z",
+                        "finalization_results": null,
+                        "git_state": null,
+                    }))
+                }
+
+                async fn stub_cleanup_session(Path(id): Path<String>) -> Json<serde_json::Value> {
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "session_id": id,
+                        "error": null,
+                    }))
+                }
+
+                async fn stub_bulk_cleanup() -> Json<serde_json::Value> {
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "removed": 0,
+                        "error": null,
+                    }))
+                }
+
+                let router = axum::Router::new()
+                    .route("/api/sessions/start", post(stub_start_session))
+                    .route("/api/sessions/cleanup", delete(stub_bulk_cleanup))
+                    .route("/api/sessions", get(stub_list_sessions))
+                    .route("/api/sessions/{id}/stop", post(stub_stop_session))
+                    .route("/api/sessions/{id}/inspect", get(stub_inspect_session))
+                    .route("/api/sessions/{id}/cleanup", delete(stub_cleanup_session))
+                    .route("/api/sessions/{id}", get(stub_get_session));
+
+                let (tx, rx) = std::sync::mpsc::channel::<String>();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    rt.block_on(async move {
+                        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+                        let port = listener.local_addr().unwrap().port();
+                        tx.send(format!("http://127.0.0.1:{port}")).unwrap();
+                        axum::serve(listener, router).await.unwrap();
+                    });
+                });
+
+                rx.recv().unwrap()
+            })
+            .clone()
+    }
+
+    // AC-1: DaemonClient::start_session sends correct request and returns SessionInfo
+    #[test]
+    fn client_start_session_returns_session_info() {
+        let client = DaemonClient {
+            base_url: session_server_base_url(),
+            client: reqwest::blocking::Client::new(),
+        };
+        let result = client.start_session("alice", "interactive");
+        let resp = result.unwrap();
+        assert!(resp.ok, "start_session must return ok=true on success");
+        assert!(
+            resp.session.is_some(),
+            "start_session must return session info"
+        );
+    }
+
+    // AC-6: DaemonClient::list_sessions returns sessions array
+    #[test]
+    fn client_list_sessions_returns_sessions_array() {
+        let client = DaemonClient {
+            base_url: session_server_base_url(),
+            client: reqwest::blocking::Client::new(),
+        };
+        let result = client.list_sessions();
+        let resp = result.unwrap();
+        // sessions may be empty if none active; field must exist
+        let _ = resp.sessions;
+    }
+
+    // AC-5: DaemonClient::stop_session returns deactivation result (idempotent)
+    #[test]
+    fn client_stop_session_returns_deactivation_result() {
+        let client = DaemonClient {
+            base_url: session_server_base_url(),
+            client: reqwest::blocking::Client::new(),
+        };
+        // stop is idempotent — returns ok=true even for unknown session IDs
+        let result = client.stop_session("sess-abc12345");
+        let resp = result.unwrap();
+        assert!(
+            resp.ok,
+            "stop_session must return ok=true for known session"
+        );
+    }
+
+    // AC-8: DaemonClient::get_session returns session info by ID
+    #[test]
+    fn client_get_session_returns_session_info_by_id() {
+        let client = DaemonClient {
+            base_url: session_server_base_url(),
+            client: reqwest::blocking::Client::new(),
+        };
+        let result = client.get_session("sess-abc12345");
+        let info = result.unwrap();
+        assert_eq!(info.session_id, "sess-abc12345");
+    }
+
+    // AC-18: DaemonClient::inspect_session — CT-89-06 RED
+
+    #[test]
+    fn client_inspect_session_returns_inspection_response() {
+        let client = DaemonClient {
+            base_url: session_server_base_url(),
+            client: reqwest::blocking::Client::new(),
+        };
+        // E0599: method `inspect_session` not found on `DaemonClient` until added
+        let result = client.inspect_session("sess-abc12345");
+        let resp = result.unwrap();
+        assert!(resp.ok, "inspect_session must return ok=true on success");
+        assert_eq!(resp.session_id, "sess-abc12345");
+    }
+
+    #[test]
+    fn client_cleanup_session_returns_ok() {
+        let client = DaemonClient {
+            base_url: session_server_base_url(),
+            client: reqwest::blocking::Client::new(),
+        };
+        // E0599: method `cleanup_session` not found on `DaemonClient` until added
+        let result = client.cleanup_session("sess-abc12345");
+        let resp = result.unwrap();
+        assert!(resp.ok, "cleanup_session must return ok=true on success");
+        assert_eq!(resp.session_id, "sess-abc12345");
+    }
+
+    #[test]
+    fn client_bulk_cleanup_sessions_returns_removed_count() {
+        let client = DaemonClient {
+            base_url: session_server_base_url(),
+            client: reqwest::blocking::Client::new(),
+        };
+        // E0599: method `bulk_cleanup_sessions` not found on `DaemonClient` until added
+        let result = client.bulk_cleanup_sessions(true, None, None);
+        let resp = result.unwrap();
+        assert!(
+            resp.ok,
+            "bulk_cleanup_sessions must return ok=true on success"
+        );
     }
 }

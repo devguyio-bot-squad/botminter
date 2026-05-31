@@ -29,7 +29,11 @@ pub(super) fn symlink_md_files(src_dir: &Path, dst_dir: &Path) -> Result<()> {
             }
             let rel_target = rel.join(filename);
             unix_fs::symlink(&rel_target, &dst).with_context(|| {
-                format!("Failed to symlink {} → {}", dst.display(), rel_target.display())
+                format!(
+                    "Failed to symlink {} → {}",
+                    dst.display(),
+                    rel_target.display()
+                )
             })?;
         }
     }
@@ -59,7 +63,12 @@ pub(super) fn symlink_subdirs(src_dir: &Path, dst_dir: &Path) -> Result<()> {
         let dir_name = entry.file_name();
         let dst = dst_dir.join(&dir_name);
         if dst.symlink_metadata().is_ok() {
-            if dst.is_dir() && !dst.symlink_metadata().map(|m| m.file_type().is_symlink()).unwrap_or(false) {
+            if dst.is_dir()
+                && !dst
+                    .symlink_metadata()
+                    .map(|m| m.file_type().is_symlink())
+                    .unwrap_or(false)
+            {
                 fs::remove_dir_all(&dst).ok();
             } else {
                 fs::remove_file(&dst).ok();
@@ -67,7 +76,11 @@ pub(super) fn symlink_subdirs(src_dir: &Path, dst_dir: &Path) -> Result<()> {
         }
         let rel_target = rel.join(&dir_name);
         unix_fs::symlink(&rel_target, &dst).with_context(|| {
-            format!("Failed to symlink {} → {}", dst.display(), rel_target.display())
+            format!(
+                "Failed to symlink {} → {}",
+                dst.display(),
+                rel_target.display()
+            )
         })?;
     }
 
@@ -153,9 +166,8 @@ pub(super) fn copy_if_newer_verbose(src: &Path, dst: &Path) -> Result<bool> {
         if let Some(parent) = dst.parent() {
             fs::create_dir_all(parent)?;
         }
-        fs::copy(src, dst).with_context(|| {
-            format!("Failed to copy {} → {}", src.display(), dst.display())
-        })?;
+        fs::copy(src, dst)
+            .with_context(|| format!("Failed to copy {} → {}", src.display(), dst.display()))?;
     }
     Ok(should_copy)
 }
@@ -171,7 +183,8 @@ fn verify_symlink(link: &Path, expected_target: &Path) -> Result<()> {
 
     // Compute the relative path from the link's parent to the target
     let link_parent = link.parent().unwrap_or(Path::new("."));
-    let canonical_parent = fs::canonicalize(link_parent).unwrap_or_else(|_| link_parent.to_path_buf());
+    let canonical_parent =
+        fs::canonicalize(link_parent).unwrap_or_else(|_| link_parent.to_path_buf());
     let rel = relative_path(&canonical_parent, &canonical_target);
 
     let needs_fix = match fs::read_link(link) {
@@ -556,8 +569,12 @@ mod tests {
         git_cmd(
             &ws,
             &[
-                "-c", "protocol.file.allow=always",
-                "submodule", "add", remote.to_str().unwrap(), "team",
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                remote.to_str().unwrap(),
+                "team",
             ],
         )
         .unwrap();

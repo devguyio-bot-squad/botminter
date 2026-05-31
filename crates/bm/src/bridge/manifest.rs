@@ -151,10 +151,18 @@ pub fn state_path(workzone: &Path, team_name: &str) -> PathBuf {
 /// Loads and parses bridge.yml from a bridge directory.
 pub fn load_manifest(bridge_dir: &Path) -> Result<BridgeManifest> {
     let manifest_path = bridge_dir.join("bridge.yml");
-    let contents = fs::read_to_string(&manifest_path)
-        .with_context(|| format!("Failed to read bridge manifest at {}", manifest_path.display()))?;
-    let manifest: BridgeManifest = serde_yml::from_str(&contents)
-        .with_context(|| format!("Failed to parse bridge manifest at {}", manifest_path.display()))?;
+    let contents = fs::read_to_string(&manifest_path).with_context(|| {
+        format!(
+            "Failed to read bridge manifest at {}",
+            manifest_path.display()
+        )
+    })?;
+    let manifest: BridgeManifest = serde_yml::from_str(&contents).with_context(|| {
+        format!(
+            "Failed to parse bridge manifest at {}",
+            manifest_path.display()
+        )
+    })?;
     Ok(manifest)
 }
 
@@ -185,8 +193,7 @@ pub fn save_state(path: &Path, state: &BridgeState) -> Result<()> {
 
     // Set permissions before rename (0600 -- contains credentials)
     let perms = fs::Permissions::from_mode(0o600);
-    fs::set_permissions(&tmp_path, perms)
-        .context("Failed to set bridge state file permissions")?;
+    fs::set_permissions(&tmp_path, perms).context("Failed to set bridge state file permissions")?;
 
     fs::rename(&tmp_path, path).context("Failed to rename temp bridge state file")?;
 
@@ -204,8 +211,8 @@ pub fn discover(team_repo: &Path, _team_name: &str) -> Result<Option<PathBuf>> {
         return Ok(None);
     }
 
-    let contents = fs::read_to_string(&manifest_path)
-        .context("Failed to read team botminter.yml")?;
+    let contents =
+        fs::read_to_string(&manifest_path).context("Failed to read team botminter.yml")?;
     let value: serde_yml::Value =
         serde_yml::from_str(&contents).context("Failed to parse team botminter.yml")?;
 
@@ -343,10 +350,7 @@ spec:
         assert_eq!(loaded.service_url.as_deref(), Some("http://localhost:3000"));
         assert_eq!(loaded.container_ids, vec!["abc123"]);
         assert_eq!(loaded.status, "running");
-        assert_eq!(
-            loaded.started_at.as_deref(),
-            Some("2026-03-08T00:00:00Z")
-        );
+        assert_eq!(loaded.started_at.as_deref(), Some("2026-03-08T00:00:00Z"));
         assert_eq!(
             loaded.last_health_check.as_deref(),
             Some("2026-03-08T00:01:00Z")
@@ -388,7 +392,10 @@ spec:
 
         let metadata = fs::metadata(&path).unwrap();
         let mode = metadata.permissions().mode() & 0o777;
-        assert_eq!(mode, 0o600, "Bridge state file should have 0600 permissions");
+        assert_eq!(
+            mode, 0o600,
+            "Bridge state file should have 0600 permissions"
+        );
     }
 
     #[test]
@@ -412,11 +419,7 @@ spec:
     fn discover_no_bridge() {
         let tmp = tempfile::tempdir().unwrap();
         // Create a botminter.yml without a bridge key
-        fs::write(
-            tmp.path().join("botminter.yml"),
-            "profile: scrum\n",
-        )
-        .unwrap();
+        fs::write(tmp.path().join("botminter.yml"), "profile: scrum\n").unwrap();
 
         let result = discover(tmp.path(), "test-team").unwrap();
         assert!(result.is_none());
@@ -434,11 +437,7 @@ spec:
     fn discover_bridge() {
         let tmp = tempfile::tempdir().unwrap();
         // Create botminter.yml with bridge key
-        fs::write(
-            tmp.path().join("botminter.yml"),
-            "bridge: stub\n",
-        )
-        .unwrap();
+        fs::write(tmp.path().join("botminter.yml"), "bridge: stub\n").unwrap();
         // Create the bridge directory
         let bridge_dir = tmp.path().join("bridges").join("stub");
         fs::create_dir_all(&bridge_dir).unwrap();
@@ -450,11 +449,7 @@ spec:
     #[test]
     fn discover_missing_dir() {
         let tmp = tempfile::tempdir().unwrap();
-        fs::write(
-            tmp.path().join("botminter.yml"),
-            "bridge: nonexistent\n",
-        )
-        .unwrap();
+        fs::write(tmp.path().join("botminter.yml"), "bridge: nonexistent\n").unwrap();
 
         let result = discover(tmp.path(), "test-team");
         assert!(result.is_err());
@@ -489,7 +484,10 @@ spec:
         };
 
         let json = serde_json::to_string(&room).unwrap();
-        assert!(!json.contains("member"), "member: None should be omitted from JSON");
+        assert!(
+            !json.contains("member"),
+            "member: None should be omitted from JSON"
+        );
     }
 
     #[test]

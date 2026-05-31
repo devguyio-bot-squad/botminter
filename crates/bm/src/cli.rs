@@ -206,6 +206,22 @@ pub enum Command {
         /// Show verbose Ralph runtime details
         #[arg(short, long)]
         verbose: bool,
+
+        /// Output session data as JSON and suppress all other output
+        #[arg(long)]
+        json: bool,
+
+        /// Show completed session history instead of active sessions
+        #[arg(long)]
+        history: bool,
+
+        /// Filter history by member name (only with --history)
+        #[arg(long)]
+        member: Option<String>,
+
+        /// Filter history to sessions ending within a time window, e.g. 24h, 7d (only with --history)
+        #[arg(long)]
+        since: Option<String>,
     },
 
     /// Team management commands
@@ -248,11 +264,15 @@ pub enum Command {
         autonomous: bool,
     },
 
-    /// Launch Minty, the BotMinter interactive assistant
+    /// Migrate permanent workspaces to ephemeral session model
     Minty {
         /// Team to operate on (gives Minty team-specific context)
         #[arg(short, long)]
         team: Option<String>,
+
+        /// Discover existing permanent workspaces without migrating
+        #[arg(long)]
+        discover: bool,
 
         /// Run the coding agent in autonomous mode (skip permission prompts)
         #[arg(short, long)]
@@ -369,6 +389,11 @@ pub enum Command {
         command: DebugCommand,
     },
 
+    /// Session inspection and cleanup
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
+    },
 
     /// Unknown subcommand (caught when not matching any static or dynamic command)
     #[command(external_subcommand)]
@@ -826,6 +851,41 @@ pub enum BridgeRoomCommand {
 
     /// List rooms
     List {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SessionCommand {
+    /// Inspect a retained session's workspace state and metadata
+    Inspect {
+        /// Session ID to inspect
+        session_id: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Manually clean up one or more retained sessions
+    Cleanup {
+        /// Session ID (individual cleanup — omit for bulk)
+        session_id: Option<String>,
+
+        /// Clean up all retained sessions
+        #[arg(long)]
+        all: bool,
+
+        /// Clean up all retained sessions for a specific member
+        #[arg(long)]
+        member: Option<String>,
+
+        /// Clean up sessions older than the given duration (e.g. 48h)
+        #[arg(long)]
+        older_than: Option<String>,
+
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,

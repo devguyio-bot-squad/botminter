@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 
-use super::manifest::{BridgeIdentity, load_state, save_state};
 use super::env_var_suffix;
+use super::manifest::{load_state, save_state, BridgeIdentity};
 
 // ── CredentialStore trait + implementations ──────────────────────────
 
@@ -50,12 +50,7 @@ impl CredentialStore for InMemoryCredentialStore {
     }
 
     fn retrieve(&self, member_name: &str) -> Result<Option<String>> {
-        Ok(self
-            .tokens
-            .lock()
-            .unwrap()
-            .get(member_name)
-            .cloned())
+        Ok(self.tokens.lock().unwrap().get(member_name).cloned())
     }
 
     fn remove(&self, member_name: &str) -> Result<()> {
@@ -143,19 +138,17 @@ fn get_or_create_collection<'a>(
         .map_err(|e| anyhow::anyhow!("Failed to create keyring collection '{}': {}", name, e))
 }
 
-
 fn connect_secret_service() -> Result<dbus_secret_service::SecretService> {
-    dbus_secret_service::SecretService::connect(
-        dbus_secret_service::EncryptionType::Plain,
-    )
-    .map_err(|e| {
-        anyhow::anyhow!(
-            "Cannot connect to Secret Service (D-Bus). \
+    dbus_secret_service::SecretService::connect(dbus_secret_service::EncryptionType::Plain).map_err(
+        |e| {
+            anyhow::anyhow!(
+                "Cannot connect to Secret Service (D-Bus). \
              Install a Secret Service provider (e.g., gnome-keyring) \
              or set BM_BRIDGE_TOKEN_* environment variables instead. ({})",
-            e
-        )
-    })
+                e
+            )
+        },
+    )
 }
 
 /// Checks if the keyring collection is unlocked.
@@ -176,9 +169,9 @@ pub fn check_keyring_unlocked_for(collection_name: Option<&str>) -> Result<()> {
         })?
     };
 
-    let locked = collection.is_locked().map_err(|e| {
-        anyhow::anyhow!("Cannot check keyring lock state: {}", e)
-    })?;
+    let locked = collection
+        .is_locked()
+        .map_err(|e| anyhow::anyhow!("Cannot check keyring lock state: {}", e))?;
 
     if locked {
         anyhow::bail!(
@@ -201,9 +194,9 @@ pub fn check_keyring_unlocked() -> Result<()> {
 fn dss_store(service: &str, member_name: &str, token: &str, collection_name: &str) -> Result<()> {
     let ss = connect_secret_service()?;
     let collection = get_or_create_collection(&ss, collection_name)?;
-    collection.ensure_unlocked().map_err(|e| {
-        anyhow::anyhow!("Failed to unlock collection '{}': {}", collection_name, e)
-    })?;
+    collection
+        .ensure_unlocked()
+        .map_err(|e| anyhow::anyhow!("Failed to unlock collection '{}': {}", collection_name, e))?;
 
     let mut attrs = std::collections::HashMap::new();
     attrs.insert("service", service);
@@ -237,14 +230,14 @@ fn dss_retrieve(service: &str, member_name: &str, collection_name: &str) -> Resu
     attrs.insert("service", service);
     attrs.insert("username", member_name);
 
-    let items = collection.search_items(attrs).map_err(|e| {
-        anyhow::anyhow!("Failed to search keyring: {}", e)
-    })?;
+    let items = collection
+        .search_items(attrs)
+        .map_err(|e| anyhow::anyhow!("Failed to search keyring: {}", e))?;
 
     if let Some(item) = items.first() {
-        let secret = item.get_secret().map_err(|e| {
-            anyhow::anyhow!("Failed to read secret: {}", e)
-        })?;
+        let secret = item
+            .get_secret()
+            .map_err(|e| anyhow::anyhow!("Failed to read secret: {}", e))?;
         Ok(Some(String::from_utf8_lossy(&secret).to_string()))
     } else {
         Ok(None)
@@ -356,7 +349,7 @@ impl CredentialStore for LocalCredentialStore {
                 match entry.delete_credential() {
                     Ok(()) => {}
                     Err(keyring::Error::NoEntry) => {} // Already gone
-                    Err(_) => {} // Best-effort removal; credential may remain
+                    Err(_) => {}                       // Best-effort removal; credential may remain
                 }
             }
 

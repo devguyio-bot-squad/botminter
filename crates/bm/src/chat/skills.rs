@@ -54,11 +54,8 @@ pub fn scan_skills(ws_path: &Path, dirs: &[String]) -> Vec<SkillInfo> {
                     }
 
                     let description = truncate_description(&meta.description);
-                    let relative_path = format!(
-                        "{}/{}/SKILL.md",
-                        dir,
-                        entry.file_name().to_string_lossy()
-                    );
+                    let relative_path =
+                        format!("{}/{}/SKILL.md", dir, entry.file_name().to_string_lossy());
 
                     seen_names.insert(meta.name.clone());
                     skills.push(SkillInfo {
@@ -104,9 +101,7 @@ pub fn truncate_description(desc: &str) -> String {
                 &normalized
             } else {
                 // Find last space before 120 chars to avoid cutting words
-                let cut = normalized[..120]
-                    .rfind(' ')
-                    .unwrap_or(120);
+                let cut = normalized[..120].rfind(' ').unwrap_or(120);
                 &normalized[..cut]
             }
         }
@@ -171,10 +166,7 @@ mod tests {
             .unwrap();
         }
 
-        let dirs = vec![
-            "team/skills".to_string(),
-            "member/skills".to_string(),
-        ];
+        let dirs = vec!["team/skills".to_string(), "member/skills".to_string()];
         let result = scan_skills(tmp.path(), &dirs);
         assert_eq!(result.len(), 1, "Should deduplicate skills with same name");
         assert_eq!(result[0].name, "gh");

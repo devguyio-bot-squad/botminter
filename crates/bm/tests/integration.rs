@@ -75,7 +75,13 @@ fn setup_team(tmp: &Path, team_name: &str, profile_name: &str) -> PathBuf {
     git(&team_repo, &["config", "user.name", "BM Test"]);
 
     // Extract profile content from disk into team repo (explicit base path, no env vars)
-    profile::extract_profile_from(&profiles_path, profile_name, &team_repo, &claude_code_agent()).unwrap();
+    profile::extract_profile_from(
+        &profiles_path,
+        profile_name,
+        &team_repo,
+        &claude_code_agent(),
+    )
+    .unwrap();
 
     // Create members/ and projects/ dirs (as bm init does)
     fs::create_dir_all(team_repo.join("members")).unwrap();
@@ -132,7 +138,13 @@ fn add_team_to_config(
     git(&team_repo, &["config", "user.email", "test@botminter.test"]);
     git(&team_repo, &["config", "user.name", "BM Test"]);
     let profiles_path = profile::profiles_dir_for(tmp);
-    profile::extract_profile_from(&profiles_path, profile_name, &team_repo, &claude_code_agent()).unwrap();
+    profile::extract_profile_from(
+        &profiles_path,
+        profile_name,
+        &team_repo,
+        &claude_code_agent(),
+    )
+    .unwrap();
     fs::create_dir_all(team_repo.join("members")).unwrap();
     fs::create_dir_all(team_repo.join("projects")).unwrap();
     fs::write(team_repo.join("members/.gitkeep"), "").unwrap();
@@ -149,7 +161,7 @@ fn add_team_to_config(
         coding_agent: None,
         project_number: None,
         bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+        daemon: Default::default(),
         vm: None,
     });
 
@@ -213,10 +225,6 @@ fn bm_add_project(home: &Path, url: &str, team: &str) {
     bm_run(home, &["projects", "add", url, "-t", team]);
 }
 
-/// Runs `bm teams sync` via subprocess.
-fn bm_sync(home: &Path, team: &str) {
-    bm_run(home, &["teams", "sync", "-t", team]);
-}
 
 /// Gets an OS-assigned free port by binding to port 0.
 fn get_free_port() -> u16 {
@@ -284,15 +292,44 @@ fn profiles_describe_returns_complete_data() {
     for name in profile::list_profiles_from(&profiles_path).unwrap() {
         let manifest = profile::read_manifest_from(&name, &profiles_path).unwrap();
         assert_eq!(manifest.name, name, "Profile '{}' name should match", name);
-        assert!(!manifest.display_name.is_empty(), "Profile '{}' should have display_name", name);
-        assert!(!manifest.description.is_empty(), "Profile '{}' should have description", name);
-        assert!(!manifest.schema_version.is_empty(), "Profile '{}' should have schema_version", name);
-        assert!(!manifest.roles.is_empty(), "Profile '{}' should have roles", name);
-        assert!(!manifest.labels.is_empty(), "Profile '{}' should have labels", name);
+        assert!(
+            !manifest.display_name.is_empty(),
+            "Profile '{}' should have display_name",
+            name
+        );
+        assert!(
+            !manifest.description.is_empty(),
+            "Profile '{}' should have description",
+            name
+        );
+        assert!(
+            !manifest.schema_version.is_empty(),
+            "Profile '{}' should have schema_version",
+            name
+        );
+        assert!(
+            !manifest.roles.is_empty(),
+            "Profile '{}' should have roles",
+            name
+        );
+        assert!(
+            !manifest.labels.is_empty(),
+            "Profile '{}' should have labels",
+            name
+        );
 
         for role in &manifest.roles {
-            assert!(!role.name.is_empty(), "Profile '{}' role should have name", name);
-            assert!(!role.description.is_empty(), "Profile '{}' role '{}' should have description", name, role.name);
+            assert!(
+                !role.name.is_empty(),
+                "Profile '{}' role should have name",
+                name
+            );
+            assert!(
+                !role.description.is_empty(),
+                "Profile '{}' role '{}' should have description",
+                name,
+                role.name
+            );
         }
     }
 }
@@ -350,7 +387,10 @@ fn hire_auto_suffix_first_member() {
     bm_run(tmp.path(), &["hire", "architect"]);
 
     let member_dir = team_repo.join("members/architect-01");
-    assert!(member_dir.is_dir(), "architect-01/ should exist (auto-suffix)");
+    assert!(
+        member_dir.is_dir(),
+        "architect-01/ should exist (auto-suffix)"
+    );
 }
 
 #[test]
@@ -427,12 +467,14 @@ fn projects_add_nonexistent_url_errors() {
     let team_repo = setup_team(tmp.path(), "test-team", "scrum");
 
     // Snapshot manifest before the add attempt
-    let manifest_before =
-        fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
+    let manifest_before = fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
 
     // Bare local paths are rejected (must use a URI scheme)
     let bad_path = tmp.path().join("does-not-exist-repo");
-    let stderr = bm_run_fail(tmp.path(), &["projects", "add", &bad_path.to_string_lossy()]);
+    let stderr = bm_run_fail(
+        tmp.path(),
+        &["projects", "add", &bad_path.to_string_lossy()],
+    );
     assert!(
         stderr.contains("must use a URI scheme"),
         "error should reject bare path: {}",
@@ -449,94 +491,14 @@ fn projects_add_nonexistent_url_errors() {
     );
 
     // Manifest should be unchanged — no partial write
-    let manifest_after =
-        fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
-    assert_eq!(manifest_before, manifest_after, "manifest should not change on failed add");
-}
-
-#[test]
-fn sync_with_nonexistent_fork_url_gives_actionable_error() {
-    let tmp = tempfile::tempdir().unwrap();
-    let team_repo = setup_team(tmp.path(), "bad-fork-team", "scrum");
-
-    bm_hire(tmp.path(), "architect", "alice", "bad-fork-team");
-
-    // Manually inject a project with a non-existent fork URL into botminter.yml
-    // (bypasses validation that projects::add will have)
-    let manifest_path = team_repo.join("botminter.yml");
-    let mut manifest: bm::profile::ProfileManifest = {
-        let contents = fs::read_to_string(&manifest_path).unwrap();
-        serde_yml::from_str(&contents).unwrap()
-    };
-    let bad_url = tmp.path().join("does-not-exist-repo");
-    manifest.projects.push(bm::profile::ProjectDef {
-        name: "ghost-project".to_string(),
-        fork_url: bad_url.to_string_lossy().to_string(),
-    });
-    let contents = serde_yml::to_string(&manifest).unwrap();
-    fs::write(&manifest_path, contents).unwrap();
-    git(&team_repo, &["add", "botminter.yml"]);
-    git(&team_repo, &["commit", "-m", "add bad project"]);
-
-    let stderr = bm_run_fail(tmp.path(), &["teams", "sync", "-t", "bad-fork-team"]);
-    // The member name should appear in the failure list
-    assert!(
-        stderr.contains("architect-alice"),
-        "error should reference the failed member: {}",
-        stderr
+    let manifest_after = fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
+    assert_eq!(
+        manifest_before, manifest_after,
+        "manifest should not change on failed add"
     );
 }
 
-#[test]
-fn sync_continues_past_failed_member() {
-    let tmp = tempfile::tempdir().unwrap();
-    let team_repo = setup_team(tmp.path(), "mixed-team", "scrum");
 
-    // Create a valid fake fork
-    let good_fork = tmp.path().join("good-fork");
-    fs::create_dir_all(&good_fork).unwrap();
-    git(&good_fork, &["init", "-b", "main"]);
-    git(&good_fork, &["config", "user.email", "test@botminter.test"]);
-    git(&good_fork, &["config", "user.name", "BM Test"]);
-    fs::write(good_fork.join("README.md"), "# Good fork").unwrap();
-    git(&good_fork, &["add", "-A"]);
-    git(&good_fork, &["commit", "-m", "init"]);
-
-    // Hire two members
-    bm_hire(tmp.path(), "architect", "alice", "mixed-team");
-    bm_hire(tmp.path(), "architect", "bob", "mixed-team");
-
-    // Manually inject a project with a bad fork URL
-    let manifest_path = team_repo.join("botminter.yml");
-    let mut manifest: bm::profile::ProfileManifest = {
-        let contents = fs::read_to_string(&manifest_path).unwrap();
-        serde_yml::from_str(&contents).unwrap()
-    };
-    let bad_url = tmp.path().join("bad-fork-nonexistent");
-    manifest.projects.push(bm::profile::ProjectDef {
-        name: "bad-fork".to_string(),
-        fork_url: bad_url.to_string_lossy().to_string(),
-    });
-    let contents = serde_yml::to_string(&manifest).unwrap();
-    fs::write(&manifest_path, contents).unwrap();
-    git(&team_repo, &["add", "botminter.yml"]);
-    git(&team_repo, &["commit", "-m", "add bad project"]);
-
-    // Both members should fail (bad fork), but sync should continue past first failure
-    let stderr = bm_run_fail(tmp.path(), &["teams", "sync", "-t", "mixed-team"]);
-
-    // Both failing members should be mentioned
-    assert!(
-        stderr.contains("architect-alice"),
-        "error should mention alice: {}",
-        stderr
-    );
-    assert!(
-        stderr.contains("architect-bob"),
-        "error should mention bob: {}",
-        stderr
-    );
-}
 
 // ── Schema version guard ─────────────────────────────────────────────
 
@@ -554,28 +516,13 @@ fn schema_version_mismatch_blocks_hire() {
     git(&team_repo, &["commit", "-m", "chore: bump schema"]);
 
     let stderr = bm_run_fail(tmp.path(), &["hire", "architect", "--name", "alice"]);
-    assert!(stderr.contains("bm upgrade"), "Should suggest bm upgrade: {}", stderr);
+    assert!(
+        stderr.contains("bm upgrade"),
+        "Should suggest bm upgrade: {}",
+        stderr
+    );
 }
 
-#[test]
-fn schema_version_mismatch_blocks_sync() {
-    let tmp = tempfile::tempdir().unwrap();
-    let team_repo = setup_team(tmp.path(), "test-team", "scrum");
-
-    // Hire a member first (with correct schema)
-    bm_hire(tmp.path(), "architect", "bob", "test-team");
-
-    // Tamper with schema_version
-    let manifest_path = team_repo.join("botminter.yml");
-    let mut content = fs::read_to_string(&manifest_path).unwrap();
-    content = content.replace("schema_version: '1.0'", "schema_version: v99");
-    fs::write(&manifest_path, content).unwrap();
-    git(&team_repo, &["add", "botminter.yml"]);
-    git(&team_repo, &["commit", "-m", "chore: bump schema"]);
-
-    let stderr = bm_run_fail(tmp.path(), &["teams", "sync"]);
-    assert!(stderr.contains("bm upgrade"), "Should suggest bm upgrade: {}", stderr);
-}
 
 // ── Multi-team and -t flag tests ─────────────────────────────────────
 
@@ -617,116 +564,7 @@ fn team_flag_nonexistent_errors() {
     assert!(stderr.contains("alpha")); // lists available teams
 }
 
-// ── Full lifecycle tests ─────────────────────────────────────────────
 
-#[test]
-fn lifecycle_hire_then_sync_no_project() {
-    let tmp = tempfile::tempdir().unwrap();
-    let team_repo = setup_team(tmp.path(), "lifecycle-team", "scrum");
-
-    // Hire two members
-    bm_hire(tmp.path(), "architect", "alice", "lifecycle-team");
-    bm_hire(tmp.path(), "human-assistant", "bob", "lifecycle-team");
-
-    // Sync (no projects — submodule model)
-    bm_sync(tmp.path(), "lifecycle-team");
-
-    // Verify workspaces were created (one workspace per member)
-    let team_dir = team_repo.parent().unwrap();
-    let alice_ws = team_dir.join("architect-alice");
-    let bob_ws = team_dir.join("human-assistant-bob");
-
-    // Submodule model: team/ submodule instead of .botminter/
-    assert!(alice_ws.join("team").is_dir(), "alice should have team/ submodule");
-    assert!(bob_ws.join("team").is_dir(), "bob should have team/ submodule");
-    assert!(alice_ws.join(".gitmodules").exists(), "alice should have .gitmodules");
-    assert!(bob_ws.join(".gitmodules").exists(), "bob should have .gitmodules");
-
-    // Verify team submodule has member config
-    assert!(
-        alice_ws.join("team/members/architect-alice").is_dir(),
-        "alice team submodule should contain member dir"
-    );
-    assert!(
-        bob_ws.join("team/members/human-assistant-bob").is_dir(),
-        "bob team submodule should contain member dir"
-    );
-}
-
-#[test]
-fn lifecycle_hire_project_add_then_sync() {
-    let tmp = tempfile::tempdir().unwrap();
-    let team_repo = setup_team(tmp.path(), "proj-team", "scrum");
-
-    // Create a dummy "fork" repo to clone from
-    let fork_url = create_fake_fork(tmp.path(), "fake-fork");
-
-    // Hire a member
-    bm_hire(tmp.path(), "architect", "alice", "proj-team");
-
-    // Add the project
-    bm_add_project(tmp.path(), &fork_url, "proj-team");
-
-    // Sync
-    bm_sync(tmp.path(), "proj-team");
-
-    // Submodule model: one workspace per member, project as submodule
-    let team_dir = team_repo.parent().unwrap();
-    let ws = team_dir.join("architect-alice");
-
-    assert!(ws.join("team").is_dir(), "workspace should have team/ submodule");
-    assert!(ws.join(".gitmodules").exists(), "workspace should have .gitmodules");
-    assert!(
-        ws.join("projects/fake-fork").is_dir(),
-        "workspace should have projects/fake-fork/ submodule"
-    );
-    assert!(
-        ws.join("projects/fake-fork/README.md").exists(),
-        "project submodule should have fork content"
-    );
-}
-
-#[test]
-fn lifecycle_sync_idempotent() {
-    let tmp = tempfile::tempdir().unwrap();
-    setup_team(tmp.path(), "idem-team", "scrum");
-
-    bm_hire(tmp.path(), "architect", "alice", "idem-team");
-
-    // Sync twice — should not error
-    bm_sync(tmp.path(), "idem-team");
-    bm_sync(tmp.path(), "idem-team");
-
-    // Assert context files are present after both syncs
-    let ws = tmp.path().join("workspaces/idem-team/architect-alice");
-    assert!(ws.join("ralph.yml").exists(), "ralph.yml should exist after sync");
-    assert!(ws.join("CLAUDE.md").exists(), "CLAUDE.md should exist after sync");
-    assert!(ws.join("PROMPT.md").exists(), "PROMPT.md should exist after sync");
-    assert!(ws.join(".botminter.workspace").exists(), "marker should exist after sync");
-}
-
-#[test]
-fn sync_recovers_stale_workspace_dir() {
-    let tmp = tempfile::tempdir().unwrap();
-    setup_team(tmp.path(), "stale-team", "scrum");
-
-    bm_hire(tmp.path(), "architect", "alice", "stale-team");
-    bm_sync(tmp.path(), "stale-team");
-
-    let ws = tmp.path().join("workspaces/stale-team/architect-alice");
-    assert!(ws.join(".botminter.workspace").exists(), "marker should exist after first sync");
-
-    // Remove the marker to simulate a stale/incomplete workspace
-    fs::remove_file(ws.join(".botminter.workspace")).unwrap();
-
-    // Sync again — should recover by re-creating the workspace
-    bm_sync(tmp.path(), "stale-team");
-
-    assert!(ws.join(".botminter.workspace").exists(), "marker should be restored after recovery");
-    assert!(ws.join("ralph.yml").exists(), "ralph.yml should exist after recovery");
-    assert!(ws.join("CLAUDE.md").exists(), "CLAUDE.md should exist after recovery");
-    assert!(ws.join("PROMPT.md").exists(), "PROMPT.md should exist after recovery");
-}
 
 // ── Roles list test ──────────────────────────────────────────────────
 
@@ -781,10 +619,7 @@ fn extract_member_names(output: &str) -> Vec<String> {
             continue;
         }
         // Strip outer │ borders, then split by inner ┆
-        let inner = line
-            .trim()
-            .trim_start_matches('│')
-            .trim_end_matches('│');
+        let inner = line.trim().trim_start_matches('│').trim_end_matches('│');
         let first_col = inner.split('┆').next().unwrap_or("").trim();
         // Skip header row and empty cells
         if first_col.is_empty() || first_col == "Member" {
@@ -877,7 +712,10 @@ fn completions_bash() {
     assert!(output.status.success(), "bm completions bash should exit 0");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.is_empty(), "bash completions should not be empty");
-    assert!(stdout.contains("bm"), "bash completions should reference bm");
+    assert!(
+        stdout.contains("bm"),
+        "bash completions should reference bm"
+    );
     // Dynamic: registration script calls the binary at tab-time via COMPLETE env var
     assert!(
         stdout.contains("COMPLETE"),
@@ -912,7 +750,10 @@ fn completions_fish() {
     assert!(output.status.success(), "bm completions fish should exit 0");
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.is_empty(), "fish completions should not be empty");
-    assert!(stdout.contains("bm"), "fish completions should reference bm");
+    assert!(
+        stdout.contains("bm"),
+        "fish completions should reference bm"
+    );
     assert!(
         stdout.contains("COMPLETE"),
         "fish completions should be dynamic, output:\n{}",
@@ -926,10 +767,19 @@ fn completions_powershell() {
         .args(["completions", "powershell"])
         .output()
         .expect("failed to run bm");
-    assert!(output.status.success(), "bm completions powershell should exit 0");
+    assert!(
+        output.status.success(),
+        "bm completions powershell should exit 0"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(!stdout.is_empty(), "powershell completions should not be empty");
-    assert!(stdout.contains("bm"), "powershell completions should reference bm");
+    assert!(
+        !stdout.is_empty(),
+        "powershell completions should not be empty"
+    );
+    assert!(
+        stdout.contains("bm"),
+        "powershell completions should reference bm"
+    );
     assert!(
         stdout.contains("COMPLETE"),
         "powershell completions should be dynamic, output:\n{}",
@@ -943,10 +793,16 @@ fn completions_elvish() {
         .args(["completions", "elvish"])
         .output()
         .expect("failed to run bm");
-    assert!(output.status.success(), "bm completions elvish should exit 0");
+    assert!(
+        output.status.success(),
+        "bm completions elvish should exit 0"
+    );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(!stdout.is_empty(), "elvish completions should not be empty");
-    assert!(stdout.contains("bm"), "elvish completions should reference bm");
+    assert!(
+        stdout.contains("bm"),
+        "elvish completions should reference bm"
+    );
     assert!(
         stdout.contains("COMPLETE"),
         "elvish completions should be dynamic, output:\n{}",
@@ -1169,90 +1025,7 @@ fn hire_then_members_list_shows_role() {
 
 // ── Multi-member / multi-project scenarios ───────────────────────────
 
-#[test]
-fn hire_multiple_roles_then_sync() {
-    let tmp = tempfile::tempdir().unwrap();
-    let team_repo = setup_team(tmp.path(), "multi-hire-team", "scrum");
 
-    let profiles_path = profile::profiles_dir_for(tmp.path());
-    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
-    let picks: Vec<&str> = (0..3).map(|i| roles[i % roles.len()].as_str()).collect();
-    let names = ["m1", "m2", "m3"];
-
-    for (role, name) in picks.iter().zip(names.iter()) {
-        bm_hire(tmp.path(), role, name, "multi-hire-team");
-    }
-
-    let fork_a = create_fake_fork(tmp.path(), "proj-alpha");
-    let fork_b = create_fake_fork(tmp.path(), "proj-beta");
-    bm_add_project(tmp.path(), &fork_a, "multi-hire-team");
-    bm_add_project(tmp.path(), &fork_b, "multi-hire-team");
-
-    bm_sync(tmp.path(), "multi-hire-team");
-
-    let team_dir = team_repo.parent().unwrap();
-    for (role, name) in picks.iter().zip(names.iter()) {
-        let member_dir = format!("{}-{}", role, name);
-        let ws = team_dir.join(&member_dir);
-
-        // Submodule model: one workspace per member with team/ and projects/
-        assert!(
-            ws.join("team").is_dir(),
-            "{} should have team/ submodule",
-            member_dir
-        );
-        assert!(
-            ws.join("projects/proj-alpha").is_dir(),
-            "{} should have projects/proj-alpha/ submodule",
-            member_dir
-        );
-        assert!(
-            ws.join("projects/proj-beta").is_dir(),
-            "{} should have projects/proj-beta/ submodule",
-            member_dir
-        );
-    }
-}
-
-#[test]
-fn sync_with_multiple_projects_creates_project_submodules() {
-    let tmp = tempfile::tempdir().unwrap();
-    let team_repo = setup_team(tmp.path(), "proj-ws-team", "scrum");
-
-    let profiles_path = profile::profiles_dir_for(tmp.path());
-    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
-    let role = &roles[0];
-
-    bm_hire(tmp.path(), role, "alice", "proj-ws-team");
-
-    let fork_a = create_fake_fork(tmp.path(), "project-one");
-    let fork_b = create_fake_fork(tmp.path(), "project-two");
-    bm_add_project(tmp.path(), &fork_a, "proj-ws-team");
-    bm_add_project(tmp.path(), &fork_b, "proj-ws-team");
-
-    bm_sync(tmp.path(), "proj-ws-team");
-
-    let team_dir = team_repo.parent().unwrap();
-    let member = format!("{}-alice", role);
-    let ws = team_dir.join(&member);
-
-    // Submodule model: one workspace with team/ and projects/ submodules
-    assert!(ws.join("team").is_dir(), "{} should have team/ submodule", member);
-
-    for proj in &["project-one", "project-two"] {
-        assert!(
-            ws.join(format!("projects/{}", proj)).is_dir(),
-            "{} should have projects/{} submodule",
-            member,
-            proj
-        );
-        assert!(
-            ws.join(format!("projects/{}/README.md", proj)).exists(),
-            "projects/{} should have fork content",
-            proj
-        );
-    }
-}
 
 #[test]
 fn hire_same_role_twice_auto_suffix() {
@@ -1273,45 +1046,18 @@ fn hire_same_role_twice_auto_suffix() {
     assert!(m2.is_dir(), "{}-02 should exist", role);
 
     // Both should have proper skeleton files
-    assert!(m1.join("botminter.yml").exists(), "{}-01 should have botminter.yml", role);
-    assert!(m2.join("botminter.yml").exists(), "{}-02 should have botminter.yml", role);
-}
-
-#[test]
-fn sync_after_second_hire_creates_new_workspace() {
-    let tmp = tempfile::tempdir().unwrap();
-    let team_repo = setup_team(tmp.path(), "incr-team", "scrum");
-
-    let profiles_path = profile::profiles_dir_for(tmp.path());
-    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
-    let role_a = &roles[0];
-
-    bm_hire(tmp.path(), role_a, "first", "incr-team");
-    bm_sync(tmp.path(), "incr-team");
-
-    let team_dir = team_repo.parent().unwrap();
-    let first_ws = team_dir.join(format!("{}-first", role_a));
     assert!(
-        first_ws.join("team").is_dir(),
-        "first workspace should have team/ submodule after initial sync"
-    );
-
-    // Hire second member (different role if available)
-    let role_b = if roles.len() > 1 { &roles[1] } else { role_a };
-    bm_hire(tmp.path(), role_b, "second", "incr-team");
-
-    bm_sync(tmp.path(), "incr-team");
-
-    let second_ws = team_dir.join(format!("{}-second", role_b));
-    assert!(
-        second_ws.join("team").is_dir(),
-        "second workspace should have team/ submodule after incremental sync"
+        m1.join("botminter.yml").exists(),
+        "{}-01 should have botminter.yml",
+        role
     );
     assert!(
-        first_ws.join("team").is_dir(),
-        "first workspace should still have team/ submodule after incremental sync"
+        m2.join("botminter.yml").exists(),
+        "{}-02 should have botminter.yml",
+        role
     );
 }
+
 
 // ── Error paths ──────────────────────────────────────────────────────
 
@@ -1362,33 +1108,6 @@ fn hire_with_corrupt_manifest_errors() {
     );
 }
 
-#[test]
-fn sync_missing_workzone_creates_it() {
-    let tmp = tempfile::tempdir().unwrap();
-    setup_team(tmp.path(), "recreate-team", "scrum");
-
-    let profiles_path = profile::profiles_dir_for(tmp.path());
-    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
-    let role = &roles[0];
-
-    bm_hire(tmp.path(), role, "alice", "recreate-team");
-    bm_sync(tmp.path(), "recreate-team");
-
-    let member_dir = format!("{}-alice", role);
-    let ws = tmp.path().join("workspaces/recreate-team").join(&member_dir);
-    assert!(ws.is_dir(), "workspace should exist after first sync");
-
-    // Delete the workspace directory
-    fs::remove_dir_all(&ws).unwrap();
-    assert!(!ws.exists(), "workspace should be deleted");
-
-    // Sync again — should recreate the missing workspace
-    bm_sync(tmp.path(), "recreate-team");
-    assert!(
-        ws.join("team").is_dir(),
-        "sync should recreate missing workspace with team/ submodule"
-    );
-}
 
 #[test]
 fn teams_list_with_empty_config() {
@@ -1496,11 +1215,7 @@ fn knowledge_list_shows_files_at_all_scopes() {
         "# Design Patterns\n",
     )
     .unwrap();
-    fs::write(
-        member_dir.join("botminter.yml"),
-        "role: architect\n",
-    )
-    .unwrap();
+    fs::write(member_dir.join("botminter.yml"), "role: architect\n").unwrap();
 
     git(&team_repo, &["add", "-A"]);
     git(&team_repo, &["commit", "-m", "feat: add member knowledge"]);
@@ -1538,7 +1253,10 @@ fn knowledge_show_file_not_found() {
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "test-team", "scrum");
 
-    let stderr = bm_run_fail(tmp.path(), &["knowledge", "show", "knowledge/nonexistent.md"]);
+    let stderr = bm_run_fail(
+        tmp.path(),
+        &["knowledge", "show", "knowledge/nonexistent.md"],
+    );
     assert!(stderr.contains("File not found"), "Got: {}", stderr);
 }
 
@@ -1695,7 +1413,9 @@ impl Drop for DaemonGuard {
             .output();
 
         // Force-kill via PID file if still alive
-        let pid_file = self.home.join(format!(".botminter/daemon-{}.pid", self.team_name));
+        let pid_file = self
+            .home
+            .join(format!(".botminter/daemon-{}.pid", self.team_name));
         if let Ok(pid_str) = fs::read_to_string(&pid_file) {
             if let Ok(pid) = pid_str.trim().parse::<i32>() {
                 unsafe {
@@ -1708,13 +1428,16 @@ impl Drop for DaemonGuard {
 
         // Clean up files
         let _ = fs::remove_file(
-            self.home.join(format!(".botminter/daemon-{}.pid", self.team_name)),
+            self.home
+                .join(format!(".botminter/daemon-{}.pid", self.team_name)),
         );
         let _ = fs::remove_file(
-            self.home.join(format!(".botminter/daemon-{}.json", self.team_name)),
+            self.home
+                .join(format!(".botminter/daemon-{}.json", self.team_name)),
         );
         let _ = fs::remove_file(
-            self.home.join(format!(".botminter/daemon-{}-poll.json", self.team_name)),
+            self.home
+                .join(format!(".botminter/daemon-{}-poll.json", self.team_name)),
         );
     }
 }
@@ -1728,11 +1451,24 @@ fn daemon_start_creates_pid_and_config_files() {
     let port = get_free_port();
     let output = bm_run(
         tmp.path(),
-        &["daemon", "start", "--mode", "poll", "--port", &port.to_string(), "-t", "daemon-test"],
+        &[
+            "daemon",
+            "start",
+            "--mode",
+            "poll",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "daemon-test",
+        ],
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Daemon started"), "Should print started message: {}", stdout);
+    assert!(
+        stdout.contains("Daemon started"),
+        "Should print started message: {}",
+        stdout
+    );
 
     // Verify PID file exists
     let pid_file = tmp.path().join(".botminter/daemon-daemon-test.pid");
@@ -1759,14 +1495,30 @@ fn daemon_status_shows_running() {
     // Start daemon
     bm_run(
         tmp.path(),
-        &["daemon", "start", "--mode", "poll", "--port", &port.to_string(), "-t", "daemon-status-test"],
+        &[
+            "daemon",
+            "start",
+            "--mode",
+            "poll",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "daemon-status-test",
+        ],
     );
 
     // Check status
-    let output = bm_run(tmp.path(), &["daemon", "status", "-t", "daemon-status-test"]);
+    let output = bm_run(
+        tmp.path(),
+        &["daemon", "status", "-t", "daemon-status-test"],
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("running"), "Should show running: {}", stdout);
+    assert!(
+        stdout.contains("running"),
+        "Should show running: {}",
+        stdout
+    );
     assert!(stdout.contains("poll"), "Should show mode: {}", stdout);
 }
 
@@ -1780,14 +1532,27 @@ fn daemon_stop_cleans_up() {
     // Start daemon
     bm_run(
         tmp.path(),
-        &["daemon", "start", "--mode", "poll", "--port", &port.to_string(), "-t", "daemon-stop-test"],
+        &[
+            "daemon",
+            "start",
+            "--mode",
+            "poll",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "daemon-stop-test",
+        ],
     );
 
     // Stop daemon
     let output = bm_run(tmp.path(), &["daemon", "stop", "-t", "daemon-stop-test"]);
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Daemon stopped"), "Should print stopped: {}", stdout);
+    assert!(
+        stdout.contains("Daemon stopped"),
+        "Should print stopped: {}",
+        stdout
+    );
 
     // Verify cleanup
     let pid_file = tmp.path().join(".botminter/daemon-daemon-stop-test.pid");
@@ -1806,15 +1571,37 @@ fn daemon_start_already_running_errors() {
     // Start daemon
     bm_run(
         tmp.path(),
-        &["daemon", "start", "--mode", "poll", "--port", &port.to_string(), "-t", "daemon-dup-test"],
+        &[
+            "daemon",
+            "start",
+            "--mode",
+            "poll",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "daemon-dup-test",
+        ],
     );
 
     // Try starting again (same port doesn't matter — PID file check catches it first)
     let stderr = bm_run_fail(
         tmp.path(),
-        &["daemon", "start", "--mode", "poll", "--port", &port.to_string(), "-t", "daemon-dup-test"],
+        &[
+            "daemon",
+            "start",
+            "--mode",
+            "poll",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "daemon-dup-test",
+        ],
     );
-    assert!(stderr.contains("already running"), "Should say already running: {}", stderr);
+    assert!(
+        stderr.contains("already running"),
+        "Should say already running: {}",
+        stderr
+    );
 }
 
 #[test]
@@ -1835,10 +1622,17 @@ fn daemon_status_not_running() {
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "daemon-nostat-test", "scrum");
 
-    let output = bm_run(tmp.path(), &["daemon", "status", "-t", "daemon-nostat-test"]);
+    let output = bm_run(
+        tmp.path(),
+        &["daemon", "status", "-t", "daemon-nostat-test"],
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("not running"), "Should say not running: {}", stdout);
+    assert!(
+        stdout.contains("not running"),
+        "Should say not running: {}",
+        stdout
+    );
 }
 
 #[test]
@@ -1870,15 +1664,23 @@ fn daemon_webhook_mode_starts_and_stops() {
     let output = bm_run(
         tmp.path(),
         &[
-            "daemon", "start",
-            "--mode", "webhook",
-            "--port", &port.to_string(),
-            "-t", "daemon-wh-test",
+            "daemon",
+            "start",
+            "--mode",
+            "webhook",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "daemon-wh-test",
         ],
     );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("Daemon started"), "Should show started: {}", stdout);
+    assert!(
+        stdout.contains("Daemon started"),
+        "Should show started: {}",
+        stdout
+    );
 
     // Wait for server to bind (polling instead of fixed sleep)
     assert!(
@@ -1891,7 +1693,11 @@ fn daemon_webhook_mode_starts_and_stops() {
     let status_out = bm_run(tmp.path(), &["daemon", "status", "-t", "daemon-wh-test"]);
 
     let status_stdout = String::from_utf8_lossy(&status_out.stdout);
-    assert!(status_stdout.contains("webhook"), "Should show webhook mode: {}", status_stdout);
+    assert!(
+        status_stdout.contains("webhook"),
+        "Should show webhook mode: {}",
+        status_stdout
+    );
 }
 
 // ── Daemon CLI parsing tests ─────────────────────────────────────────
@@ -1905,10 +1711,26 @@ fn daemon_cli_parsing_start_flags() {
 
     assert!(output.status.success());
     let stdout = String::from_utf8_lossy(&output.stdout);
-    assert!(stdout.contains("--mode"), "Help should mention --mode: {}", stdout);
-    assert!(stdout.contains("--port"), "Help should mention --port: {}", stdout);
-    assert!(stdout.contains("--interval"), "Help should mention --interval: {}", stdout);
-    assert!(stdout.contains("--bind"), "Help should mention --bind: {}", stdout);
+    assert!(
+        stdout.contains("--mode"),
+        "Help should mention --mode: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("--port"),
+        "Help should mention --port: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("--interval"),
+        "Help should mention --interval: {}",
+        stdout
+    );
+    assert!(
+        stdout.contains("--bind"),
+        "Help should mention --bind: {}",
+        stdout
+    );
 }
 
 // ── Webhook endpoint tests ───────────────────────────────────────────
@@ -1925,10 +1747,14 @@ fn daemon_webhook_accepts_relevant_event() {
     bm_run(
         tmp.path(),
         &[
-            "daemon", "start",
-            "--mode", "webhook",
-            "--port", &port.to_string(),
-            "-t", "daemon-wh-accept",
+            "daemon",
+            "start",
+            "--mode",
+            "webhook",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "daemon-wh-accept",
         ],
     );
 
@@ -1969,10 +1795,14 @@ fn daemon_webhook_rejects_irrelevant_event() {
     bm_run(
         tmp.path(),
         &[
-            "daemon", "start",
-            "--mode", "webhook",
-            "--port", &port.to_string(),
-            "-t", "daemon-wh-reject",
+            "daemon",
+            "start",
+            "--mode",
+            "webhook",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "daemon-wh-reject",
         ],
     );
 
@@ -1993,7 +1823,11 @@ fn daemon_webhook_rejects_irrelevant_event() {
 
     match resp {
         Ok(r) => {
-            assert_eq!(r.status().as_u16(), 200, "Should still respond 200 for irrelevant events");
+            assert_eq!(
+                r.status().as_u16(),
+                200,
+                "Should still respond 200 for irrelevant events"
+            );
         }
         Err(e) => {
             eprintln!("Warning: could not connect to webhook server: {}", e);
@@ -2012,10 +1846,14 @@ fn daemon_webhook_returns_404_for_wrong_path() {
     bm_run(
         tmp.path(),
         &[
-            "daemon", "start",
-            "--mode", "webhook",
-            "--port", &port.to_string(),
-            "-t", "daemon-wh-404",
+            "daemon",
+            "start",
+            "--mode",
+            "webhook",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "daemon-wh-404",
         ],
     );
 
@@ -2055,10 +1893,14 @@ fn daemon_health_endpoint_returns_ok() {
     bm_run(
         tmp.path(),
         &[
-            "daemon", "start",
-            "--mode", "webhook",
-            "--port", &port.to_string(),
-            "-t", "daemon-health",
+            "daemon",
+            "start",
+            "--mode",
+            "webhook",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "daemon-health",
         ],
     );
 
@@ -2095,10 +1937,7 @@ fn projects_sync_fails_without_github_repo() {
 
     // projects sync should fail because there's no github_repo configured
     let stderr = bm_run_fail(tmp.path(), &["projects", "sync"]);
-    assert!(
-        !stderr.is_empty(),
-        "sync should fail without github_repo"
-    );
+    assert!(!stderr.is_empty(), "sync should fail without github_repo");
 }
 
 #[test]
@@ -2151,7 +1990,10 @@ fn profile_views_parse_correctly() {
     let content = fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
     let manifest: profile::ProfileManifest = serde_yml::from_str(&content).unwrap();
 
-    assert!(!manifest.views.is_empty(), "agentic-sdlc-minimal profile should have views");
+    assert!(
+        !manifest.views.is_empty(),
+        "agentic-sdlc-minimal profile should have views"
+    );
 
     // The Engineer view should resolve to eng:* statuses + done + error
     let eng_view = manifest
@@ -2307,7 +2149,10 @@ fn members_show_displays_details() {
     bm_hire(tmp.path(), role, "alice", "mshow-team");
 
     let member_name = format!("{}-alice", role);
-    let output = bm_run(tmp.path(), &["members", "show", &member_name, "-t", "mshow-team"]);
+    let output = bm_run(
+        tmp.path(),
+        &["members", "show", &member_name, "-t", "mshow-team"],
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -2340,7 +2185,13 @@ fn members_show_nonexistent_errors() {
 
     let stderr = bm_run_fail(
         tmp.path(),
-        &["members", "show", "nonexistent-member", "-t", "mshow-err-team"],
+        &[
+            "members",
+            "show",
+            "nonexistent-member",
+            "-t",
+            "mshow-err-team",
+        ],
     );
     assert!(
         stderr.contains("not found"),
@@ -2399,7 +2250,10 @@ fn projects_show_displays_details() {
     let fork = create_fake_fork(tmp.path(), "my-lib");
     bm_add_project(tmp.path(), &fork, "pshow-team");
 
-    let output = bm_run(tmp.path(), &["projects", "show", "my-lib", "-t", "pshow-team"]);
+    let output = bm_run(
+        tmp.path(),
+        &["projects", "show", "my-lib", "-t", "pshow-team"],
+    );
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(
@@ -2450,11 +2304,17 @@ fn setup_chat_workspace(tmp: &Path, team_name: &str) -> (String, String) {
     fs::write(ws_path.join(".botminter.workspace"), "").unwrap();
 
     // Copy ralph.yml from the member dir in team repo
-    let member_ralph = team_repo.join("members").join(&member_name).join("ralph.yml");
+    let member_ralph = team_repo
+        .join("members")
+        .join(&member_name)
+        .join("ralph.yml");
     fs::copy(&member_ralph, ws_path.join("ralph.yml")).unwrap();
 
     // Copy PROMPT.md from the member dir in team repo
-    let member_prompt = team_repo.join("members").join(&member_name).join("PROMPT.md");
+    let member_prompt = team_repo
+        .join("members")
+        .join(&member_name)
+        .join("PROMPT.md");
     fs::copy(&member_prompt, ws_path.join("PROMPT.md")).unwrap();
 
     (member_name, role.clone())
@@ -2571,12 +2431,7 @@ fn chat_nonexistent_member_errors() {
 
     let stderr = bm_run_fail(
         tmp.path(),
-        &[
-            "chat",
-            "nonexistent-member",
-            "-t",
-            "chat-err-team",
-        ],
+        &["chat", "nonexistent-member", "-t", "chat-err-team"],
     );
     assert!(
         stderr.contains("not found"),
@@ -2598,15 +2453,7 @@ fn chat_without_workspace_errors() {
     bm_hire(tmp.path(), role, "bob", "chat-nows-team");
     let member_name = format!("{}-bob", role);
 
-    let stderr = bm_run_fail(
-        tmp.path(),
-        &[
-            "chat",
-            &member_name,
-            "-t",
-            "chat-nows-team",
-        ],
-    );
+    let stderr = bm_run_fail(tmp.path(), &["chat", &member_name, "-t", "chat-nows-team"]);
     assert!(
         stderr.contains("No workspace") || stderr.contains("sync"),
         "should mention missing workspace, stderr:\n{}",
@@ -2621,10 +2468,7 @@ fn attach_local_formation_returns_not_applicable() {
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "attach-local-team", "scrum");
 
-    let stderr = bm_run_fail(
-        tmp.path(),
-        &["attach", "-t", "attach-local-team"],
-    );
+    let stderr = bm_run_fail(tmp.path(), &["attach", "-t", "attach-local-team"]);
     assert!(
         stderr.contains("not applicable") || stderr.contains("already in the local environment"),
         "bm attach on local formation should say 'not applicable', got: {}",
@@ -2670,9 +2514,7 @@ fn init_non_interactive_creates_team_with_skip_github() {
     );
 
     // Verify config.yml was written
-    let config_path = home
-        .join(".botminter")
-        .join("config.yml");
+    let config_path = home.join(".botminter").join("config.yml");
     assert!(
         config_path.exists(),
         "config.yml should exist at {}",
@@ -2700,12 +2542,12 @@ fn init_non_interactive_creates_team_with_skip_github() {
 
     // Verify profiles were extracted with botminter.yml manifest
     // profiles_dir uses dirs::config_dir() -> XDG_CONFIG_HOME or HOME/.config
-    let profiles_dir = home
-        .join(".config")
-        .join("botminter")
-        .join("profiles");
+    let profiles_dir = home.join(".config").join("botminter").join("profiles");
     assert!(
-        profiles_dir.join("agentic-sdlc-minimal").join("botminter.yml").exists(),
+        profiles_dir
+            .join("agentic-sdlc-minimal")
+            .join("botminter.yml")
+            .exists(),
         "botminter.yml should exist in extracted profile directory"
     );
 
@@ -3121,7 +2963,10 @@ fn bridge_identity_add() {
     assert_eq!(identity.username, "testuser");
     assert_eq!(identity.user_id, "stub-id");
     // Token is now stored in keyring, not in bridge-state.json
-    assert!(identity.token.is_none(), "Token should not be stored in bridge-state.json");
+    assert!(
+        identity.token.is_none(),
+        "Token should not be stored in bridge-state.json"
+    );
 }
 
 #[test]
@@ -3374,7 +3219,11 @@ fn status_shows_bridge() {
     bm_run(home, &["start", "--bridge-only"]);
 
     // Create members dir so status doesn't bail
-    let team_repo = tmp.path().join("workspaces").join("bridge-team").join("team");
+    let team_repo = tmp
+        .path()
+        .join("workspaces")
+        .join("bridge-team")
+        .join("team");
     let members_dir = team_repo.join("members").join("dummy");
     fs::create_dir_all(&members_dir).unwrap();
     fs::write(members_dir.join("botminter.yml"), "role: dev\n").unwrap();
@@ -3405,7 +3254,11 @@ fn status_no_bridge_shows_normal() {
     let home = tmp.path();
 
     // Create members dir so status doesn't bail early
-    let team_repo = tmp.path().join("workspaces").join("nobridge-team").join("team");
+    let team_repo = tmp
+        .path()
+        .join("workspaces")
+        .join("nobridge-team")
+        .join("team");
     let members_dir = team_repo.join("members").join("dummy");
     fs::create_dir_all(&members_dir).unwrap();
     fs::write(members_dir.join("botminter.yml"), "role: dev\n").unwrap();
@@ -3448,13 +3301,19 @@ fn init_bridge_records_in_manifest() {
         .args([
             "init",
             "--non-interactive",
-            "--profile", "agentic-sdlc-minimal",
-            "--team-name", "bridge-init-test",
-            "--org", "testorg",
-            "--repo", "testrepo",
-            "--bridge", "telegram",
+            "--profile",
+            "agentic-sdlc-minimal",
+            "--team-name",
+            "bridge-init-test",
+            "--org",
+            "testorg",
+            "--repo",
+            "testrepo",
+            "--bridge",
+            "telegram",
             "--skip-github",
-            "--workzone", &home.join("workspaces").to_string_lossy(),
+            "--workzone",
+            &home.join("workspaces").to_string_lossy(),
         ])
         .output()
         .unwrap();
@@ -3494,12 +3353,17 @@ fn init_no_bridge_has_no_bridge_key() {
         .args([
             "init",
             "--non-interactive",
-            "--profile", "agentic-sdlc-minimal",
-            "--team-name", "no-bridge-test",
-            "--org", "testorg",
-            "--repo", "testrepo",
+            "--profile",
+            "agentic-sdlc-minimal",
+            "--team-name",
+            "no-bridge-test",
+            "--org",
+            "testorg",
+            "--repo",
+            "testrepo",
             "--skip-github",
-            "--workzone", &home.join("workspaces").to_string_lossy(),
+            "--workzone",
+            &home.join("workspaces").to_string_lossy(),
         ])
         .output()
         .unwrap();
@@ -3537,13 +3401,19 @@ fn init_bridge_invalid_name_fails() {
         .args([
             "init",
             "--non-interactive",
-            "--profile", "agentic-sdlc-minimal",
-            "--team-name", "bad-bridge-test",
-            "--org", "testorg",
-            "--repo", "testrepo",
-            "--bridge", "nonexistent",
+            "--profile",
+            "agentic-sdlc-minimal",
+            "--team-name",
+            "bad-bridge-test",
+            "--org",
+            "testorg",
+            "--repo",
+            "testrepo",
+            "--bridge",
+            "nonexistent",
             "--skip-github",
-            "--workzone", &home.join("workspaces").to_string_lossy(),
+            "--workzone",
+            &home.join("workspaces").to_string_lossy(),
         ])
         .output()
         .unwrap();
@@ -3572,10 +3442,14 @@ fn daemon_api_teams_endpoint() {
     bm_run(
         tmp.path(),
         &[
-            "daemon", "start",
-            "--mode", "webhook",
-            "--port", &port.to_string(),
-            "-t", "console-teams",
+            "daemon",
+            "start",
+            "--mode",
+            "webhook",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "console-teams",
         ],
     );
 
@@ -3595,7 +3469,9 @@ fn daemon_api_teams_endpoint() {
     assert_eq!(resp.status().as_u16(), 200, "/api/teams should return 200");
 
     let body: serde_json::Value = resp.json().expect("/api/teams should return valid JSON");
-    let teams = body.as_array().expect("/api/teams should return a JSON array");
+    let teams = body
+        .as_array()
+        .expect("/api/teams should return a JSON array");
     assert!(!teams.is_empty(), "Teams array should not be empty");
     assert_eq!(
         teams[0]["name"], "console-teams",
@@ -3618,10 +3494,14 @@ fn daemon_start_shows_console_url() {
     let output = bm_run(
         tmp.path(),
         &[
-            "daemon", "start",
-            "--mode", "webhook",
-            "--port", &port.to_string(),
-            "-t", "console-url",
+            "daemon",
+            "start",
+            "--mode",
+            "webhook",
+            "--port",
+            &port.to_string(),
+            "-t",
+            "console-url",
         ],
     );
 
@@ -3655,7 +3535,10 @@ fn setup_fixture_team(tmp: &Path, team_name: &str) -> PathBuf {
     git(&team_repo, &["config", "user.email", "test@botminter.test"]);
     git(&team_repo, &["config", "user.name", "BM Test"]);
     git(&team_repo, &["add", "-A"]);
-    git(&team_repo, &["commit", "-m", "feat: init fixture team repo"]);
+    git(
+        &team_repo,
+        &["commit", "-m", "feat: init fixture team repo"],
+    );
 
     // Write config (team.path = team_dir, matching production)
     let config = BotminterConfig {
@@ -3712,10 +3595,14 @@ fn daemon_console_api_e2e_with_fixtures() {
     bm_run(
         tmp.path(),
         &[
-            "daemon", "start",
-            "--mode", "webhook",
-            "--port", &port.to_string(),
-            "-t", team_name,
+            "daemon",
+            "start",
+            "--mode",
+            "webhook",
+            "--port",
+            &port.to_string(),
+            "-t",
+            team_name,
         ],
     );
 
@@ -3758,7 +3645,8 @@ fn daemon_console_api_e2e_with_fixtures() {
         // Members — fixture has 3
         let members = body["members"].as_array().expect("members array");
         assert_eq!(members.len(), 3, "fixture has 3 members");
-        let member_names: Vec<&str> = members.iter()
+        let member_names: Vec<&str> = members
+            .iter()
             .map(|m| m["name"].as_str().unwrap())
             .collect();
         assert!(member_names.contains(&"superman-alice"));
@@ -3768,9 +3656,7 @@ fn daemon_console_api_e2e_with_fixtures() {
         // Roles — fixture has 2 (superman, chief-of-staff)
         let roles = body["roles"].as_array().expect("roles array");
         assert_eq!(roles.len(), 2, "fixture has 2 roles");
-        let role_names: Vec<&str> = roles.iter()
-            .map(|r| r["name"].as_str().unwrap())
-            .collect();
+        let role_names: Vec<&str> = roles.iter().map(|r| r["name"].as_str().unwrap()).collect();
         assert!(role_names.contains(&"superman"));
         assert!(role_names.contains(&"chief-of-staff"));
 
@@ -3795,14 +3681,16 @@ fn daemon_console_api_e2e_with_fixtures() {
         assert_eq!(members.len(), 3, "fixture has 3 members");
 
         // Find alice and verify her fields
-        let alice = members.iter()
+        let alice = members
+            .iter()
             .find(|m| m["name"] == "superman-alice")
             .expect("alice should exist");
         assert_eq!(alice["role"], "superman");
         assert_eq!(alice["hat_count"], 14, "alice has 14 hats");
 
         // Find mgr and verify
-        let mgr = members.iter()
+        let mgr = members
+            .iter()
             .find(|m| m["name"] == "chief-of-staff-mgr")
             .expect("mgr should exist");
         assert_eq!(mgr["role"], "chief-of-staff");
@@ -3812,10 +3700,16 @@ fn daemon_console_api_e2e_with_fixtures() {
     // ── GET /api/teams/:team/members/:name ──────────────────────
     {
         let resp = client
-            .get(format!("{base}/api/teams/{team_name}/members/superman-alice"))
+            .get(format!(
+                "{base}/api/teams/{team_name}/members/superman-alice"
+            ))
             .send()
             .expect("GET member detail");
-        assert_eq!(resp.status().as_u16(), 200, "member detail should return 200");
+        assert_eq!(
+            resp.status().as_u16(),
+            200,
+            "member detail should return 200"
+        );
         let body: serde_json::Value = resp.json().unwrap();
 
         assert_eq!(body["name"], "superman-alice");
@@ -3823,7 +3717,10 @@ fn daemon_console_api_e2e_with_fixtures() {
 
         // Has ralph_yml content
         assert!(body["ralph_yml"].is_string(), "should have ralph_yml");
-        assert!(!body["ralph_yml"].as_str().unwrap().is_empty(), "ralph_yml not empty");
+        assert!(
+            !body["ralph_yml"].as_str().unwrap().is_empty(),
+            "ralph_yml not empty"
+        );
 
         // Has hats array with 14 entries
         let hats = body["hats"].as_array().expect("hats array");
@@ -3832,7 +3729,9 @@ fn daemon_console_api_e2e_with_fixtures() {
         // Has invariant files (design-quality.md)
         let inv_files = body["invariant_files"].as_array().expect("invariant_files");
         assert!(
-            inv_files.iter().any(|f| f.as_str().map_or(false, |s| s.contains("design-quality"))),
+            inv_files
+                .iter()
+                .any(|f| f.as_str().is_some_and(|s| s.contains("design-quality"))),
             "alice should have design-quality.md invariant"
         );
     }
@@ -3878,13 +3777,23 @@ fn daemon_console_api_e2e_with_fixtures() {
         let body: serde_json::Value = resp.json().unwrap();
         let entries = body["entries"].as_array().expect("entries array");
 
-        let entry_names: Vec<&str> = entries.iter()
-            .filter_map(|e| e["name"].as_str())
-            .collect();
-        assert!(entry_names.contains(&"members"), "tree should contain members/");
-        assert!(entry_names.contains(&"knowledge"), "tree should contain knowledge/");
-        assert!(entry_names.contains(&"invariants"), "tree should contain invariants/");
-        assert!(entry_names.contains(&"workflows"), "tree should contain workflows/");
+        let entry_names: Vec<&str> = entries.iter().filter_map(|e| e["name"].as_str()).collect();
+        assert!(
+            entry_names.contains(&"members"),
+            "tree should contain members/"
+        );
+        assert!(
+            entry_names.contains(&"knowledge"),
+            "tree should contain knowledge/"
+        );
+        assert!(
+            entry_names.contains(&"invariants"),
+            "tree should contain invariants/"
+        );
+        assert!(
+            entry_names.contains(&"workflows"),
+            "tree should contain workflows/"
+        );
     }
 
     // ── GET /api/teams/:team/files/botminter.yml ────────────────
@@ -3906,7 +3815,9 @@ fn daemon_console_api_e2e_with_fixtures() {
             "botminter.yml should contain profile name"
         );
         assert!(
-            body["content_type"].as_str().map_or(false, |ct| ct.contains("yaml")),
+            body["content_type"]
+                .as_str()
+                .is_some_and(|ct| ct.contains("yaml")),
             "content_type should indicate yaml"
         );
     }
@@ -3917,10 +3828,7 @@ fn daemon_console_api_e2e_with_fixtures() {
     // a graceful 404 with "Console not built" — that's acceptable.
     #[cfg(feature = "console")]
     {
-        let resp = client
-            .get(format!("{base}/"))
-            .send()
-            .expect("GET /");
+        let resp = client.get(format!("{base}/")).send().expect("GET /");
         let status = resp.status().as_u16();
         let body = resp.text().unwrap();
         if status == 404 && body.contains("Console not built") {

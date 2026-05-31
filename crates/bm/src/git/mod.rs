@@ -1,6 +1,6 @@
 pub mod app_auth;
-pub mod manifest_flow;
 mod github;
+pub mod manifest_flow;
 mod project;
 
 pub use github::{

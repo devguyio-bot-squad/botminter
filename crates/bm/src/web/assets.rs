@@ -32,10 +32,9 @@ pub async fn serve_embedded_assets(method: Method, uri: Uri) -> Response {
     match ConsoleAssets::get("index.html") {
         Some(file) => {
             let mut response = Html(file.data.to_vec()).into_response();
-            response.headers_mut().insert(
-                header::CACHE_CONTROL,
-                "no-cache".parse().unwrap(),
-            );
+            response
+                .headers_mut()
+                .insert(header::CACHE_CONTROL, "no-cache".parse().unwrap());
             response
         }
         None => (StatusCode::NOT_FOUND, "Console not built").into_response(),
@@ -99,7 +98,10 @@ mod tests {
             "application/javascript; charset=utf-8"
         );
         assert_eq!(mime_from_path("style.css"), "text/css; charset=utf-8");
-        assert_eq!(mime_from_path("data.json"), "application/json; charset=utf-8");
+        assert_eq!(
+            mime_from_path("data.json"),
+            "application/json; charset=utf-8"
+        );
         assert_eq!(mime_from_path("logo.svg"), "image/svg+xml");
         assert_eq!(mime_from_path("logo.png"), "image/png");
         assert_eq!(mime_from_path("unknown.xyz"), "application/octet-stream");

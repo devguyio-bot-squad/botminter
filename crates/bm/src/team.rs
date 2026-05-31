@@ -96,8 +96,7 @@ impl<'a> Team<'a> {
         // Daemon lifecycle: stop when --all, or when no event source keeps it useful.
         // When stopping a single member, leave the daemon alone.
         let has_events = self.entry.daemon.has_event_source();
-        let should_stop_daemon = stop_all
-            || (member_filter.is_none() && !has_events);
+        let should_stop_daemon = stop_all || (member_filter.is_none() && !has_events);
 
         let daemon_stopped = if should_stop_daemon {
             match daemon::query_status(&self.entry.name)? {
@@ -113,9 +112,7 @@ impl<'a> Team<'a> {
 
         // When an event source is active and the daemon stays running,
         // the command should warn the operator.
-        let daemon_events_active = has_events
-            && !daemon_stopped
-            && member_filter.is_none();
+        let daemon_events_active = has_events && !daemon_stopped && member_filter.is_none();
 
         Ok(TeamStopResult {
             members,
@@ -219,12 +216,12 @@ mod tests {
     use std::path::{Path, PathBuf};
 
     use crate::config::{BridgeLifecycle, Credentials};
+    use crate::formation::start_members::MemberLaunched;
+    use crate::formation::stop_members::MemberStopped;
     use crate::formation::{
         CredentialDomain, EnvironmentCheck, EnvironmentStatus, KeyValueCredentialStore,
         MemberHandle, MemberStatus, SetupParams,
     };
-    use crate::formation::start_members::MemberLaunched;
-    use crate::formation::stop_members::MemberStopped;
 
     /// Mock formation that returns canned results for testing delegation.
     struct MockFormation {
@@ -295,7 +292,9 @@ mod tests {
             &self,
             _domain: CredentialDomain,
         ) -> Result<Box<dyn KeyValueCredentialStore>> {
-            Ok(Box::new(crate::formation::InMemoryKeyValueCredentialStore::new()))
+            Ok(Box::new(
+                crate::formation::InMemoryKeyValueCredentialStore::new(),
+            ))
         }
 
         fn setup_token_delivery(
@@ -396,7 +395,10 @@ mod tests {
         assert_eq!(result.launched.len(), 1);
         assert_eq!(result.launched[0].name, "superman");
         assert_eq!(result.launched[0].pid, 42);
-        assert!(result.bridge.is_none(), "Team.start() should not handle bridge");
+        assert!(
+            result.bridge.is_none(),
+            "Team.start() should not handle bridge"
+        );
     }
 
     #[test]
@@ -446,7 +448,11 @@ mod tests {
 
         let result = team.start(&config, None);
         assert!(result.is_err());
-        assert!(result.err().unwrap().to_string().contains("mock start error"));
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("mock start error"));
     }
 
     #[test]
@@ -458,7 +464,11 @@ mod tests {
 
         let result = team.stop(&config, None, false, false, false);
         assert!(result.is_err());
-        assert!(result.err().unwrap().to_string().contains("mock stop error"));
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("mock stop error"));
     }
 
     #[test]

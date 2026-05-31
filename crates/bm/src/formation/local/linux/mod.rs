@@ -9,12 +9,12 @@ use std::process::Command;
 use anyhow::{bail, Context, Result};
 
 use crate::daemon::{self, DaemonClient};
-use crate::formation::{
-    self, CredentialDomain, EnvironmentStatus, EnvironmentCheck, Formation,
-    KeyValueCredentialStore, MemberHandle, MemberStatus, SetupParams, StartParams, StopParams,
-};
 use crate::formation::start_members::{MemberLaunched, MemberSkipped, StartResult};
 use crate::formation::stop_members::{MemberStopped, StopResult};
+use crate::formation::{
+    self, CredentialDomain, EnvironmentCheck, EnvironmentStatus, Formation,
+    KeyValueCredentialStore, MemberHandle, MemberStatus, SetupParams, StartParams, StopParams,
+};
 use crate::state;
 
 /// Linux local formation — runs members as local processes on the operator's machine.
@@ -105,10 +105,8 @@ impl Formation for LinuxLocalFormation {
             } => {
                 let service = format!("botminter.{}.github-app", team_name);
                 let config_dir = crate::config::config_dir()?;
-                let keys_path = config_dir.join(format!(
-                    "credential-keys-{}-github-app.json",
-                    team_name
-                ));
+                let keys_path =
+                    config_dir.join(format!("credential-keys-{}-github-app.json", team_name));
                 Ok(Box::new(credential::LocalKeyValueCredentialStore::new(
                     service, keys_path,
                 )))
@@ -116,12 +114,7 @@ impl Formation for LinuxLocalFormation {
         }
     }
 
-    fn setup_token_delivery(
-        &self,
-        _member: &str,
-        workspace: &Path,
-        bot_user: &str,
-    ) -> Result<()> {
+    fn setup_token_delivery(&self, _member: &str, workspace: &Path, bot_user: &str) -> Result<()> {
         // Create GH_CONFIG_DIR at {workspace}/.config/gh/
         let gh_config_dir = workspace.join(".config").join("gh");
         fs::create_dir_all(&gh_config_dir)
@@ -191,8 +184,13 @@ impl Formation for LinuxLocalFormation {
             .write_all(hosts_content.as_bytes())
             .with_context(|| format!("Failed to write {}", tmp_path.display()))?;
 
-        fs::rename(&tmp_path, &hosts_yml)
-            .with_context(|| format!("Failed to rename {} → {}", tmp_path.display(), hosts_yml.display()))?;
+        fs::rename(&tmp_path, &hosts_yml).with_context(|| {
+            format!(
+                "Failed to rename {} → {}",
+                tmp_path.display(),
+                hosts_yml.display()
+            )
+        })?;
 
         Ok(())
     }
@@ -425,11 +423,15 @@ mod tests {
         std::fs::write(tmp.path().join(".git/config"), "[core]\n\tbare = false\n").unwrap();
 
         // Call twice — credential helper should only be added once
-        f.setup_token_delivery("superman", tmp.path(), "bot").unwrap();
-        f.setup_token_delivery("superman", tmp.path(), "bot").unwrap();
+        f.setup_token_delivery("superman", tmp.path(), "bot")
+            .unwrap();
+        f.setup_token_delivery("superman", tmp.path(), "bot")
+            .unwrap();
 
         let git_config = std::fs::read_to_string(tmp.path().join(".git/config")).unwrap();
-        let count = git_config.matches("[credential \"https://github.com\"]").count();
+        let count = git_config
+            .matches("[credential \"https://github.com\"]")
+            .count();
         assert_eq!(count, 1, "credential helper should be added only once");
     }
 
@@ -441,7 +443,8 @@ mod tests {
         // Setup first
         std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
         std::fs::write(tmp.path().join(".git/config"), "").unwrap();
-        f.setup_token_delivery("superman", tmp.path(), "my-bot[bot]").unwrap();
+        f.setup_token_delivery("superman", tmp.path(), "my-bot[bot]")
+            .unwrap();
 
         // Refresh with a real token
         f.refresh_token("superman", tmp.path(), "ghs_installation_token_abc")
@@ -449,8 +452,14 @@ mod tests {
 
         let hosts = std::fs::read_to_string(tmp.path().join(".config/gh/hosts.yml")).unwrap();
         assert!(hosts.contains("oauth_token: ghs_installation_token_abc"));
-        assert!(hosts.contains("user: my-bot[bot]"), "bot user should be preserved");
-        assert!(!hosts.contains("placeholder"), "placeholder token should be replaced");
+        assert!(
+            hosts.contains("user: my-bot[bot]"),
+            "bot user should be preserved"
+        );
+        assert!(
+            !hosts.contains("placeholder"),
+            "placeholder token should be replaced"
+        );
 
         // Verify tmp file is cleaned up (rename removes it)
         assert!(!tmp.path().join(".config/gh/hosts.yml.tmp").exists());
@@ -463,10 +472,13 @@ mod tests {
 
         std::fs::create_dir_all(tmp.path().join(".git")).unwrap();
         std::fs::write(tmp.path().join(".git/config"), "").unwrap();
-        f.setup_token_delivery("superman", tmp.path(), "bot").unwrap();
+        f.setup_token_delivery("superman", tmp.path(), "bot")
+            .unwrap();
 
-        f.refresh_token("superman", tmp.path(), "ghs_first").unwrap();
-        f.refresh_token("superman", tmp.path(), "ghs_second").unwrap();
+        f.refresh_token("superman", tmp.path(), "ghs_first")
+            .unwrap();
+        f.refresh_token("superman", tmp.path(), "ghs_second")
+            .unwrap();
 
         let hosts = std::fs::read_to_string(tmp.path().join(".config/gh/hosts.yml")).unwrap();
         assert!(hosts.contains("ghs_second"));

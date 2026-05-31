@@ -1,5 +1,7 @@
 use anyhow::Result;
-use comfy_table::{ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table};
+use comfy_table::{
+    modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, ContentArrangement, Table,
+};
 
 use crate::bridge::BridgeRoom;
 
@@ -64,7 +66,10 @@ pub fn room_list(team_flag: Option<&str>) -> Result<()> {
             .set_content_arrangement(ContentArrangement::DynamicFullWidth)
             .set_header(vec!["Room", "Room ID"]);
         for room in &live_rooms {
-            table.add_row(vec![room.name.as_str(), room.room_id.as_deref().unwrap_or("—")]);
+            table.add_row(vec![
+                room.name.as_str(),
+                room.room_id.as_deref().unwrap_or("—"),
+            ]);
         }
         println!("{table}");
         return Ok(());

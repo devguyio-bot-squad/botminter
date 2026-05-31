@@ -38,10 +38,7 @@ impl TgMock {
                 &self.container_id,
             ])
             .output()
-            .map(|o| {
-                o.status.success()
-                    && String::from_utf8_lossy(&o.stdout).trim() == "true"
-            })
+            .map(|o| o.status.success() && String::from_utf8_lossy(&o.stdout).trim() == "true")
             .unwrap_or(false)
     }
 
@@ -80,9 +77,7 @@ impl TgMock {
             String::from_utf8_lossy(&output.stderr)
         );
 
-        let container_id = String::from_utf8_lossy(&output.stdout)
-            .trim()
-            .to_string();
+        let container_id = String::from_utf8_lossy(&output.stdout).trim().to_string();
 
         eprintln!(
             "TgMock started: container={} port={}",
@@ -184,4 +179,3 @@ fn find_free_port() -> u16 {
         .expect("failed to get local address")
         .port()
 }
-

@@ -15,9 +15,8 @@ use bm::profile;
 use libtest_mimic::Trial;
 
 use super::super::helpers::{
-    cleanup_project_boards, find_free_port, force_kill, is_alive,
-    read_pid_from_state, repo_from_config,
-    DaemonGuard, E2eConfig, GithubSuite, ProcessGuard,
+    cleanup_project_boards, find_free_port, force_kill, is_alive, read_pid_from_state,
+    repo_from_config, DaemonGuard, E2eConfig, GithubSuite, ProcessGuard,
 };
 use super::super::telegram;
 use super::super::test_env::TestEnv;
@@ -36,15 +35,24 @@ const MEMBER_DIR: &str = "engineer-alice";
 // Each function takes captured values and returns a closure suitable for .case().
 // This allows the same logic to be registered in both passes with different names.
 
-fn init_with_bridge_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn init_with_bridge_fn(
+    gh_org: String,
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let workzone = env.home.join("workspaces");
-        let repo_name = env.repo_full_name.split('/').next_back().unwrap().to_string();
+        let repo_name = env
+            .repo_full_name
+            .split('/')
+            .next_back()
+            .unwrap()
+            .to_string();
 
         // Use a board title that does NOT match the "{team_name} Board" convention.
         // On first pass, the board doesn't exist and gets created.
         // On second pass (after reset_home), the board exists and gets found by title.
-        let board_title = env.get_export("board_title")
+        let board_title = env
+            .get_export("board_title")
             .map(|s| s.to_string())
             .unwrap_or_else(|| {
                 let ts = repo_name.split('-').next_back().unwrap_or("0");
@@ -53,19 +61,32 @@ fn init_with_bridge_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEn
         env.export("board_title", &board_title);
         env.save();
 
-        let output = env.command("bm")
+        let output = env
+            .command("bm")
             .args([
-                "init", "--non-interactive",
-                "--profile", PROFILE,
-                "--team-name", TEAM_NAME,
-                "--org", &gh_org,
-                "--repo", &repo_name,
-                "--bridge", "tuwunel",
-                "--github-project-board", &board_title,
-                "--workzone", &workzone.to_string_lossy(),
+                "init",
+                "--non-interactive",
+                "--profile",
+                PROFILE,
+                "--team-name",
+                TEAM_NAME,
+                "--org",
+                &gh_org,
+                "--repo",
+                &repo_name,
+                "--bridge",
+                "tuwunel",
+                "--github-project-board",
+                &board_title,
+                "--workzone",
+                &workzone.to_string_lossy(),
             ])
             .output();
-        assert!(output.status.success(), "bm init failed: {}", String::from_utf8_lossy(&output.stderr));
+        assert!(
+            output.status.success(),
+            "bm init failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
         // When a bridge is selected, next-steps should mention --all (not just --repos)
@@ -76,9 +97,18 @@ fn init_with_bridge_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEn
         );
 
         let team_repo = workzone.join(TEAM_NAME).join("team");
-        assert!(team_repo.join(".git").is_dir(), "team repo should have .git");
-        assert!(team_repo.join("botminter.yml").exists(), "should have botminter.yml");
-        assert!(team_repo.join("PROCESS.md").exists(), "should have PROCESS.md");
+        assert!(
+            team_repo.join(".git").is_dir(),
+            "team repo should have .git"
+        );
+        assert!(
+            team_repo.join("botminter.yml").exists(),
+            "should have botminter.yml"
+        );
+        assert!(
+            team_repo.join("PROCESS.md").exists(),
+            "should have PROCESS.md"
+        );
 
         // Verify bridge directory exists in team repo
         assert!(
@@ -102,7 +132,11 @@ fn init_with_bridge_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEn
         let profiles_base = env.home.join(".config/botminter/profiles");
         let manifest = profile::read_manifest_from(PROFILE, &profiles_base).unwrap();
         for expected in &manifest.labels {
-            assert!(labels.contains(&expected.name), "Label '{}' missing", expected.name);
+            assert!(
+                labels.contains(&expected.name),
+                "Label '{}' missing",
+                expected.name
+            );
         }
     }
 }
@@ -115,23 +149,35 @@ fn hire_member_fn(
     app_private_key_file: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args([
-                "hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME,
+                "hire",
+                ROLE,
+                "--name",
+                MEMBER_NAME,
+                "-t",
+                TEAM_NAME,
                 "--reuse-app",
-                "--app-id", &app_id,
-                "--client-id", &app_client_id,
-                "--private-key-file", &app_private_key_file,
-                "--installation-id", &app_installation_id,
+                "--app-id",
+                &app_id,
+                "--client-id",
+                &app_client_id,
+                "--private-key-file",
+                &app_private_key_file,
+                "--installation-id",
+                &app_installation_id,
             ])
             .run();
         assert!(stdout.contains(MEMBER_DIR) || stdout.contains(MEMBER_NAME));
     }
 }
 
-fn env_create_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn env_create_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let output = env.command("bm")
+        let output = env
+            .command("bm")
             .args(["env", "create", "-t", TEAM_NAME])
             .output();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
@@ -139,7 +185,9 @@ fn env_create_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + st
         // ralph is not installed (stub env), but the command itself must parse
         // and dispatch correctly. Accept both success and prerequisite failure.
         assert!(
-            output.status.success() || stderr.contains("not found") || stderr.contains("not installed"),
+            output.status.success()
+                || stderr.contains("not found")
+                || stderr.contains("not installed"),
             "bm env create should succeed or fail with a prerequisite error, got: {}",
             stderr
         );
@@ -153,13 +201,12 @@ fn env_create_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + st
     }
 }
 
-fn attach_local_formation_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn attach_local_formation_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         // For v2 teams with local formation, `bm attach` should tell the user
         // they're already in the local environment (not try Lima).
-        let output = env.command("bm")
-            .args(["attach", "-t", TEAM_NAME])
-            .output();
+        let output = env.command("bm").args(["attach", "-t", TEAM_NAME]).output();
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         assert!(
             !output.status.success(),
@@ -167,14 +214,18 @@ fn attach_local_formation_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::Unw
             stderr
         );
         assert!(
-            stderr.contains("not applicable") || stderr.contains("already in the local environment"),
+            stderr.contains("not applicable")
+                || stderr.contains("already in the local environment"),
             "bm attach should say 'not applicable' for local formation, got: {}",
             stderr
         );
     }
 }
 
-fn projects_add_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn projects_add_fn(
+    gh_org: String,
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         // Read existing project URL from team repo if available (second pass)
         let team_repo = env.home.join("workspaces").join(TEAM_NAME).join("team");
@@ -182,7 +233,8 @@ fn projects_add_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEnv) +
         let existing_url = if manifest_path.exists() {
             let contents = fs::read_to_string(&manifest_path).unwrap();
             let manifest: serde_yml::Value = serde_yml::from_str(&contents).unwrap();
-            manifest["projects"].as_sequence()
+            manifest["projects"]
+                .as_sequence()
                 .and_then(|ps| ps.first())
                 .and_then(|p| p["fork_url"].as_str().map(String::from))
         } else {
@@ -195,15 +247,36 @@ fn projects_add_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEnv) +
             // First pass -- create a GitHub repo for the project
             let fork = env.home.join("test-project");
             fs::create_dir_all(&fork).unwrap();
-            env.command("git").args(["init", "-b", "main"]).current_dir(&fork).run();
-            env.command("git").args(["config", "user.email", "e2e@test"]).current_dir(&fork).run();
-            env.command("git").args(["config", "user.name", "E2E"]).current_dir(&fork).run();
+            env.command("git")
+                .args(["init", "-b", "main"])
+                .current_dir(&fork)
+                .run();
+            env.command("git")
+                .args(["config", "user.email", "e2e@test"])
+                .current_dir(&fork)
+                .run();
+            env.command("git")
+                .args(["config", "user.name", "E2E"])
+                .current_dir(&fork)
+                .run();
             fs::write(fork.join("README.md"), "# test").unwrap();
-            env.command("git").args(["add", "-A"]).current_dir(&fork).run();
-            env.command("git").args(["commit", "-m", "init"]).current_dir(&fork).run();
+            env.command("git")
+                .args(["add", "-A"])
+                .current_dir(&fork)
+                .run();
+            env.command("git")
+                .args(["commit", "-m", "init"])
+                .current_dir(&fork)
+                .run();
 
-            let full_name = format!("{}/bm-e2e-project-{}", gh_org,
-                std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs());
+            let full_name = format!(
+                "{}/bm-e2e-project-{}",
+                gh_org,
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs()
+            );
             bm::git::create_repo_and_push(&fork, &full_name)
                 .expect("failed to create project repo on GitHub");
             format!("https://github.com/{}.git", full_name)
@@ -218,13 +291,20 @@ fn projects_add_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEnv) +
         let repo = repo_from_config(&env.home);
         let labels = super::super::github::list_labels(&repo);
         let expected_label = format!("project/{}", project_name);
-        assert!(labels.contains(&expected_label), "Label '{}' missing: {:?}", expected_label, labels);
+        assert!(
+            labels.contains(&expected_label),
+            "Label '{}' missing: {:?}",
+            expected_label,
+            labels
+        );
     }
 }
 
-fn teams_show_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn teams_show_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args(["teams", "show", "-t", TEAM_NAME])
             .run();
         assert!(stdout.contains("Bridge:"));
@@ -232,7 +312,9 @@ fn teams_show_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + st
     }
 }
 
-fn bridge_start_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn bridge_start_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         if !telegram::podman_available() {
             eprintln!("SKIP: podman not available -- bridge steps will be skipped");
@@ -251,11 +333,15 @@ fn bridge_start_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::pan
             .run();
 
         // Verify bridge-state.json
-        let bstate_path = env.home
+        let bstate_path = env
+            .home
             .join("workspaces")
             .join(TEAM_NAME)
             .join("bridge-state.json");
-        assert!(bstate_path.exists(), "bridge-state.json should exist after bridge start");
+        assert!(
+            bstate_path.exists(),
+            "bridge-state.json should exist after bridge start"
+        );
         let bstate_contents = fs::read_to_string(&bstate_path).unwrap();
         let bstate: serde_json::Value = serde_json::from_str(&bstate_contents).unwrap();
         assert_eq!(
@@ -275,7 +361,9 @@ fn bridge_start_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::pan
     }
 }
 
-fn bridge_start_idempotent_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn bridge_start_idempotent_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         if env.get_export("tuwunel_port").is_none() {
             eprintln!("SKIP: bridge not started (no podman)");
@@ -284,7 +372,8 @@ fn bridge_start_idempotent_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send
 
         let port = env.get_export("tuwunel_port").unwrap().to_string();
 
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args(["bridge", "start", "-t", TEAM_NAME])
             .env("TUWUNEL_PORT", &port)
             .run();
@@ -296,7 +385,9 @@ fn bridge_start_idempotent_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send
     }
 }
 
-fn bridge_identity_add_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn bridge_identity_add_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         if env.get_export("tuwunel_port").is_none() {
             eprintln!("SKIP: bridge not started (no podman)");
@@ -306,40 +397,53 @@ fn bridge_identity_add_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + s
         let port = env.get_export("tuwunel_port").unwrap().to_string();
 
         // Local bridge auto-provisions -- no BM_BRIDGE_TOKEN_ env var needed
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args(["bridge", "identity", "add", MEMBER_DIR, "-t", TEAM_NAME])
             .env("TUWUNEL_PORT", &port)
             .run();
         assert!(stdout.contains(MEMBER_DIR));
 
         // Verify token was stored by running `bm bridge identity list`
-        let list_out = env.command("bm")
+        let list_out = env
+            .command("bm")
             .args(["bridge", "identity", "list", "-t", TEAM_NAME])
             .run();
-        assert!(list_out.contains(MEMBER_DIR), "identity should appear in list after add");
+        assert!(
+            list_out.contains(MEMBER_DIR),
+            "identity should appear in list after add"
+        );
     }
 }
 
-fn bridge_identity_list_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn bridge_identity_list_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args(["bridge", "identity", "list", "-t", TEAM_NAME])
             .run();
         assert!(stdout.contains(MEMBER_DIR));
     }
 }
 
-fn bridge_identity_show_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn bridge_identity_show_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let stdout = env.command("bm")
-            .args(["bridge", "identity", "show", MEMBER_DIR, "--reveal", "-t", TEAM_NAME])
+        let stdout = env
+            .command("bm")
+            .args([
+                "bridge", "identity", "show", MEMBER_DIR, "--reveal", "-t", TEAM_NAME,
+            ])
             .run();
         assert!(stdout.contains(MEMBER_DIR), "should show username");
         assert!(stdout.contains("Token:"), "should show token field");
     }
 }
 
-fn bridge_room_create_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn bridge_room_create_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         if env.get_export("tuwunel_port").is_none() {
             eprintln!("SKIP: bridge not started (no podman)");
@@ -354,7 +458,8 @@ fn bridge_room_create_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + st
             .run();
 
         // Verify bridge-state.json has room
-        let bstate_path = env.home
+        let bstate_path = env
+            .home
             .join("workspaces")
             .join(TEAM_NAME)
             .join("bridge-state.json");
@@ -368,7 +473,8 @@ fn bridge_room_create_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + st
     }
 }
 
-fn bridge_room_membership_verify_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn bridge_room_membership_verify_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         if env.get_export("tuwunel_port").is_none() {
             eprintln!("SKIP: bridge not started (no podman)");
@@ -382,29 +488,38 @@ fn bridge_room_membership_verify_fn() -> impl Fn(&mut TestEnv) + Send + std::pan
         let homeserver_url = format!("http://127.0.0.1:{}", port);
 
         // Get the room ID from bridge-state.json
-        let bstate_path = env.home
+        let bstate_path = env
+            .home
             .join("workspaces")
             .join(TEAM_NAME)
             .join("bridge-state.json");
         let bstate_contents = fs::read_to_string(&bstate_path).unwrap();
         let bstate: serde_json::Value = serde_json::from_str(&bstate_contents).unwrap();
-        let room_id = bstate["rooms"].as_array()
+        let room_id = bstate["rooms"]
+            .as_array()
             .and_then(|rooms| rooms.first())
             .and_then(|r| r["room_id"].as_str())
             .expect("should have a room_id in bridge-state.json");
 
         // Get the member's access token via identity show --reveal
-        let show_out = env.command("bm")
-            .args(["bridge", "identity", "show", MEMBER_DIR, "--reveal", "-t", TEAM_NAME])
+        let show_out = env
+            .command("bm")
+            .args([
+                "bridge", "identity", "show", MEMBER_DIR, "--reveal", "-t", TEAM_NAME,
+            ])
             .run();
-        let token = show_out.lines()
+        let token = show_out
+            .lines()
             .find(|l| l.contains("Token:"))
             .and_then(|l| l.split_whitespace().nth(1))
             .expect("should be able to extract token from identity show output");
 
-        eprintln!("  membership_verify: room_id={}, token={}...{}", room_id,
+        eprintln!(
+            "  membership_verify: room_id={}, token={}...{}",
+            room_id,
             &token[..token.len().min(4)],
-            &token[token.len().saturating_sub(4)..]);
+            &token[token.len().saturating_sub(4)..]
+        );
 
         // Join the room using the member's token (simulates what the brain does).
         // Use -s (silent) without -f so we get the response body on HTTP errors.
@@ -414,13 +529,20 @@ fn bridge_room_membership_verify_fn() -> impl Fn(&mut TestEnv) + Send + std::pan
             room_id.replace('!', "%21").replace(':', "%3A")
         );
         let auth_header = format!("Authorization: Bearer {}", token);
-        let join_out = env.command("curl")
+        let join_out = env
+            .command("curl")
             .args([
-                "-s", "--max-time", "10",
-                "-X", "POST",
-                "-H", &auth_header,
-                "-H", "Content-Type: application/json",
-                "-d", "{}",
+                "-s",
+                "--max-time",
+                "10",
+                "-X",
+                "POST",
+                "-H",
+                &auth_header,
+                "-H",
+                "Content-Type: application/json",
+                "-d",
+                "{}",
                 &join_url,
             ])
             .run();
@@ -431,26 +553,23 @@ fn bridge_room_membership_verify_fn() -> impl Fn(&mut TestEnv) + Send + std::pan
         );
 
         // Verify the member can see the room in /joined_rooms
-        let joined_url = format!(
-            "{}/_matrix/client/v3/joined_rooms",
-            homeserver_url,
-        );
-        let joined_out = env.command("curl")
-            .args([
-                "-s", "--max-time", "10",
-                "-H", &auth_header,
-                &joined_url,
-            ])
+        let joined_url = format!("{}/_matrix/client/v3/joined_rooms", homeserver_url,);
+        let joined_out = env
+            .command("curl")
+            .args(["-s", "--max-time", "10", "-H", &auth_header, &joined_url])
             .run();
         assert!(
             joined_out.contains(room_id),
             "member should see room {} in /joined_rooms, got: {}",
-            room_id, joined_out
+            room_id,
+            joined_out
         );
     }
 }
 
-fn start_skips_running_bridge_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn start_skips_running_bridge_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         // Member is already running from start_status_healthy. Starting again should
         // report "already running" for both the member and the bridge.
@@ -471,7 +590,9 @@ fn start_skips_running_bridge_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + S
     }
 }
 
-fn start_single_member_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn start_single_member_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let mut guard = ProcessGuard::new(env, TEAM_NAME);
         let mut cmd = env.command("bm");
@@ -480,25 +601,44 @@ fn start_single_member_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + s
             cmd.env("TUWUNEL_PORT", port);
         }
         let stdout = cmd.run();
-        assert!(stdout.contains("Started 1 member"), "should start exactly 1 member, got: {}", stdout);
+        assert!(
+            stdout.contains("Started 1 member"),
+            "should start exactly 1 member, got: {}",
+            stdout
+        );
         // Should NOT mention bridge (single member skips bridge lifecycle)
-        assert!(!stdout.contains("Starting bridge") && !stdout.contains("Bridge") ,
-            "single member start should skip bridge, got: {}", stdout);
+        assert!(
+            !stdout.contains("Starting bridge") && !stdout.contains("Bridge"),
+            "single member start should skip bridge, got: {}",
+            stdout
+        );
 
-        if let Some(pid) = read_pid_from_state(&env.home) { guard.set_pid(pid); }
+        if let Some(pid) = read_pid_from_state(&env.home) {
+            guard.set_pid(pid);
+        }
         std::mem::forget(guard);
     }
 }
 
-fn stop_single_member_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn stop_single_member_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let pid_before = read_pid_from_state(&env.home);
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args(["stop", MEMBER_DIR, "-t", TEAM_NAME])
             .run();
-        assert!(stdout.contains("Stopped 1 member"), "should stop exactly 1 member, got: {}", stdout);
+        assert!(
+            stdout.contains("Stopped 1 member"),
+            "should stop exactly 1 member, got: {}",
+            stdout
+        );
         // Bridge should NOT be stopped (single member stop skips bridge)
-        assert!(!stdout.contains("Stopping bridge"), "single member stop should skip bridge, got: {}", stdout);
+        assert!(
+            !stdout.contains("Stopping bridge"),
+            "single member stop should skip bridge, got: {}",
+            stdout
+        );
         if let Some(pid) = pid_before {
             super::super::helpers::wait_for_exit(pid, Duration::from_secs(5));
             assert!(!is_alive(pid));
@@ -506,7 +646,9 @@ fn stop_single_member_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindS
     }
 }
 
-fn sync_bridge_and_repos_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn sync_bridge_and_repos_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let mut cmd = env.command("bm");
         cmd.args(["teams", "sync", "--bridge", "--repos", "-t", TEAM_NAME]);
@@ -528,7 +670,10 @@ fn sync_bridge_and_repos_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send +
 
         // Verify settings.json was surfaced with PostToolUse hook
         let settings_path = ws.join(".claude/settings.json");
-        assert!(settings_path.exists(), ".claude/settings.json should exist after sync");
+        assert!(
+            settings_path.exists(),
+            ".claude/settings.json should exist after sync"
+        );
         let settings_content = fs::read_to_string(&settings_path).unwrap();
         assert!(
             settings_content.contains("bm-agent claude hook post-tool-use"),
@@ -547,7 +692,9 @@ fn sync_bridge_and_repos_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send +
                 "RObot.enabled should be true"
             );
             assert!(
-                ralph_doc["RObot"]["matrix"]["homeserver_url"].as_str().is_some(),
+                ralph_doc["RObot"]["matrix"]["homeserver_url"]
+                    .as_str()
+                    .is_some(),
                 "RObot.matrix.homeserver_url should be set"
             );
             assert!(
@@ -558,7 +705,9 @@ fn sync_bridge_and_repos_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send +
     }
 }
 
-fn sync_idempotent_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn sync_idempotent_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let mut cmd = env.command("bm");
         cmd.args(["teams", "sync", "--bridge", "--repos", "-t", TEAM_NAME]);
@@ -578,27 +727,33 @@ fn sync_idempotent_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::
     }
 }
 
-fn projects_sync_fn(gh_org: String, _gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn projects_sync_fn(
+    gh_org: String,
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args(["projects", "sync", "-t", TEAM_NAME])
             .run();
         assert!(stdout.contains("Status field synced"));
 
-        let _projects = bm::git::list_projects(&gh_org)
-            .expect("list_gh_projects should succeed");
+        let _projects = bm::git::list_projects(&gh_org).expect("list_gh_projects should succeed");
 
         // Idempotency
-        let stdout2 = env.command("bm")
+        let stdout2 = env
+            .command("bm")
             .args(["projects", "sync", "-t", TEAM_NAME])
             .run();
         assert!(stdout2.contains("Status field synced"));
     }
 }
 
-fn start_without_ralph_errors_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn start_without_ralph_errors_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let stderr = env.command("bm")
+        let stderr = env
+            .command("bm")
             .args(["start", "-t", TEAM_NAME])
             .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
             .run_fail();
@@ -615,7 +770,9 @@ fn start_without_ralph_errors_fn() -> impl Fn(&mut TestEnv) + Send + std::panic:
     }
 }
 
-fn start_status_healthy_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn start_status_healthy_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         // Remove brain-prompt.md so bm start uses ralph (the stub) instead of
         // bm brain-run. Brain mode is tested separately in exploratory tests.
@@ -631,18 +788,19 @@ fn start_status_healthy_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + 
         let stdout = cmd.run();
         assert!(stdout.contains("Started 1 member"));
 
-        if let Some(pid) = read_pid_from_state(&env.home) { guard.set_pid(pid); }
+        if let Some(pid) = read_pid_from_state(&env.home) {
+            guard.set_pid(pid);
+        }
 
-        let stdout = env.command("bm")
-            .args(["status", "-t", TEAM_NAME])
-            .run();
+        let stdout = env.command("bm").args(["status", "-t", TEAM_NAME]).run();
         assert!(stdout.contains("running") && stdout.contains(MEMBER_DIR));
 
         std::mem::forget(guard);
     }
 }
 
-fn bridge_functional_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn bridge_functional_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         if env.get_export("tuwunel_port").is_none() {
             eprintln!("SKIP: bridge not started (no podman)");
@@ -651,26 +809,37 @@ fn bridge_functional_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSa
         std::thread::sleep(Duration::from_secs(3));
         let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
         let env_content = fs::read_to_string(ws.join(".ralph-stub-env")).unwrap();
-        assert!(env_content.contains("RALPH_MATRIX_ACCESS_TOKEN="),
-            "stub env should contain RALPH_MATRIX_ACCESS_TOKEN, got: {}", env_content);
-        assert!(env_content.contains("RALPH_MATRIX_HOMESERVER_URL="),
-            "stub env should contain RALPH_MATRIX_HOMESERVER_URL, got: {}", env_content);
-        assert!(env_content.contains("GH_CONFIG_DIR="),
-            "stub env should contain GH_CONFIG_DIR (App credential path), got: {}", env_content);
+        assert!(
+            env_content.contains("RALPH_MATRIX_ACCESS_TOKEN="),
+            "stub env should contain RALPH_MATRIX_ACCESS_TOKEN, got: {}",
+            env_content
+        );
+        assert!(
+            env_content.contains("RALPH_MATRIX_HOMESERVER_URL="),
+            "stub env should contain RALPH_MATRIX_HOMESERVER_URL, got: {}",
+            env_content
+        );
+        assert!(
+            env_content.contains("GH_CONFIG_DIR="),
+            "stub env should contain GH_CONFIG_DIR (App credential path), got: {}",
+            env_content
+        );
 
         // Verify the stub successfully contacted the Matrix homeserver
         let matrix_response = fs::read_to_string(ws.join(".ralph-stub-matrix-response")).unwrap();
-        assert!(matrix_response.contains("versions"),
-            "stub should have received a valid /_matrix/client/versions response, got: {}", matrix_response);
+        assert!(
+            matrix_response.contains("versions"),
+            "stub should have received a valid /_matrix/client/versions response, got: {}",
+            matrix_response
+        );
     }
 }
 
-fn stop_clean_shutdown_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn stop_clean_shutdown_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let pid_before = read_pid_from_state(&env.home);
-        let stdout = env.command("bm")
-            .args(["stop", "-t", TEAM_NAME])
-            .run();
+        let stdout = env.command("bm").args(["stop", "-t", TEAM_NAME]).run();
         assert!(stdout.contains("Stopped 1 member"));
         if let Some(pid) = pid_before {
             super::super::helpers::wait_for_exit(pid, Duration::from_secs(5));
@@ -679,7 +848,9 @@ fn stop_clean_shutdown_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::Unwind
     }
 }
 
-fn stop_force_kills_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn stop_force_kills_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let mut guard = ProcessGuard::new(env, TEAM_NAME);
         let mut cmd = env.command("bm");
@@ -698,7 +869,9 @@ fn stop_force_kills_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std:
     }
 }
 
-fn status_detects_crashed_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn status_detects_crashed_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let mut cmd = env.command("bm");
         cmd.args(["start", "-t", TEAM_NAME]);
@@ -709,33 +882,38 @@ fn status_detects_crashed_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send 
         let pid = read_pid_from_state(&env.home).expect("should have PID");
         force_kill(pid);
         super::super::helpers::wait_for_exit(pid, Duration::from_secs(5));
-        let stdout = env.command("bm")
-            .args(["status", "-t", TEAM_NAME])
-            .run();
+        let stdout = env.command("bm").args(["status", "-t", TEAM_NAME]).run();
         assert!(stdout.contains("crashed"));
     }
 }
 
-fn members_list_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn members_list_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let stdout = env.command("bm")
+        let stdout = env
+            .command("bm")
             .args(["members", "list", "-t", TEAM_NAME])
             .run();
         assert!(stdout.contains(MEMBER_DIR) && stdout.contains(ROLE));
     }
 }
 
-fn teams_list_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn teams_list_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let stdout = env.command("bm")
-            .args(["teams", "list"])
-            .run();
+        let stdout = env.command("bm").args(["teams", "list"]).run();
         let repo = repo_from_config(&env.home);
-        assert!(stdout.contains(&repo), "teams list should show repo '{}'", repo);
+        assert!(
+            stdout.contains(&repo),
+            "teams list should show repo '{}'",
+            repo
+        );
     }
 }
 
-fn daemon_start_poll_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn daemon_start_poll_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
         let _ = fs::remove_file(ws.join(".ralph-stub-pid"));
@@ -751,14 +929,27 @@ fn daemon_start_poll_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std
         // Pre-seed poll state with the current latest event ID so the daemon
         // doesn't treat pre-existing GitHub events (from the first pass or
         // previous cases) as new activity.
-        let latest_event_id = env.command("gh")
-            .args(["api", &format!("repos/{}/events", env.repo_full_name),
-                   "--jq", ".[0].id"])
+        let latest_event_id = env
+            .command("gh")
+            .args([
+                "api",
+                &format!("repos/{}/events", env.repo_full_name),
+                "--jq",
+                ".[0].id",
+            ])
             .output();
         let latest_event_id = if latest_event_id.status.success() {
-            let id = String::from_utf8_lossy(&latest_event_id.stdout).trim().to_string();
-            if id.is_empty() { None } else { Some(id) }
-        } else { None };
+            let id = String::from_utf8_lossy(&latest_event_id.stdout)
+                .trim()
+                .to_string();
+            if id.is_empty() {
+                None
+            } else {
+                Some(id)
+            }
+        } else {
+            None
+        };
         if let Some(ref event_id) = latest_event_id {
             let poll_state_dir = env.home.join(".botminter");
             fs::create_dir_all(&poll_state_dir).unwrap();
@@ -769,31 +960,55 @@ fn daemon_start_poll_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std
             fs::write(
                 poll_state_dir.join(format!("daemon-{}-poll.json", TEAM_NAME)),
                 serde_json::to_string_pretty(&poll_state).unwrap(),
-            ).unwrap();
+            )
+            .unwrap();
         }
 
         let mut cmd = env.command("bm");
-        cmd.args(["daemon", "start", "--mode", "poll", "--interval", "2", "-t", TEAM_NAME]);
+        cmd.args([
+            "daemon",
+            "start",
+            "--mode",
+            "poll",
+            "--interval",
+            "2",
+            "-t",
+            TEAM_NAME,
+        ]);
         if let Some(port) = env.get_export("tuwunel_port") {
             cmd.env("TUWUNEL_PORT", port);
         }
         let out = cmd.run();
         assert!(out.contains("Daemon started"));
 
-        let out = env.command("bm")
+        let out = env
+            .command("bm")
             .args(["daemon", "status", "-t", TEAM_NAME])
             .run();
         assert!(out.contains("running") && out.contains("poll"));
 
-        assert!(!ws.join(".ralph-stub-pid").exists(), "Ralph should NOT be running before any GH event");
+        assert!(
+            !ws.join(".ralph-stub-pid").exists(),
+            "Ralph should NOT be running before any GH event"
+        );
     }
 }
 
-fn daemon_poll_launches_member_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn daemon_poll_launches_member_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         env.command("gh")
-            .args(["issue", "create", "-R", &env.repo_full_name,
-                "--title", "Trigger daemon member launch", "--body", "E2E test trigger"])
+            .args([
+                "issue",
+                "create",
+                "-R",
+                &env.repo_full_name,
+                "--title",
+                "Trigger daemon member launch",
+                "--body",
+                "E2E test trigger",
+            ])
             .run();
 
         let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
@@ -802,23 +1017,43 @@ fn daemon_poll_launches_member_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + 
         while !stub_pid_file.exists() && std::time::Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(500));
         }
-        assert!(stub_pid_file.exists(), "Daemon did not launch member within 30s");
-        let stub_pid: u32 = fs::read_to_string(&stub_pid_file).unwrap().trim().parse().unwrap();
+        assert!(
+            stub_pid_file.exists(),
+            "Daemon did not launch member within 30s"
+        );
+        let stub_pid: u32 = fs::read_to_string(&stub_pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         assert!(is_alive(stub_pid));
 
-        let daemon_log = env.home.join(format!(".botminter/logs/daemon-{}.log", TEAM_NAME));
+        let daemon_log = env
+            .home
+            .join(format!(".botminter/logs/daemon-{}.log", TEAM_NAME));
         assert!(daemon_log.exists());
     }
 }
 
-fn daemon_stop_poll_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn daemon_stop_poll_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let pid_file = env.home.join(format!(".botminter/daemon-{}.pid", TEAM_NAME));
-        let daemon_pid: u32 = fs::read_to_string(&pid_file).expect("daemon PID file").trim().parse().unwrap();
+        let pid_file = env
+            .home
+            .join(format!(".botminter/daemon-{}.pid", TEAM_NAME));
+        let daemon_pid: u32 = fs::read_to_string(&pid_file)
+            .expect("daemon PID file")
+            .trim()
+            .parse()
+            .unwrap();
         let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
-        let stub_pid: Option<u32> = fs::read_to_string(ws.join(".ralph-stub-pid")).ok().and_then(|s| s.trim().parse().ok());
+        let stub_pid: Option<u32> = fs::read_to_string(ws.join(".ralph-stub-pid"))
+            .ok()
+            .and_then(|s| s.trim().parse().ok());
 
-        let out = env.command("bm")
+        let out = env
+            .command("bm")
             .args(["daemon", "stop", "-t", TEAM_NAME])
             .run();
         assert!(out.contains("Daemon stopped"));
@@ -835,14 +1070,20 @@ fn daemon_stop_poll_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std:
     }
 }
 
-fn daemon_start_webhook_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn daemon_start_webhook_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let out = env.command("bm")
-            .args(["daemon", "start", "--mode", "webhook", "--port", "19500", "-t", TEAM_NAME])
+        let out = env
+            .command("bm")
+            .args([
+                "daemon", "start", "--mode", "webhook", "--port", "19500", "-t", TEAM_NAME,
+            ])
             .run();
         assert!(out.contains("Daemon started"));
         std::thread::sleep(Duration::from_millis(500));
-        let out = env.command("bm")
+        let out = env
+            .command("bm")
             .args(["daemon", "status", "-t", TEAM_NAME])
             .run();
         assert!(out.contains("running") && out.contains("webhook"));
@@ -850,7 +1091,9 @@ fn daemon_start_webhook_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + 
     }
 }
 
-fn daemon_stop_webhook_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn daemon_stop_webhook_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         env.command("bm")
             .args(["daemon", "stop", "-t", TEAM_NAME])
@@ -861,7 +1104,9 @@ fn daemon_stop_webhook_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + s
     }
 }
 
-fn daemon_sigkill_escalation_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn daemon_sigkill_escalation_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
         let ignore_file = ws.join(".ralph-stub-ignore-sigterm");
@@ -877,15 +1122,32 @@ fn daemon_sigkill_escalation_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Se
 
         let _guard = DaemonGuard::new(env, TEAM_NAME);
         let mut cmd = env.command("bm");
-        cmd.args(["daemon", "start", "--mode", "poll", "--interval", "2", "-t", TEAM_NAME]);
+        cmd.args([
+            "daemon",
+            "start",
+            "--mode",
+            "poll",
+            "--interval",
+            "2",
+            "-t",
+            TEAM_NAME,
+        ]);
         if let Some(port) = env.get_export("tuwunel_port") {
             cmd.env("TUWUNEL_PORT", port);
         }
         cmd.run();
 
         env.command("gh")
-            .args(["issue", "create", "-R", &env.repo_full_name,
-                "--title", "Trigger SIGKILL test", "--body", "E2E"])
+            .args([
+                "issue",
+                "create",
+                "-R",
+                &env.repo_full_name,
+                "--title",
+                "Trigger SIGKILL test",
+                "--body",
+                "E2E",
+            ])
             .run();
 
         let stub_pid_file = ws.join(".ralph-stub-pid");
@@ -894,9 +1156,16 @@ fn daemon_sigkill_escalation_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Se
             std::thread::sleep(Duration::from_millis(500));
         }
         assert!(stub_pid_file.exists(), "Daemon should have launched ralph");
-        let ralph_pid: u32 = fs::read_to_string(&stub_pid_file).unwrap().trim().parse().unwrap();
+        let ralph_pid: u32 = fs::read_to_string(&stub_pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         assert!(is_alive(ralph_pid));
-        assert!(sigterm_log.exists(), "Ralph should have logged SIGTERM trap setup");
+        assert!(
+            sigterm_log.exists(),
+            "Ralph should have logged SIGTERM trap setup"
+        );
 
         env.command("bm")
             .args(["daemon", "stop", "-t", TEAM_NAME])
@@ -914,17 +1183,24 @@ fn daemon_sigkill_escalation_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Se
     }
 }
 
-fn daemon_stale_pid_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn daemon_stale_pid_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let _guard = DaemonGuard::new(env, TEAM_NAME);
         let pid_dir = env.home.join(".botminter");
         fs::create_dir_all(&pid_dir).unwrap();
         fs::write(pid_dir.join(format!("daemon-{}.pid", TEAM_NAME)), "99999").unwrap();
 
-        let out = env.command("bm")
+        let out = env
+            .command("bm")
             .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
             .run();
-        assert!(out.contains("Daemon started"), "Should start despite stale PID: {}", out);
+        assert!(
+            out.contains("Daemon started"),
+            "Should start despite stale PID: {}",
+            out
+        );
 
         env.command("bm")
             .args(["daemon", "stop", "-t", TEAM_NAME])
@@ -932,14 +1208,17 @@ fn daemon_stale_pid_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std:
     }
 }
 
-fn daemon_already_running_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn daemon_already_running_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let _guard = DaemonGuard::new(env, TEAM_NAME);
         env.command("bm")
             .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
             .run();
 
-        let output = env.command("bm")
+        let output = env
+            .command("bm")
             .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
             .output();
         assert!(!output.status.success());
@@ -948,18 +1227,27 @@ fn daemon_already_running_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send 
     }
 }
 
-fn daemon_crashed_detection_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn daemon_crashed_detection_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         env.command("bm")
             .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
             .run();
 
-        let pid_file = env.home.join(format!(".botminter/daemon-{}.pid", TEAM_NAME));
-        let daemon_pid: u32 = fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+        let pid_file = env
+            .home
+            .join(format!(".botminter/daemon-{}.pid", TEAM_NAME));
+        let daemon_pid: u32 = fs::read_to_string(&pid_file)
+            .unwrap()
+            .trim()
+            .parse()
+            .unwrap();
         force_kill(daemon_pid);
         super::super::helpers::wait_for_exit(daemon_pid, Duration::from_secs(5));
 
-        let out = env.command("bm")
+        let out = env
+            .command("bm")
             .args(["daemon", "status", "-t", TEAM_NAME])
             .run();
         assert!(out.contains("not running") || out.contains("stale"));
@@ -967,7 +1255,9 @@ fn daemon_crashed_detection_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Sen
     }
 }
 
-fn bridge_stop_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn bridge_stop_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         if env.get_export("tuwunel_port").is_none() {
             eprintln!("SKIP: bridge not started (no podman)");
@@ -982,16 +1272,21 @@ fn bridge_stop_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::pani
             .run();
 
         // Consume the TuwunelGuard to prevent double-cleanup
-        let guard_name = env.get_export("tuwunel_guard_name")
-            .expect("tuwunel_guard_name should be exported").to_string();
-        let guard_port: u16 = env.get_export("tuwunel_guard_port")
+        let guard_name = env
+            .get_export("tuwunel_guard_name")
+            .expect("tuwunel_guard_name should be exported")
+            .to_string();
+        let guard_port: u16 = env
+            .get_export("tuwunel_guard_port")
             .expect("tuwunel_guard_port should be exported")
-            .parse().unwrap();
+            .parse()
+            .unwrap();
         let guard = TuwunelGuard::from_existing(guard_name, guard_port);
         let _ = guard.into_parts();
 
         // Verify bridge-state.json shows stopped
-        let bstate_path = env.home
+        let bstate_path = env
+            .home
             .join("workspaces")
             .join(TEAM_NAME)
             .join("bridge-state.json");
@@ -1005,20 +1300,26 @@ fn bridge_stop_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::pani
     }
 }
 
-fn inbox_lifecycle_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn inbox_lifecycle_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
 
         // Write a message
-        let stdout = env.command("bm-agent")
+        let stdout = env
+            .command("bm-agent")
             .args(["inbox", "write", "fix CI pipeline"])
             .current_dir(&ws)
             .run();
-        assert!(stdout.contains("Message written") || stdout.is_empty() || stdout.contains("fix CI"),
-            "inbox write should succeed, got: {}", stdout);
+        assert!(
+            stdout.contains("Message written") || stdout.is_empty() || stdout.contains("fix CI"),
+            "inbox write should succeed, got: {}",
+            stdout
+        );
 
         // Peek shows the message
-        let stdout = env.command("bm-agent")
+        let stdout = env
+            .command("bm-agent")
             .args(["inbox", "peek"])
             .current_dir(&ws)
             .run();
@@ -1029,7 +1330,8 @@ fn inbox_lifecycle_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe
         );
 
         // Read consumes the message (JSON format)
-        let stdout = env.command("bm-agent")
+        let stdout = env
+            .command("bm-agent")
             .args(["inbox", "read", "--format", "json"])
             .current_dir(&ws)
             .run();
@@ -1040,7 +1342,8 @@ fn inbox_lifecycle_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe
         );
 
         // Peek now shows empty
-        let stdout = env.command("bm-agent")
+        let stdout = env
+            .command("bm-agent")
             .args(["inbox", "peek"])
             .current_dir(&ws)
             .run();
@@ -1052,7 +1355,9 @@ fn inbox_lifecycle_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe
     }
 }
 
-fn inbox_resync_preserves_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn inbox_resync_preserves_fn(
+    _gh_token: String,
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
 
@@ -1071,7 +1376,8 @@ fn inbox_resync_preserves_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send 
         cmd.run();
 
         // Peek should still show the message
-        let stdout = env.command("bm-agent")
+        let stdout = env
+            .command("bm-agent")
             .args(["inbox", "peek"])
             .current_dir(&ws)
             .run();
@@ -1105,12 +1411,21 @@ fn fire_member_fn(
         if !team_repo.join("members").join(MEMBER_DIR).is_dir() {
             env.command("bm")
                 .args([
-                    "hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME,
+                    "hire",
+                    ROLE,
+                    "--name",
+                    MEMBER_NAME,
+                    "-t",
+                    TEAM_NAME,
                     "--reuse-app",
-                    "--app-id", &app_id,
-                    "--client-id", &app_client_id,
-                    "--private-key-file", &app_private_key_file,
-                    "--installation-id", &app_installation_id,
+                    "--app-id",
+                    &app_id,
+                    "--client-id",
+                    &app_client_id,
+                    "--private-key-file",
+                    &app_private_key_file,
+                    "--installation-id",
+                    &app_installation_id,
                 ])
                 .run();
         }
@@ -1123,7 +1438,8 @@ fn fire_member_fn(
 
         // Fire with --yes (skip confirmation) and --keep-app (shared test App).
         // Don't delete repo — cleanup handles it.
-        let output = env.command("bm")
+        let output = env
+            .command("bm")
             .args(["fire", MEMBER_DIR, "-t", TEAM_NAME, "--yes", "--keep-app"])
             .output();
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -1131,9 +1447,14 @@ fn fire_member_fn(
         assert!(
             output.status.success(),
             "bm fire failed:\nstdout: {}\nstderr: {}",
-            stdout, stderr
+            stdout,
+            stderr
         );
-        assert!(stdout.contains("Fired"), "should print 'Fired', got: {}", stdout);
+        assert!(
+            stdout.contains("Fired"),
+            "should print 'Fired', got: {}",
+            stdout
+        );
 
         // Verify cleanup
         assert!(
@@ -1148,12 +1469,21 @@ fn fire_member_fn(
         // Re-hire for subsequent tests (second pass needs the member)
         env.command("bm")
             .args([
-                "hire", ROLE, "--name", MEMBER_NAME, "-t", TEAM_NAME,
+                "hire",
+                ROLE,
+                "--name",
+                MEMBER_NAME,
+                "-t",
+                TEAM_NAME,
                 "--reuse-app",
-                "--app-id", &app_id,
-                "--client-id", &app_client_id,
-                "--private-key-file", &app_private_key_file,
-                "--installation-id", &app_installation_id,
+                "--app-id",
+                &app_id,
+                "--client-id",
+                &app_client_id,
+                "--private-key-file",
+                &app_private_key_file,
+                "--installation-id",
+                &app_installation_id,
             ])
             .run();
     }
@@ -1176,76 +1506,175 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .setup({
             move |_env: &mut TestEnv| {
                 if !telegram::podman_available() {
-                    eprintln!("WARN: podman not available -- bridge-dependent steps will be skipped");
+                    eprintln!(
+                        "WARN: podman not available -- bridge-dependent steps will be skipped"
+                    );
                 }
             }
         })
         // ── First pass: fresh start ──────────────────────────────────
-        .case("init_with_bridge_fresh", init_with_bridge_fn(gh_org.clone(), gh_token.clone()))
+        .case(
+            "init_with_bridge_fresh",
+            init_with_bridge_fn(gh_org.clone(), gh_token.clone()),
+        )
         // ── Environment setup ──────────────────────────────────────
         .case("env_create_fresh", env_create_fn())
         .case("attach_local_formation_fresh", attach_local_formation_fn())
         // ── Continue operator journey ────────────────────────────
-        .case("hire_member_fresh", hire_member_fn(gh_token.clone(), app_id.clone(), app_client_id.clone(), app_installation_id.clone(), app_private_key_file.clone()))
-        .case("projects_add_fresh", projects_add_fn(gh_org.clone(), gh_token.clone()))
+        .case(
+            "hire_member_fresh",
+            hire_member_fn(
+                gh_token.clone(),
+                app_id.clone(),
+                app_client_id.clone(),
+                app_installation_id.clone(),
+                app_private_key_file.clone(),
+            ),
+        )
+        .case(
+            "projects_add_fresh",
+            projects_add_fn(gh_org.clone(), gh_token.clone()),
+        )
         .case("teams_show_fresh", teams_show_fn())
         .case("bridge_start_fresh", bridge_start_fn(gh_token.clone()))
-        .case("bridge_start_idempotent_fresh", bridge_start_idempotent_fn(gh_token.clone()))
-        .case("bridge_identity_add_fresh", bridge_identity_add_fn(gh_token.clone()))
+        .case(
+            "bridge_start_idempotent_fresh",
+            bridge_start_idempotent_fn(gh_token.clone()),
+        )
+        .case(
+            "bridge_identity_add_fresh",
+            bridge_identity_add_fn(gh_token.clone()),
+        )
         .case("bridge_identity_show_fresh", bridge_identity_show_fn())
         .case("bridge_identity_list_fresh", bridge_identity_list_fn())
-        .case("bridge_room_create_fresh", bridge_room_create_fn(gh_token.clone()))
-        .case("bridge_room_membership_verify_fresh", bridge_room_membership_verify_fn())
-        .case("sync_bridge_and_repos_fresh", sync_bridge_and_repos_fn(gh_token.clone()))
-        .case("sync_idempotent_fresh", sync_idempotent_fn(gh_token.clone()))
+        .case(
+            "bridge_room_create_fresh",
+            bridge_room_create_fn(gh_token.clone()),
+        )
+        .case(
+            "bridge_room_membership_verify_fresh",
+            bridge_room_membership_verify_fn(),
+        )
+        .case(
+            "sync_bridge_and_repos_fresh",
+            sync_bridge_and_repos_fn(gh_token.clone()),
+        )
+        .case(
+            "sync_idempotent_fresh",
+            sync_idempotent_fn(gh_token.clone()),
+        )
         .case("inbox_lifecycle_fresh", inbox_lifecycle_fn())
-        .case("inbox_resync_preserves_fresh", inbox_resync_preserves_fn(gh_token.clone()))
-        .case("projects_sync_fresh", projects_sync_fn(gh_org.clone(), gh_token.clone()))
-        .case("start_without_ralph_errors_fresh", start_without_ralph_errors_fn())
-        .case("start_status_healthy_fresh", start_status_healthy_fn(gh_token.clone()))
-        .case("start_skips_running_bridge_fresh", start_skips_running_bridge_fn(gh_token.clone()))
+        .case(
+            "inbox_resync_preserves_fresh",
+            inbox_resync_preserves_fn(gh_token.clone()),
+        )
+        .case(
+            "projects_sync_fresh",
+            projects_sync_fn(gh_org.clone(), gh_token.clone()),
+        )
+        .case(
+            "start_without_ralph_errors_fresh",
+            start_without_ralph_errors_fn(),
+        )
+        .case(
+            "start_status_healthy_fresh",
+            start_status_healthy_fn(gh_token.clone()),
+        )
+        .case(
+            "start_skips_running_bridge_fresh",
+            start_skips_running_bridge_fn(gh_token.clone()),
+        )
         .case("bridge_functional_fresh", bridge_functional_fn())
         .case("stop_clean_shutdown_fresh", stop_clean_shutdown_fn())
-        .case("start_single_member_fresh", start_single_member_fn(gh_token.clone()))
+        .case(
+            "start_single_member_fresh",
+            start_single_member_fn(gh_token.clone()),
+        )
         .case("stop_single_member_fresh", stop_single_member_fn())
-        .case("stop_force_kills_fresh", stop_force_kills_fn(gh_token.clone()))
-        .case("status_detects_crashed_fresh", status_detects_crashed_fn(gh_token.clone()))
+        .case(
+            "stop_force_kills_fresh",
+            stop_force_kills_fn(gh_token.clone()),
+        )
+        .case(
+            "status_detects_crashed_fresh",
+            status_detects_crashed_fn(gh_token.clone()),
+        )
         .case("members_list_fresh", members_list_fn())
         .case("teams_list_fresh", teams_list_fn())
         // Stop members and daemon auto-started by bm start before explicit daemon tests
         .case("daemon_cleanup_fresh", |env: &mut TestEnv| {
-            let _ = env.command("bm")
+            let _ = env
+                .command("bm")
                 .args(["stop", "--force", "--all", "-t", TEAM_NAME])
                 .output();
         })
-        .case("daemon_start_poll_fresh", daemon_start_poll_fn(gh_token.clone()))
-        .case("daemon_poll_launches_member_fresh", daemon_poll_launches_member_fn(gh_token.clone()))
-        .case("daemon_stop_poll_fresh", daemon_stop_poll_fn(gh_token.clone()))
-        .case("daemon_start_webhook_fresh", daemon_start_webhook_fn(gh_token.clone()))
-        .case("daemon_stop_webhook_fresh", daemon_stop_webhook_fn(gh_token.clone()))
-        .case("daemon_sigkill_escalation_fresh", daemon_sigkill_escalation_fn(gh_token.clone()))
-        .case("daemon_stale_pid_fresh", daemon_stale_pid_fn(gh_token.clone()))
-        .case("daemon_already_running_fresh", daemon_already_running_fn(gh_token.clone()))
-        .case("daemon_crashed_detection_fresh", daemon_crashed_detection_fn(gh_token.clone()))
+        .case(
+            "daemon_start_poll_fresh",
+            daemon_start_poll_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_poll_launches_member_fresh",
+            daemon_poll_launches_member_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_stop_poll_fresh",
+            daemon_stop_poll_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_start_webhook_fresh",
+            daemon_start_webhook_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_stop_webhook_fresh",
+            daemon_stop_webhook_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_sigkill_escalation_fresh",
+            daemon_sigkill_escalation_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_stale_pid_fresh",
+            daemon_stale_pid_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_already_running_fresh",
+            daemon_already_running_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_crashed_detection_fresh",
+            daemon_crashed_detection_fn(gh_token.clone()),
+        )
         .case("bridge_stop_fresh", bridge_stop_fn(gh_token.clone()))
-        .case("fire_member_fresh", fire_member_fn(gh_token.clone(), app_id.clone(), app_client_id.clone(), app_installation_id.clone(), app_private_key_file.clone()))
+        .case(
+            "fire_member_fresh",
+            fire_member_fn(
+                gh_token.clone(),
+                app_id.clone(),
+                app_client_id.clone(),
+                app_installation_id.clone(),
+                app_private_key_file.clone(),
+            ),
+        )
         // ── Reset HOME ───────────────────────────────────────────────
         .case("reset_home", |env: &mut TestEnv| {
             eprintln!("Wiping HOME for second pass...");
 
             // Stop daemon if auto-started by bm start
-            let _ = env.command("bm")
+            let _ = env
+                .command("bm")
                 .args(["daemon", "stop", "-t", TEAM_NAME])
                 .output();
 
             // Remove old Tuwunel container and volume so the second pass
             // creates a fresh one instead of trying to restart a stale container
             let container_name = format!("bm-tuwunel-{}", TEAM_NAME);
-            let _ = env.command("podman")
+            let _ = env
+                .command("podman")
                 .args(["rm", "-f", &container_name])
                 .output();
             let volume_name = format!("{}-data", container_name);
-            let _ = env.command("podman")
+            let _ = env
+                .command("podman")
                 .args(["volume", "rm", "-f", &volume_name])
                 .output();
 
@@ -1260,65 +1689,164 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("verify_board_survives_reset", {
             let gh_org = gh_org.clone();
             move |env: &mut TestEnv| {
-                let board_title = env.get_export("board_title")
+                let board_title = env
+                    .get_export("board_title")
                     .expect("board_title export should survive reset_home")
                     .to_string();
-                let projects = bm::git::list_projects(&gh_org)
-                    .expect("list_projects should succeed");
+                let projects =
+                    bm::git::list_projects(&gh_org).expect("list_projects should succeed");
                 assert!(
                     projects.iter().any(|(_, t)| t == &board_title),
                     "Project board '{}' should still exist on GitHub after HOME wipe, found: {:?}",
-                    board_title, projects
+                    board_title,
+                    projects
                 );
             }
         })
-        .case("init_with_bridge_existing", init_with_bridge_fn(gh_org.clone(), gh_token.clone()))
+        .case(
+            "init_with_bridge_existing",
+            init_with_bridge_fn(gh_org.clone(), gh_token.clone()),
+        )
         .case("env_create_existing", env_create_fn())
-        .case("attach_local_formation_existing", attach_local_formation_fn())
-        .case("hire_member_existing", hire_member_fn(gh_token.clone(), app_id.clone(), app_client_id.clone(), app_installation_id.clone(), app_private_key_file.clone()))
-        .case_expect_error("projects_add_existing", projects_add_fn(gh_org.clone(), gh_token.clone()),
-            |err| err.contains("already exists"))
+        .case(
+            "attach_local_formation_existing",
+            attach_local_formation_fn(),
+        )
+        .case(
+            "hire_member_existing",
+            hire_member_fn(
+                gh_token.clone(),
+                app_id.clone(),
+                app_client_id.clone(),
+                app_installation_id.clone(),
+                app_private_key_file.clone(),
+            ),
+        )
+        .case_expect_error(
+            "projects_add_existing",
+            projects_add_fn(gh_org.clone(), gh_token.clone()),
+            |err| err.contains("already exists"),
+        )
         .case("teams_show_existing", teams_show_fn())
         .case("bridge_start_existing", bridge_start_fn(gh_token.clone()))
-        .case("bridge_start_idempotent_existing", bridge_start_idempotent_fn(gh_token.clone()))
-        .case("bridge_identity_add_existing", bridge_identity_add_fn(gh_token.clone()))
+        .case(
+            "bridge_start_idempotent_existing",
+            bridge_start_idempotent_fn(gh_token.clone()),
+        )
+        .case(
+            "bridge_identity_add_existing",
+            bridge_identity_add_fn(gh_token.clone()),
+        )
         .case("bridge_identity_show_existing", bridge_identity_show_fn())
         .case("bridge_identity_list_existing", bridge_identity_list_fn())
-        .case("bridge_room_create_existing", bridge_room_create_fn(gh_token.clone()))
-        .case("bridge_room_membership_verify_existing", bridge_room_membership_verify_fn())
-        .case("sync_bridge_and_repos_existing", sync_bridge_and_repos_fn(gh_token.clone()))
-        .case("sync_idempotent_existing", sync_idempotent_fn(gh_token.clone()))
+        .case(
+            "bridge_room_create_existing",
+            bridge_room_create_fn(gh_token.clone()),
+        )
+        .case(
+            "bridge_room_membership_verify_existing",
+            bridge_room_membership_verify_fn(),
+        )
+        .case(
+            "sync_bridge_and_repos_existing",
+            sync_bridge_and_repos_fn(gh_token.clone()),
+        )
+        .case(
+            "sync_idempotent_existing",
+            sync_idempotent_fn(gh_token.clone()),
+        )
         .case("inbox_lifecycle_existing", inbox_lifecycle_fn())
-        .case("inbox_resync_preserves_existing", inbox_resync_preserves_fn(gh_token.clone()))
-        .case("projects_sync_existing", projects_sync_fn(gh_org.clone(), gh_token.clone()))
-        .case("start_without_ralph_errors_existing", start_without_ralph_errors_fn())
-        .case("start_status_healthy_existing", start_status_healthy_fn(gh_token.clone()))
-        .case("start_skips_running_bridge_existing", start_skips_running_bridge_fn(gh_token.clone()))
+        .case(
+            "inbox_resync_preserves_existing",
+            inbox_resync_preserves_fn(gh_token.clone()),
+        )
+        .case(
+            "projects_sync_existing",
+            projects_sync_fn(gh_org.clone(), gh_token.clone()),
+        )
+        .case(
+            "start_without_ralph_errors_existing",
+            start_without_ralph_errors_fn(),
+        )
+        .case(
+            "start_status_healthy_existing",
+            start_status_healthy_fn(gh_token.clone()),
+        )
+        .case(
+            "start_skips_running_bridge_existing",
+            start_skips_running_bridge_fn(gh_token.clone()),
+        )
         .case("bridge_functional_existing", bridge_functional_fn())
         .case("stop_clean_shutdown_existing", stop_clean_shutdown_fn())
-        .case("start_single_member_existing", start_single_member_fn(gh_token.clone()))
+        .case(
+            "start_single_member_existing",
+            start_single_member_fn(gh_token.clone()),
+        )
         .case("stop_single_member_existing", stop_single_member_fn())
-        .case("stop_force_kills_existing", stop_force_kills_fn(gh_token.clone()))
-        .case("status_detects_crashed_existing", status_detects_crashed_fn(gh_token.clone()))
+        .case(
+            "stop_force_kills_existing",
+            stop_force_kills_fn(gh_token.clone()),
+        )
+        .case(
+            "status_detects_crashed_existing",
+            status_detects_crashed_fn(gh_token.clone()),
+        )
         .case("members_list_existing", members_list_fn())
         .case("teams_list_existing", teams_list_fn())
         // Stop members and daemon auto-started by bm start before explicit daemon tests
         .case("daemon_cleanup_existing", |env: &mut TestEnv| {
-            let _ = env.command("bm")
+            let _ = env
+                .command("bm")
                 .args(["stop", "--force", "--all", "-t", TEAM_NAME])
                 .output();
         })
-        .case("daemon_start_poll_existing", daemon_start_poll_fn(gh_token.clone()))
-        .case("daemon_poll_launches_member_existing", daemon_poll_launches_member_fn(gh_token.clone()))
-        .case("daemon_stop_poll_existing", daemon_stop_poll_fn(gh_token.clone()))
-        .case("daemon_start_webhook_existing", daemon_start_webhook_fn(gh_token.clone()))
-        .case("daemon_stop_webhook_existing", daemon_stop_webhook_fn(gh_token.clone()))
-        .case("daemon_sigkill_escalation_existing", daemon_sigkill_escalation_fn(gh_token.clone()))
-        .case("daemon_stale_pid_existing", daemon_stale_pid_fn(gh_token.clone()))
-        .case("daemon_already_running_existing", daemon_already_running_fn(gh_token.clone()))
-        .case("daemon_crashed_detection_existing", daemon_crashed_detection_fn(gh_token.clone()))
+        .case(
+            "daemon_start_poll_existing",
+            daemon_start_poll_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_poll_launches_member_existing",
+            daemon_poll_launches_member_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_stop_poll_existing",
+            daemon_stop_poll_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_start_webhook_existing",
+            daemon_start_webhook_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_stop_webhook_existing",
+            daemon_stop_webhook_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_sigkill_escalation_existing",
+            daemon_sigkill_escalation_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_stale_pid_existing",
+            daemon_stale_pid_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_already_running_existing",
+            daemon_already_running_fn(gh_token.clone()),
+        )
+        .case(
+            "daemon_crashed_detection_existing",
+            daemon_crashed_detection_fn(gh_token.clone()),
+        )
         .case("bridge_stop_existing", bridge_stop_fn(gh_token.clone()))
-        .case("fire_member_existing", fire_member_fn(gh_token.clone(), app_id.clone(), app_client_id.clone(), app_installation_id.clone(), app_private_key_file.clone()))
+        .case(
+            "fire_member_existing",
+            fire_member_fn(
+                gh_token.clone(),
+                app_id.clone(),
+                app_client_id.clone(),
+                app_installation_id.clone(),
+                app_private_key_file.clone(),
+            ),
+        )
         // ── Cleanup ──────────────────────────────────────────────────
         .case("cleanup", {
             let gh_org_c = gh_org.clone();
@@ -1327,28 +1855,37 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
                 eprintln!("Final cleanup...");
                 // Force-remove Tuwunel container and volume if still around
                 let container_name = format!("bm-tuwunel-{}", TEAM_NAME);
-                let _ = env.command("podman")
+                let _ = env
+                    .command("podman")
                     .args(["rm", "-f", &container_name])
                     .output();
                 let volume_name = format!("{}-data", container_name);
-                let _ = env.command("podman")
+                let _ = env
+                    .command("podman")
                     .args(["volume", "rm", "-f", &volume_name])
                     .output();
                 // Delete workspace repo
                 let ws_repo = format!("{}/{}-{}", gh_org_c, TEAM_NAME, MEMBER_DIR);
-                let _ = env.command("gh")
+                let _ = env
+                    .command("gh")
                     .args(["repo", "delete", &ws_repo, "--yes"])
                     .output();
                 // Delete project repo (read URL from team repo manifest)
-                let manifest_path = env.home.join("workspaces").join(TEAM_NAME).join("team/botminter.yml");
+                let manifest_path = env
+                    .home
+                    .join("workspaces")
+                    .join(TEAM_NAME)
+                    .join("team/botminter.yml");
                 if let Ok(contents) = fs::read_to_string(&manifest_path) {
                     if let Ok(manifest) = serde_yml::from_str::<serde_yml::Value>(&contents) {
                         if let Some(projects) = manifest["projects"].as_sequence() {
                             for proj in projects {
                                 if let Some(url) = proj["fork_url"].as_str() {
-                                    let repo_name = url.trim_start_matches("https://github.com/")
+                                    let repo_name = url
+                                        .trim_start_matches("https://github.com/")
                                         .trim_end_matches(".git");
-                                    let _ = env.command("gh")
+                                    let _ = env
+                                        .command("gh")
                                         .args(["repo", "delete", repo_name, "--yes"])
                                         .output();
                                 }
@@ -1357,7 +1894,8 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
                     }
                 }
                 // Delete team repo
-                let _ = env.command("gh")
+                let _ = env
+                    .command("gh")
                     .args(["repo", "delete", &env.repo_full_name, "--yes"])
                     .output();
                 cleanup_project_boards(&gh_org_c, &gh_token_c, TEAM_NAME);
@@ -1392,8 +1930,10 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
     //   61: start_status_healthy, 62: start_skips_running, 63: bridge_functional
     //   75: daemon_start_webhook, 76: daemon_stop_webhook
     suite
-        .group(19, 21).group(33, 34)
-        .group(61, 63).group(75, 76)
+        .group(19, 21)
+        .group(33, 34)
+        .group(61, 63)
+        .group(75, 76)
 }
 
 pub fn scenario(config: &E2eConfig) -> Trial {

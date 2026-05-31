@@ -12,8 +12,8 @@ pub use self::local::create_local_formation;
 // Low-level process spawners — internal to the formation module.
 // The public entry point for member launch is `start_local_members`.
 pub(crate) use self::launch::{
-    check_robot_enabled_mismatch, is_brain_member, launch_brain, reap_child, BrainLaunchConfig,
-    launch_ralph,
+    check_robot_enabled_mismatch, is_brain_member, launch_brain, launch_ralph, reap_child,
+    BrainLaunchConfig,
 };
 pub use self::local_topology::write_local_topology;
 pub use self::manager::{run_formation_manager, FormationManagerResult};
@@ -68,7 +68,10 @@ pub trait Formation {
     /// Returns a key-value credential store for the given domain.
     /// The store interface is simple: store(key, value) / retrieve(key).
     /// Each credential domain composes its own key conventions.
-    fn credential_store(&self, domain: CredentialDomain) -> Result<Box<dyn KeyValueCredentialStore>>;
+    fn credential_store(
+        &self,
+        domain: CredentialDomain,
+    ) -> Result<Box<dyn KeyValueCredentialStore>>;
 
     /// One-time setup for token delivery to a member.
     /// Creates GH_CONFIG_DIR, writes initial config, configures git
@@ -374,10 +377,7 @@ pub fn list_formations(team_repo: &Path) -> Result<Vec<String>> {
 /// 1. If `--formation` flag is specified, use that.
 /// 2. If no flag, check for formations dir → default to "local".
 /// 3. If no formations dir exists (v1 team), return None (legacy behavior).
-pub fn resolve_formation(
-    team_repo: &Path,
-    flag: Option<&str>,
-) -> Result<Option<String>> {
+pub fn resolve_formation(team_repo: &Path, flag: Option<&str>) -> Result<Option<String>> {
     match flag {
         Some(name) => {
             // Explicit flag — verify formation exists

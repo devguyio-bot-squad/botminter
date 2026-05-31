@@ -19,6 +19,7 @@ use tokio::task::JoinHandle;
 
 /// A mock GitHub server for testing the manifest flow.
 pub struct GitHubMock {
+    #[allow(dead_code)]
     pub port: u16,
     pub base_url: String,
     _handle: JoinHandle<()>,
@@ -121,7 +122,10 @@ async fn handle_app_new(
     };
 
     // Redirect to the callback with a mock code
-    let redirect = format!("{redirect_url}?code=a1b2c3d4e5f6789012345678&state={}", params.state);
+    let redirect = format!(
+        "{redirect_url}?code=a1b2c3d4e5f6789012345678&state={}",
+        params.state
+    );
     eprintln!("[github-mock] redirecting to {redirect}");
     Redirect::temporary(&redirect).into_response()
 }
@@ -165,7 +169,10 @@ async fn handle_installations(State(_state): State<Arc<MockState>>) -> Json<serd
 /// GET /users/{owner}
 ///
 /// Returns Organization type for any owner (needed by validate_is_org).
-async fn handle_user_type(State(_state): State<Arc<MockState>>, Path(owner): Path<String>) -> Json<serde_json::Value> {
+async fn handle_user_type(
+    State(_state): State<Arc<MockState>>,
+    Path(owner): Path<String>,
+) -> Json<serde_json::Value> {
     eprintln!("[github-mock] GET /users/{owner}");
     Json(serde_json::json!({
         "login": owner,

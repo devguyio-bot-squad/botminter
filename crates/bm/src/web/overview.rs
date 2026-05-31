@@ -48,9 +48,8 @@ fn build_overview(state: &WebState, team_name: &str) -> anyhow::Result<TeamOverv
                 e
             )
         })?;
-        serde_yml::from_str(&content).map_err(|e| {
-            anyhow::anyhow!("Failed to parse botminter.yml: {}", e)
-        })?
+        serde_yml::from_str(&content)
+            .map_err(|e| anyhow::anyhow!("Failed to parse botminter.yml: {}", e))?
     };
 
     let members = scan_members(&team_path)?;
@@ -59,11 +58,7 @@ fn build_overview(state: &WebState, team_name: &str) -> anyhow::Result<TeamOverv
 
     let bridge = BridgeOverview {
         selected: manifest.bridge.clone(),
-        available: manifest
-            .bridges
-            .iter()
-            .map(|b| b.name.clone())
-            .collect(),
+        available: manifest.bridges.iter().map(|b| b.name.clone()).collect(),
     };
 
     let default_coding_agent_display = manifest
@@ -258,8 +253,9 @@ mod tests {
     fn setup_fixture_team(tmp: &std::path::Path) -> std::path::PathBuf {
         let team_dir = tmp.join("my-team");
         let team_repo = team_dir.join("team");
-        let fixture_base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo");
+        let fixture_base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo",
+        );
 
         // Copy the entire fixture team-repo into team_dir/team/ (production layout)
         copy_dir_recursive(&fixture_base, &team_repo);
@@ -307,7 +303,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                daemon: Default::default(),
                 vm: None,
             }],
             vms: Vec::new(),
@@ -332,13 +328,19 @@ mod tests {
         let manifest = read_fixture_manifest(&team_path);
         let team_name = "my-team";
         let github_repo = "myorg/my-team";
-        write_config(&config_path, team_name, &team_path, &manifest.name, github_repo);
+        write_config(
+            &config_path,
+            team_name,
+            &team_path,
+            &manifest.name,
+            github_repo,
+        );
 
         let app = test_app(config_path);
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/teams/{team_name}/overview"))
+                    .uri(format!("/api/teams/{team_name}/overview"))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -393,8 +395,14 @@ mod tests {
         for member in members {
             assert!(member["name"].is_string(), "Member must have name");
             assert!(member["role"].is_string(), "Member must have role");
-            assert!(member["comment_emoji"].is_string(), "Member must have comment_emoji");
-            assert!(member["hat_count"].is_number(), "Member must have hat_count");
+            assert!(
+                member["comment_emoji"].is_string(),
+                "Member must have comment_emoji"
+            );
+            assert!(
+                member["hat_count"].is_number(),
+                "Member must have hat_count"
+            );
             // hat_count should be non-negative
             assert!(member["hat_count"].as_u64().is_some());
         }
@@ -482,7 +490,13 @@ mod tests {
         // No botminter.yml in team/
 
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "empty-team", &team_dir, "test-profile", "org/test");
+        write_config(
+            &config_path,
+            "empty-team",
+            &team_dir,
+            "test-profile",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app

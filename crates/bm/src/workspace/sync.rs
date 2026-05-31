@@ -3,9 +3,9 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 
-use crate::profile::CodingAgentDef;
 use super::repo::assemble_agent_dir_submodule;
 use super::util::{copy_if_newer_verbose, git_cmd, git_cmd_output};
+use crate::profile::CodingAgentDef;
 
 /// Events emitted during workspace sync for the caller to display.
 #[derive(Debug)]
@@ -95,13 +95,24 @@ pub fn sync_workspace(
     // Update submodules to latest remote content
     if team_dir.is_dir() {
         if verbose {
-            result.events.push(SyncEvent::UpdatingSubmodule("team/".to_string()));
+            result
+                .events
+                .push(SyncEvent::UpdatingSubmodule("team/".to_string()));
         }
         // Fetch and update to latest remote tracking branch
-        git_cmd(ws_root, &[
-            "-c", "protocol.file.allow=always",
-            "submodule", "update", "--remote", "--merge", "team",
-        ]).ok();
+        git_cmd(
+            ws_root,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "update",
+                "--remote",
+                "--merge",
+                "team",
+            ],
+        )
+        .ok();
 
         // Checkout member branch (avoid detached HEAD)
         checkout_member_branch(&team_dir, member_dir_name, verbose, &mut result)?;
@@ -116,12 +127,23 @@ pub fn sync_workspace(
                     let project_name = entry.file_name().to_string_lossy().to_string();
                     let project_path = format!("projects/{}", project_name);
                     if verbose {
-                        result.events.push(SyncEvent::UpdatingSubmodule(project_path.clone()));
+                        result
+                            .events
+                            .push(SyncEvent::UpdatingSubmodule(project_path.clone()));
                     }
-                    git_cmd(ws_root, &[
-                        "-c", "protocol.file.allow=always",
-                        "submodule", "update", "--remote", "--merge", &project_path,
-                    ]).ok();
+                    git_cmd(
+                        ws_root,
+                        &[
+                            "-c",
+                            "protocol.file.allow=always",
+                            "submodule",
+                            "update",
+                            "--remote",
+                            "--merge",
+                            &project_path,
+                        ],
+                    )
+                    .ok();
 
                     // Checkout member branch in project submodule
                     checkout_member_branch(&entry.path(), member_dir_name, verbose, &mut result)?;
@@ -133,13 +155,21 @@ pub fn sync_workspace(
     // Re-copy context files from team/members/<member>/
     let member_src = team_dir.join("members").join(member_dir_name);
     let files_to_sync = [
-        (member_src.join("ralph.yml"), ws_root.join("ralph.yml"), "ralph.yml"),
+        (
+            member_src.join("ralph.yml"),
+            ws_root.join("ralph.yml"),
+            "ralph.yml",
+        ),
         (
             member_src.join(&coding_agent.context_file),
             ws_root.join(&coding_agent.context_file),
             coding_agent.context_file.as_str(),
         ),
-        (member_src.join("PROMPT.md"), ws_root.join("PROMPT.md"), "PROMPT.md"),
+        (
+            member_src.join("PROMPT.md"),
+            ws_root.join("PROMPT.md"),
+            "PROMPT.md",
+        ),
     ];
 
     for (src, dst, name) in &files_to_sync {
@@ -154,18 +184,20 @@ pub fn sync_workspace(
     }
 
     // Re-copy settings.local.json if source is newer (member-level)
-    let settings_src = member_src
-        .join("coding-agent")
-        .join("settings.local.json");
+    let settings_src = member_src.join("coding-agent").join("settings.local.json");
     let settings_dst = ws_root
         .join(&coding_agent.agent_dir)
         .join("settings.local.json");
     let settings_copied = copy_if_newer_verbose(&settings_src, &settings_dst)?;
     if verbose && settings_src.exists() {
         if settings_copied {
-            result.events.push(SyncEvent::FileCopied("settings.local.json".to_string()));
+            result
+                .events
+                .push(SyncEvent::FileCopied("settings.local.json".to_string()));
         } else {
-            result.events.push(SyncEvent::FileSkipped("settings.local.json".to_string()));
+            result
+                .events
+                .push(SyncEvent::FileSkipped("settings.local.json".to_string()));
         }
     }
 
@@ -200,10 +232,7 @@ pub fn sync_workspace(
     )?;
 
     // Inject project-aware sections into ralph.yml and context file
-    super::context::inject_project_skill_dirs(
-        &ws_root.join("ralph.yml"),
-        &project_name_refs,
-    )?;
+    super::context::inject_project_skill_dirs(&ws_root.join("ralph.yml"), &project_name_refs)?;
     super::context::inject_project_sections(
         &ws_root.join(&coding_agent.context_file),
         member_dir_name,
@@ -242,15 +271,22 @@ pub fn sync_workspace(
 
 /// Checks out the member branch in a submodule, creating it if needed.
 /// Avoids leaving the submodule in detached HEAD state.
-fn checkout_member_branch(sub_dir: &Path, member_dir_name: &str, verbose: bool, result: &mut SyncResult) -> Result<()> {
+fn checkout_member_branch(
+    sub_dir: &Path,
+    member_dir_name: &str,
+    verbose: bool,
+    result: &mut SyncResult,
+) -> Result<()> {
     // Check current branch
-    let current = git_cmd_output(sub_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
-        .unwrap_or_default();
+    let current =
+        git_cmd_output(sub_dir, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap_or_default();
     let current = current.trim();
 
     if current == member_dir_name {
         if verbose {
-            result.events.push(SyncEvent::BranchAlreadyOnIt(member_dir_name.to_string()));
+            result
+                .events
+                .push(SyncEvent::BranchAlreadyOnIt(member_dir_name.to_string()));
         }
         return Ok(());
     }
@@ -258,7 +294,9 @@ fn checkout_member_branch(sub_dir: &Path, member_dir_name: &str, verbose: bool, 
     // Try checkout existing branch first
     if git_cmd(sub_dir, &["checkout", member_dir_name]).is_ok() {
         if verbose {
-            result.events.push(SyncEvent::BranchCheckedOut(member_dir_name.to_string()));
+            result
+                .events
+                .push(SyncEvent::BranchCheckedOut(member_dir_name.to_string()));
         }
         return Ok(());
     }
@@ -276,7 +314,9 @@ fn checkout_member_branch(sub_dir: &Path, member_dir_name: &str, verbose: bool, 
 
     git_cmd(sub_dir, &["checkout", "-b", member_dir_name])?;
     if verbose {
-        result.events.push(SyncEvent::BranchCreated(member_dir_name.to_string()));
+        result
+            .events
+            .push(SyncEvent::BranchCreated(member_dir_name.to_string()));
     }
     Ok(())
 }
@@ -284,10 +324,10 @@ fn checkout_member_branch(sub_dir: &Path, member_dir_name: &str, verbose: bool, 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::repo::create_workspace_repo;
     use crate::workspace::repo::tests::{
         claude_code_agent, setup_team_repo_for_ws, test_ws_params,
     };
-    use crate::workspace::repo::create_workspace_repo;
 
     /// Helper: create a workspace using the submodule model for sync tests.
     fn setup_syncable_workspace(tmp: &Path) -> (PathBuf, String, CodingAgentDef) {
@@ -309,10 +349,7 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Verify initial content
-        assert_eq!(
-            fs::read_to_string(ws.join("ralph.yml")).unwrap(),
-            "v: 1"
-        );
+        assert_eq!(fs::read_to_string(ws.join("ralph.yml")).unwrap(), "v: 1");
 
         // Modify ralph.yml in team/ submodule (simulating upstream change)
         let source = ws.join("team/members").join(&member).join("ralph.yml");
@@ -563,7 +600,8 @@ mod tests {
         // Create inbox file with a pending message
         let ralph_dir = ws.join(".ralph");
         fs::create_dir_all(&ralph_dir).unwrap();
-        let inbox_content = r#"{"ts":"2026-03-22T12:00:00Z","from":"brain","message":"test message"}"#;
+        let inbox_content =
+            r#"{"ts":"2026-03-22T12:00:00Z","from":"brain","message":"test message"}"#;
         fs::write(ralph_dir.join("loop-inbox.jsonl"), inbox_content).unwrap();
 
         sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
@@ -651,10 +689,28 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Run sync twice with context params
-        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo")).unwrap();
+        sync_workspace(
+            &ws,
+            &member,
+            &agent,
+            false,
+            false,
+            Some(42),
+            Some("org/repo"),
+        )
+        .unwrap();
         let claude_1 = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo")).unwrap();
+        sync_workspace(
+            &ws,
+            &member,
+            &agent,
+            false,
+            false,
+            Some(42),
+            Some("org/repo"),
+        )
+        .unwrap();
         let claude_2 = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
 
         assert_eq!(

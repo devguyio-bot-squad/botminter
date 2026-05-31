@@ -33,15 +33,16 @@ fn save_tracked_keys(path: &Path, keys: &[String]) -> Result<()> {
 
 /// Connects to the D-Bus Secret Service.
 fn connect_secret_service() -> Result<dbus_secret_service::SecretService> {
-    dbus_secret_service::SecretService::connect(dbus_secret_service::EncryptionType::Plain)
-        .map_err(|e| {
+    dbus_secret_service::SecretService::connect(dbus_secret_service::EncryptionType::Plain).map_err(
+        |e| {
             anyhow::anyhow!(
                 "Cannot connect to Secret Service (D-Bus). \
                  Install a Secret Service provider (e.g., gnome-keyring) \
                  or use environment variable overrides instead. ({})",
                 e
             )
-        })
+        },
+    )
 }
 
 /// Finds or creates a collection by label.
@@ -66,9 +67,9 @@ fn get_or_create_collection<'a>(
 fn dss_store(service: &str, key: &str, value: &str, collection_name: &str) -> Result<()> {
     let ss = connect_secret_service()?;
     let collection = get_or_create_collection(&ss, collection_name)?;
-    collection.ensure_unlocked().map_err(|e| {
-        anyhow::anyhow!("Failed to unlock collection '{}': {}", collection_name, e)
-    })?;
+    collection
+        .ensure_unlocked()
+        .map_err(|e| anyhow::anyhow!("Failed to unlock collection '{}': {}", collection_name, e))?;
 
     let mut attrs = HashMap::new();
     attrs.insert("service", service);
@@ -323,10 +324,8 @@ impl KeyValueCredentialStore for LocalKeyValueCredentialStore {
 
     fn list_keys(&self, prefix: &str) -> Result<Vec<String>> {
         let keys = load_tracked_keys(&self.keys_path)?;
-        let mut filtered: Vec<String> = keys
-            .into_iter()
-            .filter(|k| k.starts_with(prefix))
-            .collect();
+        let mut filtered: Vec<String> =
+            keys.into_iter().filter(|k| k.starts_with(prefix)).collect();
         filtered.sort();
         Ok(filtered)
     }
@@ -344,7 +343,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let keys_path = tmp.path().join("keys.json");
 
-        save_tracked_keys(&keys_path, &["a/1".to_string(), "a/2".to_string(), "b/1".to_string()]).unwrap();
+        save_tracked_keys(
+            &keys_path,
+            &["a/1".to_string(), "a/2".to_string(), "b/1".to_string()],
+        )
+        .unwrap();
         let keys = load_tracked_keys(&keys_path).unwrap();
         assert_eq!(keys, vec!["a/1", "a/2", "b/1"]);
     }
@@ -370,10 +373,8 @@ mod tests {
     fn track_key_is_idempotent() {
         let tmp = tempfile::tempdir().unwrap();
         let keys_path = tmp.path().join("keys.json");
-        let store = LocalKeyValueCredentialStore::new(
-            "test-service".to_string(),
-            keys_path.clone(),
-        );
+        let store =
+            LocalKeyValueCredentialStore::new("test-service".to_string(), keys_path.clone());
 
         store.track_key("my-key").unwrap();
         store.track_key("my-key").unwrap(); // duplicate
@@ -385,12 +386,14 @@ mod tests {
     fn untrack_key_removes_from_file() {
         let tmp = tempfile::tempdir().unwrap();
         let keys_path = tmp.path().join("keys.json");
-        save_tracked_keys(&keys_path, &["a".to_string(), "b".to_string(), "c".to_string()]).unwrap();
+        save_tracked_keys(
+            &keys_path,
+            &["a".to_string(), "b".to_string(), "c".to_string()],
+        )
+        .unwrap();
 
-        let store = LocalKeyValueCredentialStore::new(
-            "test-service".to_string(),
-            keys_path.clone(),
-        );
+        let store =
+            LocalKeyValueCredentialStore::new("test-service".to_string(), keys_path.clone());
 
         store.untrack_key("b").unwrap();
         let keys = load_tracked_keys(&keys_path).unwrap();
@@ -403,10 +406,8 @@ mod tests {
         let keys_path = tmp.path().join("keys.json");
         save_tracked_keys(&keys_path, &["a".to_string()]).unwrap();
 
-        let store = LocalKeyValueCredentialStore::new(
-            "test-service".to_string(),
-            keys_path.clone(),
-        );
+        let store =
+            LocalKeyValueCredentialStore::new("test-service".to_string(), keys_path.clone());
 
         store.untrack_key("nonexistent").unwrap();
         let keys = load_tracked_keys(&keys_path).unwrap();
@@ -427,10 +428,7 @@ mod tests {
         )
         .unwrap();
 
-        let store = LocalKeyValueCredentialStore::new(
-            "test-service".to_string(),
-            keys_path,
-        );
+        let store = LocalKeyValueCredentialStore::new("test-service".to_string(), keys_path);
 
         let keys = store.list_keys("superman/").unwrap();
         assert_eq!(keys, vec!["superman/app-id", "superman/private-key"]);
@@ -440,16 +438,9 @@ mod tests {
     fn list_keys_empty_prefix_returns_all() {
         let tmp = tempfile::tempdir().unwrap();
         let keys_path = tmp.path().join("keys.json");
-        save_tracked_keys(
-            &keys_path,
-            &["a".to_string(), "b".to_string()],
-        )
-        .unwrap();
+        save_tracked_keys(&keys_path, &["a".to_string(), "b".to_string()]).unwrap();
 
-        let store = LocalKeyValueCredentialStore::new(
-            "test-service".to_string(),
-            keys_path,
-        );
+        let store = LocalKeyValueCredentialStore::new("test-service".to_string(), keys_path);
 
         let keys = store.list_keys("").unwrap();
         assert_eq!(keys, vec!["a", "b"]);
@@ -459,16 +450,9 @@ mod tests {
     fn list_keys_no_match_returns_empty() {
         let tmp = tempfile::tempdir().unwrap();
         let keys_path = tmp.path().join("keys.json");
-        save_tracked_keys(
-            &keys_path,
-            &["superman/id".to_string()],
-        )
-        .unwrap();
+        save_tracked_keys(&keys_path, &["superman/id".to_string()]).unwrap();
 
-        let store = LocalKeyValueCredentialStore::new(
-            "test-service".to_string(),
-            keys_path,
-        );
+        let store = LocalKeyValueCredentialStore::new("test-service".to_string(), keys_path);
 
         let keys = store.list_keys("batman/").unwrap();
         assert!(keys.is_empty());
@@ -479,10 +463,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let keys_path = tmp.path().join("nonexistent.json");
 
-        let store = LocalKeyValueCredentialStore::new(
-            "test-service".to_string(),
-            keys_path,
-        );
+        let store = LocalKeyValueCredentialStore::new("test-service".to_string(), keys_path);
 
         let keys = store.list_keys("").unwrap();
         assert!(keys.is_empty());

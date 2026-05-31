@@ -100,7 +100,7 @@ bm projects add https://github.com/org/my-project.git
 ### 4. Provision workspaces
 
 ```bash
-bm teams sync
+bm start
 ```
 
 This creates workspace repos for each member with the team repo as a `team/` submodule, project forks as `projects/` submodules, copied context files (PROMPT.md, CLAUDE.md, ralph.yml), and assembled `.claude/agents/`.

@@ -6,7 +6,10 @@ use std::path::Path;
 
 /// Returns the workspace root (two levels up from CARGO_MANIFEST_DIR).
 fn workspace_root() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap()
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .canonicalize()
+        .unwrap()
 }
 
 /// Returns the path to the bridge examples directory.
@@ -266,10 +269,7 @@ fn stub_bridge_has_required_files() {
         stub.join("schema.json").exists(),
         "stub/schema.json must exist"
     );
-    assert!(
-        stub.join("Justfile").exists(),
-        "stub/Justfile must exist"
-    );
+    assert!(stub.join("Justfile").exists(), "stub/Justfile must exist");
 }
 
 // ── Telegram bridge conformance (profile bridges) ───────────────────
@@ -578,8 +578,10 @@ fn tuwunel_schema_json_has_host() {
             "{}/tuwunel: schema.json must have properties.host",
             profile
         );
-        let required = val["required"].as_array()
-            .expect(&format!("{}/tuwunel: schema.json must have required array", profile));
+        let required = val["required"].as_array().unwrap_or_else(|| panic!(
+            "{}/tuwunel: schema.json must have required array",
+            profile
+        ));
         assert!(
             required.iter().any(|v| v.as_str() == Some("host")),
             "{}/tuwunel: schema.json required must include 'host'",

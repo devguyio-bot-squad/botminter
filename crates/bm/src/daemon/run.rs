@@ -8,7 +8,7 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -20,8 +20,11 @@ use super::event::{
 };
 use super::log::daemon_log;
 use super::process::handle_member_launch;
+use super::session_api;
 use crate::config as app_config;
 use crate::formation::AppCredentialsCached;
+use crate::session::manager::SessionManager;
+use crate::session::retention::{RetentionConfig, RetentionEngine};
 use crate::web::state::WebState;
 use crate::web::web_router;
 
@@ -42,17 +45,13 @@ pub(super) struct DaemonState {
     /// In-memory cache of App credentials for members that have been started.
     /// Used by the background refresh loop to re-sign JWTs without re-reading keyring.
     pub(super) app_credentials: Arc<Mutex<HashMap<String, AppCredentialsCached>>>,
+    /// Session manager — tracks active sessions and their workspace state.
+    pub(super) session_manager: Arc<Mutex<SessionManager>>,
 }
 
 /// Runs the daemon event loop. Called by the hidden `bm daemon-run` command.
 /// This function does not return until the daemon is signaled to stop.
-pub fn run_daemon(
-    team_name: &str,
-    mode: &str,
-    port: u16,
-    interval: u64,
-    bind: &str,
-) -> Result<()> {
+pub fn run_daemon(team_name: &str, mode: &str, port: u16, interval: u64, bind: &str) -> Result<()> {
     // Resolve the isolated keyring D-Bus address BEFORE creating the tokio
     // runtime. `with_keyring_dbus` in credential.rs swaps DBUS_SESSION_BUS_ADDRESS
     // via `std::env::set_var`, which is unsound in multi-threaded processes.
@@ -88,11 +87,38 @@ async fn run_daemon_async(
 
     // Load config once at startup and cache it. API handlers use these
     // cached values instead of re-reading config from disk on every request.
-    let cfg = app_config::load()
-        .context("Daemon failed to load config at startup")?;
+    let cfg = app_config::load().context("Daemon failed to load config at startup")?;
     let team_entry = app_config::resolve_team(&cfg, Some(team_name))
         .context("Daemon failed to resolve team at startup")?
         .clone();
+
+    // Session manager: workspace dirs live next to the daemon config files.
+    let sessions_dir = paths
+        .config()
+        .parent()
+        .map(|p| p.join(format!("sessions-{}", team_name)))
+        .unwrap_or_else(|| std::path::PathBuf::from(format!("sessions-{}", team_name)));
+    let registry_path = sessions_dir.join("registry.json");
+    let mut session_manager = SessionManager::new(sessions_dir.clone(), registry_path)
+        .context("Failed to initialise session manager")?;
+
+    // Recover sessions whose agent process died between daemon runs.
+    match session_manager.recover_stale_sessions_with(is_pid_alive) {
+        Ok(report) if report.recovered > 0 => {
+            daemon_log(
+                &paths,
+                "INFO",
+                &format!(
+                    "Startup recovery: {} stale session(s) marked Failed",
+                    report.recovered
+                ),
+            );
+        }
+        Err(e) => {
+            daemon_log(&paths, "WARN", &format!("Startup recovery failed: {:#}", e));
+        }
+        _ => {}
+    }
 
     let state = DaemonState {
         team_name: team_name.to_string(),
@@ -104,6 +130,7 @@ async fn run_daemon_async(
         config: Arc::new(cfg),
         team_entry: Arc::new(team_entry),
         app_credentials: Arc::new(Mutex::new(HashMap::new())),
+        session_manager: Arc::new(Mutex::new(session_manager)),
     };
 
     // Resolve config path for the web API (console routes)
@@ -118,9 +145,7 @@ async fn run_daemon_async(
         .allow_origin(AllowOrigin::predicate(|origin, _| {
             origin
                 .to_str()
-                .map(|o| {
-                    o.starts_with("http://localhost:") || o.starts_with("http://127.0.0.1:")
-                })
+                .map(|o| o.starts_with("http://localhost:") || o.starts_with("http://127.0.0.1:"))
                 .unwrap_or(false)
         }))
         .allow_methods([
@@ -140,6 +165,42 @@ async fn run_daemon_async(
         .route("/api/health", get(api::health_check_handler))
         // Loop management API
         .route("/api/loops/start", post(api::start_loop_handler))
+        // Session management API (CT-03)
+        .route(
+            "/api/sessions/start",
+            post(session_api::start_session_handler),
+        )
+        .route("/api/sessions", get(session_api::list_sessions_handler))
+        .route(
+            "/api/sessions/history",
+            get(session_api::list_session_history_handler),
+        )
+        .route(
+            "/api/sessions/{id}/stop",
+            post(session_api::stop_session_handler),
+        )
+        .route("/api/sessions/{id}", get(session_api::get_session_handler))
+        // Stop variants and force stop (CT-88-03)
+        .route(
+            "/api/sessions/{id}",
+            delete(session_api::force_stop_session_handler),
+        )
+        .route(
+            "/api/sessions/{id}/finalize",
+            post(session_api::retrigger_finalization_handler),
+        )
+        .route(
+            "/api/sessions/{id}/inspect",
+            get(session_api::inspect_session_handler),
+        )
+        .route(
+            "/api/sessions/{id}/cleanup",
+            delete(session_api::cleanup_session_handler),
+        )
+        .route(
+            "/api/sessions/cleanup",
+            delete(session_api::bulk_cleanup_handler),
+        )
         .with_state(state.clone())
         .merge(web_router(web_state))
         .layer(cors);
@@ -151,6 +212,37 @@ async fn run_daemon_async(
         let poll_shutdown = Arc::clone(&shutdown);
         tokio::spawn(async move {
             run_poll_loop(&poll_team, &poll_paths, interval, &poll_shutdown).await;
+        });
+    }
+
+    // Spawn RetentionEngine background thread — runs hourly to expire old sessions.
+    {
+        let retention_manager = Arc::clone(&state.session_manager);
+        let retention_sessions_dir = sessions_dir.clone();
+        let retention_shutdown = Arc::clone(&shutdown);
+        std::thread::spawn(move || {
+            loop {
+                // Poll shutdown every minute; run a GC cycle after 60 minutes.
+                for _ in 0..60 {
+                    std::thread::sleep(std::time::Duration::from_secs(60));
+                    if retention_shutdown.load(Ordering::SeqCst) {
+                        return;
+                    }
+                }
+                let dir = retention_sessions_dir.clone();
+                let engine = RetentionEngine {
+                    config: RetentionConfig {
+                        loop_brain_duration: std::time::Duration::from_secs(24 * 3600),
+                        disk_budget_bytes: 10 * 1024 * 1024 * 1024, // 10 GiB
+                    },
+                    disk_usage: Box::new(move || dir_size(&dir)),
+                };
+                if let Ok(mut manager) = retention_manager.lock() {
+                    if let Err(e) = engine.run_cycle(&mut manager) {
+                        tracing::warn!("RetentionEngine cycle failed: {:#}", e);
+                    }
+                }
+            }
         });
     }
 
@@ -184,7 +276,8 @@ async fn run_daemon_async(
     // After binding, write the daemon config with the actual port. This is
     // critical when port=0 (OS-assigned): the parent process and clients
     // read this file to discover the daemon's address.
-    let actual_addr = listener.local_addr()
+    let actual_addr = listener
+        .local_addr()
         .context("Failed to get listener local address")?;
     let daemon_cfg = DaemonConfig {
         team: team_name.to_string(),
@@ -194,10 +287,14 @@ async fn run_daemon_async(
         pid: std::process::id(),
         started_at: chrono::Utc::now().to_rfc3339(),
     };
-    let cfg_contents = serde_json::to_string_pretty(&daemon_cfg)
-        .context("Failed to serialize daemon config")?;
-    std::fs::write(paths.config(), &cfg_contents)
-        .with_context(|| format!("Failed to write daemon config to {}", paths.config().display()))?;
+    let cfg_contents =
+        serde_json::to_string_pretty(&daemon_cfg).context("Failed to serialize daemon config")?;
+    std::fs::write(paths.config(), &cfg_contents).with_context(|| {
+        format!(
+            "Failed to write daemon config to {}",
+            paths.config().display()
+        )
+    })?;
 
     daemon_log(
         &paths,
@@ -234,6 +331,118 @@ async fn run_daemon_async(
     Ok(())
 }
 
+// Uses /proc/<pid>/stat to avoid kill(-1, 0) edge cases when pid overflows i32.
+fn is_pid_alive(pid: u32) -> bool {
+    // PIDs that cannot be valid positive pid_t values
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
+    let stat_path = format!("/proc/{}/stat", pid);
+    match std::fs::read_to_string(&stat_path) {
+        Ok(stat) => {
+            // Format: "pid (comm) state ..." — state char follows the closing paren
+            if let Some(pos) = stat.rfind(')') {
+                let state_char = stat[pos + 1..].trim_start().chars().next().unwrap_or('?');
+                state_char != 'Z'
+            } else {
+                true
+            }
+        }
+        Err(_) => false, // /proc/<pid>/stat missing → process does not exist
+    }
+}
+
+fn dir_size(path: &std::path::Path) -> Result<u64> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let meta = entry.metadata()?;
+        if meta.is_dir() {
+            total += dir_size(&entry.path())?;
+        } else {
+            total += meta.len();
+        }
+    }
+    Ok(total)
+}
+
+#[cfg(test)]
+#[allow(clippy::items_after_test_module)]
+mod daemon_startup_tests {
+    use chrono::Utc;
+    use tempfile::TempDir;
+
+    use crate::session::manager::{RecoveryReport, SessionManager};
+    use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
+
+    use super::is_pid_alive;
+
+    fn make_manager(tmp: &TempDir) -> SessionManager {
+        let registry_path = tmp.path().join("registry.json");
+        SessionManager::new(tmp.path().to_path_buf(), registry_path).unwrap()
+    }
+
+    // AC-25: Active session with dead PID is marked Failed when recover_stale_sessions_with
+    // is called with is_pid_alive at daemon startup.
+    #[test]
+    fn daemon_startup_recovery_marks_dead_pid_sessions_failed() {
+        let tmp = TempDir::new().unwrap();
+        let mut manager = make_manager(&tmp);
+
+        // PID u32::MAX is guaranteed to never be alive (invalid on all platforms)
+        let dead_pid = u32::MAX;
+        let id = SessionId::new();
+        let record = SessionRecord {
+            session_id: id.clone(),
+            member_name: "alice".to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Active,
+            created_at: Utc::now(),
+            state_transitioned_at: Utc::now(),
+            agent_pid: Some(dead_pid),
+            workspace_path: None,
+            finalization_result: None,
+        };
+        manager.registry.register(record).unwrap();
+        manager.registry.save().unwrap();
+
+        let report: RecoveryReport = manager.recover_stale_sessions_with(is_pid_alive).unwrap();
+
+        assert_eq!(
+            report.recovered, 1,
+            "dead-PID session must be marked Failed at startup"
+        );
+        let recovered = manager.registry.get(&id).unwrap();
+        assert_eq!(
+            recovered.current_state,
+            SessionState::Failed,
+            "recovered session must be in Failed state"
+        );
+    }
+
+    // is_pid_alive must return false for a known-impossible PID.
+    #[test]
+    fn is_pid_alive_returns_false_for_dead_pid() {
+        assert!(
+            !is_pid_alive(u32::MAX),
+            "is_pid_alive must return false for PID u32::MAX (impossible)"
+        );
+    }
+
+    // is_pid_alive must return true for the current process.
+    #[test]
+    fn is_pid_alive_returns_true_for_current_process() {
+        let pid = std::process::id();
+        assert!(
+            is_pid_alive(pid),
+            "is_pid_alive must return true for the current running process"
+        );
+    }
+}
+
 /// Waits for SIGTERM or SIGINT, then sets the shutdown flag.
 async fn shutdown_signal(shutdown: Arc<AtomicBool>) {
     let ctrl_c = tokio::signal::ctrl_c();
@@ -266,7 +475,11 @@ async fn webhook_handler(
     let body_str = match std::str::from_utf8(&body) {
         Ok(s) => s.to_string(),
         Err(_) => {
-            daemon_log(&state.paths, "ERROR", "Failed to read request body as UTF-8");
+            daemon_log(
+                &state.paths,
+                "ERROR",
+                "Failed to read request body as UTF-8",
+            );
             return StatusCode::BAD_REQUEST;
         }
     };
@@ -394,18 +607,10 @@ async fn run_poll_loop(
                 save_poll_state(&poll_state_file, &poll_state);
             }
             Ok(Err(e)) => {
-                daemon_log(
-                    paths,
-                    "ERROR",
-                    &format!("Poll cycle failed: {:#}", e),
-                );
+                daemon_log(paths, "ERROR", &format!("Poll cycle failed: {:#}", e));
             }
             Err(e) => {
-                daemon_log(
-                    paths,
-                    "ERROR",
-                    &format!("Poll task panicked: {}", e),
-                );
+                daemon_log(paths, "ERROR", &format!("Poll task panicked: {}", e));
             }
         }
     }

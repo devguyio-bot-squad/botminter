@@ -258,7 +258,7 @@ bm credentials export -o team-creds.yml
 
 # New machine:
 bm init --credentials-file team-creds.yml
-bm teams sync -a
+bm start -a
 ```
 
 ### `bm members list`
@@ -330,7 +330,7 @@ bm chat <member> [-t <team>] [--hat <hat>] [--render-system-prompt]
     - `bm chat <member> --hat executor` — hat-specific mode: agent is in character as that hat
     - `bm chat <member> --render-system-prompt` — prints the generated system prompt to stdout and exits (for debugging/inspection). Works with `--hat` too.
 - In normal mode: writes the meta-prompt to a temp file and launches the coding agent via `formation.exec_in()` (v2 teams) or direct process exec (v1 teams)
-- Requires a workspace created by `bm teams sync`
+- Requires a workspace created by `bm start`
 
 ### `bm meetings`
 
@@ -527,12 +527,12 @@ bm teams show [<name>] [-t <team>]
 - Lists hired members with their roles
 - Lists configured projects with their fork URLs
 
-### `bm teams sync`
+### `bm start`
 
 Provision and reconcile workspaces.
 
 ```bash
-bm teams sync [--repos] [--bridge] [--all|-a] [-v] [-t <team>]
+bm start [--repos] [--bridge] [--all|-a] [-v] [-t <team>]
 ```
 
 | Parameter | Required | Description |
@@ -557,7 +557,7 @@ bm teams sync [--repos] [--bridge] [--all|-a] [-v] [-t <team>]
 
 ### `bm start`
 
-Launch members (all, or a specific one).
+Launch members (all, or a specific one). This command **creates ephemeral** session workspaces on-demand.
 
 ```bash
 bm start [<member>] [-t <team>] [--formation <name>] [--no-bridge] [--bridge-only]
@@ -575,11 +575,12 @@ bm up [<member>] [-t <team>] [--formation <name>]
 
 **Behavior:**
 
+- **Creates ephemeral** workspaces in `.sessions/<session-id>/` with team and project repos cloned
 - For local bridges: auto-starts the bridge if not already running (skipped when starting a single member)
 - If bridge is already running, verifies health and skips restart
 - Checks for `ralph` binary prerequisite
 - Resolves per-member credentials from keyring or environment variables
-- Discovers member workspaces
+- Provisions fresh session workspaces
 - Detects chat-first members (brain mode) via `brain-prompt.md` in workspace
 - For brain members: launches the brain multiplexer (`bm brain-run`) which runs an ACP session with event watcher and heartbeat
 - For standard members: launches `ralph run -p PROMPT.md` as background process
@@ -587,19 +588,21 @@ bm up [<member>] [-t <team>] [--formation <name>]
 - Verifies processes alive after 2 seconds
 - For non-local formations: runs the formation manager as a one-shot Ralph session
 - Writes a `.topology` file tracking member endpoints
+- Session lifecycle is managed by the session daemon (started automatically)
 
 ### `bm stop`
 
-Stop members (all, or a specific one).
+Stop members (all, or a specific one). Use `--preserve` to **preserve work** before cleanup.
 
 ```bash
-bm stop [<member>] [-t <team>] [-f|--force] [--bridge] [--all]
+bm stop [<member>] [-t <team>] [-f|--force] [--preserve] [--bridge] [--all]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `<member>` | No | Stop only this member (stops all if omitted) |
 | `-f` / `--force` | No | Send SIGTERM instead of graceful stop |
+| `--preserve` | No | **Preserve work** — save uncommitted changes and unpushed commits before cleanup |
 | `--bridge` | No | Also stop the bridge service |
 | `--all` | No | Full teardown: stop members, daemon, and bridge |
 | `-t <team>` | No | Team to operate on |
@@ -608,7 +611,9 @@ bm stop [<member>] [-t <team>] [-f|--force] [--bridge] [--all]
 
 - Graceful mode (default): sends SIGTERM to brain members (multiplexer handles shutdown), runs `ralph loops stop` for standard members, polls for 60s
 - Force mode (`--force`): sends SIGTERM immediately to all members
+- **Preserve mode** (`--preserve`): bundles uncommitted changes, unpushed commits, and Ralph state into timestamped archive before cleanup (extends retention from 24h to 7 days)
 - Cleans state.json entries
+- Triggers session finalization for stopped sessions
 - Suggests `bm stop -f` on graceful failure
 - When stopping a single member, bridge lifecycle is not affected
 - Bridge is left running unless `--bridge` or `--all` is passed (prints a reminder to use `bm stop --bridge`)
@@ -616,7 +621,7 @@ bm stop [<member>] [-t <team>] [-f|--force] [--bridge] [--all]
 
 ### `bm status`
 
-Status dashboard.
+Status dashboard with **session detail** for active and recent sessions.
 
 ```bash
 bm status [-t <team>] [-v]
@@ -630,7 +635,8 @@ bm status [-t <team>] [-v]
 **Behavior:**
 
 - Header shows team name, profile, GitHub repo, and configured projects
-- Displays Member, Role, Status, Branch, Started, PID table
+- Displays Member, Role, Status, Branch, Started, PID table with **session detail**
+- **Session detail** includes: session ID, member name, state (running/stopped/finalized), creation time, and retention deadline for stopped sessions
 - Status column shows "brain" for chat-first members, "running" for standard members, "crashed" or "stopped" as appropriate
 - Branch column shows the workspace repo's current git branch (or "—" if no workspace exists)
 - Shows daemon status if a daemon is running
@@ -1126,7 +1132,7 @@ just clippy   # cargo clippy -p bm -- -D warnings
 ## Related topics
 
 - [Getting Started](../getting-started/index.md) — first-use walkthrough
-- [Workspace Model](../concepts/workspace-model.md) — how `bm teams sync` structures workspaces
+- [Workspace Model](../concepts/workspace-model.md) — how `bm start` structures workspaces
 - [Generate a Team Repo](../how-to/generate-team-repo.md) — detailed `bm init` guide
 - [Configuration Files](configuration.md) — daemon config, formation config, and credential fields
 - [Manage Knowledge](../how-to/manage-knowledge.md) — adding and organizing knowledge files
