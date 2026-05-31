@@ -183,6 +183,15 @@ impl SessionManager {
         self.registry.save()
     }
 
+    /// Force-stop a session: Active → Killed or Finalizing → Killed, skipping finalization.
+    ///
+    /// For Active sessions: kills the agent process and transitions to Killed without launching
+    /// a finalization subagent. For Finalizing sessions: kills the running finalization subagent
+    /// and transitions to Killed. Workspace is retained in both cases (re-trigger available).
+    pub fn force_stop_session(&mut self, _id: &SessionId) -> Result<()> {
+        todo!("force_stop_session not yet implemented")
+    }
+
     /// Re-trigger finalization on a Retained session: Retained → Finalizing, launch fresh subagent.
     ///
     /// Returns an error if the session is not in Retained state — only retained sessions can be
