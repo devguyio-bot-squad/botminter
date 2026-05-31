@@ -220,22 +220,23 @@ impl SessionManager {
     /// Returns an error if the session is not in Retained state — only retained sessions can be
     /// re-finalized; calling this on an active or completed session is a caller bug.
     pub fn retrigger_finalization_for(&mut self, id: &SessionId) -> Result<()> {
-        let current = self
+        let session = self
             .registry
             .get(id)
             .ok_or_else(|| anyhow::anyhow!("session {} not found", id))?
-            .current_state
             .clone();
-        if current != SessionState::Retained {
+        if session.current_state != SessionState::Retained {
             anyhow::bail!(
                 "retrigger_finalization_for requires Retained state, session {} is {}",
                 id,
-                current
+                session.current_state
             );
         }
         self.registry.update_state(id, SessionState::Finalizing)?;
         self.registry.save()?;
-        let _ = retrigger_finalization(id);
+        if let Some(ref wp) = session.workspace_path {
+            let _ = retrigger_finalization(wp, id);
+        }
         Ok(())
     }
 }
@@ -773,12 +774,11 @@ mod session_push_integration_tests {
 
 #[cfg(test)]
 mod session_finalization_integration_tests {
-    use super::git_test_fixtures::{clone_into_workspace_projects, git_commit_all, init_bare_repo};
+    use super::git_test_fixtures::{clone_into_workspace_projects, init_bare_repo};
     use super::*;
     use crate::session::finalization::subagent::recovery_branch_name;
     use std::fs;
     use std::path::Path;
-    use std::process::Command;
     use tempfile::TempDir;
 
     fn make_manager(workspace_base: &Path, registry_path: &Path) -> SessionManager {

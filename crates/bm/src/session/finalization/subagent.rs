@@ -36,6 +36,20 @@ pub fn launch_finalization_subagent(workspace_path: &Path, session_id: &str) -> 
         .map_err(|e| anyhow::anyhow!("failed to launch finalization subagent: {e}"))
 }
 
+/// Re-trigger finalization on a session in Retained state.
+///
+/// Launches a fresh finalization subagent in the retained workspace.
+pub fn retrigger_finalization(workspace_path: &Path, session_id: &SessionId) -> Result<()> {
+    launch_finalization_subagent(workspace_path, session_id.as_str()).map(drop)
+}
+
+/// Construct the recovery branch name for a push conflict.
+///
+/// Convention: `recovery/<session-id>/<original-branch>`
+pub fn recovery_branch_name(session_id: &str, original: &str) -> String {
+    format!("recovery/{session_id}/{original}")
+}
+
 #[cfg(test)]
 mod finalization_subagent_tests {
     use std::ffi::OsStr;
@@ -98,9 +112,6 @@ mod finalization_subagent_tests {
 
     #[test]
     fn retrigger_finalization_is_not_a_stub() {
-        // Call with future signature: retrigger_finalization(&workspace, &session_id)
-        // This will NOT compile with the current 1-arg signature -> compilation failure = RED.
-        // GREEN will change the signature to match.
         let workspace = PathBuf::from("/nonexistent/workspace-retrigger-test");
         let session_id = SessionId::from_string("sess-retrigger-stub-check".to_string());
         let result = retrigger_finalization(&workspace, &session_id);
@@ -109,19 +120,4 @@ mod finalization_subagent_tests {
             "retrigger_finalization must attempt to spawn a process, not return Ok(()) as a stub; got Ok(())"
         );
     }
-}
-
-/// Re-trigger finalization on a session in Retained state.
-///
-/// Transitions the session from Retained → Finalizing and launches a fresh
-/// finalization subagent in the retained workspace.
-pub fn retrigger_finalization(_session_id: &SessionId) -> Result<()> {
-    Ok(())
-}
-
-/// Construct the recovery branch name for a push conflict.
-///
-/// Convention: `recovery/<session-id>/<original-branch>`
-pub fn recovery_branch_name(session_id: &str, original: &str) -> String {
-    format!("recovery/{session_id}/{original}")
 }
