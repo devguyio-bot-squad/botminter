@@ -26,8 +26,22 @@ where
     F: Fn() -> Result<SessionsListResponse>,
     G: Fn(&str) -> Result<StopSessionResponse>,
 {
-    let _ = (member, list_fn, stop_fn);
-    todo!("stop_member_sessions not yet implemented")
+    let sessions = list_fn()?.sessions;
+    let mut summary = StopSummary::default();
+
+    for session in sessions.iter().filter(|s| s.owning_member == member) {
+        let resp = stop_fn(&session.session_id)?;
+        summary.sessions_deactivating += 1;
+        if resp
+            .dirty_repos
+            .iter()
+            .any(|r| r.has_uncommitted || !r.unpushed_branches.is_empty())
+        {
+            summary.entering_finalization += 1;
+        }
+    }
+
+    Ok(summary)
 }
 
 /// Stop a specific session by ID via graceful deactivation.
@@ -37,8 +51,17 @@ pub fn stop_session_by_id<F>(session_id: &str, stop_fn: &F) -> Result<StopSummar
 where
     F: Fn(&str) -> Result<StopSessionResponse>,
 {
-    let _ = (session_id, stop_fn);
-    todo!("stop_session_by_id not yet implemented")
+    let resp = stop_fn(session_id)?;
+    let entering_finalization = usize::from(
+        resp.dirty_repos
+            .iter()
+            .any(|r| r.has_uncommitted || !r.unpushed_branches.is_empty()),
+    );
+    Ok(StopSummary {
+        sessions_deactivating: 1,
+        entering_finalization,
+        interactive_skipped: 0,
+    })
 }
 
 /// Bare stop: stop all autonomous sessions (loop/brain), skip interactive.
@@ -51,8 +74,26 @@ where
     F: Fn() -> Result<SessionsListResponse>,
     G: Fn(&str) -> Result<StopSessionResponse>,
 {
-    let _ = (list_fn, stop_fn);
-    todo!("stop_autonomous_sessions not yet implemented")
+    let sessions = list_fn()?.sessions;
+    let mut summary = StopSummary::default();
+
+    for session in &sessions {
+        if session.session_type == "loop" || session.session_type == "brain" {
+            let resp = stop_fn(&session.session_id)?;
+            summary.sessions_deactivating += 1;
+            if resp
+                .dirty_repos
+                .iter()
+                .any(|r| r.has_uncommitted || !r.unpushed_branches.is_empty())
+            {
+                summary.entering_finalization += 1;
+            }
+        } else {
+            summary.interactive_skipped += 1;
+        }
+    }
+
+    Ok(summary)
 }
 
 /// Force-stop a session: kill immediately, no finalization, session → Killed.
@@ -64,8 +105,12 @@ pub fn force_stop_session_cmd<F>(session_id: &str, force_fn: &F) -> Result<StopS
 where
     F: Fn(&str) -> Result<ForceStopResponse>,
 {
-    let _ = (session_id, force_fn);
-    todo!("force_stop_session_cmd not yet implemented")
+    let resp = force_fn(session_id)?;
+    Ok(StopSummary {
+        sessions_deactivating: 1,
+        entering_finalization: usize::from(resp.finalization_launched),
+        interactive_skipped: 0,
+    })
 }
 
 /// Re-trigger finalization on a Retained session: Retained → Finalizing.
@@ -76,8 +121,15 @@ pub fn retrigger_finalization_cmd<F>(session_id: &str, retrigger_fn: &F) -> Resu
 where
     F: Fn(&str) -> Result<RetriggerFinalizationResponse>,
 {
-    let _ = (session_id, retrigger_fn);
-    todo!("retrigger_finalization_cmd not yet implemented")
+    let resp = retrigger_fn(session_id)?;
+    if !resp.ok {
+        anyhow::bail!(
+            "retrigger finalization failed for session {}: {}",
+            session_id,
+            resp.error.unwrap_or_default()
+        );
+    }
+    Ok(())
 }
 
 /// Handles `bm stop [member] [-t team] [--force] [--bridge] [--all]`.

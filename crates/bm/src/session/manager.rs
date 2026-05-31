@@ -5,6 +5,7 @@ use std::process::Command;
 
 use anyhow::Result;
 use chrono::Utc;
+use libc;
 
 use super::lock::WorkItemLock;
 use super::registry::SessionRegistry;
@@ -188,8 +189,30 @@ impl SessionManager {
     /// For Active sessions: kills the agent process and transitions to Killed without launching
     /// a finalization subagent. For Finalizing sessions: kills the running finalization subagent
     /// and transitions to Killed. Workspace is retained in both cases (re-trigger available).
-    pub fn force_stop_session(&mut self, _id: &SessionId) -> Result<()> {
-        todo!("force_stop_session not yet implemented")
+    pub fn force_stop_session(&mut self, id: &SessionId) -> Result<()> {
+        let session = self
+            .registry
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("Session {} not found", id))?
+            .clone();
+
+        match &session.current_state {
+            SessionState::Active | SessionState::Finalizing => {
+                if let Some(pid) = session.agent_pid {
+                    // SIGKILL — no cleanup, no grace period
+                    unsafe { libc::kill(pid as i32, libc::SIGKILL) };
+                }
+                self.registry.update_state(id, SessionState::Killed)?;
+                self.registry.save()?;
+                let _ = self.work_item_lock.release_all(id);
+                Ok(())
+            }
+            state => anyhow::bail!(
+                "force_stop_session requires Active or Finalizing state, session {} is {}",
+                id,
+                state
+            ),
+        }
     }
 
     /// Re-trigger finalization on a Retained session: Retained → Finalizing, launch fresh subagent.

@@ -261,19 +261,90 @@ pub(super) async fn stop_session_handler(
 /// Active → Killed immediately (no finalization subagent).
 /// Finalizing → kill the finalization subagent → Killed (workspace retained, re-trigger available).
 pub(super) async fn force_stop_session_handler(
-    State(_state): State<DaemonState>,
-    Path(_session_id_str): Path<String>,
+    State(state): State<DaemonState>,
+    Path(session_id_str): Path<String>,
     Query(_params): Query<ForceStopParams>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    todo!("force_stop_session_handler not yet implemented")
+    let session_id = SessionId::from_string(session_id_str.clone());
+    let manager = Arc::clone(&state.session_manager);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut m = manager.lock().unwrap();
+        m.force_stop_session(&session_id)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => {
+            let resp = ForceStopResponse {
+                ok: true,
+                session_id: session_id_str,
+                new_state: "Killed".to_string(),
+                finalization_launched: false,
+                error: None,
+            };
+            (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
+        }
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "code": "force_stop_failed",
+                "error": e.to_string()
+            })),
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "ok": false,
+                "code": "internal_error",
+                "error": "internal error"
+            })),
+        ),
+    }
 }
 
 /// POST /api/sessions/{id}/finalize — re-trigger finalization on a Retained session.
 pub(super) async fn retrigger_finalization_handler(
-    State(_state): State<DaemonState>,
-    Path(_session_id_str): Path<String>,
+    State(state): State<DaemonState>,
+    Path(session_id_str): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    todo!("retrigger_finalization_handler not yet implemented")
+    let session_id = SessionId::from_string(session_id_str.clone());
+    let manager = Arc::clone(&state.session_manager);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut m = manager.lock().unwrap();
+        m.retrigger_finalization_for(&session_id)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => {
+            let resp = RetriggerFinalizationResponse {
+                ok: true,
+                session_id: session_id_str,
+                new_state: "Finalizing".to_string(),
+                error: None,
+            };
+            (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
+        }
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "code": "retrigger_failed",
+                "error": e.to_string()
+            })),
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "ok": false,
+                "code": "internal_error",
+                "error": "internal error"
+            })),
+        ),
+    }
 }
 
 /// GET /api/sessions/{id} — return a single session's detail.
