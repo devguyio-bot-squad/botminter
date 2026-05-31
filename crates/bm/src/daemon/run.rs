@@ -24,6 +24,7 @@ use super::session_api;
 use crate::config as app_config;
 use crate::formation::AppCredentialsCached;
 use crate::session::manager::SessionManager;
+use crate::session::retention::{RetentionConfig, RetentionEngine};
 use crate::web::state::WebState;
 use crate::web::web_router;
 
@@ -98,8 +99,26 @@ async fn run_daemon_async(
         .map(|p| p.join(format!("sessions-{}", team_name)))
         .unwrap_or_else(|| std::path::PathBuf::from(format!("sessions-{}", team_name)));
     let registry_path = sessions_dir.join("registry.json");
-    let session_manager = SessionManager::new(sessions_dir, registry_path)
+    let mut session_manager = SessionManager::new(sessions_dir.clone(), registry_path)
         .context("Failed to initialise session manager")?;
+
+    // Recover sessions whose agent process died between daemon runs.
+    match session_manager.recover_stale_sessions_with(is_pid_alive) {
+        Ok(report) if report.recovered > 0 => {
+            daemon_log(
+                &paths,
+                "INFO",
+                &format!(
+                    "Startup recovery: {} stale session(s) marked Failed",
+                    report.recovered
+                ),
+            );
+        }
+        Err(e) => {
+            daemon_log(&paths, "WARN", &format!("Startup recovery failed: {:#}", e));
+        }
+        _ => {}
+    }
 
     let state = DaemonState {
         team_name: team_name.to_string(),
@@ -196,6 +215,37 @@ async fn run_daemon_async(
         });
     }
 
+    // Spawn RetentionEngine background thread — runs hourly to expire old sessions.
+    {
+        let retention_manager = Arc::clone(&state.session_manager);
+        let retention_sessions_dir = sessions_dir.clone();
+        let retention_shutdown = Arc::clone(&shutdown);
+        std::thread::spawn(move || {
+            loop {
+                // Poll shutdown every minute; run a GC cycle after 60 minutes.
+                for _ in 0..60 {
+                    std::thread::sleep(std::time::Duration::from_secs(60));
+                    if retention_shutdown.load(Ordering::SeqCst) {
+                        return;
+                    }
+                }
+                let dir = retention_sessions_dir.clone();
+                let engine = RetentionEngine {
+                    config: RetentionConfig {
+                        loop_brain_duration: std::time::Duration::from_secs(24 * 3600),
+                        disk_budget_bytes: 10 * 1024 * 1024 * 1024, // 10 GiB
+                    },
+                    disk_usage: Box::new(move || dir_size(&dir)),
+                };
+                if let Ok(mut manager) = retention_manager.lock() {
+                    if let Err(e) = engine.run_cycle(&mut manager) {
+                        tracing::warn!("RetentionEngine cycle failed: {:#}", e);
+                    }
+                }
+            }
+        });
+    }
+
     let addr: SocketAddr = format!("{}:{}", bind, port)
         .parse()
         .with_context(|| format!("Invalid bind address: {}:{}", bind, port))?;
@@ -279,6 +329,116 @@ async fn run_daemon_async(
 
     daemon_log(&paths, "INFO", "Daemon stopped");
     Ok(())
+}
+
+// Uses /proc/<pid>/stat to avoid kill(-1, 0) edge cases when pid overflows i32.
+fn is_pid_alive(pid: u32) -> bool {
+    // PIDs that cannot be valid positive pid_t values
+    if pid == 0 || pid > i32::MAX as u32 {
+        return false;
+    }
+    let stat_path = format!("/proc/{}/stat", pid);
+    match std::fs::read_to_string(&stat_path) {
+        Ok(stat) => {
+            // Format: "pid (comm) state ..." — state char follows the closing paren
+            if let Some(pos) = stat.rfind(')') {
+                let state_char = stat[pos + 1..].trim_start().chars().next().unwrap_or('?');
+                state_char != 'Z'
+            } else {
+                true
+            }
+        }
+        Err(_) => false, // /proc/<pid>/stat missing → process does not exist
+    }
+}
+
+fn dir_size(path: &std::path::Path) -> Result<u64> {
+    if !path.exists() {
+        return Ok(0);
+    }
+    let mut total = 0u64;
+    for entry in std::fs::read_dir(path)? {
+        let entry = entry?;
+        let meta = entry.metadata()?;
+        if meta.is_dir() {
+            total += dir_size(&entry.path())?;
+        } else {
+            total += meta.len();
+        }
+    }
+    Ok(total)
+}
+
+#[cfg(test)]
+mod daemon_startup_tests {
+    use chrono::Utc;
+    use tempfile::TempDir;
+
+    use crate::session::manager::{RecoveryReport, SessionManager};
+    use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
+
+    use super::is_pid_alive;
+
+    fn make_manager(tmp: &TempDir) -> SessionManager {
+        let registry_path = tmp.path().join("registry.json");
+        SessionManager::new(tmp.path().to_path_buf(), registry_path).unwrap()
+    }
+
+    // AC-25: Active session with dead PID is marked Failed when recover_stale_sessions_with
+    // is called with is_pid_alive at daemon startup.
+    #[test]
+    fn daemon_startup_recovery_marks_dead_pid_sessions_failed() {
+        let tmp = TempDir::new().unwrap();
+        let mut manager = make_manager(&tmp);
+
+        // PID u32::MAX is guaranteed to never be alive (invalid on all platforms)
+        let dead_pid = u32::MAX;
+        let id = SessionId::new();
+        let record = SessionRecord {
+            session_id: id.clone(),
+            member_name: "alice".to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Active,
+            created_at: Utc::now(),
+            state_transitioned_at: Utc::now(),
+            agent_pid: Some(dead_pid),
+            workspace_path: None,
+        };
+        manager.registry.register(record).unwrap();
+        manager.registry.save().unwrap();
+
+        let report: RecoveryReport = manager.recover_stale_sessions_with(is_pid_alive).unwrap();
+
+        assert_eq!(
+            report.recovered, 1,
+            "dead-PID session must be marked Failed at startup"
+        );
+        let recovered = manager.registry.get(&id).unwrap();
+        assert_eq!(
+            recovered.current_state,
+            SessionState::Failed,
+            "recovered session must be in Failed state"
+        );
+    }
+
+    // is_pid_alive must return false for a known-impossible PID.
+    #[test]
+    fn is_pid_alive_returns_false_for_dead_pid() {
+        assert!(
+            !is_pid_alive(u32::MAX),
+            "is_pid_alive must return false for PID u32::MAX (impossible)"
+        );
+    }
+
+    // is_pid_alive must return true for the current process.
+    #[test]
+    fn is_pid_alive_returns_true_for_current_process() {
+        let pid = std::process::id();
+        assert!(
+            is_pid_alive(pid),
+            "is_pid_alive must return true for the current running process"
+        );
+    }
 }
 
 /// Waits for SIGTERM or SIGINT, then sets the shutdown flag.
