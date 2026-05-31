@@ -667,7 +667,7 @@ mod tests {
         SESSION_SERVER_BASE_URL
             .get_or_init(|| {
                 use axum::extract::Path;
-                use axum::routing::{get, post};
+                use axum::routing::{delete, get, post};
                 use axum::Json;
 
                 async fn stub_start_session(
@@ -712,10 +712,44 @@ mod tests {
                     }))
                 }
 
+                async fn stub_inspect_session(Path(id): Path<String>) -> Json<serde_json::Value> {
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "session_id": id,
+                        "member_name": "stub-member",
+                        "session_type": "loop",
+                        "current_state": "Retained",
+                        "workspace_path": null,
+                        "created_at": "2026-05-31T00:00:00Z",
+                        "state_transitioned_at": "2026-05-31T00:00:00Z",
+                        "finalization_results": null,
+                        "git_state": null,
+                    }))
+                }
+
+                async fn stub_cleanup_session(Path(id): Path<String>) -> Json<serde_json::Value> {
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "session_id": id,
+                        "error": null,
+                    }))
+                }
+
+                async fn stub_bulk_cleanup() -> Json<serde_json::Value> {
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "removed": 0,
+                        "error": null,
+                    }))
+                }
+
                 let router = axum::Router::new()
                     .route("/api/sessions/start", post(stub_start_session))
+                    .route("/api/sessions/cleanup", delete(stub_bulk_cleanup))
                     .route("/api/sessions", get(stub_list_sessions))
                     .route("/api/sessions/{id}/stop", post(stub_stop_session))
+                    .route("/api/sessions/{id}/inspect", get(stub_inspect_session))
+                    .route("/api/sessions/{id}/cleanup", delete(stub_cleanup_session))
                     .route("/api/sessions/{id}", get(stub_get_session));
 
                 let (tx, rx) = std::sync::mpsc::channel::<String>();
@@ -789,5 +823,48 @@ mod tests {
         let result = client.get_session("sess-abc12345");
         let info = result.unwrap();
         assert_eq!(info.session_id, "sess-abc12345");
+    }
+
+    // AC-18: DaemonClient::inspect_session — CT-89-06 RED
+
+    #[test]
+    fn client_inspect_session_returns_inspection_response() {
+        let client = DaemonClient {
+            base_url: session_server_base_url(),
+            client: reqwest::blocking::Client::new(),
+        };
+        // E0599: method `inspect_session` not found on `DaemonClient` until added
+        let result = client.inspect_session("sess-abc12345");
+        let resp = result.unwrap();
+        assert!(resp.ok, "inspect_session must return ok=true on success");
+        assert_eq!(resp.session_id, "sess-abc12345");
+    }
+
+    #[test]
+    fn client_cleanup_session_returns_ok() {
+        let client = DaemonClient {
+            base_url: session_server_base_url(),
+            client: reqwest::blocking::Client::new(),
+        };
+        // E0599: method `cleanup_session` not found on `DaemonClient` until added
+        let result = client.cleanup_session("sess-abc12345");
+        let resp = result.unwrap();
+        assert!(resp.ok, "cleanup_session must return ok=true on success");
+        assert_eq!(resp.session_id, "sess-abc12345");
+    }
+
+    #[test]
+    fn client_bulk_cleanup_sessions_returns_removed_count() {
+        let client = DaemonClient {
+            base_url: session_server_base_url(),
+            client: reqwest::blocking::Client::new(),
+        };
+        // E0599: method `bulk_cleanup_sessions` not found on `DaemonClient` until added
+        let result = client.bulk_cleanup_sessions(true, None, None);
+        let resp = result.unwrap();
+        assert!(
+            resp.ok,
+            "bulk_cleanup_sessions must return ok=true on success"
+        );
     }
 }

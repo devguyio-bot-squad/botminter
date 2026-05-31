@@ -1464,3 +1464,43 @@ mod restart_recovery_tests {
         );
     }
 }
+
+// AC-18: SessionInspection extended fields — CT-89-06 RED
+#[cfg(test)]
+mod session_inspection_extended_tests {
+    use super::*;
+    use crate::session::types::{FinalizationResult, GitState, SessionState, SessionType};
+    use tempfile::TempDir;
+
+    fn make_manager(tmp: &TempDir) -> SessionManager {
+        SessionManager::new(
+            tmp.path().join("workspaces"),
+            tmp.path().join("registry.json"),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn inspect_session_includes_finalization_results_field() {
+        let tmp = TempDir::new().unwrap();
+        let mut manager = make_manager(&tmp);
+        let record = manager.create_session("alice", SessionType::Loop).unwrap();
+        let id = record.session_id.clone();
+
+        let inspection = manager.inspect_session(&id).unwrap();
+        // E0609: no field `finalization_results` on `SessionInspection` until added
+        let _: &Option<FinalizationResult> = &inspection.finalization_results;
+    }
+
+    #[test]
+    fn inspect_session_includes_git_state_field() {
+        let tmp = TempDir::new().unwrap();
+        let mut manager = make_manager(&tmp);
+        let record = manager.create_session("alice", SessionType::Loop).unwrap();
+        let id = record.session_id.clone();
+
+        let inspection = manager.inspect_session(&id).unwrap();
+        // E0609: no field `git_state` on `SessionInspection` until added
+        let _: &Option<GitState> = &inspection.git_state;
+    }
+}

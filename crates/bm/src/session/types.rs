@@ -216,4 +216,39 @@ mod tests {
             );
         }
     }
+
+    // AC-18: FinalizationResult data contract — CT-89-06 RED
+
+    #[test]
+    fn finalization_result_has_required_fields() {
+        // E0422: `FinalizationResult` not found until types.rs adds the struct
+        let r = FinalizationResult {
+            committed_repos: vec!["botminter".to_string()],
+            pushed_branches: vec!["main".to_string()],
+            recovery_branches: vec![],
+            issue_urls: vec![],
+            exit_status: FinalizationExitStatus::Success,
+        };
+        assert_eq!(r.committed_repos, vec!["botminter"]);
+        assert_eq!(r.exit_status, FinalizationExitStatus::Success);
+    }
+
+    #[test]
+    fn git_state_has_required_fields() {
+        // E0422: `GitState` not found until types.rs adds the struct
+        let gs = GitState {
+            branches: vec!["main".to_string()],
+            has_uncommitted: false,
+            unpushed_commits: vec![],
+        };
+        assert!(!gs.has_uncommitted);
+        assert_eq!(gs.branches, vec!["main"]);
+    }
+
+    #[test]
+    fn session_record_has_finalization_result_field() {
+        let r = make_record("alice", SessionType::Loop);
+        // E0609: no field `finalization_result` on `SessionRecord` until added
+        let _: &Option<FinalizationResult> = &r.finalization_result;
+    }
 }
