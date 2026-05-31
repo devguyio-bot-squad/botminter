@@ -1,8 +1,8 @@
 mod dashboard;
 
 pub use dashboard::{
-    gather_status, BridgeDisplay, BridgeIdentityRow, DaemonDisplay, MemberRow,
-    RalphMemberInfo, StatusInfo, SubmoduleRow, VerboseDisplay, WorkspaceVerbose,
+    gather_status, BridgeDisplay, BridgeIdentityRow, DaemonDisplay, MemberRow, RalphMemberInfo,
+    StatusInfo, SubmoduleRow, VerboseDisplay, WorkspaceVerbose,
 };
 
 use std::collections::{HashMap, HashSet};
@@ -134,7 +134,9 @@ pub enum MemberStatus {
 impl MemberStatus {
     pub fn label(&self) -> &'static str {
         match self {
-            MemberStatus::Running { brain_mode: true, .. } => "brain",
+            MemberStatus::Running {
+                brain_mode: true, ..
+            } => "brain",
             MemberStatus::Running { .. } => "running",
             MemberStatus::Crashed { .. } => "crashed",
             MemberStatus::Stopped => "stopped",
@@ -188,7 +190,9 @@ pub fn is_enabled(state: &RuntimeState, key: &str) -> bool {
 /// Returns enabled member keys for a team.
 pub fn enabled_members(state: &RuntimeState, team_name: &str) -> Vec<String> {
     let prefix = format!("{}/", team_name);
-    state.enabled.iter()
+    state
+        .enabled
+        .iter()
         .filter(|k| k.starts_with(&prefix))
         .cloned()
         .collect()
