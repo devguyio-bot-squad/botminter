@@ -6,11 +6,11 @@ use comfy_table::{
 };
 
 use crate::config;
-use crate::daemon::SessionsListResponse;
+use crate::daemon::{DaemonClient, SessionsListResponse};
 use crate::state::{self, MemberStatus};
 
 /// Handles `bm status [-t team] [-v] [--json]`.
-pub fn run(team_flag: Option<&str>, verbose: bool, _json: bool) -> Result<()> {
+pub fn run(team_flag: Option<&str>, verbose: bool, json: bool) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
 
@@ -134,23 +134,71 @@ pub fn run(team_flag: Option<&str>, verbose: bool, _json: bool) -> Result<()> {
         }
     }
 
+    // Sessions (AC-10)
+    let team_name = team.name.clone();
+    let fetcher = move || DaemonClient::connect(&team_name)?.list_sessions();
+    fetch_and_display_sessions(&team.name, json, &mut std::io::stdout(), &fetcher)?;
+
     Ok(())
 }
 
 /// Fetches sessions via `session_fetcher` and writes the session section to `writer`.
 ///
-/// When `json` is true, writes only a JSON `{"sessions":[...]}` object and
-/// suppresses all other output. When the daemon is not reachable, writes
-/// "Sessions: none (daemon not running)" in text mode or `{"sessions":[]}` in JSON mode.
-///
-/// GREEN phase will implement this; the stub currently writes nothing so all
-/// behavioural tests fail (RED phase intent).
+/// When `json` is true, writes `{"sessions":[...]}` (full IDs, no table).
+/// When the daemon is not reachable, writes "Sessions: none (daemon not running)" in
+/// text mode or `{"sessions":[]}` in JSON mode.
 pub(crate) fn fetch_and_display_sessions<W: Write>(
     _team_name: &str,
-    _json: bool,
-    _writer: &mut W,
-    _session_fetcher: &dyn Fn() -> Result<SessionsListResponse>,
+    json: bool,
+    writer: &mut W,
+    session_fetcher: &dyn Fn() -> Result<SessionsListResponse>,
 ) -> Result<()> {
+    let sessions = match session_fetcher() {
+        Ok(resp) => resp.sessions,
+        Err(_) => {
+            if json {
+                writeln!(writer, "{{\"sessions\":[]}}")?;
+            } else {
+                writeln!(writer, "Sessions: none (daemon not running)")?;
+            }
+            return Ok(());
+        }
+    };
+
+    if json {
+        let resp = SessionsListResponse { sessions };
+        writeln!(writer, "{}", serde_json::to_string(&resp)?)?;
+        return Ok(());
+    }
+
+    if sessions.is_empty() {
+        writeln!(writer, "Sessions: none")?;
+        return Ok(());
+    }
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL_CONDENSED)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::DynamicFullWidth)
+        .set_header(vec!["Session ID", "Member", "Type", "State", "Started"]);
+
+    for s in &sessions {
+        let short_id = if s.session_id.len() > 8 {
+            format!("{}…", &s.session_id[..8])
+        } else {
+            s.session_id.clone()
+        };
+        let started = format_timestamp(&s.start_time);
+        table.add_row(vec![
+            short_id.as_str(),
+            &s.owning_member,
+            &s.session_type,
+            &s.current_state,
+            &started,
+        ]);
+    }
+    writeln!(writer, "{table}")?;
     Ok(())
 }
 
