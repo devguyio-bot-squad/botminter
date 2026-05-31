@@ -17,8 +17,8 @@ fn main() -> Result<()> {
     let cli = if meetings.is_empty() {
         Cli::parse()
     } else {
-        let mut meetings_cmd = clap::Command::new("meetings")
-            .about("Meet with a team member for a specific purpose");
+        let mut meetings_cmd =
+            clap::Command::new("meetings").about("Meet with a team member for a specific purpose");
         for m in &meetings {
             meetings_cmd = meetings_cmd.subcommand(commands::meeting::build_meeting_subcommand(m));
         }
@@ -41,7 +41,9 @@ fn main() -> Result<()> {
             std::process::exit(0);
         }
 
-        Cli::from_arg_matches(&matches).map_err(|e| e.exit()).unwrap()
+        Cli::from_arg_matches(&matches)
+            .map_err(|e| e.exit())
+            .unwrap()
     };
 
     match cli.command {
@@ -89,7 +91,13 @@ fn main() -> Result<()> {
             TeamsCommand::Show { name, team } => {
                 commands::teams::show(name.as_deref(), team.as_deref())?;
             }
-            TeamsCommand::Sync { repos, bridge, all, verbose, team } => {
+            TeamsCommand::Sync {
+                repos,
+                bridge,
+                all,
+                verbose,
+                team,
+            } => {
                 let effective_repos = repos || all;
                 let effective_bridge = bridge || all;
                 commands::teams::sync(effective_repos, effective_bridge, verbose, team.as_deref())?;
@@ -186,7 +194,9 @@ fn main() -> Result<()> {
         Command::Bridge { command } => match command {
             BridgeCommand::Start { team } => commands::bridge::start(team.as_deref())?,
             BridgeCommand::Stop { team } => commands::bridge::stop(team.as_deref())?,
-            BridgeCommand::Status { team, reveal } => commands::bridge::status(team.as_deref(), reveal)?,
+            BridgeCommand::Status { team, reveal } => {
+                commands::bridge::status(team.as_deref(), reveal)?
+            }
             BridgeCommand::Identity { command } => match command {
                 BridgeIdentityCommand::Add { username, team } => {
                     commands::bridge::identity_add(&username, team.as_deref())?
@@ -197,9 +207,11 @@ fn main() -> Result<()> {
                 BridgeIdentityCommand::Remove { username, team } => {
                     commands::bridge::identity_remove(&username, team.as_deref())?
                 }
-                BridgeIdentityCommand::Show { username, reveal, team } => {
-                    commands::bridge::identity_show(&username, reveal, team.as_deref())?
-                }
+                BridgeIdentityCommand::Show {
+                    username,
+                    reveal,
+                    team,
+                } => commands::bridge::identity_show(&username, reveal, team.as_deref())?,
                 BridgeIdentityCommand::List { team } => {
                     commands::bridge::identity_list(team.as_deref())?
                 }
@@ -211,9 +223,7 @@ fn main() -> Result<()> {
                 BridgeRoomCommand::CreateDm { member, team } => {
                     commands::bridge::room_create_dm(&member, team.as_deref())?
                 }
-                BridgeRoomCommand::List { team } => {
-                    commands::bridge::room_list(team.as_deref())?
-                }
+                BridgeRoomCommand::List { team } => commands::bridge::room_list(team.as_deref())?,
             },
         },
 
@@ -272,9 +282,21 @@ fn main() -> Result<()> {
             no_bridge,
             bridge_only,
         } => {
-            commands::start::run(team.as_deref(), formation.as_deref(), no_bridge, bridge_only, member.as_deref())?;
+            commands::start::run(
+                team.as_deref(),
+                formation.as_deref(),
+                no_bridge,
+                bridge_only,
+                member.as_deref(),
+            )?;
         }
-        Command::Stop { member, team, force, bridge, all } => {
+        Command::Stop {
+            member,
+            team,
+            force,
+            bridge,
+            all,
+        } => {
             commands::stop::run(team.as_deref(), force, member.as_deref(), bridge, all)?;
         }
         Command::Enable { member, team, now } => {
@@ -283,8 +305,8 @@ fn main() -> Result<()> {
         Command::Disable { member, team, now } => {
             commands::disable::run(member.as_deref(), team.as_deref(), now)?;
         }
-        Command::Status { team, verbose } => {
-            commands::status::run(team.as_deref(), verbose)?;
+        Command::Status { team, verbose, json } => {
+            commands::status::run(team.as_deref(), verbose, json)?;
         }
         Command::BrainRun {
             workspace,
@@ -316,7 +338,15 @@ fn main() -> Result<()> {
                 if render {
                     commands::bootstrap::render(name, cpus, &memory, &disk, team.as_deref());
                 } else {
-                    commands::bootstrap::run(non_interactive, name, cpus, &memory, &disk, &env_vars, team.as_deref())?;
+                    commands::bootstrap::run(
+                        non_interactive,
+                        name,
+                        cpus,
+                        &memory,
+                        &disk,
+                        &env_vars,
+                        team.as_deref(),
+                    )?;
                 }
             }
             RuntimeCommand::Delete { name, force } => {
