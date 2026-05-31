@@ -43,8 +43,45 @@ pub struct RepoContext {
 }
 
 /// Classify `file_path` (relative to repo root) according to finalization categorization rules.
-pub fn categorize(_file_path: &Path, _context: &RepoContext) -> Category {
-    todo!("categorize not yet implemented")
+pub fn categorize(file_path: &Path, context: &RepoContext) -> Category {
+    if is_never_commit(file_path) {
+        return Category::NeverCommit;
+    }
+
+    if context.repo_kind == RepoKind::Project && context.current_branch != context.default_branch {
+        return Category::CommitAndPush;
+    }
+
+    if context.repo_kind == RepoKind::Team && is_team_commit_path(file_path) {
+        return Category::CommitAndPush;
+    }
+
+    if context.remote_status == RemoteStatus::Ahead
+        && context.current_branch == context.default_branch
+    {
+        return Category::PushOnly;
+    }
+
+    Category::LeaveInPlace
+}
+
+fn is_never_commit(path: &Path) -> bool {
+    if path.starts_with(".config/gh") {
+        return true;
+    }
+    path.file_name().is_some_and(|n| n == ".env")
+}
+
+fn is_team_commit_path(path: &Path) -> bool {
+    let mut comps = path.components();
+    match comps.next().and_then(|c| c.as_os_str().to_str()) {
+        Some("specs") | Some("knowledge") => true,
+        Some("members") => {
+            comps.next(); // skip member name
+            comps.next().is_some_and(|c| c.as_os_str() == "knowledge")
+        }
+        _ => false,
+    }
 }
 
 #[cfg(test)]
@@ -98,36 +135,21 @@ mod tests {
     #[test]
     fn team_repo_specs_file_is_commit_and_push() {
         let file = PathBuf::from("specs/botminter/design.md");
-        let ctx = team_ctx(
-            "main",
-            "main",
-            RemoteStatus::UpToDate,
-            vec![file.clone()],
-        );
+        let ctx = team_ctx("main", "main", RemoteStatus::UpToDate, vec![file.clone()]);
         assert_eq!(categorize(&file, &ctx), Category::CommitAndPush);
     }
 
     #[test]
     fn team_repo_knowledge_file_is_commit_and_push() {
         let file = PathBuf::from("knowledge/patterns.md");
-        let ctx = team_ctx(
-            "main",
-            "main",
-            RemoteStatus::UpToDate,
-            vec![file.clone()],
-        );
+        let ctx = team_ctx("main", "main", RemoteStatus::UpToDate, vec![file.clone()]);
         assert_eq!(categorize(&file, &ctx), Category::CommitAndPush);
     }
 
     #[test]
     fn team_repo_members_knowledge_file_is_commit_and_push() {
         let file = PathBuf::from("members/engineer-bob/knowledge/habits.md");
-        let ctx = team_ctx(
-            "main",
-            "main",
-            RemoteStatus::UpToDate,
-            vec![file.clone()],
-        );
+        let ctx = team_ctx("main", "main", RemoteStatus::UpToDate, vec![file.clone()]);
         assert_eq!(categorize(&file, &ctx), Category::CommitAndPush);
     }
 
@@ -152,24 +174,14 @@ mod tests {
     #[test]
     fn credential_path_gh_config_is_never_commit() {
         let file = PathBuf::from(".config/gh/hosts.yml");
-        let ctx = project_ctx(
-            "main",
-            "main",
-            RemoteStatus::UpToDate,
-            vec![file.clone()],
-        );
+        let ctx = project_ctx("main", "main", RemoteStatus::UpToDate, vec![file.clone()]);
         assert_eq!(categorize(&file, &ctx), Category::NeverCommit);
     }
 
     #[test]
     fn credential_path_env_file_is_never_commit() {
         let file = PathBuf::from(".env");
-        let ctx = project_ctx(
-            "main",
-            "main",
-            RemoteStatus::UpToDate,
-            vec![file.clone()],
-        );
+        let ctx = project_ctx("main", "main", RemoteStatus::UpToDate, vec![file.clone()]);
         assert_eq!(categorize(&file, &ctx), Category::NeverCommit);
     }
 
@@ -191,12 +203,7 @@ mod tests {
     fn never_commit_takes_precedence_over_commit_and_push() {
         // .env under members/*/knowledge/ — credential rule overrides team repo knowledge rule
         let file = PathBuf::from("members/engineer-bob/knowledge/.env");
-        let ctx = team_ctx(
-            "main",
-            "main",
-            RemoteStatus::UpToDate,
-            vec![file.clone()],
-        );
+        let ctx = team_ctx("main", "main", RemoteStatus::UpToDate, vec![file.clone()]);
         assert_eq!(categorize(&file, &ctx), Category::NeverCommit);
     }
 }
