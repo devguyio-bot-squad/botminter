@@ -70,7 +70,7 @@ pub fn push_with_rebase_retry(
 mod tests {
     use super::*;
     use std::fs;
-    use std::path::PathBuf;
+    use std::path::{Path, PathBuf};
     use std::process::Command;
     use tempfile::TempDir;
 
@@ -111,7 +111,7 @@ mod tests {
     }
 
     /// Stage all changes and commit with a fixed author identity.
-    fn git_commit_all(repo: &PathBuf, msg: &str) {
+    fn git_commit_all(repo: &Path, msg: &str) {
         Command::new("git")
             .args(["-C", repo.to_str().unwrap(), "add", "."])
             .output()

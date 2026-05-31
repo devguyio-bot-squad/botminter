@@ -106,12 +106,9 @@ impl SessionManager {
             .ok_or_else(|| anyhow::anyhow!("Session {} not found", id))?
             .clone();
 
-        let mut dirty_repos = session
-            .workspace_path
-            .as_deref()
-            .map(inspect_dirty_repos)
-            .unwrap_or_default();
+        let mut dirty_repos = vec![];
         if let Some(ref wp) = session.workspace_path {
+            dirty_repos = inspect_dirty_repos(wp);
             push_and_refresh_dirty(&mut dirty_repos, wp);
         }
 
@@ -162,9 +159,7 @@ fn push_and_refresh_dirty(dirty_repos: &mut [DirtyRepo], workspace_path: &Path) 
             .current_dir(&repo_path)
             .output();
         let branch = match branch_out {
-            Ok(o) if o.status.success() => {
-                String::from_utf8_lossy(&o.stdout).trim().to_string()
-            }
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
             _ => continue,
         };
         if push_with_rebase_retry(&repo_path, "origin", &branch, DEFAULT_MAX_RETRIES).is_ok() {
