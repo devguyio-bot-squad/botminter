@@ -153,6 +153,10 @@ async fn run_daemon_async(
         )
         .route("/api/sessions", get(session_api::list_sessions_handler))
         .route(
+            "/api/sessions/history",
+            get(session_api::list_session_history_handler),
+        )
+        .route(
             "/api/sessions/{id}/stop",
             post(session_api::stop_session_handler),
         )

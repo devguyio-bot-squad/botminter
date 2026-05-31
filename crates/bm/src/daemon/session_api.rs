@@ -7,6 +7,7 @@
 //!   GET    /api/sessions/{id}           — get session detail
 //!   DELETE /api/sessions/{id}?force     — force-stop a session (skip finalization)
 //!   POST   /api/sessions/{id}/finalize  — re-trigger finalization on a Retained session
+//!   GET    /api/sessions/history        — list terminal sessions (completed/failed/killed)
 
 use std::sync::Arc;
 
@@ -15,7 +16,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::session::types::{SessionId, SessionRecord, SessionType};
+use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
 
 use super::run::DaemonState;
 
@@ -601,6 +602,34 @@ pub(super) async fn bulk_cleanup_handler(
     }
 }
 
+pub(super) async fn list_session_history_handler(
+    State(state): State<DaemonState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let manager = Arc::clone(&state.session_manager);
+
+    let sessions = tokio::task::spawn_blocking(move || {
+        let m = manager.lock().unwrap();
+        m.list_terminal()
+            .into_iter()
+            .map(|r| SessionHistoryInfo {
+                session_id: r.session_id.as_str().to_string(),
+                owning_member: r.member_name.clone(),
+                session_type: session_type_str(&r.session_type).to_string(),
+                start_time: r.created_at.to_rfc3339(),
+                end_time: r.state_transitioned_at.to_rfc3339(),
+                exit_normal: matches!(r.current_state, SessionState::Completed),
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+
+    (
+        StatusCode::OK,
+        Json(serde_json::to_value(sessions).unwrap()),
+    )
+}
+
 // ── Tests ────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -1161,6 +1190,77 @@ mod tests {
             StatusCode::OK,
             "DELETE /api/sessions/cleanup must return 200, got {}",
             response.status()
+        );
+    }
+
+    // AC-17: GET /api/sessions/history returns terminal sessions with correct exit_normal flags
+    #[tokio::test]
+    async fn history_handler_returns_terminal_sessions() {
+        use axum::body::{to_bytes, Body};
+        use axum::http::Request;
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let state = make_test_state();
+
+        {
+            let mut mgr = state.session_manager.lock().unwrap();
+            let completed = mgr
+                .create_session("alice", crate::session::SessionType::Loop)
+                .unwrap();
+            let failed = mgr
+                .create_session("bob", crate::session::SessionType::Brain)
+                .unwrap();
+            mgr.registry
+                .update_state(
+                    &completed.session_id,
+                    crate::session::SessionState::Completed,
+                )
+                .unwrap();
+            mgr.registry.save().unwrap();
+            mgr.registry
+                .update_state(&failed.session_id, crate::session::SessionState::Failed)
+                .unwrap();
+            mgr.registry.save().unwrap();
+        }
+
+        let app = axum::Router::new()
+            .route("/api/sessions/history", get(list_session_history_handler))
+            .with_state(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/api/sessions/history")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "GET /api/sessions/history must return 200 OK"
+        );
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let sessions: Vec<SessionHistoryInfo> = serde_json::from_slice(&body).unwrap();
+
+        assert_eq!(
+            sessions.len(),
+            2,
+            "history endpoint must return both terminal sessions"
+        );
+        let alice = sessions
+            .iter()
+            .find(|s| s.owning_member == "alice")
+            .unwrap();
+        let bob = sessions.iter().find(|s| s.owning_member == "bob").unwrap();
+        assert!(
+            alice.exit_normal,
+            "Completed session must have exit_normal=true"
+        );
+        assert!(
+            !bob.exit_normal,
+            "Failed session must have exit_normal=false"
         );
     }
 }
