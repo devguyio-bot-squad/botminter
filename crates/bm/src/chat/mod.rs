@@ -1,5 +1,6 @@
 pub(crate) mod config;
 pub(crate) mod skills;
+pub mod spawn;
 
 use std::collections::BTreeMap;
 use std::io::Write;
@@ -56,7 +57,8 @@ pub fn prepare_chat_session(
         bail!(
             "Member '{}' not found in team '{}'. \
              Run `bm members list` to see hired members.",
-            member, team_name
+            member,
+            team_name
         );
     }
 
@@ -98,7 +100,8 @@ pub fn prepare_chat_session(
                 bail!(
                     "Hat '{}' not found for member '{}'. \
                      No hats with instructions found in ralph.yml",
-                    hat_name, member
+                    hat_name,
+                    member
                 );
             } else {
                 let mut available: Vec<&str> =
@@ -106,7 +109,9 @@ pub fn prepare_chat_session(
                 available.sort();
                 bail!(
                     "Hat '{}' not found for member '{}'. Available hats: {}",
-                    hat_name, member, available.join(", ")
+                    hat_name,
+                    member,
+                    available.join(", ")
                 );
             }
         }
@@ -143,7 +148,10 @@ pub fn prepare_chat_session(
     };
     let meta_prompt = build_meta_prompt(&params);
 
-    Ok(AgentSession { meta_prompt, ws_path })
+    Ok(AgentSession {
+        meta_prompt,
+        ws_path,
+    })
 }
 
 /// Builds a meta-prompt for an interactive `bm chat` session.
@@ -156,10 +164,7 @@ pub fn build_meta_prompt(params: &MetaPromptParams) -> String {
     let mut out = String::new();
 
     // Header: role identity
-    out.push_str(&format!(
-        "# Interactive Session — {}\n",
-        params.member_name
-    ));
+    out.push_str(&format!("# Interactive Session — {}\n", params.member_name));
     out.push('\n');
     out.push_str(&format!(
         "You are a member of the {} team.\n",
@@ -263,7 +268,10 @@ pub fn inject_app_credentials(ws_path: &Path, team_name: &str, member_name: &str
         std::env::set_var("GH_CONFIG_DIR", &gh_dir);
         std::env::remove_var("GH_TOKEN");
         std::env::remove_var("GITHUB_TOKEN");
-        eprintln!("Using GitHub App identity (GH_CONFIG_DIR: {})", gh_dir.display());
+        eprintln!(
+            "Using GitHub App identity (GH_CONFIG_DIR: {})",
+            gh_dir.display()
+        );
         true
     } else if gh_dir.is_dir() {
         eprintln!("Warning: App credential directory found but hosts.yml is missing. Using personal GitHub auth.");
@@ -309,7 +317,8 @@ fn refresh_token_from_keyring(ws_path: &Path, team_name: &str, member_name: &str
         Ok(Some(v)) => v,
         _ => return,
     };
-    let installation_id: u64 = match store.retrieve(&credential_keys::installation_id(member_name)) {
+    let installation_id: u64 = match store.retrieve(&credential_keys::installation_id(member_name))
+    {
         Ok(Some(v)) => match v.parse() {
             Ok(id) => id,
             Err(_) => return,
@@ -367,15 +376,16 @@ pub fn launch_session(
         .context("Failed to write meta-prompt to temp file")?;
 
     let tmp_path = tmp_file.into_temp_path();
-    let tmp_path_str = tmp_path
-        .to_str()
-        .context("Temp path is not valid UTF-8")?;
-    let prompt_flag = coding_agent.system_prompt_flag.as_deref().with_context(|| {
-        format!(
-            "Coding agent '{}' ({}) does not define a system_prompt_flag",
-            coding_agent.display_name, coding_agent.binary
-        )
-    })?;
+    let tmp_path_str = tmp_path.to_str().context("Temp path is not valid UTF-8")?;
+    let prompt_flag = coding_agent
+        .system_prompt_flag
+        .as_deref()
+        .with_context(|| {
+            format!(
+                "Coding agent '{}' ({}) does not define a system_prompt_flag",
+                coding_agent.display_name, coding_agent.binary
+            )
+        })?;
 
     let mut args: Vec<&str> = vec![prompt_flag, tmp_path_str];
     if autonomous {
@@ -482,10 +492,7 @@ pub fn prepare_meeting_session(
 /// - prompt="start", input=None → "start"
 /// - prompt=None, input="plan something" → "plan something"
 /// - prompt=None, input=None → None
-pub fn build_meeting_prompt(
-    prompt: Option<&str>,
-    user_input: Option<&str>,
-) -> Option<String> {
+pub fn build_meeting_prompt(prompt: Option<&str>, user_input: Option<&str>) -> Option<String> {
     match (prompt, user_input) {
         (Some(p), Some(input)) => Some(format!("{} {}", p, input)),
         (Some(p), None) => Some(p.to_string()),
@@ -563,7 +570,10 @@ mod tests {
             skills: &[],
         };
         let result = build_meta_prompt(&params);
-        assert!(result.contains("## Guardrails"), "Missing Guardrails heading");
+        assert!(
+            result.contains("## Guardrails"),
+            "Missing Guardrails heading"
+        );
         assert!(
             result.contains("999. Always follow team invariants"),
             "Missing guardrail 999"
@@ -744,7 +754,10 @@ mod tests {
         let result = build_meta_prompt(&params);
         // Guardrails heading should exist even if empty
         assert!(result.contains("## Guardrails"));
-        assert!(!result.contains("999."), "No numbered items when guardrails empty");
+        assert!(
+            !result.contains("999."),
+            "No numbered items when guardrails empty"
+        );
     }
 
     #[test]
@@ -992,20 +1005,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let result = prepare_meeting_session(tmp.path(), "engineer-01", "   ");
         let err = result.err().expect("should fail for empty instructions");
-        assert!(
-            err.to_string().contains("must not be empty")
-        );
+        assert!(err.to_string().contains("must not be empty"));
     }
 
     #[test]
     fn prepare_meeting_session_missing_workspace_fails() {
         let tmp = tempfile::tempdir().unwrap();
-        let result =
-            prepare_meeting_session(tmp.path(), "engineer-01", "You are an engineer.");
+        let result = prepare_meeting_session(tmp.path(), "engineer-01", "You are an engineer.");
         let err = result.err().expect("should fail for missing workspace");
-        assert!(
-            err.to_string().contains("No workspace found")
-        );
+        assert!(err.to_string().contains("No workspace found"));
     }
 
     #[test]
@@ -1015,9 +1023,8 @@ mod tests {
         std::fs::create_dir_all(&ws).unwrap();
         std::fs::write(ws.join(".botminter.workspace"), "").unwrap();
 
-        let session =
-            prepare_meeting_session(tmp.path(), "engineer-01", "You are an engineer.")
-                .expect("should succeed with valid workspace");
+        let session = prepare_meeting_session(tmp.path(), "engineer-01", "You are an engineer.")
+            .expect("should succeed with valid workspace");
         assert_eq!(session.meta_prompt, "You are an engineer.");
         assert_eq!(session.ws_path, ws);
     }
@@ -1031,15 +1038,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
-        std::fs::write(gh_dir.join("hosts.yml"), "github.com:\n  oauth_token: test\n").unwrap();
+        std::fs::write(
+            gh_dir.join("hosts.yml"),
+            "github.com:\n  oauth_token: test\n",
+        )
+        .unwrap();
 
         std::env::remove_var("GH_CONFIG_DIR");
 
         let result = inject_app_credentials(tmp.path(), "test-team", "test-member");
 
         assert!(result, "Should return true when credentials are available");
-        let config_dir =
-            std::env::var("GH_CONFIG_DIR").expect("GH_CONFIG_DIR should be set");
+        let config_dir = std::env::var("GH_CONFIG_DIR").expect("GH_CONFIG_DIR should be set");
         assert_eq!(
             config_dir,
             gh_dir.to_str().unwrap(),
@@ -1054,7 +1064,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
-        std::fs::write(gh_dir.join("hosts.yml"), "github.com:\n  oauth_token: test\n").unwrap();
+        std::fs::write(
+            gh_dir.join("hosts.yml"),
+            "github.com:\n  oauth_token: test\n",
+        )
+        .unwrap();
 
         std::env::set_var("GH_TOKEN", "should-be-removed");
         std::env::set_var("GITHUB_TOKEN", "should-be-removed");

@@ -8,6 +8,10 @@ use super::api::{
     StartMembersRequest, StartMembersResponse, StopMembersRequest, StopMembersResponse,
 };
 use super::config::{DaemonConfig, DaemonPaths};
+use super::session_api::{
+    SessionInfo, SessionsListResponse, StartSessionRequest, StartSessionResponse,
+    StopSessionResponse,
+};
 use crate::state;
 
 /// HTTP client for communicating with a running daemon.
@@ -151,6 +155,33 @@ impl DaemonClient {
         resp.json::<HealthResponse>()
             .context("Failed to parse health response")
     }
+
+    /// POST /api/sessions/start — create and register a new session for `member`.
+    pub fn start_session(
+        &self,
+        member: &str,
+        session_type: &str,
+    ) -> Result<StartSessionResponse> {
+        let _ = (member, session_type);
+        todo!("CT-04: implement session start client method")
+    }
+
+    /// POST /api/sessions/{id}/stop — stop the agent and deactivate the session.
+    pub fn stop_session(&self, session_id: &str) -> Result<StopSessionResponse> {
+        let _ = session_id;
+        todo!("CT-04: implement session stop client method")
+    }
+
+    /// GET /api/sessions — list all active sessions.
+    pub fn list_sessions(&self) -> Result<SessionsListResponse> {
+        todo!("CT-04: implement session list client method")
+    }
+
+    /// GET /api/sessions/{id} — get a single session by ID.
+    pub fn get_session(&self, session_id: &str) -> Result<SessionInfo> {
+        let _ = session_id;
+        todo!("CT-04: implement session get client method")
+    }
 }
 
 /// Reads the daemon config file for a team.
@@ -180,12 +211,10 @@ mod tests {
         let paths = DaemonPaths::new_with_dir("test-team", "/tmp/nonexistent-dir-12345");
         let result = load_daemon_config(&paths);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Daemon config not found")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Daemon config not found"));
     }
 
     #[test]
@@ -219,12 +248,10 @@ mod tests {
 
         let result = load_daemon_config(&paths);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Failed to parse daemon config")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to parse daemon config"));
     }
 
     #[test]
@@ -399,5 +426,161 @@ mod tests {
         assert!(resp.loop_id.is_none());
         assert!(resp.pid.is_none());
         assert_eq!(resp.error, Some("no workspace found".to_string()));
+    }
+
+    // ── Session API type serde tests ─────────────────────────────────────────
+
+    // AC-1/8: StartSessionRequest serializes member and session_type fields
+    #[test]
+    fn session_start_request_serializes_member_and_type() {
+        let req = StartSessionRequest {
+            member: "alice".to_string(),
+            session_type: "interactive".to_string(),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["member"], "alice");
+        assert_eq!(parsed["session_type"], "interactive");
+    }
+
+    // AC-1: StartSessionResponse deserializes ok+session fields
+    #[test]
+    fn session_start_response_ok_deserializes_with_session_info() {
+        let json = serde_json::json!({
+            "ok": true,
+            "session": {
+                "session_id": "abc12345",
+                "owning_member": "alice",
+                "session_type": "interactive",
+                "current_state": "Active",
+                "start_time": "2026-05-31T00:00:00Z",
+                "workspace_path": "/tmp/ws/alice"
+            },
+            "error": null
+        });
+        let resp: StartSessionResponse = serde_json::from_value(json).unwrap();
+        assert!(resp.ok);
+        let session = resp.session.expect("session must be present on ok=true");
+        assert_eq!(session.session_id, "abc12345");
+        assert_eq!(session.owning_member, "alice");
+        assert_eq!(session.current_state, "Active");
+    }
+
+    // AC-6: SessionsListResponse deserializes sessions array
+    #[test]
+    fn session_list_response_deserializes_sessions_array() {
+        let json = serde_json::json!({
+            "sessions": [
+                {
+                    "session_id": "abc12345",
+                    "owning_member": "alice",
+                    "session_type": "interactive",
+                    "current_state": "Active",
+                    "start_time": "2026-05-31T00:00:00Z",
+                    "workspace_path": null
+                },
+                {
+                    "session_id": "def67890",
+                    "owning_member": "bob",
+                    "session_type": "loop",
+                    "current_state": "Active",
+                    "start_time": "2026-05-31T01:00:00Z",
+                    "workspace_path": null
+                }
+            ]
+        });
+        let resp: SessionsListResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(resp.sessions.len(), 2);
+        assert_eq!(resp.sessions[0].session_id, "abc12345");
+        assert_eq!(resp.sessions[1].owning_member, "bob");
+    }
+
+    // AC-7: StopSessionResponse deserializes with structured dirty_repos
+    #[test]
+    fn session_stop_response_deserializes_structured_dirty_repos() {
+        let json = serde_json::json!({
+            "ok": true,
+            "dirty_repos": [
+                {
+                    "name": "my-project",
+                    "has_uncommitted": true,
+                    "unpushed_branches": ["feature/x", "hotfix/z"]
+                }
+            ],
+            "error": null
+        });
+        let resp: StopSessionResponse = serde_json::from_value(json).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.dirty_repos.len(), 1);
+        assert_eq!(resp.dirty_repos[0].name, "my-project");
+        assert!(resp.dirty_repos[0].has_uncommitted);
+        assert_eq!(resp.dirty_repos[0].unpushed_branches, vec!["feature/x", "hotfix/z"]);
+    }
+
+    // AC-7: StopSessionResponse with empty dirty_repos (clean workspace)
+    #[test]
+    fn session_stop_response_empty_dirty_repos_for_clean_workspace() {
+        let json = serde_json::json!({
+            "ok": true,
+            "dirty_repos": [],
+            "error": null
+        });
+        let resp: StopSessionResponse = serde_json::from_value(json).unwrap();
+        assert!(resp.ok);
+        assert!(resp.dirty_repos.is_empty());
+    }
+
+    // ── Session client behavioral tests (FAIL in RED — stubs panic via todo!()) ──
+
+    // AC-1: DaemonClient::start_session sends correct request and returns SessionInfo
+    #[test]
+    fn client_start_session_returns_session_info() {
+        // Create a minimal DaemonClient to call start_session
+        // (the method panics via todo!() — RED state)
+        let client = DaemonClient {
+            base_url: "http://127.0.0.1:19999".to_string(),
+            client: reqwest::blocking::Client::new(),
+        };
+        let result = client.start_session("alice", "interactive");
+        let resp = result.unwrap();
+        assert!(resp.ok, "start_session must return ok=true on success");
+        assert!(resp.session.is_some(), "start_session must return session info");
+    }
+
+    // AC-6: DaemonClient::list_sessions returns sessions array
+    #[test]
+    fn client_list_sessions_returns_sessions_array() {
+        let client = DaemonClient {
+            base_url: "http://127.0.0.1:19999".to_string(),
+            client: reqwest::blocking::Client::new(),
+        };
+        let result = client.list_sessions();
+        let resp = result.unwrap();
+        // sessions may be empty if none active; field must exist
+        let _ = resp.sessions;
+    }
+
+    // AC-5: DaemonClient::stop_session returns deactivation result
+    #[test]
+    fn client_stop_session_returns_deactivation_result() {
+        let client = DaemonClient {
+            base_url: "http://127.0.0.1:19999".to_string(),
+            client: reqwest::blocking::Client::new(),
+        };
+        let result = client.stop_session("sess-abc12345");
+        let resp = result.unwrap();
+        assert!(resp.ok, "stop_session must return ok=true for known session");
+    }
+
+    // AC-8: DaemonClient::get_session returns session info
+    #[test]
+    fn client_get_session_returns_session_info_by_id() {
+        let client = DaemonClient {
+            base_url: "http://127.0.0.1:19999".to_string(),
+            client: reqwest::blocking::Client::new(),
+        };
+        let result = client.get_session("sess-abc12345");
+        let info = result.unwrap();
+        assert_eq!(info.session_id, "sess-abc12345");
     }
 }
