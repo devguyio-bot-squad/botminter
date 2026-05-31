@@ -2,6 +2,7 @@ pub(crate) mod finalization;
 pub mod lock;
 pub mod manager;
 pub mod registry;
+pub mod retention;
 pub mod types;
 
 pub use finalization::categorize::{categorize, Category, RemoteStatus, RepoContext, RepoKind};

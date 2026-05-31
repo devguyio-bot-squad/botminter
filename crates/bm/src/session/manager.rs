@@ -1232,3 +1232,140 @@ mod session_cleanup_inspection_tests {
         assert!(!workspace.exists());
     }
 }
+
+#[cfg(test)]
+mod restart_recovery_tests {
+    use chrono::Utc;
+    use tempfile::TempDir;
+
+    use crate::session::manager::{RecoveryReport, SessionManager};
+    use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
+
+    fn make_manager(tmp: &TempDir) -> SessionManager {
+        let registry_path = tmp.path().join("registry.json");
+        SessionManager::new(tmp.path().to_path_buf(), registry_path).unwrap()
+    }
+
+    fn add_session_with_state_and_pid(
+        manager: &mut super::SessionManager,
+        state: SessionState,
+        pid: Option<u32>,
+    ) -> SessionId {
+        let id = SessionId::new();
+        let record = SessionRecord {
+            session_id: id.clone(),
+            member_name: "alice".to_string(),
+            session_type: SessionType::Loop,
+            current_state: state,
+            created_at: Utc::now(),
+            state_transitioned_at: Utc::now(),
+            agent_pid: pid,
+            workspace_path: None,
+        };
+        manager.registry.register(record).unwrap();
+        id
+    }
+
+    // AC-25: Active session with a dead PID → transitioned to Failed on recovery.
+    #[test]
+    fn recover_stale_sessions_active_dead_pid_to_failed() {
+        let tmp = TempDir::new().unwrap();
+        let mut manager = make_manager(&tmp);
+        let id = add_session_with_state_and_pid(&mut manager, SessionState::Active, Some(0));
+        manager.registry.save().unwrap();
+
+        let report: RecoveryReport = manager.recover_stale_sessions_with(|_pid| false).unwrap();
+
+        assert_eq!(report.recovered, 1, "one stale session must be recovered");
+        let updated = manager.registry.get(&id).unwrap();
+        assert_eq!(
+            updated.current_state,
+            SessionState::Failed,
+            "stale Active session must be transitioned to Failed"
+        );
+    }
+
+    // AC-25: Finalizing session with a dead PID → transitioned to Failed on recovery.
+    #[test]
+    fn recover_stale_sessions_finalizing_dead_pid_to_failed() {
+        let tmp = TempDir::new().unwrap();
+        let mut manager = make_manager(&tmp);
+        let id = add_session_with_state_and_pid(&mut manager, SessionState::Finalizing, Some(0));
+        manager.registry.save().unwrap();
+
+        let report: RecoveryReport = manager.recover_stale_sessions_with(|_pid| false).unwrap();
+
+        assert_eq!(report.recovered, 1);
+        let updated = manager.registry.get(&id).unwrap();
+        assert_eq!(
+            updated.current_state,
+            SessionState::Failed,
+            "stale Finalizing session must be transitioned to Failed"
+        );
+    }
+
+    // AC-25: Active session with a live PID → left unchanged.
+    #[test]
+    fn recover_stale_sessions_live_pid_unchanged() {
+        let tmp = TempDir::new().unwrap();
+        let mut manager = make_manager(&tmp);
+        let id = add_session_with_state_and_pid(&mut manager, SessionState::Active, Some(1));
+        manager.registry.save().unwrap();
+
+        let report: RecoveryReport = manager.recover_stale_sessions_with(|_pid| true).unwrap();
+
+        assert_eq!(report.recovered, 0, "live session must not be recovered");
+        let unchanged = manager.registry.get(&id).unwrap();
+        assert_eq!(unchanged.current_state, SessionState::Active);
+    }
+
+    // AC-25: Active session with no PID → left unchanged (not yet attached to a process).
+    #[test]
+    fn recover_stale_sessions_no_pid_unchanged() {
+        let tmp = TempDir::new().unwrap();
+        let mut manager = make_manager(&tmp);
+        let id = add_session_with_state_and_pid(&mut manager, SessionState::Active, None);
+        manager.registry.save().unwrap();
+
+        let report: RecoveryReport = manager.recover_stale_sessions_with(|_pid| false).unwrap();
+
+        assert_eq!(
+            report.recovered, 0,
+            "session without PID must not be recovered"
+        );
+        let unchanged = manager.registry.get(&id).unwrap();
+        assert_eq!(unchanged.current_state, SessionState::Active);
+    }
+
+    // AC-25: Terminal and Retained sessions are not touched by recovery.
+    #[test]
+    fn recover_stale_sessions_ignores_terminal_states() {
+        let tmp = TempDir::new().unwrap();
+        let mut manager = make_manager(&tmp);
+        let id_completed =
+            add_session_with_state_and_pid(&mut manager, SessionState::Completed, Some(0));
+        let id_failed = add_session_with_state_and_pid(&mut manager, SessionState::Failed, Some(0));
+        let id_retained =
+            add_session_with_state_and_pid(&mut manager, SessionState::Retained, Some(0));
+        manager.registry.save().unwrap();
+
+        let report: RecoveryReport = manager.recover_stale_sessions_with(|_pid| false).unwrap();
+
+        assert_eq!(
+            report.recovered, 0,
+            "terminal/retained sessions must not be recovered"
+        );
+        assert_eq!(
+            manager.registry.get(&id_completed).unwrap().current_state,
+            SessionState::Completed
+        );
+        assert_eq!(
+            manager.registry.get(&id_failed).unwrap().current_state,
+            SessionState::Failed
+        );
+        assert_eq!(
+            manager.registry.get(&id_retained).unwrap().current_state,
+            SessionState::Retained
+        );
+    }
+}
