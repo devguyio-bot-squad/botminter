@@ -972,3 +972,192 @@ mod session_finalization_integration_tests {
         );
     }
 }
+
+// AC-18: Session inspection and manual cleanup — RED phase tests
+// These tests reference SessionInspection, CleanupFilter, CleanupReport and
+// inspect_session / cleanup_session / cleanup_sessions methods that do not
+// exist yet, producing compile errors (E0412 / E0599).
+#[cfg(test)]
+mod session_cleanup_inspection_tests {
+    use super::*;
+    use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
+    use chrono::Utc;
+    use tempfile::TempDir;
+
+    fn make_manager(tmp: &TempDir) -> SessionManager {
+        SessionManager::new(
+            tmp.path().join("workspaces"),
+            tmp.path().join("registry.json"),
+        )
+        .unwrap()
+    }
+
+    fn add_retained_session(
+        manager: &mut SessionManager,
+        member: &str,
+        workspace_path: Option<std::path::PathBuf>,
+    ) -> SessionId {
+        let record = SessionRecord {
+            session_id: SessionId::new(),
+            member_name: member.to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Retained,
+            created_at: Utc::now(),
+            state_transitioned_at: Utc::now(),
+            agent_pid: None,
+            workspace_path,
+        };
+        let id = record.session_id.clone();
+        manager.registry.register(record).unwrap();
+        id
+    }
+
+    // AC-18 (inspection): inspect_session returns structured summary for a Retained session.
+    // SessionInspection type and inspect_session method don't exist yet → compile error.
+    #[test]
+    fn inspect_retained_session_returns_structured_summary() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("ws/alice");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let mut manager = make_manager(&tmp);
+        let id = add_retained_session(&mut manager, "alice", Some(workspace));
+
+        let inspection: SessionInspection = manager.inspect_session(&id).unwrap();
+        assert_eq!(inspection.member_name, "alice");
+        assert_eq!(inspection.current_state, SessionState::Retained);
+        assert!(
+            inspection.workspace_path.is_some(),
+            "inspection must include workspace path"
+        );
+    }
+
+    // AC-18 (inspection): inspect_session returns error for unknown session ID.
+    #[test]
+    fn inspect_unknown_session_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let manager = make_manager(&tmp);
+        let phantom = SessionId::new();
+        let result: anyhow::Result<SessionInspection> = manager.inspect_session(&phantom);
+        assert!(result.is_err(), "inspect_session on unknown ID must fail");
+    }
+
+    // AC-18 (individual cleanup): cleanup_session removes workspace dir and registry entry.
+    #[test]
+    fn cleanup_session_removes_workspace_directory_and_registry_entry() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("ws/alice");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let mut manager = make_manager(&tmp);
+        let id = add_retained_session(&mut manager, "alice", Some(workspace.clone()));
+        manager.registry.save().unwrap();
+
+        // cleanup_session method doesn't exist yet → E0599
+        manager.cleanup_session(&id).unwrap();
+
+        assert!(
+            !workspace.exists(),
+            "workspace directory must be removed after cleanup"
+        );
+        assert!(
+            manager.registry.get(&id).is_none(),
+            "session must be removed from registry after cleanup"
+        );
+    }
+
+    // AC-18 (bulk cleanup): cleanup_sessions with member filter removes only matching sessions.
+    #[test]
+    fn cleanup_sessions_member_filter_removes_only_matching() {
+        let tmp = TempDir::new().unwrap();
+        let ws_a1 = tmp.path().join("ws/alice-1");
+        let ws_a2 = tmp.path().join("ws/alice-2");
+        let ws_bob = tmp.path().join("ws/bob");
+        for p in [&ws_a1, &ws_a2, &ws_bob] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        let mut manager = make_manager(&tmp);
+        let _id_a1 = add_retained_session(&mut manager, "alice", Some(ws_a1.clone()));
+        let _id_a2 = add_retained_session(&mut manager, "alice", Some(ws_a2.clone()));
+        let id_bob = add_retained_session(&mut manager, "bob", Some(ws_bob.clone()));
+
+        // CleanupFilter and cleanup_sessions don't exist yet → E0412 / E0599
+        let report: CleanupReport = manager
+            .cleanup_sessions(CleanupFilter::Member("alice".to_string()))
+            .unwrap();
+
+        assert_eq!(
+            report.removed, 2,
+            "exactly 2 alice sessions must be removed"
+        );
+        assert!(!ws_a1.exists(), "alice workspace 1 must be removed");
+        assert!(!ws_a2.exists(), "alice workspace 2 must be removed");
+        assert!(ws_bob.exists(), "bob workspace must NOT be removed");
+        assert!(
+            manager.registry.get(&id_bob).is_some(),
+            "bob session must remain in registry"
+        );
+    }
+
+    // AC-18 (bulk cleanup): cleanup_sessions with OlderThan filter removes only old sessions.
+    #[test]
+    fn cleanup_sessions_older_than_removes_only_old_sessions() {
+        let tmp = TempDir::new().unwrap();
+        let ws_old = tmp.path().join("ws/old-session");
+        let ws_new = tmp.path().join("ws/new-session");
+        for p in [&ws_old, &ws_new] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        let mut manager = make_manager(&tmp);
+
+        // Insert an old session: state_transitioned_at 49 hours in the past
+        let old_id = {
+            let id = SessionId::new();
+            let record = SessionRecord {
+                session_id: id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Retained,
+                created_at: Utc::now() - chrono::Duration::hours(49),
+                state_transitioned_at: Utc::now() - chrono::Duration::hours(49),
+                agent_pid: None,
+                workspace_path: Some(ws_old.clone()),
+            };
+            manager.registry.register(record).unwrap();
+            id
+        };
+        let new_id = add_retained_session(&mut manager, "bob", Some(ws_new.clone()));
+
+        // CleanupFilter::OlderThan and cleanup_sessions don't exist yet → E0412 / E0599
+        let report: CleanupReport = manager
+            .cleanup_sessions(CleanupFilter::OlderThan(std::time::Duration::from_secs(
+                48 * 3600,
+            )))
+            .unwrap();
+
+        assert_eq!(report.removed, 1, "only the old session must be cleaned up");
+        assert!(!ws_old.exists(), "old session workspace must be removed");
+        assert!(ws_new.exists(), "new session workspace must NOT be removed");
+        assert!(manager.registry.get(&old_id).is_none());
+        assert!(manager.registry.get(&new_id).is_some());
+    }
+
+    // AC-18 (cleanup independence): cleanup_session does not require a tokio runtime.
+    // The call must succeed from a plain synchronous test context.
+    #[test]
+    fn cleanup_does_not_require_tokio_runtime() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("ws/sync-test");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let mut manager = make_manager(&tmp);
+        let id = add_retained_session(&mut manager, "sync-member", Some(workspace.clone()));
+
+        // This must compile and run without #[tokio::test] — no runtime in scope
+        // cleanup_session method doesn't exist yet → E0599
+        let result = manager.cleanup_session(&id);
+        assert!(
+            result.is_ok(),
+            "cleanup_session must succeed without a tokio runtime: {:?}",
+            result.err()
+        );
+        assert!(!workspace.exists());
+    }
+}

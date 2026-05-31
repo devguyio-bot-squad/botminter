@@ -895,4 +895,97 @@ mod tests {
             );
         }
     }
+
+    // ── AC-18: Session inspect and cleanup HTTP API tests ────────────────────
+    // These tests reference inspect_session_handler and cleanup_session_handler
+    // which do not exist yet → compile errors (E0425).
+
+    // AC-18 (inspection): GET /api/sessions/{id}/inspect → 200 with structured summary.
+    #[tokio::test]
+    async fn get_session_inspect_returns_200() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let state = make_test_state();
+        // inspect_session_handler doesn't exist yet → E0425
+        let app = axum::Router::new()
+            .route("/api/sessions/{id}/inspect", get(inspect_session_handler))
+            .with_state(state);
+
+        let request = Request::builder()
+            .method("GET")
+            .uri("/api/sessions/test-session-id/inspect")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        // Unknown session → 404; known session → 200. Either way the route must exist.
+        assert!(
+            response.status() == StatusCode::OK || response.status() == StatusCode::NOT_FOUND,
+            "GET /api/sessions/:id/inspect must be routable (200 or 404), got {}",
+            response.status()
+        );
+    }
+
+    // AC-18 (individual cleanup): DELETE /api/sessions/{id}/cleanup → 200.
+    #[tokio::test]
+    async fn delete_session_cleanup_returns_200() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use axum::routing::delete;
+        use tower::ServiceExt;
+
+        let state = make_test_state();
+        // cleanup_session_handler doesn't exist yet → E0425
+        let app = axum::Router::new()
+            .route(
+                "/api/sessions/{id}/cleanup",
+                delete(cleanup_session_handler),
+            )
+            .with_state(state);
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/api/sessions/nonexistent-id/cleanup")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert!(
+            response.status() == StatusCode::OK || response.status() == StatusCode::NOT_FOUND,
+            "DELETE /api/sessions/:id/cleanup must be routable, got {}",
+            response.status()
+        );
+    }
+
+    // AC-18 (bulk cleanup): DELETE /api/sessions/cleanup?member=alice → 200 with count.
+    #[tokio::test]
+    async fn delete_sessions_bulk_cleanup_returns_200() {
+        use axum::body::Body;
+        use axum::http::Request;
+        use axum::routing::delete;
+        use tower::ServiceExt;
+
+        let state = make_test_state();
+        // bulk_cleanup_handler doesn't exist yet → E0425
+        let app = axum::Router::new()
+            .route("/api/sessions/cleanup", delete(bulk_cleanup_handler))
+            .with_state(state);
+
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/api/sessions/cleanup?member=alice")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "DELETE /api/sessions/cleanup must return 200, got {}",
+            response.status()
+        );
+    }
 }
