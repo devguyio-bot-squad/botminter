@@ -7,6 +7,7 @@
 //!   GET    /api/sessions/{id}           — get session detail
 //!   DELETE /api/sessions/{id}?force     — force-stop a session (skip finalization)
 //!   POST   /api/sessions/{id}/finalize  — re-trigger finalization on a Retained session
+//!   GET    /api/sessions/history        — list terminal sessions (completed/failed/killed)
 
 use std::sync::Arc;
 
@@ -15,7 +16,7 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::session::types::{SessionId, SessionRecord, SessionType};
+use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
 
 use super::run::DaemonState;
 
@@ -599,6 +600,31 @@ pub(super) async fn bulk_cleanup_handler(
             })),
         ),
     }
+}
+
+pub(super) async fn list_session_history_handler(
+    State(state): State<DaemonState>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let manager = Arc::clone(&state.session_manager);
+
+    let sessions = tokio::task::spawn_blocking(move || {
+        let m = manager.lock().unwrap();
+        m.list_terminal()
+            .iter()
+            .map(|r| SessionHistoryInfo {
+                session_id: r.session_id.as_str().to_string(),
+                owning_member: r.member_name.clone(),
+                session_type: session_type_str(&r.session_type).to_string(),
+                start_time: r.created_at.to_rfc3339(),
+                end_time: r.state_transitioned_at.to_rfc3339(),
+                exit_normal: matches!(r.current_state, SessionState::Completed),
+            })
+            .collect::<Vec<_>>()
+    })
+    .await
+    .unwrap_or_default();
+
+    (StatusCode::OK, Json(serde_json::to_value(sessions).unwrap()))
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────

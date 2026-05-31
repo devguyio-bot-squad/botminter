@@ -195,6 +195,19 @@ impl SessionManager {
             .collect()
     }
 
+    pub fn list_terminal(&self) -> Vec<&SessionRecord> {
+        self.registry
+            .list()
+            .into_iter()
+            .filter(|s| {
+                matches!(
+                    s.current_state,
+                    SessionState::Completed | SessionState::Failed | SessionState::Killed
+                )
+            })
+            .collect()
+    }
+
     /// Look up a session by ID. Returns None if the session does not exist.
     pub fn get(&self, id: &SessionId) -> Option<&SessionRecord> {
         self.registry.get(id)
