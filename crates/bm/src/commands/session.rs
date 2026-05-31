@@ -30,7 +30,6 @@ pub fn run(command: SessionCommand) -> Result<()> {
     }
 }
 
-// ── AC-18 RED tests ──────────────────────────────────────────────────────────
 #[cfg(test)]
 mod session_cli_tests {
     use crate::cli::SessionCommand;

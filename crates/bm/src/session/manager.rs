@@ -1053,10 +1053,6 @@ mod session_finalization_integration_tests {
     }
 }
 
-// AC-18: Session inspection and manual cleanup — RED phase tests
-// These tests reference SessionInspection, CleanupFilter, CleanupReport and
-// inspect_session / cleanup_session / cleanup_sessions methods that do not
-// exist yet, producing compile errors (E0412 / E0599).
 #[cfg(test)]
 mod session_cleanup_inspection_tests {
     use super::*;
@@ -1093,7 +1089,6 @@ mod session_cleanup_inspection_tests {
     }
 
     // AC-18 (inspection): inspect_session returns structured summary for a Retained session.
-    // SessionInspection type and inspect_session method don't exist yet → compile error.
     #[test]
     fn inspect_retained_session_returns_structured_summary() {
         let tmp = TempDir::new().unwrap();
@@ -1131,7 +1126,6 @@ mod session_cleanup_inspection_tests {
         let id = add_retained_session(&mut manager, "alice", Some(workspace.clone()));
         manager.registry.save().unwrap();
 
-        // cleanup_session method doesn't exist yet → E0599
         manager.cleanup_session(&id).unwrap();
 
         assert!(
@@ -1159,7 +1153,6 @@ mod session_cleanup_inspection_tests {
         let _id_a2 = add_retained_session(&mut manager, "alice", Some(ws_a2.clone()));
         let id_bob = add_retained_session(&mut manager, "bob", Some(ws_bob.clone()));
 
-        // CleanupFilter and cleanup_sessions don't exist yet → E0412 / E0599
         let report: CleanupReport = manager
             .cleanup_sessions(CleanupFilter::Member("alice".to_string()))
             .unwrap();
@@ -1206,7 +1199,6 @@ mod session_cleanup_inspection_tests {
         };
         let new_id = add_retained_session(&mut manager, "bob", Some(ws_new.clone()));
 
-        // CleanupFilter::OlderThan and cleanup_sessions don't exist yet → E0412 / E0599
         let report: CleanupReport = manager
             .cleanup_sessions(CleanupFilter::OlderThan(std::time::Duration::from_secs(
                 48 * 3600,
@@ -1231,7 +1223,6 @@ mod session_cleanup_inspection_tests {
         let id = add_retained_session(&mut manager, "sync-member", Some(workspace.clone()));
 
         // This must compile and run without #[tokio::test] — no runtime in scope
-        // cleanup_session method doesn't exist yet → E0599
         let result = manager.cleanup_session(&id);
         assert!(
             result.is_ok(),

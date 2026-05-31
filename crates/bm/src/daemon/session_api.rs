@@ -163,18 +163,19 @@ pub struct BulkCleanupParams {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn record_to_info_with_count(record: &SessionRecord, concurrent_count: u32) -> SessionInfo {
-    let session_type_str = match record.session_type {
+fn session_type_str(t: &SessionType) -> &'static str {
+    match t {
         SessionType::Loop => "loop",
         SessionType::Brain => "brain",
         SessionType::Interactive => "interactive",
     }
-    .to_string();
+}
 
+fn record_to_info_with_count(record: &SessionRecord, concurrent_count: u32) -> SessionInfo {
     SessionInfo {
         session_id: record.session_id.as_str().to_string(),
         owning_member: record.member_name.clone(),
-        session_type: session_type_str,
+        session_type: session_type_str(&record.session_type).to_string(),
         current_state: record.current_state.to_string(),
         start_time: record.created_at.to_rfc3339(),
         workspace_path: record
@@ -475,16 +476,11 @@ pub(super) async fn inspect_session_handler(
 
     match result {
         Ok(Ok(inspection)) => {
-            let session_type_str = match inspection.session_type {
-                SessionType::Loop => "loop",
-                SessionType::Brain => "brain",
-                SessionType::Interactive => "interactive",
-            };
             let resp = InspectSessionResponse {
                 ok: true,
                 session_id: inspection.session_id.as_str().to_string(),
                 member_name: inspection.member_name,
-                session_type: session_type_str.to_string(),
+                session_type: session_type_str(&inspection.session_type).to_string(),
                 current_state: inspection.current_state.to_string(),
                 workspace_path: inspection
                     .workspace_path
@@ -1081,8 +1077,6 @@ mod tests {
     }
 
     // ── AC-18: Session inspect and cleanup HTTP API tests ────────────────────
-    // These tests reference inspect_session_handler and cleanup_session_handler
-    // which do not exist yet → compile errors (E0425).
 
     // AC-18 (inspection): GET /api/sessions/{id}/inspect → 200 with structured summary.
     #[tokio::test]
@@ -1093,7 +1087,6 @@ mod tests {
         use tower::ServiceExt;
 
         let state = make_test_state();
-        // inspect_session_handler doesn't exist yet → E0425
         let app = axum::Router::new()
             .route("/api/sessions/{id}/inspect", get(inspect_session_handler))
             .with_state(state);
@@ -1122,7 +1115,6 @@ mod tests {
         use tower::ServiceExt;
 
         let state = make_test_state();
-        // cleanup_session_handler doesn't exist yet → E0425
         let app = axum::Router::new()
             .route(
                 "/api/sessions/{id}/cleanup",
@@ -1153,7 +1145,6 @@ mod tests {
         use tower::ServiceExt;
 
         let state = make_test_state();
-        // bulk_cleanup_handler doesn't exist yet → E0425
         let app = axum::Router::new()
             .route("/api/sessions/cleanup", delete(bulk_cleanup_handler))
             .with_state(state);
