@@ -9,6 +9,7 @@ use chrono::Utc;
 use super::lock::WorkItemLock;
 use super::registry::SessionRegistry;
 use super::types::{SessionId, SessionRecord, SessionState, SessionType};
+use crate::session::finalization::subagent::launch_finalization_subagent;
 use crate::workspace::{push_with_rebase_retry, DEFAULT_MAX_RETRIES};
 
 /// Describes the state of a single project repo after session deactivation.
@@ -98,7 +99,12 @@ impl SessionManager {
             .clone())
     }
 
-    /// Stop the agent for `id`, inspect workspace dirty state, and transition the session to Completed.
+    /// Stop the agent for `id`, inspect workspace dirty state, and transition the session.
+    ///
+    /// If the workspace is clean (or becomes clean after a quick push), transitions to Completed.
+    /// If work remains (uncommitted files or unresolvable push conflicts), launches a finalization
+    /// subagent and transitions to Finalizing instead. The subagent runs in the background;
+    /// `finalization_completed` or `finalization_failed` must be called when it exits.
     ///
     /// Always releases all work-item locks held by this session before returning.
     pub fn deactivate_session(&mut self, id: &SessionId) -> Result<DeactivationResult> {
@@ -109,12 +115,30 @@ impl SessionManager {
             .clone();
 
         let mut dirty_repos = vec![];
+        let mut finalization_launched = false;
+
         if let Some(ref wp) = session.workspace_path {
             dirty_repos = inspect_dirty_repos(wp);
+            // Quick-push any committed-but-unpushed branches before deciding on subagent.
             push_and_refresh_dirty(&mut dirty_repos, wp);
+
+            let still_dirty = dirty_repos
+                .iter()
+                .any(|r| r.has_uncommitted || !r.unpushed_branches.is_empty());
+
+            if still_dirty {
+                if let Ok(_child) = launch_finalization_subagent(wp, id.as_str()) {
+                    // Child runs in background — session management observes completion separately.
+                    finalization_launched = true;
+                }
+            }
         }
 
-        self.registry.update_state(id, SessionState::Completed)?;
+        if finalization_launched {
+            self.registry.update_state(id, SessionState::Finalizing)?;
+        } else {
+            self.registry.update_state(id, SessionState::Completed)?;
+        }
         self.registry.save()?;
         // Release all work-item locks held by this session — prevents orphaned locks.
         let _ = self.work_item_lock.release_all(id);
@@ -122,7 +146,7 @@ impl SessionManager {
         Ok(DeactivationResult {
             session_id: id.clone(),
             dirty_repos,
-            finalization_launched: false,
+            finalization_launched,
         })
     }
 
@@ -146,18 +170,23 @@ impl SessionManager {
     }
 
     /// Transition a Finalizing session to Completed after the subagent exits successfully.
-    pub fn finalization_completed(&mut self, _id: &SessionId) -> Result<()> {
-        todo!("finalization_completed: not yet implemented")
+    pub fn finalization_completed(&mut self, id: &SessionId) -> Result<()> {
+        self.registry.update_state(id, SessionState::Completed)?;
+        self.registry.save()
     }
 
     /// Transition a Finalizing session to Failed when remote preservation is impossible.
-    pub fn finalization_failed(&mut self, _id: &SessionId) -> Result<()> {
-        todo!("finalization_failed: not yet implemented")
+    pub fn finalization_failed(&mut self, id: &SessionId) -> Result<()> {
+        self.registry.update_state(id, SessionState::Failed)?;
+        self.registry.save()
     }
 
     /// Re-trigger finalization on a Retained session: Retained → Finalizing, launch fresh subagent.
-    pub fn retrigger_finalization_for(&mut self, _id: &SessionId) -> Result<()> {
-        todo!("retrigger_finalization_for: not yet implemented")
+    pub fn retrigger_finalization_for(&mut self, id: &SessionId) -> Result<()> {
+        self.registry.update_state(id, SessionState::Finalizing)?;
+        self.registry.save()?;
+        let _ = crate::session::finalization::subagent::retrigger_finalization(id);
+        Ok(())
     }
 }
 

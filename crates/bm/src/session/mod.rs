@@ -5,6 +5,7 @@ pub mod registry;
 pub mod types;
 
 pub use finalization::categorize::{categorize, Category, RemoteStatus, RepoContext, RepoKind};
+pub use finalization::subagent::recovery_branch_name;
 pub use lock::WorkItemLock;
 pub use manager::{DeactivationResult, DirtyRepo, SessionManager};
 pub use types::{SessionId, SessionRecord, SessionState, SessionType};
