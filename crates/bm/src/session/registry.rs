@@ -125,6 +125,7 @@ mod tests {
             state_transitioned_at: Utc::now(),
             agent_pid: None,
             workspace_path: None,
+            finalization_result: None,
         }
     }
 

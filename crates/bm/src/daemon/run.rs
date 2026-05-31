@@ -403,6 +403,7 @@ mod daemon_startup_tests {
             state_transitioned_at: Utc::now(),
             agent_pid: Some(dead_pid),
             workspace_path: None,
+            finalization_result: None,
         };
         manager.registry.register(record).unwrap();
         manager.registry.save().unwrap();

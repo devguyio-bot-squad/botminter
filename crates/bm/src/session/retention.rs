@@ -118,6 +118,7 @@ mod retention_engine_tests {
             state_transitioned_at: Utc::now() - chrono::Duration::seconds(transitioned_secs_ago),
             agent_pid: None,
             workspace_path: workspace,
+            finalization_result: None,
         };
         manager.registry.register(record).unwrap();
         id
@@ -139,6 +140,7 @@ mod retention_engine_tests {
             state_transitioned_at: Utc::now() - chrono::Duration::seconds(transitioned_secs_ago),
             agent_pid: None,
             workspace_path: workspace,
+            finalization_result: None,
         };
         manager.registry.register(record).unwrap();
         id
@@ -160,6 +162,7 @@ mod retention_engine_tests {
             state_transitioned_at: Utc::now() - chrono::Duration::seconds(transitioned_secs_ago),
             agent_pid: None,
             workspace_path: workspace,
+            finalization_result: None,
         };
         manager.registry.register(record).unwrap();
         id
@@ -367,6 +370,7 @@ mod retention_engine_tests {
             state_transitioned_at: Utc::now() - chrono::Duration::hours(48),
             agent_pid: Some(99999),
             workspace_path: Some(ws.clone()),
+            finalization_result: None,
         };
         manager.registry.register(record).unwrap();
         manager.registry.save().unwrap();

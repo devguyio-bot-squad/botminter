@@ -93,6 +93,31 @@ impl std::fmt::Display for SessionState {
     }
 }
 
+/// Finalization outcome status.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FinalizationExitStatus {
+    Success,
+    Failure,
+}
+
+/// Result of a completed finalization — written into SessionRecord when finalization ends.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FinalizationResult {
+    pub committed_repos: Vec<String>,
+    pub pushed_branches: Vec<String>,
+    pub recovery_branches: Vec<String>,
+    pub issue_urls: Vec<String>,
+    pub exit_status: FinalizationExitStatus,
+}
+
+/// Snapshot of git state in a session's workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitState {
+    pub branches: Vec<String>,
+    pub has_uncommitted: bool,
+    pub unpushed_commits: Vec<String>,
+}
+
 /// A persistent record of a tracked session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRecord {
@@ -104,6 +129,8 @@ pub struct SessionRecord {
     pub state_transitioned_at: DateTime<Utc>,
     pub agent_pid: Option<u32>,
     pub workspace_path: Option<PathBuf>,
+    #[serde(default)]
+    pub finalization_result: Option<FinalizationResult>,
 }
 
 #[cfg(test)]
@@ -120,6 +147,7 @@ mod tests {
             state_transitioned_at: Utc::now(),
             agent_pid: None,
             workspace_path: None,
+            finalization_result: None,
         }
     }
 
@@ -215,5 +243,40 @@ mod tests {
                 "{from} -> {to} must be a valid transition"
             );
         }
+    }
+
+    // AC-18: FinalizationResult data contract — CT-89-06 RED
+
+    #[test]
+    fn finalization_result_has_required_fields() {
+        // E0422: `FinalizationResult` not found until types.rs adds the struct
+        let r = FinalizationResult {
+            committed_repos: vec!["botminter".to_string()],
+            pushed_branches: vec!["main".to_string()],
+            recovery_branches: vec![],
+            issue_urls: vec![],
+            exit_status: FinalizationExitStatus::Success,
+        };
+        assert_eq!(r.committed_repos, vec!["botminter"]);
+        assert_eq!(r.exit_status, FinalizationExitStatus::Success);
+    }
+
+    #[test]
+    fn git_state_has_required_fields() {
+        // E0422: `GitState` not found until types.rs adds the struct
+        let gs = GitState {
+            branches: vec!["main".to_string()],
+            has_uncommitted: false,
+            unpushed_commits: vec![],
+        };
+        assert!(!gs.has_uncommitted);
+        assert_eq!(gs.branches, vec!["main"]);
+    }
+
+    #[test]
+    fn session_record_has_finalization_result_field() {
+        let r = make_record("alice", SessionType::Loop);
+        // E0609: no field `finalization_result` on `SessionRecord` until added
+        let _: &Option<FinalizationResult> = &r.finalization_result;
     }
 }

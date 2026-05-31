@@ -16,7 +16,9 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
+use crate::session::types::{
+    FinalizationResult, GitState, SessionId, SessionRecord, SessionState, SessionType,
+};
 
 use super::run::DaemonState;
 
@@ -135,6 +137,10 @@ pub struct InspectSessionResponse {
     pub workspace_path: Option<String>,
     pub created_at: String,
     pub state_transitioned_at: String,
+    #[serde(default)]
+    pub finalization_results: Option<FinalizationResult>,
+    #[serde(default)]
+    pub git_state: Option<GitState>,
 }
 
 /// Response for DELETE /api/sessions/{id}/cleanup.
@@ -488,6 +494,8 @@ pub(super) async fn inspect_session_handler(
                     .map(|p| p.to_string_lossy().to_string()),
                 created_at: inspection.created_at.to_rfc3339(),
                 state_transitioned_at: inspection.state_transitioned_at.to_rfc3339(),
+                finalization_results: inspection.finalization_results,
+                git_state: inspection.git_state,
             };
             (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
         }
