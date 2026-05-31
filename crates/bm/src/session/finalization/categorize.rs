@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 /// Classification of a workspace file for finalization purposes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Category {
-    /// Commit this file and push the branch (project non-default branch, or team repo knowledge paths).
+    /// Commit this file and push the branch (project non-default branch, or team repo specs/knowledge paths).
     CommitAndPush,
     /// Branch already has committed work that needs to be pushed.
     PushOnly,

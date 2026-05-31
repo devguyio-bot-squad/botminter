@@ -1,1 +1,1 @@
-pub mod categorize;
+pub(super) mod categorize;
