@@ -29,15 +29,14 @@ pub fn push_with_rebase_retry(
         let is_nff = stderr.contains("non-fast-forward") || stderr.contains("[rejected]");
 
         if !is_nff {
-            bail!("git push failed (non-retryable): {}", stderr.trim());
+            bail!(
+                "git push {remote}/{branch} failed (non-retryable): {}",
+                stderr.trim()
+            );
         }
 
         if attempt == max_retries {
-            bail!(
-                "Push failed after {} rebase+retry attempts on branch '{}'",
-                max_retries,
-                branch
-            );
+            break;
         }
 
         let fetch = Command::new("git")
@@ -46,7 +45,7 @@ pub fn push_with_rebase_retry(
             .output()?;
         if !fetch.status.success() {
             bail!(
-                "git fetch failed: {}",
+                "git fetch {remote} failed (attempt {attempt}): {}",
                 String::from_utf8_lossy(&fetch.stderr).trim()
             );
         }
@@ -58,13 +57,13 @@ pub fn push_with_rebase_retry(
             .output()?;
         if !rebase.status.success() {
             bail!(
-                "git rebase failed during push retry: {}",
+                "git rebase {rebase_target} failed during push retry (attempt {attempt}): {}",
                 String::from_utf8_lossy(&rebase.stderr).trim()
             );
         }
     }
 
-    unreachable!()
+    bail!("Push failed after {max_retries} rebase+retry attempts on branch '{branch}'")
 }
 
 #[cfg(test)]
@@ -145,7 +144,11 @@ mod tests {
         git_commit_all(&clone_a, "change from A");
 
         let result = push_with_rebase_retry(&clone_a, "origin", "main", 3);
-        assert!(result.is_ok(), "push should succeed on first try: {:?}", result);
+        assert!(
+            result.is_ok(),
+            "push should succeed on first try: {:?}",
+            result
+        );
     }
 
     #[test]
