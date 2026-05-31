@@ -9,8 +9,8 @@ use super::api::{
 };
 use super::config::{DaemonConfig, DaemonPaths};
 use super::session_api::{
-    SessionInfo, SessionsListResponse, StartSessionRequest, StartSessionResponse,
-    StopSessionResponse,
+    ForceStopResponse, RetriggerFinalizationResponse, SessionInfo, SessionsListResponse,
+    StartSessionRequest, StartSessionResponse, StopSessionResponse,
 };
 use crate::state;
 
@@ -157,11 +157,7 @@ impl DaemonClient {
     }
 
     /// POST /api/sessions/start — create and register a new session for `member`.
-    pub fn start_session(
-        &self,
-        member: &str,
-        session_type: &str,
-    ) -> Result<StartSessionResponse> {
+    pub fn start_session(&self, member: &str, session_type: &str) -> Result<StartSessionResponse> {
         let url = format!("{}/api/sessions/start", self.base_url);
         let req = StartSessionRequest {
             member: member.to_string(),
@@ -239,6 +235,46 @@ impl DaemonClient {
 
         resp.json::<SessionInfo>()
             .context("Failed to parse session get response")
+    }
+
+    /// DELETE /api/sessions/{id}?force=true — force-stop a session immediately.
+    ///
+    /// Transitions Active → Killed or Finalizing → Killed without finalization.
+    pub fn force_stop_session(&self, session_id: &str) -> Result<ForceStopResponse> {
+        let url = format!("{}/api/sessions/{}?force=true", self.base_url, session_id);
+        let resp = self
+            .client
+            .delete(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for force stop: {}", status, body);
+        }
+
+        resp.json::<ForceStopResponse>()
+            .context("Failed to parse force stop response")
+    }
+
+    /// POST /api/sessions/{id}/finalize — re-trigger finalization on a Retained session.
+    pub fn retrigger_finalization(&self, session_id: &str) -> Result<RetriggerFinalizationResponse> {
+        let url = format!("{}/api/sessions/{}/finalize", self.base_url, session_id);
+        let resp = self
+            .client
+            .post(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for retrigger finalization: {}", status, body);
+        }
+
+        resp.json::<RetriggerFinalizationResponse>()
+            .context("Failed to parse retrigger finalization response")
     }
 }
 
@@ -572,7 +608,10 @@ mod tests {
         assert_eq!(resp.dirty_repos.len(), 1);
         assert_eq!(resp.dirty_repos[0].name, "my-project");
         assert!(resp.dirty_repos[0].has_uncommitted);
-        assert_eq!(resp.dirty_repos[0].unpushed_branches, vec!["feature/x", "hotfix/z"]);
+        assert_eq!(
+            resp.dirty_repos[0].unpushed_branches,
+            vec!["feature/x", "hotfix/z"]
+        );
     }
 
     // AC-7: StopSessionResponse with empty dirty_repos (clean workspace)
@@ -609,8 +648,7 @@ mod tests {
                     Json(req): Json<serde_json::Value>,
                 ) -> Json<serde_json::Value> {
                     let member = req["member"].as_str().unwrap_or("unknown").to_string();
-                    let session_type =
-                        req["session_type"].as_str().unwrap_or("loop").to_string();
+                    let session_type = req["session_type"].as_str().unwrap_or("loop").to_string();
                     Json(serde_json::json!({
                         "ok": true,
                         "session": {
@@ -629,9 +667,7 @@ mod tests {
                     Json(serde_json::json!({ "sessions": [] }))
                 }
 
-                async fn stub_stop_session(
-                    Path(_id): Path<String>,
-                ) -> Json<serde_json::Value> {
+                async fn stub_stop_session(Path(_id): Path<String>) -> Json<serde_json::Value> {
                     Json(serde_json::json!({
                         "ok": true,
                         "dirty_repos": [],
@@ -639,9 +675,7 @@ mod tests {
                     }))
                 }
 
-                async fn stub_get_session(
-                    Path(id): Path<String>,
-                ) -> Json<serde_json::Value> {
+                async fn stub_get_session(Path(id): Path<String>) -> Json<serde_json::Value> {
                     Json(serde_json::json!({
                         "session_id": id,
                         "owning_member": "stub-member",
@@ -662,9 +696,7 @@ mod tests {
                 std::thread::spawn(move || {
                     let rt = tokio::runtime::Runtime::new().unwrap();
                     rt.block_on(async move {
-                        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-                            .await
-                            .unwrap();
+                        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
                         let port = listener.local_addr().unwrap().port();
                         tx.send(format!("http://127.0.0.1:{port}")).unwrap();
                         axum::serve(listener, router).await.unwrap();
@@ -686,7 +718,10 @@ mod tests {
         let result = client.start_session("alice", "interactive");
         let resp = result.unwrap();
         assert!(resp.ok, "start_session must return ok=true on success");
-        assert!(resp.session.is_some(), "start_session must return session info");
+        assert!(
+            resp.session.is_some(),
+            "start_session must return session info"
+        );
     }
 
     // AC-6: DaemonClient::list_sessions returns sessions array
@@ -712,7 +747,10 @@ mod tests {
         // stop is idempotent — returns ok=true even for unknown session IDs
         let result = client.stop_session("sess-abc12345");
         let resp = result.unwrap();
-        assert!(resp.ok, "stop_session must return ok=true for known session");
+        assert!(
+            resp.ok,
+            "stop_session must return ok=true for known session"
+        );
     }
 
     // AC-8: DaemonClient::get_session returns session info by ID

@@ -8,7 +8,7 @@ use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::Router;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
@@ -157,6 +157,15 @@ async fn run_daemon_async(
             post(session_api::stop_session_handler),
         )
         .route("/api/sessions/{id}", get(session_api::get_session_handler))
+        // Stop variants and force stop (CT-88-03)
+        .route(
+            "/api/sessions/{id}",
+            delete(session_api::force_stop_session_handler),
+        )
+        .route(
+            "/api/sessions/{id}/finalize",
+            post(session_api::retrigger_finalization_handler),
+        )
         .with_state(state.clone())
         .merge(web_router(web_state))
         .layer(cors);

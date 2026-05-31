@@ -1,14 +1,16 @@
 //! HTTP handlers for the session management API.
 //!
 //! Routes (added to the daemon router in run.rs):
-//!   POST   /api/sessions/start     — create a session and launch an agent
-//!   GET    /api/sessions           — list active sessions
-//!   POST   /api/sessions/{id}/stop  — stop agent and deactivate session
-//!   GET    /api/sessions/{id}       — get session detail
+//!   POST   /api/sessions/start          — create a session and launch an agent
+//!   GET    /api/sessions                — list active sessions
+//!   POST   /api/sessions/{id}/stop      — stop agent and deactivate session
+//!   GET    /api/sessions/{id}           — get session detail
+//!   DELETE /api/sessions/{id}?force     — force-stop a session (skip finalization)
+//!   POST   /api/sessions/{id}/finalize  — re-trigger finalization on a Retained session
 
 use std::sync::Arc;
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
@@ -48,6 +50,13 @@ pub struct DirtyRepoInfo {
     pub unpushed_branches: Vec<String>,
 }
 
+impl DirtyRepoInfo {
+    /// True if this repo needs finalization (has uncommitted changes or unpushed branches).
+    pub fn is_dirty(&self) -> bool {
+        self.has_uncommitted || !self.unpushed_branches.is_empty()
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StartSessionResponse {
     pub ok: bool,
@@ -64,6 +73,36 @@ pub struct SessionsListResponse {
 pub struct StopSessionResponse {
     pub ok: bool,
     pub dirty_repos: Vec<DirtyRepoInfo>,
+    pub error: Option<String>,
+}
+
+/// Query params for DELETE /api/sessions/{id}.
+// `force` is read by serde/axum at runtime — rustc's dead-code lint cannot see this.
+#[allow(dead_code)]
+#[derive(Debug, Deserialize)]
+pub struct ForceStopParams {
+    pub force: Option<bool>,
+}
+
+/// Response for DELETE /api/sessions/{id}?force=true.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ForceStopResponse {
+    pub ok: bool,
+    pub session_id: String,
+    /// State the session was transitioned to — always "Killed" for force stop.
+    pub new_state: String,
+    /// Whether a new finalization subagent was launched — always false for force stop.
+    pub finalization_launched: bool,
+    pub error: Option<String>,
+}
+
+/// Response for POST /api/sessions/{id}/finalize.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RetriggerFinalizationResponse {
+    pub ok: bool,
+    pub session_id: String,
+    /// State the session was transitioned to — "Finalizing" on success.
+    pub new_state: String,
     pub error: Option<String>,
 }
 
@@ -222,6 +261,97 @@ pub(super) async fn stop_session_handler(
         error: None,
     };
     (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
+}
+
+/// DELETE /api/sessions/{id}?force=true — force-stop a session, skipping finalization.
+///
+/// Active → Killed immediately (no finalization subagent).
+/// Finalizing → kill the finalization subagent → Killed (workspace retained, re-trigger available).
+pub(super) async fn force_stop_session_handler(
+    State(state): State<DaemonState>,
+    Path(session_id_str): Path<String>,
+    Query(_params): Query<ForceStopParams>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let session_id = SessionId::from_string(session_id_str.clone());
+    let manager = Arc::clone(&state.session_manager);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut m = manager.lock().unwrap();
+        m.force_stop_session(&session_id)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => {
+            let resp = ForceStopResponse {
+                ok: true,
+                session_id: session_id_str,
+                new_state: "Killed".to_string(),
+                finalization_launched: false,
+                error: None,
+            };
+            (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
+        }
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "code": "force_stop_failed",
+                "error": e.to_string()
+            })),
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "ok": false,
+                "code": "internal_error",
+                "error": "internal error"
+            })),
+        ),
+    }
+}
+
+/// POST /api/sessions/{id}/finalize — re-trigger finalization on a Retained session.
+pub(super) async fn retrigger_finalization_handler(
+    State(state): State<DaemonState>,
+    Path(session_id_str): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let session_id = SessionId::from_string(session_id_str.clone());
+    let manager = Arc::clone(&state.session_manager);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut m = manager.lock().unwrap();
+        m.retrigger_finalization_for(&session_id)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => {
+            let resp = RetriggerFinalizationResponse {
+                ok: true,
+                session_id: session_id_str,
+                new_state: "Finalizing".to_string(),
+                error: None,
+            };
+            (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
+        }
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "code": "retrigger_failed",
+                "error": e.to_string()
+            })),
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "ok": false,
+                "code": "internal_error",
+                "error": "internal error"
+            })),
+        ),
+    }
 }
 
 /// GET /api/sessions/{id} — return a single session's detail.
