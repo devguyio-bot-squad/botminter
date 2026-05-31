@@ -8,15 +8,16 @@ use crate::session::types::SessionId;
 /// Build the Command for the finalization subagent without spawning.
 /// Exposed for unit testing so callers can inspect program, CWD, and env vars.
 pub(crate) fn build_finalization_command(workspace_path: &Path, session_id: &str) -> Command {
+    let prompt = format!(
+        "Finalize session {session_id}: inspect all repos, commit and push relevant work, handle push conflicts with D-10 recovery."
+    );
     let mut cmd = Command::new("claude");
     cmd.args([
         "--dangerously-skip-permissions",
         "--agent",
         "finalization",
         "-p",
-        &format!(
-            "Finalize session {session_id}: inspect all repos, commit and push relevant work, handle push conflicts with D-10 recovery."
-        ),
+        &prompt,
     ])
     .current_dir(workspace_path)
     .env("BM_SESSION_ID", session_id)
@@ -44,7 +45,6 @@ mod finalization_subagent_tests {
 
     #[test]
     fn launch_finalization_subagent_spawns_claude_binary() {
-        // RED: fails until GREEN replaces stub "sh" with "claude"
         let workspace = PathBuf::from("/tmp/test-workspace");
         let cmd = build_finalization_command(&workspace, "sess-01");
         assert_eq!(
@@ -57,7 +57,6 @@ mod finalization_subagent_tests {
 
     #[test]
     fn launch_finalization_subagent_sets_workspace_as_cwd() {
-        // RED: fails until GREEN sets .current_dir(workspace_path)
         let workspace = PathBuf::from("/tmp/test-workspace");
         let cmd = build_finalization_command(&workspace, "sess-01");
         assert_eq!(
@@ -69,7 +68,6 @@ mod finalization_subagent_tests {
 
     #[test]
     fn launch_finalization_subagent_passes_session_id_in_env() {
-        // RED: fails until GREEN sets .env("BM_SESSION_ID", session_id)
         let workspace = PathBuf::from("/tmp/test-workspace");
         let session_id = "sess-abc-123";
         let cmd = build_finalization_command(&workspace, session_id);
@@ -87,7 +85,6 @@ mod finalization_subagent_tests {
 
     #[test]
     fn finalization_agent_file_exists_in_agentic_sdlc_planning_profile() {
-        // RED: fails until GREEN creates the agent file in the profile
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
         let agent_file = manifest_dir
             .join("../../profiles/agentic-sdlc-planning/coding-agent/agents/finalization.md");
