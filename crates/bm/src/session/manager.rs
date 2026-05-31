@@ -9,7 +9,9 @@ use chrono::Utc;
 use super::lock::WorkItemLock;
 use super::registry::SessionRegistry;
 use super::types::{SessionId, SessionRecord, SessionState, SessionType};
-use crate::session::finalization::subagent::launch_finalization_subagent;
+use crate::session::finalization::subagent::{
+    launch_finalization_subagent, retrigger_finalization,
+};
 use crate::workspace::{push_with_rebase_retry, DEFAULT_MAX_RETRIES};
 
 /// Describes the state of a single project repo after session deactivation.
@@ -182,10 +184,26 @@ impl SessionManager {
     }
 
     /// Re-trigger finalization on a Retained session: Retained → Finalizing, launch fresh subagent.
+    ///
+    /// Returns an error if the session is not in Retained state — only retained sessions can be
+    /// re-finalized; calling this on an active or completed session is a caller bug.
     pub fn retrigger_finalization_for(&mut self, id: &SessionId) -> Result<()> {
+        let current = self
+            .registry
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("session {} not found", id))?
+            .current_state
+            .clone();
+        if current != SessionState::Retained {
+            anyhow::bail!(
+                "retrigger_finalization_for requires Retained state, session {} is {}",
+                id,
+                current
+            );
+        }
         self.registry.update_state(id, SessionState::Finalizing)?;
         self.registry.save()?;
-        let _ = crate::session::finalization::subagent::retrigger_finalization(id);
+        let _ = retrigger_finalization(id);
         Ok(())
     }
 }
@@ -462,16 +480,13 @@ mod tests {
 }
 
 #[cfg(test)]
-mod session_push_integration_tests {
-    use super::*;
+mod git_test_fixtures {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use tempfile::TempDir;
 
-    // ── fixtures ─────────────────────────────────────────────────────────────
-
-    fn init_bare_repo(tmp: &TempDir, name: &str) -> PathBuf {
+    pub fn init_bare_repo(tmp: &TempDir, name: &str) -> PathBuf {
         let bare = tmp.path().join(format!("{name}.git"));
         fs::create_dir_all(&bare).unwrap();
         Command::new("git")
@@ -493,7 +508,11 @@ mod session_push_integration_tests {
         bare
     }
 
-    fn clone_into_workspace_projects(bare: &Path, workspace: &Path, project_name: &str) -> PathBuf {
+    pub fn clone_into_workspace_projects(
+        bare: &Path,
+        workspace: &Path,
+        project_name: &str,
+    ) -> PathBuf {
         let projects = workspace.join("projects");
         fs::create_dir_all(&projects).unwrap();
         let dest = projects.join(project_name);
@@ -504,7 +523,7 @@ mod session_push_integration_tests {
         dest
     }
 
-    fn git_commit_all(repo: &Path, msg: &str) {
+    pub fn git_commit_all(repo: &Path, msg: &str) {
         Command::new("git")
             .args(["-C", repo.to_str().unwrap(), "add", "."])
             .output()
@@ -524,6 +543,15 @@ mod session_push_integration_tests {
             .output()
             .unwrap();
     }
+}
+
+#[cfg(test)]
+mod session_push_integration_tests {
+    use super::git_test_fixtures::{clone_into_workspace_projects, git_commit_all, init_bare_repo};
+    use super::*;
+    use std::fs;
+    use std::process::Command;
+    use tempfile::TempDir;
 
     // ── tests ─────────────────────────────────────────────────────────────────
 
@@ -713,68 +741,13 @@ mod session_push_integration_tests {
 
 #[cfg(test)]
 mod session_finalization_integration_tests {
+    use super::git_test_fixtures::{clone_into_workspace_projects, git_commit_all, init_bare_repo};
     use super::*;
     use crate::session::finalization::subagent::recovery_branch_name;
     use std::fs;
-    use std::path::{Path, PathBuf};
+    use std::path::Path;
     use std::process::Command;
     use tempfile::TempDir;
-
-    // ── git fixtures ──────────────────────────────────────────────────────────
-
-    fn init_bare_repo(tmp: &TempDir, name: &str) -> PathBuf {
-        let bare = tmp.path().join(format!("{name}.git"));
-        fs::create_dir_all(&bare).unwrap();
-        Command::new("git")
-            .args(["init", "--bare", "-b", "main"])
-            .arg(&bare)
-            .output()
-            .unwrap();
-        let seed = tmp.path().join(format!("{name}-seed"));
-        Command::new("git")
-            .args(["clone", bare.to_str().unwrap(), seed.to_str().unwrap()])
-            .output()
-            .unwrap();
-        fs::write(seed.join("file.txt"), "initial\n").unwrap();
-        git_commit_all(&seed, "init");
-        Command::new("git")
-            .args(["-C", seed.to_str().unwrap(), "push"])
-            .output()
-            .unwrap();
-        bare
-    }
-
-    fn clone_into_workspace_projects(bare: &Path, workspace: &Path, project_name: &str) -> PathBuf {
-        let projects = workspace.join("projects");
-        fs::create_dir_all(&projects).unwrap();
-        let dest = projects.join(project_name);
-        Command::new("git")
-            .args(["clone", bare.to_str().unwrap(), dest.to_str().unwrap()])
-            .output()
-            .unwrap();
-        dest
-    }
-
-    fn git_commit_all(repo: &Path, msg: &str) {
-        Command::new("git")
-            .args(["-C", repo.to_str().unwrap(), "add", "."])
-            .output()
-            .unwrap();
-        Command::new("git")
-            .args([
-                "-C",
-                repo.to_str().unwrap(),
-                "-c",
-                "user.email=test@test.com",
-                "-c",
-                "user.name=Test",
-                "commit",
-                "-m",
-                msg,
-            ])
-            .output()
-            .unwrap();
-    }
 
     fn make_manager(workspace_base: &Path, registry_path: &Path) -> SessionManager {
         SessionManager::new(workspace_base.to_path_buf(), registry_path.to_path_buf()).unwrap()
@@ -820,9 +793,7 @@ mod session_finalization_integration_tests {
         let workspace_base = tmp.path().join("workspaces");
         let registry_path = tmp.path().join("sessions.json");
         let mut manager = make_manager(&workspace_base, &registry_path);
-        let record = manager
-            .create_session("bob", SessionType::Loop)
-            .unwrap();
+        let record = manager.create_session("bob", SessionType::Loop).unwrap();
 
         let result = manager.deactivate_session(&record.session_id).unwrap();
 
@@ -844,9 +815,7 @@ mod session_finalization_integration_tests {
         let workspace_base = tmp.path().join("workspaces");
         let registry_path = tmp.path().join("sessions.json");
         let mut manager = make_manager(&workspace_base, &registry_path);
-        let record = manager
-            .create_session("carol", SessionType::Loop)
-            .unwrap();
+        let record = manager.create_session("carol", SessionType::Loop).unwrap();
 
         // Drive to Finalizing directly via registry
         manager
@@ -920,9 +889,7 @@ mod session_finalization_integration_tests {
         let mut manager = make_manager(&workspace_base, &registry_path);
 
         // Drive S1 to Failed (simulating abnormal end)
-        let s1 = manager
-            .create_session("eve", SessionType::Loop)
-            .unwrap();
+        let s1 = manager.create_session("eve", SessionType::Loop).unwrap();
         manager
             .registry
             .update_state(&s1.session_id, SessionState::Failed)
@@ -948,9 +915,7 @@ mod session_finalization_integration_tests {
         let workspace_base = tmp.path().join("workspaces");
         let registry_path = tmp.path().join("sessions.json");
         let mut manager = make_manager(&workspace_base, &registry_path);
-        let record = manager
-            .create_session("frank", SessionType::Loop)
-            .unwrap();
+        let record = manager.create_session("frank", SessionType::Loop).unwrap();
 
         // Drive to Retained: Active → Completed → Retained
         manager
