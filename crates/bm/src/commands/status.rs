@@ -1,13 +1,16 @@
+use std::io::Write;
+
 use anyhow::Result;
 use comfy_table::{
-    ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table,
+    modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, ContentArrangement, Table,
 };
 
 use crate::config;
+use crate::daemon::SessionsListResponse;
 use crate::state::{self, MemberStatus};
 
-/// Handles `bm status [-t team] [-v]`.
-pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
+/// Handles `bm status [-t team] [-v] [--json]`.
+pub fn run(team_flag: Option<&str>, verbose: bool, _json: bool) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
 
@@ -54,11 +57,17 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
         .load_preset(UTF8_FULL_CONDENSED)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::DynamicFullWidth)
-        .set_header(vec!["Member", "Role", "Status", "Enabled", "Branch", "Started", "PID"]);
+        .set_header(vec![
+            "Member", "Role", "Status", "Enabled", "Branch", "Started", "PID",
+        ]);
 
     for m in &info.members {
         let (label, started, pid_str) = match &m.status {
-            MemberStatus::Running { pid, started_at, brain_mode } => {
+            MemberStatus::Running {
+                pid,
+                started_at,
+                brain_mode,
+            } => {
                 let status = if *brain_mode { "brain" } else { "running" };
                 (status, format_timestamp(started_at), pid.to_string())
             }
@@ -128,6 +137,23 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
     Ok(())
 }
 
+/// Fetches sessions via `session_fetcher` and writes the session section to `writer`.
+///
+/// When `json` is true, writes only a JSON `{"sessions":[...]}` object and
+/// suppresses all other output. When the daemon is not reachable, writes
+/// "Sessions: none (daemon not running)" in text mode or `{"sessions":[]}` in JSON mode.
+///
+/// GREEN phase will implement this; the stub currently writes nothing so all
+/// behavioural tests fail (RED phase intent).
+pub(crate) fn fetch_and_display_sessions<W: Write>(
+    _team_name: &str,
+    _json: bool,
+    _writer: &mut W,
+    _session_fetcher: &dyn Fn() -> Result<SessionsListResponse>,
+) -> Result<()> {
+    Ok(())
+}
+
 /// Formats an ISO 8601 timestamp for display, stripping sub-seconds.
 fn format_timestamp(ts: &str) -> String {
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) {
@@ -165,5 +191,144 @@ mod tests {
     fn format_timestamp_empty_passthrough() {
         let result = format_timestamp("");
         assert_eq!(result, "");
+    }
+}
+
+#[cfg(test)]
+mod session_display_tests {
+    use super::*;
+    use crate::daemon::{SessionInfo, SessionsListResponse};
+
+    fn make_session(id: &str, member: &str, stype: &str, state: &str, start: &str) -> SessionInfo {
+        SessionInfo {
+            session_id: id.to_string(),
+            owning_member: member.to_string(),
+            session_type: stype.to_string(),
+            current_state: state.to_string(),
+            start_time: start.to_string(),
+            workspace_path: None,
+        }
+    }
+
+    // AC-10: bm status shows sessions table with truncated ID, member, type, state, started columns
+    #[test]
+    fn status_shows_sessions_table_with_truncated_id() {
+        let sessions = vec![make_session(
+            "abc12345xyz9999",
+            "alice",
+            "loop",
+            "Active",
+            "2026-05-31T00:00:00Z",
+        )];
+        let fetcher = || -> Result<SessionsListResponse> {
+            Ok(SessionsListResponse {
+                sessions: sessions.clone(),
+            })
+        };
+        let mut buf = Vec::new();
+        fetch_and_display_sessions("test-team", false, &mut buf, &fetcher).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        // session_id must be truncated to 8 chars + '…'
+        assert!(
+            output.contains("abc12345"),
+            "output must contain first 8 chars of session_id; got: {output}"
+        );
+        assert!(
+            output.contains("alice"),
+            "output must contain member name; got: {output}"
+        );
+        assert!(
+            output.contains("loop"),
+            "output must contain session_type; got: {output}"
+        );
+        assert!(
+            output.contains("Active"),
+            "output must contain state; got: {output}"
+        );
+    }
+
+    // AC-10: bm status shows 'Sessions: none (daemon not running)' when daemon is offline
+    #[test]
+    fn status_shows_none_message_when_daemon_not_running() {
+        let fetcher = || -> Result<SessionsListResponse> {
+            Err(anyhow::anyhow!(
+                "Daemon for team 'test-team' is not running (stale PID 99999)"
+            ))
+        };
+        let mut buf = Vec::new();
+        fetch_and_display_sessions("test-team", false, &mut buf, &fetcher).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(
+            output.contains("none (daemon not running)"),
+            "output must say 'Sessions: none (daemon not running)'; got: {output}"
+        );
+    }
+
+    // AC-10: bm status shows 'Sessions: none' when daemon is running but has no sessions
+    #[test]
+    fn status_shows_none_when_no_sessions() {
+        let fetcher = || -> Result<SessionsListResponse> {
+            Ok(SessionsListResponse { sessions: vec![] })
+        };
+        let mut buf = Vec::new();
+        fetch_and_display_sessions("test-team", false, &mut buf, &fetcher).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(
+            output.contains("Sessions: none"),
+            "output must say 'Sessions: none' when no sessions; got: {output}"
+        );
+    }
+
+    // AC-10: --json flag serializes full session list as JSON, suppresses all other output
+    #[test]
+    fn status_json_flag_outputs_json_sessions() {
+        let sessions = vec![make_session(
+            "abc12345xyz9999",
+            "alice",
+            "loop",
+            "Active",
+            "2026-05-31T00:00:00Z",
+        )];
+        let fetcher = || -> Result<SessionsListResponse> {
+            Ok(SessionsListResponse {
+                sessions: sessions.clone(),
+            })
+        };
+        let mut buf = Vec::new();
+        fetch_and_display_sessions("test-team", true, &mut buf, &fetcher).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&output).expect("--json output must be valid JSON");
+        let sessions_arr = parsed["sessions"]
+            .as_array()
+            .expect("--json output must have 'sessions' array");
+        assert!(!sessions_arr.is_empty(), "--json output must include sessions");
+        assert_eq!(
+            sessions_arr[0]["session_id"].as_str().unwrap(),
+            "abc12345xyz9999",
+            "--json must include full session_id (not truncated)"
+        );
+    }
+
+    // AC-10: --json with daemon not running outputs {{"sessions":[]}} with exit 0 (no error)
+    #[test]
+    fn status_json_daemon_not_running_outputs_empty_sessions() {
+        let fetcher = || -> Result<SessionsListResponse> {
+            Err(anyhow::anyhow!(
+                "Daemon for team 'test-team' is not running"
+            ))
+        };
+        let mut buf = Vec::new();
+        fetch_and_display_sessions("test-team", true, &mut buf, &fetcher).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&output)
+            .expect("--json output must be valid JSON even when daemon not running");
+        let sessions_arr = parsed["sessions"]
+            .as_array()
+            .expect("must have 'sessions' array");
+        assert!(
+            sessions_arr.is_empty(),
+            "--json with daemon not running must output {{\"sessions\":[]}}; got: {output}"
+        );
     }
 }

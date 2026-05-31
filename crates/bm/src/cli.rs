@@ -206,6 +206,10 @@ pub enum Command {
         /// Show verbose Ralph runtime details
         #[arg(short, long)]
         verbose: bool,
+
+        /// Output session data as JSON and suppress all other output
+        #[arg(long)]
+        json: bool,
     },
 
     /// Team management commands
@@ -368,7 +372,6 @@ pub enum Command {
         #[command(subcommand)]
         command: DebugCommand,
     },
-
 
     /// Unknown subcommand (caught when not matching any static or dynamic command)
     #[command(external_subcommand)]
