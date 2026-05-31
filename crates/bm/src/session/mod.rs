@@ -1,6 +1,10 @@
+pub mod lock;
+pub mod manager;
 pub mod registry;
 pub mod types;
 
+pub use lock::WorkItemLock;
+pub use manager::{DeactivationResult, DirtyRepo, SessionManager};
 pub use types::{SessionId, SessionRecord, SessionState, SessionType};
 
 use std::path::Path;

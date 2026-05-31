@@ -6,11 +6,15 @@ mod lifecycle;
 mod log;
 mod process;
 mod run;
+mod session_api;
 
 pub use self::api::{
-    HealthResponse, MemberStatusInfo, MembersStatusResponse, StartLoopRequest,
-    StartLoopResponse, StartMembersRequest, StartMembersResponse, StopMembersRequest,
-    StopMembersResponse,
+    HealthResponse, MemberStatusInfo, MembersStatusResponse, StartLoopRequest, StartLoopResponse,
+    StartMembersRequest, StartMembersResponse, StopMembersRequest, StopMembersResponse,
+};
+pub use self::session_api::{
+    SessionInfo, SessionsListResponse, StartSessionRequest, StartSessionResponse,
+    StopSessionResponse,
 };
 pub use self::client::DaemonClient;
 pub use self::config::{DaemonConfig, DaemonPaths, PollState};
