@@ -221,6 +221,7 @@ mod session_cli_stop_tests {
             current_state: state.to_string(),
             start_time: "2026-05-31T00:00:00Z".to_string(),
             workspace_path: None,
+            ..SessionInfo::default()
         }
     }
 

@@ -20,6 +20,7 @@ pub use self::lifecycle::{
 };
 pub use self::run::run_daemon;
 pub use self::session_api::{
-    DirtyRepoInfo, ForceStopResponse, RetriggerFinalizationResponse, SessionInfo,
-    SessionsListResponse, StartSessionRequest, StartSessionResponse, StopSessionResponse,
+    DirtyRepoInfo, ForceStopResponse, RetriggerFinalizationResponse, SessionHistoryInfo,
+    SessionInfo, SessionsListResponse, StartSessionRequest, StartSessionResponse,
+    StopSessionResponse,
 };

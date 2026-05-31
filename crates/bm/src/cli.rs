@@ -210,6 +210,18 @@ pub enum Command {
         /// Output session data as JSON and suppress all other output
         #[arg(long)]
         json: bool,
+
+        /// Show completed session history instead of active sessions
+        #[arg(long)]
+        history: bool,
+
+        /// Filter history by member name (only with --history)
+        #[arg(long)]
+        member: Option<String>,
+
+        /// Filter history to sessions ending within a time window, e.g. 24h, 7d (only with --history)
+        #[arg(long)]
+        since: Option<String>,
     },
 
     /// Team management commands
