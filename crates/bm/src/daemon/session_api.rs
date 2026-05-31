@@ -610,7 +610,7 @@ pub(super) async fn list_session_history_handler(
     let sessions = tokio::task::spawn_blocking(move || {
         let m = manager.lock().unwrap();
         m.list_terminal()
-            .iter()
+            .into_iter()
             .map(|r| SessionHistoryInfo {
                 session_id: r.session_id.as_str().to_string(),
                 owning_member: r.member_name.clone(),
@@ -624,7 +624,10 @@ pub(super) async fn list_session_history_handler(
     .await
     .unwrap_or_default();
 
-    (StatusCode::OK, Json(serde_json::to_value(sessions).unwrap()))
+    (
+        StatusCode::OK,
+        Json(serde_json::to_value(sessions).unwrap()),
+    )
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
