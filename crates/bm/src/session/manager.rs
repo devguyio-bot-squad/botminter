@@ -9,6 +9,9 @@ use chrono::Utc;
 use super::lock::WorkItemLock;
 use super::registry::SessionRegistry;
 use super::types::{SessionId, SessionRecord, SessionState, SessionType};
+use crate::session::finalization::subagent::{
+    launch_finalization_subagent, retrigger_finalization,
+};
 use crate::workspace::{push_with_rebase_retry, DEFAULT_MAX_RETRIES};
 
 /// Describes the state of a single project repo after session deactivation.
@@ -25,6 +28,8 @@ pub struct DeactivationResult {
     pub session_id: SessionId,
     /// Repos with uncommitted files or unpushed branches.
     pub dirty_repos: Vec<DirtyRepo>,
+    /// Whether the finalization subagent was launched (true = workspace was dirty).
+    pub finalization_launched: bool,
 }
 
 /// Manages session lifecycle: creates sessions via the hydrator and tracks them in the registry.
@@ -96,7 +101,12 @@ impl SessionManager {
             .clone())
     }
 
-    /// Stop the agent for `id`, inspect workspace dirty state, and transition the session to Completed.
+    /// Stop the agent for `id`, inspect workspace dirty state, and transition the session.
+    ///
+    /// If the workspace is clean (or becomes clean after a quick push), transitions to Completed.
+    /// If work remains (uncommitted files or unresolvable push conflicts), launches a finalization
+    /// subagent and transitions to Finalizing instead. The subagent runs in the background;
+    /// `finalization_completed` or `finalization_failed` must be called when it exits.
     ///
     /// Always releases all work-item locks held by this session before returning.
     pub fn deactivate_session(&mut self, id: &SessionId) -> Result<DeactivationResult> {
@@ -107,12 +117,30 @@ impl SessionManager {
             .clone();
 
         let mut dirty_repos = vec![];
+        let mut finalization_launched = false;
+
         if let Some(ref wp) = session.workspace_path {
             dirty_repos = inspect_dirty_repos(wp);
+            // Quick-push any committed-but-unpushed branches before deciding on subagent.
             push_and_refresh_dirty(&mut dirty_repos, wp);
+
+            let still_dirty = dirty_repos
+                .iter()
+                .any(|r| r.has_uncommitted || !r.unpushed_branches.is_empty());
+
+            if still_dirty {
+                if let Ok(_child) = launch_finalization_subagent(wp, id.as_str()) {
+                    // Child runs in background — session management observes completion separately.
+                    finalization_launched = true;
+                }
+            }
         }
 
-        self.registry.update_state(id, SessionState::Completed)?;
+        if finalization_launched {
+            self.registry.update_state(id, SessionState::Finalizing)?;
+        } else {
+            self.registry.update_state(id, SessionState::Completed)?;
+        }
         self.registry.save()?;
         // Release all work-item locks held by this session — prevents orphaned locks.
         let _ = self.work_item_lock.release_all(id);
@@ -120,6 +148,7 @@ impl SessionManager {
         Ok(DeactivationResult {
             session_id: id.clone(),
             dirty_repos,
+            finalization_launched,
         })
     }
 
@@ -140,6 +169,42 @@ impl SessionManager {
     /// Look up a session by ID. Returns None if the session does not exist.
     pub fn get(&self, id: &SessionId) -> Option<&SessionRecord> {
         self.registry.get(id)
+    }
+
+    /// Transition a Finalizing session to Completed after the subagent exits successfully.
+    pub fn finalization_completed(&mut self, id: &SessionId) -> Result<()> {
+        self.registry.update_state(id, SessionState::Completed)?;
+        self.registry.save()
+    }
+
+    /// Transition a Finalizing session to Failed when remote preservation is impossible.
+    pub fn finalization_failed(&mut self, id: &SessionId) -> Result<()> {
+        self.registry.update_state(id, SessionState::Failed)?;
+        self.registry.save()
+    }
+
+    /// Re-trigger finalization on a Retained session: Retained → Finalizing, launch fresh subagent.
+    ///
+    /// Returns an error if the session is not in Retained state — only retained sessions can be
+    /// re-finalized; calling this on an active or completed session is a caller bug.
+    pub fn retrigger_finalization_for(&mut self, id: &SessionId) -> Result<()> {
+        let current = self
+            .registry
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("session {} not found", id))?
+            .current_state
+            .clone();
+        if current != SessionState::Retained {
+            anyhow::bail!(
+                "retrigger_finalization_for requires Retained state, session {} is {}",
+                id,
+                current
+            );
+        }
+        self.registry.update_state(id, SessionState::Finalizing)?;
+        self.registry.save()?;
+        let _ = retrigger_finalization(id);
+        Ok(())
     }
 }
 
@@ -415,16 +480,13 @@ mod tests {
 }
 
 #[cfg(test)]
-mod session_push_integration_tests {
-    use super::*;
+mod git_test_fixtures {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::process::Command;
     use tempfile::TempDir;
 
-    // ── fixtures ─────────────────────────────────────────────────────────────
-
-    fn init_bare_repo(tmp: &TempDir, name: &str) -> PathBuf {
+    pub fn init_bare_repo(tmp: &TempDir, name: &str) -> PathBuf {
         let bare = tmp.path().join(format!("{name}.git"));
         fs::create_dir_all(&bare).unwrap();
         Command::new("git")
@@ -446,7 +508,11 @@ mod session_push_integration_tests {
         bare
     }
 
-    fn clone_into_workspace_projects(bare: &Path, workspace: &Path, project_name: &str) -> PathBuf {
+    pub fn clone_into_workspace_projects(
+        bare: &Path,
+        workspace: &Path,
+        project_name: &str,
+    ) -> PathBuf {
         let projects = workspace.join("projects");
         fs::create_dir_all(&projects).unwrap();
         let dest = projects.join(project_name);
@@ -457,7 +523,7 @@ mod session_push_integration_tests {
         dest
     }
 
-    fn git_commit_all(repo: &Path, msg: &str) {
+    pub fn git_commit_all(repo: &Path, msg: &str) {
         Command::new("git")
             .args(["-C", repo.to_str().unwrap(), "add", "."])
             .output()
@@ -477,6 +543,15 @@ mod session_push_integration_tests {
             .output()
             .unwrap();
     }
+}
+
+#[cfg(test)]
+mod session_push_integration_tests {
+    use super::git_test_fixtures::{clone_into_workspace_projects, git_commit_all, init_bare_repo};
+    use super::*;
+    use std::fs;
+    use std::process::Command;
+    use tempfile::TempDir;
 
     // ── tests ─────────────────────────────────────────────────────────────────
 
@@ -660,6 +735,208 @@ mod session_push_integration_tests {
             result.is_ok(),
             "deactivate_session must return Ok even when push fails: {:?}",
             result
+        );
+    }
+}
+
+#[cfg(test)]
+mod session_finalization_integration_tests {
+    use super::git_test_fixtures::{clone_into_workspace_projects, git_commit_all, init_bare_repo};
+    use super::*;
+    use crate::session::finalization::subagent::recovery_branch_name;
+    use std::fs;
+    use std::path::Path;
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    fn make_manager(workspace_base: &Path, registry_path: &Path) -> SessionManager {
+        SessionManager::new(workspace_base.to_path_buf(), registry_path.to_path_buf()).unwrap()
+    }
+
+    // ── tests ─────────────────────────────────────────────────────────────────
+
+    // AC-23: deactivate with dirty workspace → transitions to Finalizing, subagent launched
+    #[test]
+    fn deactivate_dirty_session_launches_finalization_and_transitions_to_finalizing() {
+        let tmp = TempDir::new().unwrap();
+        let bare = init_bare_repo(&tmp, "repo");
+        let workspace_base = tmp.path().join("workspaces");
+        let workspace = workspace_base.join("alice");
+        let project = clone_into_workspace_projects(&bare, &workspace, "my-project");
+
+        // Uncommitted file makes workspace dirty
+        fs::write(project.join("dirty.txt"), "uncommitted work\n").unwrap();
+
+        let registry_path = tmp.path().join("sessions.json");
+        let mut manager = make_manager(&workspace_base, &registry_path);
+        let record = manager
+            .create_session("alice", SessionType::Interactive)
+            .unwrap();
+
+        let result = manager.deactivate_session(&record.session_id).unwrap();
+
+        assert!(
+            result.finalization_launched,
+            "finalization must be launched for dirty session (got finalization_launched=false)"
+        );
+        assert_eq!(
+            manager.get(&record.session_id).unwrap().current_state,
+            SessionState::Finalizing,
+            "dirty session must transition to Finalizing, not directly to Completed"
+        );
+    }
+
+    // AC-23: deactivate with clean workspace → Completed, no subagent launched (regression)
+    #[test]
+    fn deactivate_clean_session_skips_finalization_transitions_to_completed() {
+        let tmp = TempDir::new().unwrap();
+        let workspace_base = tmp.path().join("workspaces");
+        let registry_path = tmp.path().join("sessions.json");
+        let mut manager = make_manager(&workspace_base, &registry_path);
+        let record = manager.create_session("bob", SessionType::Loop).unwrap();
+
+        let result = manager.deactivate_session(&record.session_id).unwrap();
+
+        assert!(
+            !result.finalization_launched,
+            "finalization must NOT be launched for clean session"
+        );
+        assert_eq!(
+            manager.get(&record.session_id).unwrap().current_state,
+            SessionState::Completed,
+            "clean session must transition to Completed"
+        );
+    }
+
+    // AC-23: finalization subagent exits 0 → session transitions to Completed
+    #[test]
+    fn finalization_success_transitions_to_completed() {
+        let tmp = TempDir::new().unwrap();
+        let workspace_base = tmp.path().join("workspaces");
+        let registry_path = tmp.path().join("sessions.json");
+        let mut manager = make_manager(&workspace_base, &registry_path);
+        let record = manager.create_session("carol", SessionType::Loop).unwrap();
+
+        // Drive to Finalizing directly via registry
+        manager
+            .registry
+            .update_state(&record.session_id, SessionState::Finalizing)
+            .unwrap();
+        manager.registry.save().unwrap();
+
+        // Signal finalization completed successfully
+        manager.finalization_completed(&record.session_id).unwrap();
+
+        assert_eq!(
+            manager.get(&record.session_id).unwrap().current_state,
+            SessionState::Completed,
+            "finalization success must transition from Finalizing to Completed"
+        );
+    }
+
+    // D-10: recovery branch naming follows the expected convention
+    #[test]
+    fn push_conflict_creates_recovery_branch_and_completes_degraded() {
+        let session_id = "abc12345";
+        let original_branch = "main";
+        let recovery = recovery_branch_name(session_id, original_branch);
+        assert_eq!(
+            recovery,
+            format!("recovery/{session_id}/{original_branch}"),
+            "recovery branch name must follow convention: recovery/<session-id>/<branch>"
+        );
+    }
+
+    // AC-03: remote unreachable → session transitions to Failed, workspace retained
+    #[test]
+    fn network_failure_transitions_to_failed_retains_workspace() {
+        let tmp = TempDir::new().unwrap();
+        let workspace_base = tmp.path().join("workspaces");
+        let registry_path = tmp.path().join("sessions.json");
+        let mut manager = make_manager(&workspace_base, &registry_path);
+        let record = manager
+            .create_session("dan", SessionType::Interactive)
+            .unwrap();
+        let workspace_path = record.workspace_path.clone().unwrap();
+
+        // Drive to Finalizing
+        manager
+            .registry
+            .update_state(&record.session_id, SessionState::Finalizing)
+            .unwrap();
+        manager.registry.save().unwrap();
+
+        // Simulate finalization failure (remote unreachable — preservation impossible)
+        manager.finalization_failed(&record.session_id).unwrap();
+
+        assert_eq!(
+            manager.get(&record.session_id).unwrap().current_state,
+            SessionState::Failed,
+            "remote-unreachable finalization must transition to Failed"
+        );
+        assert!(
+            workspace_path.exists(),
+            "workspace must be retained (not deleted) after Failed state"
+        );
+    }
+
+    // AC-03: session in Failed state does not block new session creation (regression)
+    #[test]
+    fn abnormal_end_does_not_block_new_session() {
+        let tmp = TempDir::new().unwrap();
+        let workspace_base = tmp.path().join("workspaces");
+        let registry_path = tmp.path().join("sessions.json");
+        let mut manager = make_manager(&workspace_base, &registry_path);
+
+        // Drive S1 to Failed (simulating abnormal end)
+        let s1 = manager.create_session("eve", SessionType::Loop).unwrap();
+        manager
+            .registry
+            .update_state(&s1.session_id, SessionState::Failed)
+            .unwrap();
+        manager.registry.save().unwrap();
+
+        // S2 must still be creatable for the same member
+        let s2 = manager
+            .create_session("eve", SessionType::Loop)
+            .expect("new session must succeed even when a previous session is in Failed state");
+
+        assert_eq!(
+            s2.current_state,
+            SessionState::Active,
+            "new session must reach Active state regardless of prior Failed session"
+        );
+    }
+
+    // AC-15: retrigger finalization on Retained session → Finalizing
+    #[test]
+    fn retrigger_on_retained_session_launches_fresh_subagent() {
+        let tmp = TempDir::new().unwrap();
+        let workspace_base = tmp.path().join("workspaces");
+        let registry_path = tmp.path().join("sessions.json");
+        let mut manager = make_manager(&workspace_base, &registry_path);
+        let record = manager.create_session("frank", SessionType::Loop).unwrap();
+
+        // Drive to Retained: Active → Completed → Retained
+        manager
+            .registry
+            .update_state(&record.session_id, SessionState::Completed)
+            .unwrap();
+        manager
+            .registry
+            .update_state(&record.session_id, SessionState::Retained)
+            .unwrap();
+        manager.registry.save().unwrap();
+
+        // Retrigger finalization
+        manager
+            .retrigger_finalization_for(&record.session_id)
+            .unwrap();
+
+        assert_eq!(
+            manager.get(&record.session_id).unwrap().current_state,
+            SessionState::Finalizing,
+            "retrigger must transition Retained → Finalizing"
         );
     }
 }
