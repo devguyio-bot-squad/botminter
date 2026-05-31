@@ -20,8 +20,10 @@ use super::event::{
 };
 use super::log::daemon_log;
 use super::process::handle_member_launch;
+use super::session_api;
 use crate::config as app_config;
 use crate::formation::AppCredentialsCached;
+use crate::session::manager::SessionManager;
 use crate::web::state::WebState;
 use crate::web::web_router;
 
@@ -42,17 +44,13 @@ pub(super) struct DaemonState {
     /// In-memory cache of App credentials for members that have been started.
     /// Used by the background refresh loop to re-sign JWTs without re-reading keyring.
     pub(super) app_credentials: Arc<Mutex<HashMap<String, AppCredentialsCached>>>,
+    /// Session manager — tracks active sessions and their workspace state.
+    pub(super) session_manager: Arc<Mutex<SessionManager>>,
 }
 
 /// Runs the daemon event loop. Called by the hidden `bm daemon-run` command.
 /// This function does not return until the daemon is signaled to stop.
-pub fn run_daemon(
-    team_name: &str,
-    mode: &str,
-    port: u16,
-    interval: u64,
-    bind: &str,
-) -> Result<()> {
+pub fn run_daemon(team_name: &str, mode: &str, port: u16, interval: u64, bind: &str) -> Result<()> {
     // Resolve the isolated keyring D-Bus address BEFORE creating the tokio
     // runtime. `with_keyring_dbus` in credential.rs swaps DBUS_SESSION_BUS_ADDRESS
     // via `std::env::set_var`, which is unsound in multi-threaded processes.
@@ -88,11 +86,20 @@ async fn run_daemon_async(
 
     // Load config once at startup and cache it. API handlers use these
     // cached values instead of re-reading config from disk on every request.
-    let cfg = app_config::load()
-        .context("Daemon failed to load config at startup")?;
+    let cfg = app_config::load().context("Daemon failed to load config at startup")?;
     let team_entry = app_config::resolve_team(&cfg, Some(team_name))
         .context("Daemon failed to resolve team at startup")?
         .clone();
+
+    // Session manager: workspace dirs live next to the daemon config files.
+    let sessions_dir = paths
+        .config()
+        .parent()
+        .map(|p| p.join(format!("sessions-{}", team_name)))
+        .unwrap_or_else(|| std::path::PathBuf::from(format!("sessions-{}", team_name)));
+    let registry_path = sessions_dir.join("registry.json");
+    let session_manager = SessionManager::new(sessions_dir, registry_path)
+        .context("Failed to initialise session manager")?;
 
     let state = DaemonState {
         team_name: team_name.to_string(),
@@ -104,6 +111,7 @@ async fn run_daemon_async(
         config: Arc::new(cfg),
         team_entry: Arc::new(team_entry),
         app_credentials: Arc::new(Mutex::new(HashMap::new())),
+        session_manager: Arc::new(Mutex::new(session_manager)),
     };
 
     // Resolve config path for the web API (console routes)
@@ -118,9 +126,7 @@ async fn run_daemon_async(
         .allow_origin(AllowOrigin::predicate(|origin, _| {
             origin
                 .to_str()
-                .map(|o| {
-                    o.starts_with("http://localhost:") || o.starts_with("http://127.0.0.1:")
-                })
+                .map(|o| o.starts_with("http://localhost:") || o.starts_with("http://127.0.0.1:"))
                 .unwrap_or(false)
         }))
         .allow_methods([
@@ -140,6 +146,17 @@ async fn run_daemon_async(
         .route("/api/health", get(api::health_check_handler))
         // Loop management API
         .route("/api/loops/start", post(api::start_loop_handler))
+        // Session management API (CT-03)
+        .route(
+            "/api/sessions/start",
+            post(session_api::start_session_handler),
+        )
+        .route("/api/sessions", get(session_api::list_sessions_handler))
+        .route(
+            "/api/sessions/{id}/stop",
+            post(session_api::stop_session_handler),
+        )
+        .route("/api/sessions/{id}", get(session_api::get_session_handler))
         .with_state(state.clone())
         .merge(web_router(web_state))
         .layer(cors);
@@ -184,7 +201,8 @@ async fn run_daemon_async(
     // After binding, write the daemon config with the actual port. This is
     // critical when port=0 (OS-assigned): the parent process and clients
     // read this file to discover the daemon's address.
-    let actual_addr = listener.local_addr()
+    let actual_addr = listener
+        .local_addr()
         .context("Failed to get listener local address")?;
     let daemon_cfg = DaemonConfig {
         team: team_name.to_string(),
@@ -194,10 +212,14 @@ async fn run_daemon_async(
         pid: std::process::id(),
         started_at: chrono::Utc::now().to_rfc3339(),
     };
-    let cfg_contents = serde_json::to_string_pretty(&daemon_cfg)
-        .context("Failed to serialize daemon config")?;
-    std::fs::write(paths.config(), &cfg_contents)
-        .with_context(|| format!("Failed to write daemon config to {}", paths.config().display()))?;
+    let cfg_contents =
+        serde_json::to_string_pretty(&daemon_cfg).context("Failed to serialize daemon config")?;
+    std::fs::write(paths.config(), &cfg_contents).with_context(|| {
+        format!(
+            "Failed to write daemon config to {}",
+            paths.config().display()
+        )
+    })?;
 
     daemon_log(
         &paths,
@@ -266,7 +288,11 @@ async fn webhook_handler(
     let body_str = match std::str::from_utf8(&body) {
         Ok(s) => s.to_string(),
         Err(_) => {
-            daemon_log(&state.paths, "ERROR", "Failed to read request body as UTF-8");
+            daemon_log(
+                &state.paths,
+                "ERROR",
+                "Failed to read request body as UTF-8",
+            );
             return StatusCode::BAD_REQUEST;
         }
     };
@@ -394,18 +420,10 @@ async fn run_poll_loop(
                 save_poll_state(&poll_state_file, &poll_state);
             }
             Ok(Err(e)) => {
-                daemon_log(
-                    paths,
-                    "ERROR",
-                    &format!("Poll cycle failed: {:#}", e),
-                );
+                daemon_log(paths, "ERROR", &format!("Poll cycle failed: {:#}", e));
             }
             Err(e) => {
-                daemon_log(
-                    paths,
-                    "ERROR",
-                    &format!("Poll task panicked: {}", e),
-                );
+                daemon_log(paths, "ERROR", &format!("Poll task panicked: {}", e));
             }
         }
     }
