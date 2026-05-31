@@ -57,6 +57,10 @@ pub struct CleanupReport {
     pub removed: usize,
 }
 
+pub struct RecoveryReport {
+    pub recovered: usize,
+}
+
 /// Manages session lifecycle: creates sessions via the hydrator and tracks them in the registry.
 ///
 /// Also owns the `WorkItemLock` — `deactivate_session` always releases all locks held by the
@@ -318,6 +322,33 @@ impl SessionManager {
             self.cleanup_session(&id)?;
         }
         Ok(CleanupReport { removed })
+    }
+
+    pub fn recover_stale_sessions_with<F>(&mut self, is_alive: F) -> Result<RecoveryReport>
+    where
+        F: Fn(u32) -> bool,
+    {
+        let ids_to_recover: Vec<SessionId> = self
+            .registry
+            .list()
+            .into_iter()
+            .filter(|s| {
+                matches!(
+                    s.current_state,
+                    SessionState::Active | SessionState::Finalizing
+                )
+            })
+            .filter(|s| s.agent_pid.map(|pid| !is_alive(pid)).unwrap_or(false))
+            .map(|s| s.session_id.clone())
+            .collect();
+        let recovered = ids_to_recover.len();
+        for id in &ids_to_recover {
+            self.registry.update_state(id, SessionState::Failed)?;
+        }
+        if recovered > 0 {
+            self.registry.save()?;
+        }
+        Ok(RecoveryReport { recovered })
     }
 }
 

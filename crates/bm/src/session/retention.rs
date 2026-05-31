@@ -1,5 +1,75 @@
-// Retention engine for continuous GC of Retained sessions.
-// Types and functions are defined here; tests compile-fail in RED phase.
+use std::time::Duration;
+
+use anyhow::Result;
+use chrono::Utc;
+
+use crate::session::manager::SessionManager;
+use crate::session::types::{SessionState, SessionType};
+
+pub struct RetentionConfig {
+    pub loop_brain_duration: Duration,
+    pub disk_budget_bytes: u64,
+}
+
+pub struct RetentionReport {
+    pub removed: usize,
+}
+
+pub struct RetentionEngine {
+    pub config: RetentionConfig,
+    pub disk_usage: Box<dyn Fn() -> Result<u64>>,
+}
+
+pub fn retention_duration_for(_session_type: &SessionType) -> Duration {
+    Duration::from_secs(24 * 3600)
+}
+
+impl RetentionEngine {
+    pub fn run_cycle(&self, manager: &mut SessionManager) -> Result<RetentionReport> {
+        let now = Utc::now();
+        let mut removed = 0;
+
+        let ids_to_expire: Vec<_> = manager
+            .registry
+            .list()
+            .into_iter()
+            .filter(|s| s.current_state == SessionState::Retained)
+            .filter(|s| {
+                let age = now.signed_duration_since(s.state_transitioned_at);
+                age.num_seconds() >= 0
+                    && (age.num_seconds() as u64) >= self.config.loop_brain_duration.as_secs()
+            })
+            .map(|s| s.session_id.clone())
+            .collect();
+
+        for id in ids_to_expire {
+            manager.cleanup_session(&id)?;
+            removed += 1;
+        }
+
+        loop {
+            if (self.disk_usage)()? <= self.config.disk_budget_bytes {
+                break;
+            }
+            let oldest_id = manager
+                .registry
+                .list()
+                .into_iter()
+                .filter(|s| s.current_state == SessionState::Retained)
+                .min_by_key(|s| s.state_transitioned_at)
+                .map(|s| s.session_id.clone());
+            match oldest_id {
+                Some(id) => {
+                    manager.cleanup_session(&id)?;
+                    removed += 1;
+                }
+                None => break,
+            }
+        }
+
+        Ok(RetentionReport { removed })
+    }
+}
 
 #[cfg(test)]
 mod retention_engine_tests {
