@@ -9,6 +9,8 @@ use std::path::Path;
 use std::process::Command;
 use tempfile::TempDir;
 
+use bm::profile;
+
 /// Helper: create a `Command` for the `bm` binary with HOME isolation.
 fn bm(home: &Path) -> Command {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_bm"));
@@ -59,6 +61,11 @@ coding_agents:
 "#;
     std::fs::write(team_repo.join("botminter.yml"), botminter_yml).unwrap();
 
+    // Extract profiles
+    let profiles_path = profile::profiles_dir_for(home);
+    std::fs::create_dir_all(&profiles_path).unwrap();
+    profile::extract_embedded_to_disk(&profiles_path).unwrap();
+
     // Create config.yml with credentials field
     let config_dir = home.join(".botminter");
     std::fs::create_dir_all(&config_dir).unwrap();
@@ -92,9 +99,64 @@ teams:
     std::fs::create_dir_all(&workspace_team).unwrap();
     std::fs::create_dir_all(&workspace_projects).unwrap();
 
+    // Initialize as proper git repos
+    Command::new("git")
+        .args(["init"])
+        .current_dir(&workspace_team)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["init"])
+        .current_dir(&workspace_projects)
+        .output()
+        .unwrap();
+
     // Add some fake git state to simulate repos
     std::fs::write(workspace_team.join("README.md"), "Team repo").unwrap();
     std::fs::write(workspace_projects.join("README.md"), "Project repo").unwrap();
+
+    // Commit the files so the repos are valid
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(&workspace_team)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(&workspace_team)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(&workspace_team)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(&workspace_team)
+        .output()
+        .unwrap();
+
+    Command::new("git")
+        .args(["add", "."])
+        .current_dir(&workspace_projects)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.email", "test@test.com"])
+        .current_dir(&workspace_projects)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["config", "user.name", "Test"])
+        .current_dir(&workspace_projects)
+        .output()
+        .unwrap();
+    Command::new("git")
+        .args(["commit", "-m", "Initial commit"])
+        .current_dir(&workspace_projects)
+        .output()
+        .unwrap();
 
     (tmp, workzone, team_path, workspace_path)
 }

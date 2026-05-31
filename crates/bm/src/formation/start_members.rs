@@ -443,12 +443,12 @@ pub(crate) fn resolve_app_credentials_and_deliver(
 fn discover_members(team_repo: &Path, member_filter: Option<&str>) -> Result<Vec<String>> {
     let members_dir = team_repo.join("members");
     if !members_dir.is_dir() {
-        bail!("No members hired. Run `bm hire <role>` first.");
+        bail!("No members hired. Run `bm hire <role>` to hire a member before starting a session.");
     }
 
     let all_member_dirs = workspace::list_member_dirs(&members_dir)?;
     if all_member_dirs.is_empty() {
-        bail!("No members hired. Run `bm hire <role>` first.");
+        bail!("No members hired. Run `bm hire <role>` to hire a member before starting a session.");
     }
 
     if let Some(target) = member_filter {

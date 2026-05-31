@@ -271,8 +271,8 @@ fn main() -> Result<()> {
             )?;
         }
 
-        Command::Minty { team, autonomous } => {
-            commands::minty::run(team.as_deref(), autonomous)?;
+        Command::Minty { team, discover, autonomous } => {
+            commands::minty::run(team.as_deref(), discover, autonomous)?;
         }
 
         Command::Start {
