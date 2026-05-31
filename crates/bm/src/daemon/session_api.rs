@@ -11,6 +11,8 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
+use crate::session::types::{SessionId, SessionRecord, SessionType};
+
 use super::run::DaemonState;
 
 // ── Request types ────────────────────────────────────────────────────────────
@@ -56,50 +58,120 @@ pub struct StopSessionResponse {
 }
 
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+fn record_to_info(record: &SessionRecord) -> SessionInfo {
+    let session_type_str = match record.session_type {
+        SessionType::Loop => "loop",
+        SessionType::Brain => "brain",
+        SessionType::Interactive => "interactive",
+    }
+    .to_string();
+
+    SessionInfo {
+        session_id: record.session_id.as_str().to_string(),
+        owning_member: record.member_name.clone(),
+        session_type: session_type_str,
+        current_state: record.current_state.to_string(),
+        start_time: record.created_at.to_rfc3339(),
+        workspace_path: record
+            .workspace_path
+            .as_ref()
+            .map(|p| p.to_string_lossy().to_string()),
+    }
+}
+
+fn parse_session_type(s: &str) -> Option<SessionType> {
+    match s {
+        "loop" => Some(SessionType::Loop),
+        "brain" => Some(SessionType::Brain),
+        "interactive" => Some(SessionType::Interactive),
+        _ => None,
+    }
+}
+
 // ── Handlers ─────────────────────────────────────────────────────────────────
 
 /// POST /api/sessions/start — create a session and launch the appropriate agent.
 pub(super) async fn start_session_handler(
-    State(_state): State<DaemonState>,
-    Json(_req): Json<StartSessionRequest>,
+    State(state): State<DaemonState>,
+    Json(req): Json<StartSessionRequest>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    // Not yet implemented — returns 501 until the GREEN phase adds real logic.
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({"ok": false, "error": "not implemented"})),
-    )
+    let Some(session_type) = parse_session_type(&req.session_type) else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": "invalid session_type; must be 'loop', 'brain', or 'interactive'"})),
+        );
+    };
+
+    let mut manager = state.session_manager.lock().unwrap();
+    match manager.create_session(&req.member, session_type) {
+        Ok(record) => {
+            let info = record_to_info(&record);
+            let resp = StartSessionResponse {
+                ok: true,
+                session: Some(info),
+                error: None,
+            };
+            (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"ok": false, "error": e.to_string()})),
+        ),
+    }
 }
 
 /// GET /api/sessions — list all active sessions.
 pub(super) async fn list_sessions_handler(
-    State(_state): State<DaemonState>,
+    State(state): State<DaemonState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({"ok": false, "error": "not implemented"})),
-    )
+    let manager = state.session_manager.lock().unwrap();
+    let sessions: Vec<SessionInfo> = manager.list_active().iter().map(|r| record_to_info(r)).collect();
+    let resp = SessionsListResponse { sessions };
+    (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
 }
 
 /// POST /api/sessions/:id/stop — stop the agent and deactivate the session.
+/// Returns 200 even when the session is unknown (idempotent).
 pub(super) async fn stop_session_handler(
-    State(_state): State<DaemonState>,
-    Path(_session_id): Path<String>,
+    State(state): State<DaemonState>,
+    Path(session_id_str): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({"ok": false, "error": "not implemented"})),
-    )
+    let session_id = SessionId::from_string(session_id_str);
+    let mut manager = state.session_manager.lock().unwrap();
+    let (dirty_repos, error) = match manager.deactivate_session(&session_id) {
+        Ok(result) => (
+            result.dirty_repos.iter().map(|r| r.name.clone()).collect::<Vec<_>>(),
+            None,
+        ),
+        Err(_) => (vec![], None),
+    };
+    let resp = StopSessionResponse {
+        ok: true,
+        dirty_repos,
+        error,
+    };
+    (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
 }
 
 /// GET /api/sessions/:id — return a single session's detail.
 pub(super) async fn get_session_handler(
-    State(_state): State<DaemonState>,
-    Path(_session_id): Path<String>,
+    State(state): State<DaemonState>,
+    Path(session_id_str): Path<String>,
 ) -> (StatusCode, Json<serde_json::Value>) {
-    (
-        StatusCode::NOT_IMPLEMENTED,
-        Json(serde_json::json!({"ok": false, "error": "not implemented"})),
-    )
+    let session_id = SessionId::from_string(session_id_str);
+    let manager = state.session_manager.lock().unwrap();
+    match manager.get(&session_id) {
+        Some(record) => {
+            let info = record_to_info(record);
+            (StatusCode::OK, Json(serde_json::to_value(info).unwrap()))
+        }
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({"error": "session not found"})),
+        ),
+    }
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -297,6 +369,13 @@ mod tests {
             app_credentials: std::sync::Arc::new(std::sync::Mutex::new(
                 HashMap::<String, AppCredentialsCached>::new(),
             )),
+            session_manager: std::sync::Arc::new(std::sync::Mutex::new(
+                crate::session::manager::SessionManager::new(
+                    std::path::PathBuf::from(&tmp_path).join("sessions"),
+                    std::path::PathBuf::from(&tmp_path).join("sessions-registry.json"),
+                )
+                .expect("SessionManager::new must not fail in tests"),
+            )),
         }
     }
 
@@ -307,8 +386,8 @@ mod tests {
         axum::Router::new()
             .route("/api/sessions/start", post(start_session_handler))
             .route("/api/sessions", get(list_sessions_handler))
-            .route("/api/sessions/:id/stop", post(stop_session_handler))
-            .route("/api/sessions/:id", get(get_session_handler))
+            .route("/api/sessions/{id}/stop", post(stop_session_handler))
+            .route("/api/sessions/{id}", get(get_session_handler))
             .with_state(state)
     }
 

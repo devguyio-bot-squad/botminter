@@ -23,6 +23,7 @@ use super::log::daemon_log;
 use super::process::handle_member_launch;
 use crate::config as app_config;
 use crate::formation::AppCredentialsCached;
+use crate::session::manager::SessionManager;
 use crate::web::state::WebState;
 use crate::web::web_router;
 
@@ -43,6 +44,8 @@ pub(super) struct DaemonState {
     /// In-memory cache of App credentials for members that have been started.
     /// Used by the background refresh loop to re-sign JWTs without re-reading keyring.
     pub(super) app_credentials: Arc<Mutex<HashMap<String, AppCredentialsCached>>>,
+    /// Session manager — tracks active sessions and their workspace state.
+    pub(super) session_manager: Arc<Mutex<SessionManager>>,
 }
 
 /// Runs the daemon event loop. Called by the hidden `bm daemon-run` command.
@@ -88,6 +91,16 @@ async fn run_daemon_async(
         .context("Daemon failed to resolve team at startup")?
         .clone();
 
+    // Session manager: workspace dirs live next to the daemon config files.
+    let sessions_dir = paths
+        .config()
+        .parent()
+        .map(|p| p.join(format!("sessions-{}", team_name)))
+        .unwrap_or_else(|| std::path::PathBuf::from(format!("sessions-{}", team_name)));
+    let registry_path = sessions_dir.join("registry.json");
+    let session_manager = SessionManager::new(sessions_dir, registry_path)
+        .context("Failed to initialise session manager")?;
+
     let state = DaemonState {
         team_name: team_name.to_string(),
         paths: Arc::clone(&paths),
@@ -98,6 +111,7 @@ async fn run_daemon_async(
         config: Arc::new(cfg),
         team_entry: Arc::new(team_entry),
         app_credentials: Arc::new(Mutex::new(HashMap::new())),
+        session_manager: Arc::new(Mutex::new(session_manager)),
     };
 
     // Resolve config path for the web API (console routes)
@@ -135,8 +149,8 @@ async fn run_daemon_async(
         // Session management API (CT-03)
         .route("/api/sessions/start", post(session_api::start_session_handler))
         .route("/api/sessions", get(session_api::list_sessions_handler))
-        .route("/api/sessions/:id/stop", post(session_api::stop_session_handler))
-        .route("/api/sessions/:id", get(session_api::get_session_handler))
+        .route("/api/sessions/{id}/stop", post(session_api::stop_session_handler))
+        .route("/api/sessions/{id}", get(session_api::get_session_handler))
         .with_state(state.clone())
         .merge(web_router(web_state))
         .layer(cors);

@@ -1,11 +1,13 @@
 //! SessionManager: creates and deactivates sessions, delegates to WorkspaceHydrator.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::process::Command;
 
 use anyhow::Result;
+use chrono::Utc;
 
 use super::registry::SessionRegistry;
-use super::types::{SessionId, SessionRecord, SessionType};
+use super::types::{SessionId, SessionRecord, SessionState, SessionType};
 
 /// Describes the state of a single project repo after session deactivation.
 #[derive(Debug, Clone)]
@@ -40,33 +42,128 @@ impl SessionManager {
 
     /// Create a new session for `member` of the given `session_type`.
     ///
-    /// Delegates workspace setup to the WorkspaceHydrator (CT-02), then registers
-    /// the session in the registry as Creating → Active.
+    /// Creates the member workspace directory, registers the session in Creating state,
+    /// transitions to Active, and returns the persisted session record.
     pub fn create_session(
         &mut self,
         member: &str,
         session_type: SessionType,
     ) -> Result<SessionRecord> {
-        let _ = (member, session_type);
-        unimplemented!("SessionManager::create_session not yet implemented")
+        let workspace_path = self.workspace_base.join(member);
+        std::fs::create_dir_all(&workspace_path)?;
+
+        let session_id = SessionId::new();
+        let now = Utc::now();
+        let record = SessionRecord {
+            session_id: session_id.clone(),
+            member_name: member.to_string(),
+            session_type,
+            current_state: SessionState::Creating,
+            created_at: now,
+            state_transitioned_at: now,
+            agent_pid: None,
+            workspace_path: Some(workspace_path),
+        };
+
+        self.registry.register(record)?;
+        self.registry.update_state(&session_id, SessionState::Active)?;
+        self.registry.save()?;
+
+        Ok(self.registry.get(&session_id).expect("session must exist after register").clone())
     }
 
     /// Stop the agent for `id`, inspect workspace dirty state, and transition the session to Completed.
     pub fn deactivate_session(&mut self, id: &SessionId) -> Result<DeactivationResult> {
-        let _ = id;
-        unimplemented!("SessionManager::deactivate_session not yet implemented")
+        let session = self
+            .registry
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("Session {} not found", id))?
+            .clone();
+
+        let dirty_repos = session
+            .workspace_path
+            .as_deref()
+            .map(inspect_dirty_repos)
+            .unwrap_or_default();
+
+        self.registry.update_state(id, SessionState::Completed)?;
+        self.registry.save()?;
+
+        Ok(DeactivationResult {
+            session_id: id.clone(),
+            dirty_repos,
+        })
     }
 
-    /// Return all active (non-terminal) sessions.
+    /// Return all sessions that are not in a terminal state (Creating, Active, Finalizing).
     pub fn list_active(&self) -> Vec<&SessionRecord> {
-        unimplemented!("SessionManager::list_active not yet implemented")
+        self.registry
+            .list()
+            .into_iter()
+            .filter(|s| {
+                matches!(
+                    s.current_state,
+                    SessionState::Creating | SessionState::Active | SessionState::Finalizing
+                )
+            })
+            .collect()
     }
 
     /// Look up a session by ID. Returns None if the session does not exist.
     pub fn get(&self, id: &SessionId) -> Option<&SessionRecord> {
-        let _ = id;
-        unimplemented!("SessionManager::get not yet implemented")
+        self.registry.get(id)
     }
+}
+
+/// Run git status and unpushed-commits checks against every subdirectory under
+/// `workspace/projects/`. Non-git directories are silently skipped.
+fn inspect_dirty_repos(workspace_path: &Path) -> Vec<DirtyRepo> {
+    let projects_dir = workspace_path.join("projects");
+    if !projects_dir.exists() {
+        return vec![];
+    }
+
+    let mut dirty = vec![];
+    let entries = match std::fs::read_dir(&projects_dir) {
+        Ok(e) => e,
+        Err(_) => return vec![],
+    };
+
+    for entry in entries.flatten() {
+        if !entry.path().is_dir() {
+            continue;
+        }
+        let repo_path = entry.path();
+        let repo_name = entry.file_name().to_string_lossy().to_string();
+
+        let has_uncommitted = Command::new("git")
+            .args(["-C", repo_path.to_str().unwrap_or("."), "status", "--porcelain"])
+            .output()
+            .map(|o| !o.stdout.is_empty())
+            .unwrap_or(false);
+
+        let unpushed_branches: Vec<String> = Command::new("git")
+            .args(["-C", repo_path.to_str().unwrap_or("."), "log", "@{u}..HEAD", "--oneline"])
+            .output()
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter(|l| !l.is_empty())
+                    .map(|l| l.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        if has_uncommitted || !unpushed_branches.is_empty() {
+            dirty.push(DirtyRepo {
+                name: repo_name,
+                has_uncommitted,
+                unpushed_branches,
+            });
+        }
+    }
+
+    dirty
 }
 
 #[cfg(test)]

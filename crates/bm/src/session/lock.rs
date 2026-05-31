@@ -26,23 +26,43 @@ impl WorkItemLock {
     /// Try to acquire the lock for `work_item_id` on behalf of `session_id`.
     ///
     /// Returns `Ok(true)` if the lock was acquired, `Ok(false)` if already held by another session.
+    /// Idempotent: re-acquiring an already-owned lock returns `Ok(true)`.
     pub fn acquire(&self, work_item_id: &str, session_id: &SessionId) -> Result<bool> {
-        let _ = (work_item_id, session_id);
-        unimplemented!("WorkItemLock::acquire not yet implemented")
+        let mut locks = self.locks.lock().unwrap();
+        match locks.get(work_item_id) {
+            None => {
+                locks.insert(work_item_id.to_string(), session_id.clone());
+                Ok(true)
+            }
+            Some(existing) if existing == session_id => Ok(true),
+            Some(_) => Ok(false),
+        }
     }
 
     /// Release the lock for `work_item_id` held by `session_id`.
     ///
     /// Returns an error if the lock is not held by `session_id`.
     pub fn release(&self, work_item_id: &str, session_id: &SessionId) -> Result<()> {
-        let _ = (work_item_id, session_id);
-        unimplemented!("WorkItemLock::release not yet implemented")
+        let mut locks = self.locks.lock().unwrap();
+        match locks.get(work_item_id) {
+            Some(existing) if existing == session_id => {
+                locks.remove(work_item_id);
+                Ok(())
+            }
+            Some(_) => Err(anyhow::anyhow!(
+                "lock '{}' is not held by session {}",
+                work_item_id,
+                session_id
+            )),
+            None => Err(anyhow::anyhow!("lock '{}' is not held", work_item_id)),
+        }
     }
 
     /// Release all locks held by `session_id`. Called on session termination.
     pub fn release_all(&self, session_id: &SessionId) -> Result<()> {
-        let _ = session_id;
-        unimplemented!("WorkItemLock::release_all not yet implemented")
+        let mut locks = self.locks.lock().unwrap();
+        locks.retain(|_, v| v != session_id);
+        Ok(())
     }
 
     /// Return the number of currently held locks.

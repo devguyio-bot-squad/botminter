@@ -18,6 +18,11 @@ impl SessionId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// Construct a SessionId from an existing string (e.g., from an HTTP path parameter).
+    pub fn from_string(s: String) -> Self {
+        Self(s)
+    }
 }
 
 impl Default for SessionId {
