@@ -7,7 +7,7 @@ This guide covers provisioning workspaces for team members and launching their R
 Before launching members, provision their workspaces:
 
 ```bash
-bm teams sync
+bm start
 ```
 
 This creates or updates **workspace repos** for each hired member. Each workspace repo is a dedicated git repository containing submodules for the team repo and project forks.
@@ -15,7 +15,7 @@ This creates or updates **workspace repos** for each hired member. Each workspac
 **New workspaces** (use `--repos` to create GitHub repos):
 
 ```bash
-bm teams sync --repos
+bm start --repos
 ```
 
 1. Creates a GitHub repo (`org/<team>-<member>`) for each member
@@ -31,7 +31,7 @@ bm teams sync --repos
 **Existing workspaces** (without `--repos`):
 
 ```bash
-bm teams sync
+bm start
 ```
 
 Updates submodules to latest, re-copies context files if team submodule versions are newer, and re-assembles agent dir symlinks.
@@ -114,7 +114,7 @@ The daemon filters for `issues`, `issue_comment`, and `pull_request` events. Whe
 If team configuration has changed (new knowledge, updated prompts, modified `ralph.yml`), re-sync workspaces:
 
 ```bash
-bm teams sync
+bm start
 ```
 
 ??? note "What sync updates"
@@ -145,16 +145,16 @@ bm stop -t my-other-team
 ## Troubleshooting
 
 **"No workspaces found"**
-: Run `bm teams sync` first to provision workspaces.
+: Run `bm start` first to provision workspaces.
 
 **"Member not found"**
 : Run `bm hire <role>` first to add a member.
 
 **Changes to `ralph.yml` not taking effect**
-: Run `bm teams sync` and restart agents with `bm stop && bm start`. `ralph.yml` is a copy, not a symlink.
+: Run `bm start` and restart agents with `bm stop && bm start`. `ralph.yml` is a copy, not a symlink.
 
 **Symlinks broken after moving directories**
-: Run `bm teams sync` to repair.
+: Run `bm start` to repair.
 
 ## Related topics
 

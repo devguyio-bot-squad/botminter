@@ -30,16 +30,16 @@ The agent's working directory (CWD) is the workspace repo root. Projects are acc
 
 ## Context files
 
-Context files (CLAUDE.md, PROMPT.md, ralph.yml) are **copied** from the team submodule to the workspace root during `bm teams sync`. They are **tracked** in the workspace repo — committed, versioned, and directly visible to the agent.
+Context files (CLAUDE.md, PROMPT.md, ralph.yml) are **copied** from the team submodule to the workspace root during `bm start`. They are **tracked** in the workspace repo — committed, versioned, and directly visible to the agent.
 
 | File | Method | Update mechanism |
 |------|--------|-----------------|
-| `CLAUDE.md` | Copy | `bm teams sync` re-copies if team submodule version is newer |
-| `PROMPT.md` | Copy | `bm teams sync` re-copies if team submodule version is newer |
-| `ralph.yml` | Copy | `bm teams sync` re-copies if team submodule version is newer |
-| `settings.json` | Copy | `bm teams sync` re-copies from `team/coding-agent/settings.json` (team-level hooks) |
-| `settings.local.json` | Copy | `bm teams sync` re-copies from `team/members/<member>/coding-agent/` |
-| Agent files (`.claude/agents/`) | Symlink | `bm teams sync` re-assembles symlinks into `team/` submodule paths |
+| `CLAUDE.md` | Copy | `bm start` re-copies if team submodule version is newer |
+| `PROMPT.md` | Copy | `bm start` re-copies if team submodule version is newer |
+| `ralph.yml` | Copy | `bm start` re-copies if team submodule version is newer |
+| `settings.json` | Copy | `bm start` re-copies from `team/coding-agent/settings.json` (team-level hooks) |
+| `settings.local.json` | Copy | `bm start` re-copies from `team/members/<member>/coding-agent/` |
+| Agent files (`.claude/agents/`) | Symlink | `bm start` re-assembles symlinks into `team/` submodule paths |
 | Skills | Direct read | Ralph reads from `team/` submodule paths via `skills.dirs` |
 
 ## Submodules
@@ -83,17 +83,17 @@ Work routing is handled by issue labels in the team repo (label per project). Th
 
 ## The `.botminter.workspace` marker
 
-`bm teams sync` writes a `.botminter.workspace` marker file at the workspace root. This marker identifies the directory as a valid BotMinter workspace. `bm start` discovers workspaces by scanning for this marker file.
+`bm start` writes a `.botminter.workspace` marker file at the workspace root. This marker identifies the directory as a valid BotMinter workspace. `bm start` discovers workspaces by scanning for this marker file.
 
 The marker is BotMinter-specific — using `.gitmodules` alone would false-positive on any repo with submodules.
 
 ## Git exclusions
 
-Runtime state (`.ralph/`) is gitignored in the workspace repo. `bm teams sync` writes a `.gitignore` file excluding runtime-only paths.
+Runtime state (`.ralph/`) is gitignored in the workspace repo. `bm start` writes a `.gitignore` file excluding runtime-only paths.
 
 ## Syncing a workspace
 
-Run `bm teams sync` to create or update workspaces:
+Run `bm start` to create or update workspaces:
 
 **New workspace** (with `--repos`):
 
@@ -127,4 +127,4 @@ bm stop && bm start
 
 - [Architecture](architecture.md) — two-layer runtime model
 - [Launch Members](../how-to/launch-members.md) — creating workspaces and launching agents
-- [CLI Reference](../reference/cli.md) — `bm teams sync`, `bm start` commands
+- [CLI Reference](../reference/cli.md) — `bm start`, `bm start` commands
