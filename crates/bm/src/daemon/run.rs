@@ -13,7 +13,6 @@ use axum::Router;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 
 use super::api;
-use super::session_api;
 use super::config::{load_poll_state, save_poll_state, DaemonConfig, DaemonPaths};
 use super::event::{
     is_relevant_event, load_webhook_secret, poll_github_events, resolve_github_repo,
@@ -21,6 +20,7 @@ use super::event::{
 };
 use super::log::daemon_log;
 use super::process::handle_member_launch;
+use super::session_api;
 use crate::config as app_config;
 use crate::formation::AppCredentialsCached;
 use crate::session::manager::SessionManager;
@@ -147,9 +147,15 @@ async fn run_daemon_async(
         // Loop management API
         .route("/api/loops/start", post(api::start_loop_handler))
         // Session management API (CT-03)
-        .route("/api/sessions/start", post(session_api::start_session_handler))
+        .route(
+            "/api/sessions/start",
+            post(session_api::start_session_handler),
+        )
         .route("/api/sessions", get(session_api::list_sessions_handler))
-        .route("/api/sessions/{id}/stop", post(session_api::stop_session_handler))
+        .route(
+            "/api/sessions/{id}/stop",
+            post(session_api::stop_session_handler),
+        )
         .route("/api/sessions/{id}", get(session_api::get_session_handler))
         .with_state(state.clone())
         .merge(web_router(web_state))

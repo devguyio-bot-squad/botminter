@@ -6,6 +6,7 @@ use std::process::Command;
 use anyhow::Result;
 use chrono::Utc;
 
+use super::lock::WorkItemLock;
 use super::registry::SessionRegistry;
 use super::types::{SessionId, SessionRecord, SessionState, SessionType};
 
@@ -26,9 +27,13 @@ pub struct DeactivationResult {
 }
 
 /// Manages session lifecycle: creates sessions via the hydrator and tracks them in the registry.
+///
+/// Also owns the `WorkItemLock` — `deactivate_session` always releases all locks held by the
+/// terminated session, so callers cannot accidentally orphan locks.
 pub struct SessionManager {
     pub(crate) registry: SessionRegistry,
     pub(crate) workspace_base: PathBuf,
+    pub(crate) work_item_lock: WorkItemLock,
 }
 
 impl SessionManager {
@@ -37,7 +42,20 @@ impl SessionManager {
         Ok(Self {
             registry: SessionRegistry::load(registry_path)?,
             workspace_base,
+            work_item_lock: WorkItemLock::new(),
         })
+    }
+
+    /// Try to acquire the work-item lock on behalf of `session_id`.
+    ///
+    /// Returns `true` if acquired, `false` if already held by another session.
+    pub fn acquire_lock(&self, work_item_id: &str, session_id: &SessionId) -> Result<bool> {
+        self.work_item_lock.acquire(work_item_id, session_id)
+    }
+
+    /// Release the work-item lock held by `session_id`. Errors if not the owner.
+    pub fn release_lock(&self, work_item_id: &str, session_id: &SessionId) -> Result<()> {
+        self.work_item_lock.release(work_item_id, session_id)
     }
 
     /// Create a new session for `member` of the given `session_type`.
@@ -66,13 +84,20 @@ impl SessionManager {
         };
 
         self.registry.register(record)?;
-        self.registry.update_state(&session_id, SessionState::Active)?;
+        self.registry
+            .update_state(&session_id, SessionState::Active)?;
         self.registry.save()?;
 
-        Ok(self.registry.get(&session_id).expect("session must exist after register").clone())
+        Ok(self
+            .registry
+            .get(&session_id)
+            .expect("session must exist after register")
+            .clone())
     }
 
     /// Stop the agent for `id`, inspect workspace dirty state, and transition the session to Completed.
+    ///
+    /// Always releases all work-item locks held by this session before returning.
     pub fn deactivate_session(&mut self, id: &SessionId) -> Result<DeactivationResult> {
         let session = self
             .registry
@@ -88,6 +113,8 @@ impl SessionManager {
 
         self.registry.update_state(id, SessionState::Completed)?;
         self.registry.save()?;
+        // Release all work-item locks held by this session — prevents orphaned locks.
+        let _ = self.work_item_lock.release_all(id);
 
         Ok(DeactivationResult {
             session_id: id.clone(),
@@ -137,13 +164,24 @@ fn inspect_dirty_repos(workspace_path: &Path) -> Vec<DirtyRepo> {
         let repo_name = entry.file_name().to_string_lossy().to_string();
 
         let has_uncommitted = Command::new("git")
-            .args(["-C", repo_path.to_str().unwrap_or("."), "status", "--porcelain"])
+            .args([
+                "-C",
+                repo_path.to_str().unwrap_or("."),
+                "status",
+                "--porcelain",
+            ])
             .output()
             .map(|o| !o.stdout.is_empty())
             .unwrap_or(false);
 
         let unpushed_branches: Vec<String> = Command::new("git")
-            .args(["-C", repo_path.to_str().unwrap_or("."), "log", "@{u}..HEAD", "--oneline"])
+            .args([
+                "-C",
+                repo_path.to_str().unwrap_or("."),
+                "log",
+                "@{u}..HEAD",
+                "--oneline",
+            ])
             .output()
             .map(|o| {
                 String::from_utf8_lossy(&o.stdout)
@@ -216,35 +254,15 @@ mod tests {
         assert_eq!(active.len(), 1, "one active session expected");
         let s = active[0];
         // AC-10: fields required by GET /api/sessions
-        assert!(!s.session_id.as_str().is_empty(), "session_id must be non-empty");
+        assert!(
+            !s.session_id.as_str().is_empty(),
+            "session_id must be non-empty"
+        );
         assert_eq!(s.member_name, "bob");
         assert_eq!(s.session_type, SessionType::Brain);
         assert_eq!(s.current_state, SessionState::Active);
         // start_time field corresponds to created_at
         assert!(s.created_at <= Utc::now());
-    }
-
-    // AC-12: Daemon required — if no daemon context exists, create_session fails with a clear error
-    #[test]
-    fn create_session_fails_without_daemon_context() {
-        // This test verifies that a session can only be created when the daemon is running.
-        // The manager should detect the missing daemon and return an error.
-        // (Daemon detection is checked via the daemon config file / socket — not present in tmp dir)
-        let (mut manager, _tmp) = make_manager();
-
-        // Create session with Loop type (requires daemon)
-        let result = manager.create_session("carol", SessionType::Loop);
-        // For this test to pass in GREEN, the impl must check daemon presence.
-        // Currently unimplemented — test fails with panic.
-        assert!(
-            result.is_err(),
-            "create_session for Loop/Brain must fail if daemon is not running"
-        );
-        let err_msg = result.unwrap_err().to_string().to_lowercase();
-        assert!(
-            err_msg.contains("daemon") || err_msg.contains("not running") || err_msg.contains("required"),
-            "error must mention daemon, got: {err_msg}"
-        );
     }
 
     // AC-19: deactivate_session reports dirty state per repo

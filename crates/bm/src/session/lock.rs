@@ -106,7 +106,10 @@ mod tests {
         assert!(won_first, "first acquirer must win");
 
         let won_second = lock.acquire("issue-42", &s2).expect("second acquire");
-        assert!(!won_second, "second acquirer must lose when lock is already held");
+        assert!(
+            !won_second,
+            "second acquirer must lose when lock is already held"
+        );
     }
 
     // AC-13: acquire is idempotent for the same session
@@ -118,8 +121,13 @@ mod tests {
         let first = lock.acquire("issue-99", &session).expect("first acquire");
         assert!(first, "first call must succeed");
 
-        let second = lock.acquire("issue-99", &session).expect("idempotent acquire");
-        assert!(second, "same session re-acquiring its own lock must return true");
+        let second = lock
+            .acquire("issue-99", &session)
+            .expect("idempotent acquire");
+        assert!(
+            second,
+            "same session re-acquiring its own lock must return true"
+        );
     }
 
     // AC-14a: release allows the lock to be re-acquired
@@ -132,8 +140,13 @@ mod tests {
         lock.acquire("issue-7", &s1).expect("acquire by s1");
         lock.release("issue-7", &s1).expect("release by s1");
 
-        let won = lock.acquire("issue-7", &s2).expect("acquire by s2 after release");
-        assert!(won, "after release, another session must be able to acquire");
+        let won = lock
+            .acquire("issue-7", &s2)
+            .expect("acquire by s2 after release");
+        assert!(
+            won,
+            "after release, another session must be able to acquire"
+        );
     }
 
     // AC-14a: release by non-owner returns an error
@@ -163,7 +176,11 @@ mod tests {
         assert_eq!(lock.held_count(), 3, "three locks must be held");
 
         lock.release_all(&session).expect("release_all");
-        assert_eq!(lock.held_count(), 0, "all locks must be released after release_all");
+        assert_eq!(
+            lock.held_count(),
+            0,
+            "all locks must be released after release_all"
+        );
     }
 
     // AC-14b: release_all is a no-op for a session holding no locks
