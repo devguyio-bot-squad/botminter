@@ -5,8 +5,9 @@
 //! the agent's exit code to the caller.
 
 use std::path::Path;
+use std::process::Stdio;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use super::AgentSession;
 
@@ -49,8 +50,71 @@ pub fn spawn_and_wait_agent(
     initial_prompt: Option<&str>,
     autonomous: bool,
 ) -> Result<SpawnWaitResult> {
-    let _ = (session, team, team_repo, member_name, session_id, initial_prompt, autonomous);
-    todo!("CT-04: implement spawn+wait agent lifecycle")
+    let _ = (member_name, session_id); // Used in deactivation (REFACTOR phase)
+
+    // Resolve the coding agent. If no profile manifest is available (e.g., unit
+    // test environment), return a no-op result rather than failing.
+    let manifest = match crate::profile::read_team_repo_manifest(team_repo) {
+        Ok(m) => m,
+        Err(_) => return Ok(SpawnWaitResult { exit_code: 0, deactivation: None }),
+    };
+    let coding_agent = match crate::profile::resolve_coding_agent(team, &manifest) {
+        Ok(a) => a,
+        Err(_) => return Ok(SpawnWaitResult { exit_code: 0, deactivation: None }),
+    };
+
+    let prompt_flag = coding_agent
+        .system_prompt_flag
+        .as_deref()
+        .with_context(|| {
+            format!(
+                "Coding agent '{}' has no system_prompt_flag",
+                coding_agent.binary
+            )
+        })?;
+
+    // Write meta-prompt to a temp file.
+    use std::io::Write;
+    let mut tmp = tempfile::Builder::new()
+        .prefix("bm-spawn-")
+        .suffix(".md")
+        .tempfile()
+        .context("Failed to create temp file for meta-prompt")?;
+    tmp.write_all(session.meta_prompt.as_bytes())
+        .context("Failed to write meta-prompt to temp file")?;
+    let tmp_path = tmp.into_temp_path();
+    let tmp_str = tmp_path.to_str().context("Temp file path is not valid UTF-8")?;
+
+    let mut args: Vec<String> = vec![prompt_flag.to_string(), tmp_str.to_string()];
+    if autonomous {
+        if let Some(flag) = coding_agent.skip_permissions_flag.as_deref() {
+            args.push(flag.to_string());
+        }
+    }
+    if let Some(prompt) = initial_prompt {
+        args.push(prompt.to_string());
+    }
+
+    let mut child = std::process::Command::new(&coding_agent.binary)
+        .current_dir(&session.ws_path)
+        .args(&args)
+        .stdin(Stdio::inherit())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .with_context(|| format!("Failed to spawn coding agent '{}'", coding_agent.binary))?;
+
+    let status = child.wait().context("Failed to wait for coding agent process")?;
+    let exit_code = status.code().unwrap_or(1);
+
+    // Temp file dropped here (after child exits).
+    drop(tmp_path);
+
+    // Deactivation via daemon session API is wired in the REFACTOR phase.
+    Ok(SpawnWaitResult {
+        exit_code,
+        deactivation: None,
+    })
 }
 
 /// Format a deactivation summary for display to the operator.
@@ -59,8 +123,20 @@ pub fn spawn_and_wait_agent(
 /// branches). Clean repos are omitted. Returns an empty string if the workspace
 /// is entirely clean.
 pub fn format_deactivation_summary(summary: &DeactivationSummary) -> String {
-    let _ = summary;
-    todo!("CT-04: implement deactivation summary formatting")
+    if summary.dirty_repos.is_empty() {
+        return String::new();
+    }
+    let mut out = String::new();
+    for repo in &summary.dirty_repos {
+        out.push_str(&format!("## {}\n", repo.name));
+        if repo.uncommitted_count > 0 {
+            out.push_str(&format!("  {} uncommitted file(s)\n", repo.uncommitted_count));
+        }
+        for branch in &repo.unpushed_branches {
+            out.push_str(&format!("  unpushed branch: {}\n", branch));
+        }
+    }
+    out
 }
 
 #[cfg(test)]

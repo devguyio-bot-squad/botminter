@@ -162,25 +162,83 @@ impl DaemonClient {
         member: &str,
         session_type: &str,
     ) -> Result<StartSessionResponse> {
-        let _ = (member, session_type);
-        todo!("CT-04: implement session start client method")
+        let url = format!("{}/api/sessions/start", self.base_url);
+        let req = StartSessionRequest {
+            member: member.to_string(),
+            session_type: session_type.to_string(),
+        };
+        let resp = self
+            .client
+            .post(&url)
+            .json(&req)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session start: {}", status, body);
+        }
+
+        resp.json::<StartSessionResponse>()
+            .context("Failed to parse session start response")
     }
 
     /// POST /api/sessions/{id}/stop — stop the agent and deactivate the session.
     pub fn stop_session(&self, session_id: &str) -> Result<StopSessionResponse> {
-        let _ = session_id;
-        todo!("CT-04: implement session stop client method")
+        let url = format!("{}/api/sessions/{}/stop", self.base_url, session_id);
+        let resp = self
+            .client
+            .post(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session stop: {}", status, body);
+        }
+
+        resp.json::<StopSessionResponse>()
+            .context("Failed to parse session stop response")
     }
 
     /// GET /api/sessions — list all active sessions.
     pub fn list_sessions(&self) -> Result<SessionsListResponse> {
-        todo!("CT-04: implement session list client method")
+        let url = format!("{}/api/sessions", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session list: {}", status, body);
+        }
+
+        resp.json::<SessionsListResponse>()
+            .context("Failed to parse session list response")
     }
 
     /// GET /api/sessions/{id} — get a single session by ID.
     pub fn get_session(&self, session_id: &str) -> Result<SessionInfo> {
-        let _ = session_id;
-        todo!("CT-04: implement session get client method")
+        let url = format!("{}/api/sessions/{}", self.base_url, session_id);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session get: {}", status, body);
+        }
+
+        resp.json::<SessionInfo>()
+            .context("Failed to parse session get response")
     }
 }
 
@@ -530,15 +588,99 @@ mod tests {
         assert!(resp.dirty_repos.is_empty());
     }
 
-    // ── Session client behavioral tests (FAIL in RED — stubs panic via todo!()) ──
+    // ── Session client behavioral tests ─────────────────────────────────────────
+    //
+    // These tests start a lightweight in-process HTTP server with stub session
+    // routes and verify that DaemonClient methods produce correct requests and
+    // parse responses correctly.
+
+    static SESSION_SERVER_BASE_URL: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+
+    /// Starts a stub axum server with session API routes and returns its base URL.
+    /// The server starts once per test process (OnceLock) on a random port.
+    fn session_server_base_url() -> String {
+        SESSION_SERVER_BASE_URL
+            .get_or_init(|| {
+                use axum::extract::Path;
+                use axum::routing::{get, post};
+                use axum::Json;
+
+                async fn stub_start_session(
+                    Json(req): Json<serde_json::Value>,
+                ) -> Json<serde_json::Value> {
+                    let member = req["member"].as_str().unwrap_or("unknown").to_string();
+                    let session_type =
+                        req["session_type"].as_str().unwrap_or("loop").to_string();
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "session": {
+                            "session_id": format!("stub-{member}-{session_type}"),
+                            "owning_member": member,
+                            "session_type": session_type,
+                            "current_state": "Active",
+                            "start_time": "2026-05-31T00:00:00Z",
+                            "workspace_path": null
+                        },
+                        "error": null
+                    }))
+                }
+
+                async fn stub_list_sessions() -> Json<serde_json::Value> {
+                    Json(serde_json::json!({ "sessions": [] }))
+                }
+
+                async fn stub_stop_session(
+                    Path(_id): Path<String>,
+                ) -> Json<serde_json::Value> {
+                    Json(serde_json::json!({
+                        "ok": true,
+                        "dirty_repos": [],
+                        "error": null
+                    }))
+                }
+
+                async fn stub_get_session(
+                    Path(id): Path<String>,
+                ) -> Json<serde_json::Value> {
+                    Json(serde_json::json!({
+                        "session_id": id,
+                        "owning_member": "stub-member",
+                        "session_type": "loop",
+                        "current_state": "Active",
+                        "start_time": "2026-05-31T00:00:00Z",
+                        "workspace_path": null
+                    }))
+                }
+
+                let router = axum::Router::new()
+                    .route("/api/sessions/start", post(stub_start_session))
+                    .route("/api/sessions", get(stub_list_sessions))
+                    .route("/api/sessions/{id}/stop", post(stub_stop_session))
+                    .route("/api/sessions/{id}", get(stub_get_session));
+
+                let (tx, rx) = std::sync::mpsc::channel::<String>();
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Runtime::new().unwrap();
+                    rt.block_on(async move {
+                        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+                            .await
+                            .unwrap();
+                        let port = listener.local_addr().unwrap().port();
+                        tx.send(format!("http://127.0.0.1:{port}")).unwrap();
+                        axum::serve(listener, router).await.unwrap();
+                    });
+                });
+
+                rx.recv().unwrap()
+            })
+            .clone()
+    }
 
     // AC-1: DaemonClient::start_session sends correct request and returns SessionInfo
     #[test]
     fn client_start_session_returns_session_info() {
-        // Create a minimal DaemonClient to call start_session
-        // (the method panics via todo!() — RED state)
         let client = DaemonClient {
-            base_url: "http://127.0.0.1:19999".to_string(),
+            base_url: session_server_base_url(),
             client: reqwest::blocking::Client::new(),
         };
         let result = client.start_session("alice", "interactive");
@@ -551,7 +693,7 @@ mod tests {
     #[test]
     fn client_list_sessions_returns_sessions_array() {
         let client = DaemonClient {
-            base_url: "http://127.0.0.1:19999".to_string(),
+            base_url: session_server_base_url(),
             client: reqwest::blocking::Client::new(),
         };
         let result = client.list_sessions();
@@ -560,23 +702,24 @@ mod tests {
         let _ = resp.sessions;
     }
 
-    // AC-5: DaemonClient::stop_session returns deactivation result
+    // AC-5: DaemonClient::stop_session returns deactivation result (idempotent)
     #[test]
     fn client_stop_session_returns_deactivation_result() {
         let client = DaemonClient {
-            base_url: "http://127.0.0.1:19999".to_string(),
+            base_url: session_server_base_url(),
             client: reqwest::blocking::Client::new(),
         };
+        // stop is idempotent — returns ok=true even for unknown session IDs
         let result = client.stop_session("sess-abc12345");
         let resp = result.unwrap();
         assert!(resp.ok, "stop_session must return ok=true for known session");
     }
 
-    // AC-8: DaemonClient::get_session returns session info
+    // AC-8: DaemonClient::get_session returns session info by ID
     #[test]
     fn client_get_session_returns_session_info_by_id() {
         let client = DaemonClient {
-            base_url: "http://127.0.0.1:19999".to_string(),
+            base_url: session_server_base_url(),
             client: reqwest::blocking::Client::new(),
         };
         let result = client.get_session("sess-abc12345");
