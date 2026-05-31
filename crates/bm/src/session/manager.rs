@@ -9,6 +9,7 @@ use chrono::Utc;
 use super::lock::WorkItemLock;
 use super::registry::SessionRegistry;
 use super::types::{SessionId, SessionRecord, SessionState, SessionType};
+use crate::workspace::{push_with_rebase_retry, DEFAULT_MAX_RETRIES};
 
 /// Describes the state of a single project repo after session deactivation.
 #[derive(Debug, Clone)]
@@ -150,7 +151,27 @@ impl SessionManager {
 /// For each repo with unpushed commits, resolves the current branch and calls
 /// `push_with_rebase_retry`. On success, clears `unpushed_branches`. Non-fatal:
 /// push failures are never propagated as Err from `deactivate_session`.
-fn push_and_refresh_dirty(_dirty_repos: &mut Vec<DirtyRepo>, _workspace_path: &Path) {}
+fn push_and_refresh_dirty(dirty_repos: &mut [DirtyRepo], workspace_path: &Path) {
+    for repo in dirty_repos.iter_mut() {
+        if repo.unpushed_branches.is_empty() {
+            continue;
+        }
+        let repo_path = workspace_path.join("projects").join(&repo.name);
+        let branch_out = Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(&repo_path)
+            .output();
+        let branch = match branch_out {
+            Ok(o) if o.status.success() => {
+                String::from_utf8_lossy(&o.stdout).trim().to_string()
+            }
+            _ => continue,
+        };
+        if push_with_rebase_retry(&repo_path, "origin", &branch, DEFAULT_MAX_RETRIES).is_ok() {
+            repo.unpushed_branches.clear();
+        }
+    }
+}
 
 /// Run git status and unpushed-commits checks against every subdirectory under
 /// `workspace/projects/`. Non-git directories are silently skipped.
@@ -534,12 +555,18 @@ mod session_push_integration_tests {
         let tmp = TempDir::new().unwrap();
         let bare = init_bare_repo(&tmp, "repo");
 
-        // clone_a: conflicting change on the same file → push to advance bare
+        // Both clones start from the same bare state so they diverge after clone_a pushes.
         let clone_a = tmp.path().join("clone-a");
         Command::new("git")
             .args(["clone", bare.to_str().unwrap(), clone_a.to_str().unwrap()])
             .output()
             .unwrap();
+
+        // workspace cloned BEFORE clone_a pushes so it is behind bare when push is attempted
+        let workspace = tmp.path().join("ws/dan");
+        let project = clone_into_workspace_projects(&bare, &workspace, "my-project");
+
+        // clone_a: conflicting change on the same file → advances bare
         fs::write(clone_a.join("file.txt"), "version A\n").unwrap();
         git_commit_all(&clone_a, "A modifies file.txt");
         Command::new("git")
@@ -547,9 +574,7 @@ mod session_push_integration_tests {
             .output()
             .unwrap();
 
-        // workspace clone: conflicting change on the same file → rebase will conflict
-        let workspace = tmp.path().join("ws/dan");
-        let project = clone_into_workspace_projects(&bare, &workspace, "my-project");
+        // workspace: conflicting change on the same file → rebase will conflict
         fs::write(project.join("file.txt"), "version B\n").unwrap();
         git_commit_all(&project, "B modifies file.txt");
 
