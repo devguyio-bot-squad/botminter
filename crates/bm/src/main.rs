@@ -305,8 +305,22 @@ fn main() -> Result<()> {
         Command::Disable { member, team, now } => {
             commands::disable::run(member.as_deref(), team.as_deref(), now)?;
         }
-        Command::Status { team, verbose, json } => {
-            commands::status::run(team.as_deref(), verbose, json)?;
+        Command::Status {
+            team,
+            verbose,
+            json,
+            history,
+            member,
+            since,
+        } => {
+            commands::status::run(
+                team.as_deref(),
+                verbose,
+                json,
+                history,
+                member.as_deref(),
+                since.as_deref(),
+            )?;
         }
         Command::BrainRun {
             workspace,

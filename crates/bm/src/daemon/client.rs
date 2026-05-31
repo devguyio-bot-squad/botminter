@@ -9,8 +9,8 @@ use super::api::{
 };
 use super::config::{DaemonConfig, DaemonPaths};
 use super::session_api::{
-    ForceStopResponse, RetriggerFinalizationResponse, SessionInfo, SessionsListResponse,
-    StartSessionRequest, StartSessionResponse, StopSessionResponse,
+    ForceStopResponse, RetriggerFinalizationResponse, SessionHistoryInfo, SessionInfo,
+    SessionsListResponse, StartSessionRequest, StartSessionResponse, StopSessionResponse,
 };
 use crate::state;
 
@@ -218,6 +218,25 @@ impl DaemonClient {
             .context("Failed to parse session list response")
     }
 
+    /// GET /api/sessions/history — list completed/terminated sessions.
+    pub fn list_session_history(&self) -> Result<Vec<SessionHistoryInfo>> {
+        let url = format!("{}/api/sessions/history", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session history: {}", status, body);
+        }
+
+        resp.json::<Vec<SessionHistoryInfo>>()
+            .context("Failed to parse session history response")
+    }
+
     /// GET /api/sessions/{id} — get a single session by ID.
     pub fn get_session(&self, session_id: &str) -> Result<SessionInfo> {
         let url = format!("{}/api/sessions/{}", self.base_url, session_id);
@@ -259,7 +278,10 @@ impl DaemonClient {
     }
 
     /// POST /api/sessions/{id}/finalize — re-trigger finalization on a Retained session.
-    pub fn retrigger_finalization(&self, session_id: &str) -> Result<RetriggerFinalizationResponse> {
+    pub fn retrigger_finalization(
+        &self,
+        session_id: &str,
+    ) -> Result<RetriggerFinalizationResponse> {
         let url = format!("{}/api/sessions/{}/finalize", self.base_url, session_id);
         let resp = self
             .client
@@ -270,7 +292,11 @@ impl DaemonClient {
         let status = resp.status();
         if !status.is_success() {
             let body = resp.text().unwrap_or_default();
-            bail!("Daemon returned {} for retrigger finalization: {}", status, body);
+            bail!(
+                "Daemon returned {} for retrigger finalization: {}",
+                status,
+                body
+            );
         }
 
         resp.json::<RetriggerFinalizationResponse>()

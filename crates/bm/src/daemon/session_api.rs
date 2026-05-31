@@ -31,7 +31,7 @@ pub struct StartSessionRequest {
 // ── Response types ───────────────────────────────────────────────────────────
 
 /// A single session's fields as returned by GET /api/sessions and GET /api/sessions/{id}.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct SessionInfo {
     pub session_id: String,
     pub owning_member: String,
@@ -40,6 +40,12 @@ pub struct SessionInfo {
     /// ISO-8601 timestamp — corresponds to SessionRecord::created_at.
     pub start_time: String,
     pub workspace_path: Option<String>,
+    /// ISO-8601 timestamp of last state transition (for elapsed time display).
+    #[serde(default)]
+    pub state_transitioned_at: String,
+    /// Number of concurrent active sessions for this member.
+    #[serde(default)]
+    pub concurrent_count: u32,
 }
 
 /// Per-repo dirty state included in StopSessionResponse.
@@ -67,6 +73,17 @@ pub struct StartSessionResponse {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct SessionsListResponse {
     pub sessions: Vec<SessionInfo>,
+}
+
+/// A completed session's fields as returned by GET /api/sessions/history.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionHistoryInfo {
+    pub session_id: String,
+    pub owning_member: String,
+    pub session_type: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub exit_normal: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -108,7 +125,7 @@ pub struct RetriggerFinalizationResponse {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-fn record_to_info(record: &SessionRecord) -> SessionInfo {
+fn record_to_info_with_count(record: &SessionRecord, concurrent_count: u32) -> SessionInfo {
     let session_type_str = match record.session_type {
         SessionType::Loop => "loop",
         SessionType::Brain => "brain",
@@ -126,7 +143,13 @@ fn record_to_info(record: &SessionRecord) -> SessionInfo {
             .workspace_path
             .as_ref()
             .map(|p| p.to_string_lossy().to_string()),
+        state_transitioned_at: record.state_transitioned_at.to_rfc3339(),
+        concurrent_count,
     }
+}
+
+fn record_to_info(record: &SessionRecord) -> SessionInfo {
+    record_to_info_with_count(record, 1)
 }
 
 fn parse_session_type(s: &str) -> Option<SessionType> {
@@ -215,9 +238,20 @@ pub(super) async fn list_sessions_handler(
 
     let sessions = tokio::task::spawn_blocking(move || {
         let m = manager.lock().unwrap();
-        m.list_active()
+        let records = m.list_active();
+        let counts: std::collections::HashMap<String, u32> =
+            records
+                .iter()
+                .fold(std::collections::HashMap::new(), |mut acc, r| {
+                    *acc.entry(r.member_name.clone()).or_insert(0) += 1;
+                    acc
+                });
+        records
             .iter()
-            .map(|r| record_to_info(r))
+            .map(|r| {
+                let count = *counts.get(&r.member_name).unwrap_or(&1);
+                record_to_info_with_count(r, count)
+            })
             .collect::<Vec<_>>()
     })
     .await
@@ -412,6 +446,7 @@ mod tests {
             current_state: "Active".to_string(),
             start_time: "2026-05-31T00:00:00Z".to_string(),
             workspace_path: Some("/workspaces/alice".to_string()),
+            ..SessionInfo::default()
         };
         let resp = StartSessionResponse {
             ok: true,
@@ -451,6 +486,7 @@ mod tests {
                     current_state: "Active".to_string(),
                     start_time: "2026-05-31T00:00:00Z".to_string(),
                     workspace_path: None,
+                    ..SessionInfo::default()
                 },
                 SessionInfo {
                     session_id: "s2".to_string(),
@@ -459,6 +495,7 @@ mod tests {
                     current_state: "Active".to_string(),
                     start_time: "2026-05-31T01:00:00Z".to_string(),
                     workspace_path: None,
+                    ..SessionInfo::default()
                 },
             ],
         };
@@ -526,6 +563,7 @@ mod tests {
             current_state: "Active".to_string(),
             start_time: "2026-05-31T12:00:00Z".to_string(),
             workspace_path: Some("/ws/alice".to_string()),
+            ..SessionInfo::default()
         };
         let val = serde_json::to_value(&info).unwrap();
         // Verify all AC-10 required fields are present in serialized form

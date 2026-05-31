@@ -6,11 +6,18 @@ use comfy_table::{
 };
 
 use crate::config;
-use crate::daemon::{DaemonClient, SessionsListResponse};
+use crate::daemon::{DaemonClient, SessionHistoryInfo, SessionsListResponse};
 use crate::state::{self, MemberStatus};
 
-/// Handles `bm status [-t team] [-v] [--json]`.
-pub fn run(team_flag: Option<&str>, verbose: bool, json: bool) -> Result<()> {
+/// Handles `bm status [-t team] [-v] [--json] [--history] [--member <m>] [--since <d>]`.
+pub fn run(
+    team_flag: Option<&str>,
+    verbose: bool,
+    json: bool,
+    history: bool,
+    member_filter: Option<&str>,
+    since: Option<&str>,
+) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
 
@@ -134,10 +141,15 @@ pub fn run(team_flag: Option<&str>, verbose: bool, json: bool) -> Result<()> {
         }
     }
 
-    // Sessions (AC-10)
+    // Sessions (AC-10) / History (AC-17)
     let team_name = team.name.clone();
-    let fetcher = move || DaemonClient::connect(&team_name)?.list_sessions();
-    fetch_and_display_sessions(json, &mut std::io::stdout(), &fetcher)?;
+    if history {
+        let fetcher = move || DaemonClient::connect(&team_name)?.list_session_history();
+        fetch_and_display_history(json, member_filter, since, &mut std::io::stdout(), &fetcher)?;
+    } else {
+        let fetcher = move || DaemonClient::connect(&team_name)?.list_sessions();
+        fetch_and_display_sessions(json, &mut std::io::stdout(), &fetcher)?;
+    }
 
     Ok(())
 }
@@ -180,7 +192,15 @@ pub(crate) fn fetch_and_display_sessions<W: Write>(
         .load_preset(UTF8_FULL_CONDENSED)
         .apply_modifier(UTF8_ROUND_CORNERS)
         .set_content_arrangement(ContentArrangement::DynamicFullWidth)
-        .set_header(vec!["Session ID", "Member", "Type", "State", "Started"]);
+        .set_header(vec![
+            "Session ID",
+            "Member",
+            "Type",
+            "State",
+            "Started",
+            "Elapsed",
+            "Concurrent",
+        ]);
 
     for s in &sessions {
         let short_id = if s.session_id.len() > 8 {
@@ -189,12 +209,147 @@ pub(crate) fn fetch_and_display_sessions<W: Write>(
             s.session_id.clone()
         };
         let started = format_timestamp(&s.start_time);
+        let elapsed = if s.state_transitioned_at.is_empty() {
+            "—".to_string()
+        } else {
+            format_elapsed(compute_elapsed_secs(&s.state_transitioned_at))
+        };
+        let concurrent = s.concurrent_count.to_string();
         table.add_row(vec![
             short_id.as_str(),
             &s.owning_member,
             &s.session_type,
             &s.current_state,
             &started,
+            &elapsed,
+            &concurrent,
+        ]);
+    }
+    writeln!(writer, "{table}")?;
+    Ok(())
+}
+
+/// Formats elapsed seconds as a human-readable duration string.
+///
+/// Examples: 135 → "2m 15s", 7335 → "2h 2m", 90061 → "1d 1h"
+pub(crate) fn format_elapsed(secs: u64) -> String {
+    if secs >= 86400 {
+        let days = secs / 86400;
+        let hours = (secs % 86400) / 3600;
+        format!("{days}d {hours}h")
+    } else if secs >= 3600 {
+        let hours = secs / 3600;
+        let mins = (secs % 3600) / 60;
+        format!("{hours}h {mins}m")
+    } else {
+        let mins = secs / 60;
+        let secs_rem = secs % 60;
+        format!("{mins}m {secs_rem}s")
+    }
+}
+
+fn compute_elapsed_secs(ts: &str) -> u64 {
+    let Ok(dt) = chrono::DateTime::parse_from_rfc3339(ts) else {
+        return 0;
+    };
+    let now = chrono::Utc::now();
+    let elapsed = now.signed_duration_since(dt.with_timezone(&chrono::Utc));
+    elapsed.num_seconds().max(0) as u64
+}
+
+fn parse_since_cutoff(s: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    let s = s.trim();
+    let (num_str, secs_per_unit) = if let Some(n) = s.strip_suffix('h') {
+        (n, 3600i64)
+    } else if let Some(n) = s.strip_suffix('d') {
+        (n, 86400i64)
+    } else if let Some(n) = s.strip_suffix('m') {
+        (n, 60i64)
+    } else {
+        return None;
+    };
+    let n: i64 = num_str.trim().parse().ok()?;
+    let secs = n.checked_mul(secs_per_unit)?;
+    let now = chrono::Utc::now();
+    now.checked_sub_signed(chrono::Duration::seconds(secs))
+}
+
+/// Fetches session history via `history_fetcher`, applies filters, and writes to `writer`.
+pub(crate) fn fetch_and_display_history<W: Write>(
+    json: bool,
+    member_filter: Option<&str>,
+    since: Option<&str>,
+    writer: &mut W,
+    history_fetcher: &dyn Fn() -> Result<Vec<SessionHistoryInfo>>,
+) -> Result<()> {
+    let entries = match history_fetcher() {
+        Ok(e) => e,
+        Err(_) => {
+            if json {
+                writeln!(writer, "{{\"sessions\":[]}}")?;
+            } else {
+                writeln!(writer, "History: none")?;
+            }
+            return Ok(());
+        }
+    };
+
+    let since_cutoff = since.and_then(parse_since_cutoff);
+
+    let entries: Vec<_> = entries
+        .into_iter()
+        .filter(|e| {
+            if let Some(m) = member_filter {
+                if e.owning_member != m {
+                    return false;
+                }
+            }
+            if let Some(cutoff) = since_cutoff {
+                if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&e.end_time) {
+                    if dt.with_timezone(&chrono::Utc) < cutoff {
+                        return false;
+                    }
+                }
+            }
+            true
+        })
+        .collect();
+
+    if entries.is_empty() {
+        if json {
+            writeln!(writer, "{{\"sessions\":[]}}")?;
+        } else {
+            writeln!(writer, "History: none")?;
+        }
+        return Ok(());
+    }
+
+    if json {
+        writeln!(writer, "{}", serde_json::to_string(&entries)?)?;
+        return Ok(());
+    }
+
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL_CONDENSED)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::DynamicFullWidth)
+        .set_header(vec!["Session ID", "Member", "Type", "Start", "End", "Exit"]);
+
+    for e in &entries {
+        let short_id = if e.session_id.len() > 7 {
+            format!("{}…", &e.session_id[..7])
+        } else {
+            e.session_id.clone()
+        };
+        let exit_label = if e.exit_normal { "normal" } else { "abnormal" };
+        table.add_row(vec![
+            short_id.as_str(),
+            &e.owning_member,
+            &e.session_type,
+            &format_timestamp(&e.start_time),
+            &format_timestamp(&e.end_time),
+            exit_label,
         ]);
     }
     writeln!(writer, "{table}")?;
@@ -254,6 +409,7 @@ mod session_display_tests {
             current_state: state.to_string(),
             start_time: start.to_string(),
             workspace_path: None,
+            ..SessionInfo::default()
         }
     }
 
