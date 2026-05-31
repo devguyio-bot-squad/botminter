@@ -137,7 +137,7 @@ pub fn run(team_flag: Option<&str>, verbose: bool, json: bool) -> Result<()> {
     // Sessions (AC-10)
     let team_name = team.name.clone();
     let fetcher = move || DaemonClient::connect(&team_name)?.list_sessions();
-    fetch_and_display_sessions(&team.name, json, &mut std::io::stdout(), &fetcher)?;
+    fetch_and_display_sessions(json, &mut std::io::stdout(), &fetcher)?;
 
     Ok(())
 }
@@ -148,7 +148,6 @@ pub fn run(team_flag: Option<&str>, verbose: bool, json: bool) -> Result<()> {
 /// When the daemon is not reachable, writes "Sessions: none (daemon not running)" in
 /// text mode or `{"sessions":[]}` in JSON mode.
 pub(crate) fn fetch_and_display_sessions<W: Write>(
-    _team_name: &str,
     json: bool,
     writer: &mut W,
     session_fetcher: &dyn Fn() -> Result<SessionsListResponse>,
@@ -274,7 +273,7 @@ mod session_display_tests {
             })
         };
         let mut buf = Vec::new();
-        fetch_and_display_sessions("test-team", false, &mut buf, &fetcher).unwrap();
+        fetch_and_display_sessions(false, &mut buf, &fetcher).unwrap();
         let output = String::from_utf8(buf).unwrap();
         // session_id must be truncated to 8 chars + '…'
         assert!(
@@ -304,7 +303,7 @@ mod session_display_tests {
             ))
         };
         let mut buf = Vec::new();
-        fetch_and_display_sessions("test-team", false, &mut buf, &fetcher).unwrap();
+        fetch_and_display_sessions(false, &mut buf, &fetcher).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(
             output.contains("none (daemon not running)"),
@@ -315,11 +314,10 @@ mod session_display_tests {
     // AC-10: bm status shows 'Sessions: none' when daemon is running but has no sessions
     #[test]
     fn status_shows_none_when_no_sessions() {
-        let fetcher = || -> Result<SessionsListResponse> {
-            Ok(SessionsListResponse { sessions: vec![] })
-        };
+        let fetcher =
+            || -> Result<SessionsListResponse> { Ok(SessionsListResponse { sessions: vec![] }) };
         let mut buf = Vec::new();
-        fetch_and_display_sessions("test-team", false, &mut buf, &fetcher).unwrap();
+        fetch_and_display_sessions(false, &mut buf, &fetcher).unwrap();
         let output = String::from_utf8(buf).unwrap();
         assert!(
             output.contains("Sessions: none"),
@@ -343,14 +341,17 @@ mod session_display_tests {
             })
         };
         let mut buf = Vec::new();
-        fetch_and_display_sessions("test-team", true, &mut buf, &fetcher).unwrap();
+        fetch_and_display_sessions(true, &mut buf, &fetcher).unwrap();
         let output = String::from_utf8(buf).unwrap();
         let parsed: serde_json::Value =
             serde_json::from_str(&output).expect("--json output must be valid JSON");
         let sessions_arr = parsed["sessions"]
             .as_array()
             .expect("--json output must have 'sessions' array");
-        assert!(!sessions_arr.is_empty(), "--json output must include sessions");
+        assert!(
+            !sessions_arr.is_empty(),
+            "--json output must include sessions"
+        );
         assert_eq!(
             sessions_arr[0]["session_id"].as_str().unwrap(),
             "abc12345xyz9999",
@@ -367,7 +368,7 @@ mod session_display_tests {
             ))
         };
         let mut buf = Vec::new();
-        fetch_and_display_sessions("test-team", true, &mut buf, &fetcher).unwrap();
+        fetch_and_display_sessions(true, &mut buf, &fetcher).unwrap();
         let output = String::from_utf8(buf).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&output)
             .expect("--json output must be valid JSON even when daemon not running");
