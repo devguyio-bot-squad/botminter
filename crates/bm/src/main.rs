@@ -380,6 +380,9 @@ fn main() -> Result<()> {
                 commands::debug::brain_logs(&member, team.as_deref(), lines, entries)?;
             }
         },
+        Command::Session { command } => {
+            commands::session::run(command)?;
+        }
         Command::External(args) => {
             commands::meeting::run_external(args)?;
         }

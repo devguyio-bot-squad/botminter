@@ -33,6 +33,30 @@ pub struct DeactivationResult {
     pub finalization_launched: bool,
 }
 
+/// Structured summary of a session returned by `inspect_session`.
+#[derive(Debug, Clone)]
+pub struct SessionInspection {
+    pub session_id: SessionId,
+    pub member_name: String,
+    pub session_type: SessionType,
+    pub current_state: SessionState,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub state_transitioned_at: chrono::DateTime<chrono::Utc>,
+    pub workspace_path: Option<std::path::PathBuf>,
+}
+
+/// Filter predicate for bulk session cleanup.
+pub enum CleanupFilter {
+    Member(String),
+    OlderThan(std::time::Duration),
+    All,
+}
+
+/// Result of a bulk cleanup operation.
+pub struct CleanupReport {
+    pub removed: usize,
+}
+
 /// Manages session lifecycle: creates sessions via the hydrator and tracks them in the registry.
 ///
 /// Also owns the `WorkItemLock` — `deactivate_session` always releases all locks held by the
@@ -238,6 +262,62 @@ impl SessionManager {
             let _ = retrigger_finalization(wp, id);
         }
         Ok(())
+    }
+
+    pub fn inspect_session(&self, id: &SessionId) -> Result<SessionInspection> {
+        let session = self
+            .registry
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("session {} not found", id))?
+            .clone();
+        Ok(SessionInspection {
+            session_id: session.session_id,
+            member_name: session.member_name,
+            session_type: session.session_type,
+            current_state: session.current_state,
+            created_at: session.created_at,
+            state_transitioned_at: session.state_transitioned_at,
+            workspace_path: session.workspace_path,
+        })
+    }
+
+    pub fn cleanup_session(&mut self, id: &SessionId) -> Result<()> {
+        let session = self
+            .registry
+            .get(id)
+            .ok_or_else(|| anyhow::anyhow!("session {} not found", id))?
+            .clone();
+        if let Some(ref wp) = session.workspace_path {
+            if wp.exists() {
+                std::fs::remove_dir_all(wp)?;
+            }
+        }
+        self.registry.remove(id)?;
+        self.registry.save()
+    }
+
+    pub fn cleanup_sessions(&mut self, filter: CleanupFilter) -> Result<CleanupReport> {
+        let now = chrono::Utc::now();
+        let ids_to_remove: Vec<SessionId> = self
+            .registry
+            .list()
+            .into_iter()
+            .filter(|s| s.current_state == SessionState::Retained)
+            .filter(|s| match &filter {
+                CleanupFilter::Member(name) => &s.member_name == name,
+                CleanupFilter::OlderThan(duration) => {
+                    let age = now.signed_duration_since(s.state_transitioned_at);
+                    age.num_seconds() >= 0 && (age.num_seconds() as u64) > duration.as_secs()
+                }
+                CleanupFilter::All => true,
+            })
+            .map(|s| s.session_id.clone())
+            .collect();
+        let removed = ids_to_remove.len();
+        for id in ids_to_remove {
+            self.cleanup_session(&id)?;
+        }
+        Ok(CleanupReport { removed })
     }
 }
 
@@ -970,5 +1050,185 @@ mod session_finalization_integration_tests {
             SessionState::Finalizing,
             "retrigger must transition Retained → Finalizing"
         );
+    }
+}
+
+#[cfg(test)]
+mod session_cleanup_inspection_tests {
+    use super::*;
+    use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
+    use chrono::Utc;
+    use tempfile::TempDir;
+
+    fn make_manager(tmp: &TempDir) -> SessionManager {
+        SessionManager::new(
+            tmp.path().join("workspaces"),
+            tmp.path().join("registry.json"),
+        )
+        .unwrap()
+    }
+
+    fn add_retained_session(
+        manager: &mut SessionManager,
+        member: &str,
+        workspace_path: Option<std::path::PathBuf>,
+    ) -> SessionId {
+        let record = SessionRecord {
+            session_id: SessionId::new(),
+            member_name: member.to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Retained,
+            created_at: Utc::now(),
+            state_transitioned_at: Utc::now(),
+            agent_pid: None,
+            workspace_path,
+        };
+        let id = record.session_id.clone();
+        manager.registry.register(record).unwrap();
+        id
+    }
+
+    // AC-18 (inspection): inspect_session returns structured summary for a Retained session.
+    #[test]
+    fn inspect_retained_session_returns_structured_summary() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("ws/alice");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let mut manager = make_manager(&tmp);
+        let id = add_retained_session(&mut manager, "alice", Some(workspace));
+
+        let inspection: SessionInspection = manager.inspect_session(&id).unwrap();
+        assert_eq!(inspection.member_name, "alice");
+        assert_eq!(inspection.current_state, SessionState::Retained);
+        assert!(
+            inspection.workspace_path.is_some(),
+            "inspection must include workspace path"
+        );
+    }
+
+    // AC-18 (inspection): inspect_session returns error for unknown session ID.
+    #[test]
+    fn inspect_unknown_session_returns_error() {
+        let tmp = TempDir::new().unwrap();
+        let manager = make_manager(&tmp);
+        let phantom = SessionId::new();
+        let result: anyhow::Result<SessionInspection> = manager.inspect_session(&phantom);
+        assert!(result.is_err(), "inspect_session on unknown ID must fail");
+    }
+
+    // AC-18 (individual cleanup): cleanup_session removes workspace dir and registry entry.
+    #[test]
+    fn cleanup_session_removes_workspace_directory_and_registry_entry() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("ws/alice");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let mut manager = make_manager(&tmp);
+        let id = add_retained_session(&mut manager, "alice", Some(workspace.clone()));
+        manager.registry.save().unwrap();
+
+        manager.cleanup_session(&id).unwrap();
+
+        assert!(
+            !workspace.exists(),
+            "workspace directory must be removed after cleanup"
+        );
+        assert!(
+            manager.registry.get(&id).is_none(),
+            "session must be removed from registry after cleanup"
+        );
+    }
+
+    // AC-18 (bulk cleanup): cleanup_sessions with member filter removes only matching sessions.
+    #[test]
+    fn cleanup_sessions_member_filter_removes_only_matching() {
+        let tmp = TempDir::new().unwrap();
+        let ws_a1 = tmp.path().join("ws/alice-1");
+        let ws_a2 = tmp.path().join("ws/alice-2");
+        let ws_bob = tmp.path().join("ws/bob");
+        for p in [&ws_a1, &ws_a2, &ws_bob] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        let mut manager = make_manager(&tmp);
+        let _id_a1 = add_retained_session(&mut manager, "alice", Some(ws_a1.clone()));
+        let _id_a2 = add_retained_session(&mut manager, "alice", Some(ws_a2.clone()));
+        let id_bob = add_retained_session(&mut manager, "bob", Some(ws_bob.clone()));
+
+        let report: CleanupReport = manager
+            .cleanup_sessions(CleanupFilter::Member("alice".to_string()))
+            .unwrap();
+
+        assert_eq!(
+            report.removed, 2,
+            "exactly 2 alice sessions must be removed"
+        );
+        assert!(!ws_a1.exists(), "alice workspace 1 must be removed");
+        assert!(!ws_a2.exists(), "alice workspace 2 must be removed");
+        assert!(ws_bob.exists(), "bob workspace must NOT be removed");
+        assert!(
+            manager.registry.get(&id_bob).is_some(),
+            "bob session must remain in registry"
+        );
+    }
+
+    // AC-18 (bulk cleanup): cleanup_sessions with OlderThan filter removes only old sessions.
+    #[test]
+    fn cleanup_sessions_older_than_removes_only_old_sessions() {
+        let tmp = TempDir::new().unwrap();
+        let ws_old = tmp.path().join("ws/old-session");
+        let ws_new = tmp.path().join("ws/new-session");
+        for p in [&ws_old, &ws_new] {
+            std::fs::create_dir_all(p).unwrap();
+        }
+        let mut manager = make_manager(&tmp);
+
+        // Insert an old session: state_transitioned_at 49 hours in the past
+        let old_id = {
+            let id = SessionId::new();
+            let record = SessionRecord {
+                session_id: id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Retained,
+                created_at: Utc::now() - chrono::Duration::hours(49),
+                state_transitioned_at: Utc::now() - chrono::Duration::hours(49),
+                agent_pid: None,
+                workspace_path: Some(ws_old.clone()),
+            };
+            manager.registry.register(record).unwrap();
+            id
+        };
+        let new_id = add_retained_session(&mut manager, "bob", Some(ws_new.clone()));
+
+        let report: CleanupReport = manager
+            .cleanup_sessions(CleanupFilter::OlderThan(std::time::Duration::from_secs(
+                48 * 3600,
+            )))
+            .unwrap();
+
+        assert_eq!(report.removed, 1, "only the old session must be cleaned up");
+        assert!(!ws_old.exists(), "old session workspace must be removed");
+        assert!(ws_new.exists(), "new session workspace must NOT be removed");
+        assert!(manager.registry.get(&old_id).is_none());
+        assert!(manager.registry.get(&new_id).is_some());
+    }
+
+    // AC-18 (cleanup independence): cleanup_session does not require a tokio runtime.
+    // The call must succeed from a plain synchronous test context.
+    #[test]
+    fn cleanup_does_not_require_tokio_runtime() {
+        let tmp = TempDir::new().unwrap();
+        let workspace = tmp.path().join("ws/sync-test");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let mut manager = make_manager(&tmp);
+        let id = add_retained_session(&mut manager, "sync-member", Some(workspace.clone()));
+
+        // This must compile and run without #[tokio::test] — no runtime in scope
+        let result = manager.cleanup_session(&id);
+        assert!(
+            result.is_ok(),
+            "cleanup_session must succeed without a tokio runtime: {:?}",
+            result.err()
+        );
+        assert!(!workspace.exists());
     }
 }
