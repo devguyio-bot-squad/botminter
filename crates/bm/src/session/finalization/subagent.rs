@@ -8,15 +8,19 @@ use crate::session::types::SessionId;
 /// Build the Command for the finalization subagent without spawning.
 /// Exposed for unit testing so callers can inspect program, CWD, and env vars.
 pub(crate) fn build_finalization_command(workspace_path: &Path, session_id: &str) -> Command {
-    let mut cmd = Command::new("sh");
-    cmd.args(["-c", "exit 0"]);
-    // Stub: workspace_path and session_id unused until GREEN phase replaces with:
-    //   Command::new("claude")
-    //       .args(["--dangerously-skip-permissions", "--agent", "finalization", "-p", ...])
-    //       .current_dir(workspace_path)
-    //       .env("BM_SESSION_ID", session_id)
-    //       .env_remove("CLAUDECODE")
-    let _ = (workspace_path, session_id);
+    let mut cmd = Command::new("claude");
+    cmd.args([
+        "--dangerously-skip-permissions",
+        "--agent",
+        "finalization",
+        "-p",
+        &format!(
+            "Finalize session {session_id}: inspect all repos, commit and push relevant work, handle push conflicts with D-10 recovery."
+        ),
+    ])
+    .current_dir(workspace_path)
+    .env("BM_SESSION_ID", session_id)
+    .env_remove("CLAUDECODE");
     cmd
 }
 
