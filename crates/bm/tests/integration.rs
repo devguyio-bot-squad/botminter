@@ -4146,7 +4146,7 @@ fn daemon_console_api_e2e_with_fixtures() {
         assert!(
             inv_files
                 .iter()
-                .any(|f| f.as_str().map_or(false, |s| s.contains("design-quality"))),
+                .any(|f| f.as_str().is_some_and(|s| s.contains("design-quality"))),
             "alice should have design-quality.md invariant"
         );
     }
@@ -4232,7 +4232,7 @@ fn daemon_console_api_e2e_with_fixtures() {
         assert!(
             body["content_type"]
                 .as_str()
-                .map_or(false, |ct| ct.contains("yaml")),
+                .is_some_and(|ct| ct.contains("yaml")),
             "content_type should indicate yaml"
         );
     }

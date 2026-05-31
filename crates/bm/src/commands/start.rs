@@ -259,6 +259,7 @@ mod tests {
         use crate::formation;
         use anyhow::Result;
 
+        #[allow(clippy::type_complexity)]
         let _: fn(
             &std::path::Path,
             Option<&str>,

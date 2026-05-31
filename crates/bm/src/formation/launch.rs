@@ -233,6 +233,7 @@ mod tests {
         // via resolve_credential_from_store() in the member loop.
 
         // Verify launch_ralph compiles with bridge-type-aware parameters + gh_config_dir
+        #[allow(clippy::type_complexity)]
         let _: fn(
             &std::path::Path,
             Option<&str>,

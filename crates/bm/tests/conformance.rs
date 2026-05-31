@@ -578,7 +578,7 @@ fn tuwunel_schema_json_has_host() {
             "{}/tuwunel: schema.json must have properties.host",
             profile
         );
-        let required = val["required"].as_array().expect(&format!(
+        let required = val["required"].as_array().unwrap_or_else(|| panic!(
             "{}/tuwunel: schema.json must have required array",
             profile
         ));

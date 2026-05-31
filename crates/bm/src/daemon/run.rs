@@ -370,6 +370,7 @@ fn dir_size(path: &std::path::Path) -> Result<u64> {
 }
 
 #[cfg(test)]
+#[allow(clippy::items_after_test_module)]
 mod daemon_startup_tests {
     use chrono::Utc;
     use tempfile::TempDir;

@@ -1165,6 +1165,7 @@ pub(super) mod tests {
     /// `clone_repo` creates a bare git repo at the target path (simulating a
     /// real clone) so that subsequent git operations succeed.
     struct MockRemoteOps {
+        #[allow(dead_code)]
         initial_state: RemoteRepoState,
         push_fails: bool,
         calls: RefCell<Vec<String>>,
