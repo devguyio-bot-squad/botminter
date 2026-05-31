@@ -20,8 +20,13 @@ pub struct RetentionEngine {
     pub disk_usage: Box<dyn Fn() -> Result<u64>>,
 }
 
-pub fn retention_duration_for(_session_type: &SessionType) -> Duration {
-    Duration::from_secs(24 * 3600)
+pub fn retention_duration_for(session_type: &SessionType) -> Duration {
+    match session_type {
+        // AC-26: Interactive uses the same duration as Loop/Brain (not zero).
+        SessionType::Loop | SessionType::Brain | SessionType::Interactive => {
+            Duration::from_secs(24 * 3600)
+        }
+    }
 }
 
 impl RetentionEngine {
@@ -43,8 +48,12 @@ impl RetentionEngine {
             .collect();
 
         for id in ids_to_expire {
-            manager.cleanup_session(&id)?;
-            removed += 1;
+            match manager.cleanup_session(&id) {
+                Ok(_) => removed += 1,
+                Err(e) => {
+                    tracing::warn!(session_id = %id, error = %e, "retention: cleanup failed, skipping")
+                }
+            }
         }
 
         loop {
@@ -59,10 +68,14 @@ impl RetentionEngine {
                 .min_by_key(|s| s.state_transitioned_at)
                 .map(|s| s.session_id.clone());
             match oldest_id {
-                Some(id) => {
-                    manager.cleanup_session(&id)?;
-                    removed += 1;
-                }
+                Some(id) => match manager.cleanup_session(&id) {
+                    Ok(_) => removed += 1,
+                    Err(e) => {
+                        // Stop the disk-budget loop if cleanup fails to avoid an infinite retry.
+                        tracing::warn!(session_id = %id, error = %e, "retention: disk-budget cleanup failed, stopping cycle");
+                        break;
+                    }
+                },
                 None => break,
             }
         }
