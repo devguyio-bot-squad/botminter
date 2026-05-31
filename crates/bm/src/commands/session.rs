@@ -8,10 +8,7 @@ use crate::daemon::DaemonClient;
 
 pub fn run(command: SessionCommand) -> Result<()> {
     match command {
-        SessionCommand::Inspect {
-            session_id,
-            team,
-        } => {
+        SessionCommand::Inspect { session_id, team } => {
             let cfg = config::load()?;
             let team_entry = config::resolve_team(&cfg, team.as_deref())?;
             let client = DaemonClient::connect(&team_entry.name)?;
@@ -73,11 +70,8 @@ pub fn run(command: SessionCommand) -> Result<()> {
                     anyhow::bail!("cleanup failed for session {id}: {err}");
                 }
             } else {
-                let resp = client.bulk_cleanup_sessions(
-                    all,
-                    member.as_deref(),
-                    older_than.as_deref(),
-                )?;
+                let resp =
+                    client.bulk_cleanup_sessions(all, member.as_deref(), older_than.as_deref())?;
                 if resp.ok {
                     println!("Cleaned up {} session(s).", resp.removed);
                 } else {

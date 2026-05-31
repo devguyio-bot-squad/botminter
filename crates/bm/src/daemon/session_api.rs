@@ -16,7 +16,9 @@ use axum::http::StatusCode;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use crate::session::types::{FinalizationResult, GitState, SessionId, SessionRecord, SessionState, SessionType};
+use crate::session::types::{
+    FinalizationResult, GitState, SessionId, SessionRecord, SessionState, SessionType,
+};
 
 use super::run::DaemonState;
 

@@ -9,7 +9,9 @@ use libc;
 
 use super::lock::WorkItemLock;
 use super::registry::SessionRegistry;
-use super::types::{FinalizationResult, GitState, SessionId, SessionRecord, SessionState, SessionType};
+use super::types::{
+    FinalizationResult, GitState, SessionId, SessionRecord, SessionState, SessionType,
+};
 use crate::session::finalization::subagent::{
     launch_finalization_subagent, retrigger_finalization,
 };
@@ -1477,7 +1479,7 @@ mod restart_recovery_tests {
 #[cfg(test)]
 mod session_inspection_extended_tests {
     use super::*;
-    use crate::session::types::{FinalizationResult, GitState, SessionState, SessionType};
+    use crate::session::types::{FinalizationResult, GitState, SessionType};
     use tempfile::TempDir;
 
     fn make_manager(tmp: &TempDir) -> SessionManager {
