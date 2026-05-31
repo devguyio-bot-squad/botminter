@@ -4,9 +4,9 @@ use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 
-use crate::profile::CodingAgentDef;
 use super::sync::write_workspace_marker;
 use super::util::{git_cmd, git_submodule_add, symlink_md_files, symlink_subdirs};
+use crate::profile::CodingAgentDef;
 
 // ── Remote repo abstraction ─────────────────────────────────────────
 
@@ -185,9 +185,9 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
             );
         }
 
-        let remote = params.remote_ops.ok_or_else(|| {
-            anyhow::anyhow!("remote_ops is required when push=true")
-        })?;
+        let remote = params
+            .remote_ops
+            .ok_or_else(|| anyhow::anyhow!("remote_ops is required when push=true"))?;
 
         let ws_repo_name = format!("{}/{}-{}", org, params.team_name, params.member_dir_name);
 
@@ -255,14 +255,13 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
             .to_string()
     };
 
-    git_submodule_add(&member_ws, &team_repo_url, "team")
-        .with_context(|| {
-            format!(
-                "Failed to add team repo submodule.\n\n\
+    git_submodule_add(&member_ws, &team_repo_url, "team").with_context(|| {
+        format!(
+            "Failed to add team repo submodule.\n\n\
                  To verify the team repo: git ls-remote {}",
-                team_repo_url
-            )
-        })?;
+            team_repo_url
+        )
+    })?;
 
     // Checkout member branch in team submodule
     let team_sub = member_ws.join("team");
@@ -278,14 +277,13 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
 
         for &(project_name, fork_url) in params.projects {
             let submodule_path = format!("projects/{}", project_name);
-            git_submodule_add(&member_ws, fork_url, &submodule_path)
-                .with_context(|| {
-                    format!(
-                        "Failed to add project submodule '{}' from {}\n\n\
+            git_submodule_add(&member_ws, fork_url, &submodule_path).with_context(|| {
+                format!(
+                    "Failed to add project submodule '{}' from {}\n\n\
                          To verify the fork: gh repo view {}",
-                        project_name, fork_url, fork_url
-                    )
-                })?;
+                    project_name, fork_url, fork_url
+                )
+            })?;
 
             // Checkout member branch in project submodule
             let proj_sub = member_ws.join("projects").join(project_name);
@@ -310,10 +308,7 @@ pub fn create_workspace_repo(params: &WorkspaceRepoParams) -> Result<()> {
     git_cmd(&member_ws, &["add", "-A"])?;
     let has_changes = git_cmd(&member_ws, &["diff", "--cached", "--quiet"]).is_err();
     if has_changes {
-        git_cmd(
-            &member_ws,
-            &["commit", "-m", "Initial workspace setup"],
-        )?;
+        git_cmd(&member_ws, &["commit", "-m", "Initial workspace setup"])?;
     }
 
     // Push if remote is configured
@@ -373,14 +368,12 @@ pub fn assemble_workspace_repo_context(
 
     let prompt_src = member_src.join("PROMPT.md");
     if prompt_src.exists() {
-        fs::copy(&prompt_src, ws_root.join("PROMPT.md"))
-            .context("Failed to copy PROMPT.md")?;
+        fs::copy(&prompt_src, ws_root.join("PROMPT.md")).context("Failed to copy PROMPT.md")?;
     }
 
     let ralph_src = member_src.join("ralph.yml");
     if ralph_src.exists() {
-        fs::copy(&ralph_src, ws_root.join("ralph.yml"))
-            .context("Failed to copy ralph.yml")?;
+        fs::copy(&ralph_src, ws_root.join("ralph.yml")).context("Failed to copy ralph.yml")?;
     }
 
     // Assemble agent dir with symlinks into team/ submodule
@@ -427,7 +420,10 @@ pub(super) fn assemble_agent_dir_submodule(
     let team_sub = ws_root.join("team");
 
     // 1. Team-level agents
-    symlink_md_files(&team_sub.join("coding-agent").join("agents"), &agents_subdir)?;
+    symlink_md_files(
+        &team_sub.join("coding-agent").join("agents"),
+        &agents_subdir,
+    )?;
 
     // 2. Project-level agents (all assigned projects)
     for project in project_names {
@@ -458,15 +454,26 @@ pub(super) fn assemble_agent_dir_submodule(
     }
     fs::create_dir_all(&skills_subdir)
         .with_context(|| format!("Failed to create {}/skills/", coding_agent.agent_dir))?;
-    symlink_subdirs(&team_sub.join("coding-agent").join("skills"), &skills_subdir)?;
+    symlink_subdirs(
+        &team_sub.join("coding-agent").join("skills"),
+        &skills_subdir,
+    )?;
     for project in project_names {
         symlink_subdirs(
-            &team_sub.join("projects").join(project).join("coding-agent").join("skills"),
+            &team_sub
+                .join("projects")
+                .join(project)
+                .join("coding-agent")
+                .join("skills"),
             &skills_subdir,
         )?;
     }
     symlink_subdirs(
-        &team_sub.join("members").join(member_dir_name).join("coding-agent").join("skills"),
+        &team_sub
+            .join("members")
+            .join(member_dir_name)
+            .join("coding-agent")
+            .join("skills"),
         &skills_subdir,
     )?;
 
@@ -477,15 +484,26 @@ pub(super) fn assemble_agent_dir_submodule(
     }
     fs::create_dir_all(&commands_subdir)
         .with_context(|| format!("Failed to create {}/commands/", coding_agent.agent_dir))?;
-    symlink_subdirs(&team_sub.join("coding-agent").join("commands"), &commands_subdir)?;
+    symlink_subdirs(
+        &team_sub.join("coding-agent").join("commands"),
+        &commands_subdir,
+    )?;
     for project in project_names {
         symlink_subdirs(
-            &team_sub.join("projects").join(project).join("coding-agent").join("commands"),
+            &team_sub
+                .join("projects")
+                .join(project)
+                .join("coding-agent")
+                .join("commands"),
             &commands_subdir,
         )?;
     }
     symlink_subdirs(
-        &team_sub.join("members").join(member_dir_name).join("coding-agent").join("commands"),
+        &team_sub
+            .join("members")
+            .join(member_dir_name)
+            .join("coding-agent")
+            .join("commands"),
         &commands_subdir,
     )?;
 
@@ -503,13 +521,9 @@ pub(super) fn assemble_agent_dir_submodule(
     }
 
     // 7. Copy settings.json if present (team-level — shared hooks for all members)
-    let team_settings_src = team_sub
-        .join("coding-agent")
-        .join("settings.json");
+    let team_settings_src = team_sub.join("coding-agent").join("settings.json");
     if team_settings_src.exists() {
-        let dst = ws_root
-            .join(&coding_agent.agent_dir)
-            .join("settings.json");
+        let dst = ws_root.join(&coding_agent.agent_dir).join("settings.json");
         fs::copy(&team_settings_src, &dst).context("Failed to copy settings.json")?;
     }
 
@@ -518,8 +532,8 @@ pub(super) fn assemble_agent_dir_submodule(
 
 #[cfg(test)]
 pub(super) mod tests {
+    use super::super::util::git_cmd_output;
     use super::*;
-    use super::super::util::{git_cmd_output};
     use std::path::PathBuf;
 
     /// Returns a `CodingAgentDef` for Claude Code, used by most tests.
@@ -651,10 +665,8 @@ pub(super) mod tests {
 
         let fork_a_url = fork_a.to_string_lossy().to_string();
         let fork_b_url = fork_b.to_string_lossy().to_string();
-        let projects: Vec<(&str, &str)> = vec![
-            ("project-a", &fork_a_url),
-            ("project-b", &fork_b_url),
-        ];
+        let projects: Vec<(&str, &str)> =
+            vec![("project-a", &fork_a_url), ("project-b", &fork_b_url)];
 
         let agent = claude_code_agent();
         let params = test_ws_params(&team_repo, &workspace_base, "arch-01", &projects, &agent);
@@ -711,8 +723,7 @@ pub(super) mod tests {
         create_workspace_repo(&params).unwrap();
 
         let proj_sub = workspace_base.join("arch-01/projects/my-project");
-        let branch =
-            git_cmd_output(&proj_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        let branch = git_cmd_output(&proj_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
         assert_eq!(
             branch.trim(),
             "arch-01",
@@ -855,18 +866,32 @@ pub(super) mod tests {
 
         // Verify they are regular files, not symlinks
         assert!(
-            !ws.join("CLAUDE.md").symlink_metadata().unwrap().file_type().is_symlink(),
+            !ws.join("CLAUDE.md")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink(),
             "CLAUDE.md should be a copy, not a symlink"
         );
         assert!(
-            !ws.join("PROMPT.md").symlink_metadata().unwrap().file_type().is_symlink(),
+            !ws.join("PROMPT.md")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink(),
             "PROMPT.md should be a copy, not a symlink"
         );
 
         // Verify content: CLAUDE.md has original content plus injected workspace context
         let claude_content = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
-        assert!(claude_content.starts_with("# C"), "CLAUDE.md should start with original content");
-        assert!(claude_content.contains("<!-- BM:WORKSPACE_CONTEXT -->"), "CLAUDE.md should have injected context");
+        assert!(
+            claude_content.starts_with("# C"),
+            "CLAUDE.md should start with original content"
+        );
+        assert!(
+            claude_content.contains("<!-- BM:WORKSPACE_CONTEXT -->"),
+            "CLAUDE.md should have injected context"
+        );
         assert_eq!(fs::read_to_string(ws.join("PROMPT.md")).unwrap(), "# P");
         assert_eq!(fs::read_to_string(ws.join("ralph.yml")).unwrap(), "v: 1");
     }
@@ -913,16 +938,32 @@ pub(super) mod tests {
         assert!(agents_dir.is_dir(), ".claude/agents/ should exist");
 
         // Team-level and member-level agents should be symlinked
-        assert!(agents_dir.join("team-agent.md").exists(), "team-agent.md should exist");
-        assert!(agents_dir.join("member-agent.md").exists(), "member-agent.md should exist");
+        assert!(
+            agents_dir.join("team-agent.md").exists(),
+            "team-agent.md should exist"
+        );
+        assert!(
+            agents_dir.join("member-agent.md").exists(),
+            "member-agent.md should exist"
+        );
 
         // They should be symlinks
         assert!(
-            agents_dir.join("team-agent.md").symlink_metadata().unwrap().file_type().is_symlink(),
+            agents_dir
+                .join("team-agent.md")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink(),
             "team-agent.md should be a symlink"
         );
         assert!(
-            agents_dir.join("member-agent.md").symlink_metadata().unwrap().file_type().is_symlink(),
+            agents_dir
+                .join("member-agent.md")
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink(),
             "member-agent.md should be a symlink"
         );
 
@@ -986,20 +1027,33 @@ pub(super) mod tests {
         let agents_dir = ws.join(".claude/agents");
 
         // All three scopes should be present
-        assert!(agents_dir.join("team-wide.md").exists(), "Team agent missing");
-        assert!(agents_dir.join("project-specific.md").exists(), "Project agent missing");
-        assert!(agents_dir.join("member-only.md").exists(), "Member agent missing");
+        assert!(
+            agents_dir.join("team-wide.md").exists(),
+            "Team agent missing"
+        );
+        assert!(
+            agents_dir.join("project-specific.md").exists(),
+            "Project agent missing"
+        );
+        assert!(
+            agents_dir.join("member-only.md").exists(),
+            "Member agent missing"
+        );
 
         // All should be symlinks
         for name in &["team-wide.md", "project-specific.md", "member-only.md"] {
             assert!(
-                agents_dir.join(name).symlink_metadata().unwrap().file_type().is_symlink(),
+                agents_dir
+                    .join(name)
+                    .symlink_metadata()
+                    .unwrap()
+                    .file_type()
+                    .is_symlink(),
                 "{} should be a symlink",
                 name
             );
         }
     }
-
 
     #[test]
     fn workspace_repo_writes_marker_file() {
@@ -1013,10 +1067,16 @@ pub(super) mod tests {
         create_workspace_repo(&params).unwrap();
 
         let ws = workspace_base.join("arch-01");
-        assert!(ws.join(".botminter.workspace").exists(), ".botminter.workspace marker should exist");
+        assert!(
+            ws.join(".botminter.workspace").exists(),
+            ".botminter.workspace marker should exist"
+        );
 
         let marker = fs::read_to_string(ws.join(".botminter.workspace")).unwrap();
-        assert!(marker.contains("member: arch-01"), "marker should contain member name");
+        assert!(
+            marker.contains("member: arch-01"),
+            "marker should contain member name"
+        );
     }
 
     #[test]
@@ -1145,7 +1205,11 @@ pub(super) mod tests {
         }
 
         fn clone_repo(&self, _repo_name: &str, target: &Path, recursive: bool) -> Result<()> {
-            let tag = if recursive { "clone_repo(recursive)" } else { "clone_repo" };
+            let tag = if recursive {
+                "clone_repo(recursive)"
+            } else {
+                "clone_repo"
+            };
             self.calls.borrow_mut().push(tag.into());
             // Simulate clone by creating a git repo at the target
             fs::create_dir_all(target)?;
@@ -1196,19 +1260,35 @@ pub(super) mod tests {
     fn push_fresh_repo_creates_and_pushes() {
         let tmp = tempfile::tempdir().unwrap();
         let team_repo = setup_team_repo_for_ws(tmp.path());
-        let team_url = fs::canonicalize(&team_repo).unwrap().to_string_lossy().to_string();
+        let team_url = fs::canonicalize(&team_repo)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         let workspace_base = tmp.path().join("workzone");
         fs::create_dir_all(&workspace_base).unwrap();
 
         let mock = MockRemoteOps::new(RemoteRepoState::NotFound, false);
         let agent = claude_code_agent();
-        let params = push_ws_params(&team_repo, &workspace_base, "arch-01", &agent, &mock, &team_url);
+        let params = push_ws_params(
+            &team_repo,
+            &workspace_base,
+            "arch-01",
+            &agent,
+            &mock,
+            &team_url,
+        );
         create_workspace_repo(&params).unwrap();
 
         let calls = mock.calls();
         assert_eq!(
             calls,
-            vec!["repo_state", "create_repo", "repo_state", "clone_repo", "push_repo"],
+            vec![
+                "repo_state",
+                "create_repo",
+                "repo_state",
+                "clone_repo",
+                "push_repo"
+            ],
             "fresh repo should: check state, create, wait for availability, clone, push"
         );
 
@@ -1224,13 +1304,23 @@ pub(super) mod tests {
     fn push_repo_has_content_returns_early() {
         let tmp = tempfile::tempdir().unwrap();
         let team_repo = setup_team_repo_for_ws(tmp.path());
-        let team_url = fs::canonicalize(&team_repo).unwrap().to_string_lossy().to_string();
+        let team_url = fs::canonicalize(&team_repo)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         let workspace_base = tmp.path().join("workzone");
         fs::create_dir_all(&workspace_base).unwrap();
 
         let mock = MockRemoteOps::new(RemoteRepoState::HasContent, false);
         let agent = claude_code_agent();
-        let params = push_ws_params(&team_repo, &workspace_base, "arch-01", &agent, &mock, &team_url);
+        let params = push_ws_params(
+            &team_repo,
+            &workspace_base,
+            "arch-01",
+            &agent,
+            &mock,
+            &team_url,
+        );
         create_workspace_repo(&params).unwrap();
 
         let calls = mock.calls();
@@ -1249,19 +1339,36 @@ pub(super) mod tests {
     fn push_empty_repo_deletes_and_recreates() {
         let tmp = tempfile::tempdir().unwrap();
         let team_repo = setup_team_repo_for_ws(tmp.path());
-        let team_url = fs::canonicalize(&team_repo).unwrap().to_string_lossy().to_string();
+        let team_url = fs::canonicalize(&team_repo)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         let workspace_base = tmp.path().join("workzone");
         fs::create_dir_all(&workspace_base).unwrap();
 
         let mock = MockRemoteOps::new(RemoteRepoState::Empty, false);
         let agent = claude_code_agent();
-        let params = push_ws_params(&team_repo, &workspace_base, "arch-01", &agent, &mock, &team_url);
+        let params = push_ws_params(
+            &team_repo,
+            &workspace_base,
+            "arch-01",
+            &agent,
+            &mock,
+            &team_url,
+        );
         create_workspace_repo(&params).unwrap();
 
         let calls = mock.calls();
         assert_eq!(
             calls,
-            vec!["repo_state", "delete_repo", "create_repo", "repo_state", "clone_repo", "push_repo"],
+            vec![
+                "repo_state",
+                "delete_repo",
+                "create_repo",
+                "repo_state",
+                "clone_repo",
+                "push_repo"
+            ],
             "Empty repo should: check, delete, create, wait for availability, clone, push"
         );
 
@@ -1308,7 +1415,10 @@ pub(super) mod tests {
 
         let ws = workspace_base.join("arch-01");
         let settings = ws.join(".claude/settings.json");
-        assert!(settings.exists(), ".claude/settings.json should be surfaced");
+        assert!(
+            settings.exists(),
+            ".claude/settings.json should be surfaced"
+        );
         let content = fs::read_to_string(&settings).unwrap();
         assert!(
             content.contains("bm-agent claude hook post-tool-use"),
@@ -1380,14 +1490,20 @@ pub(super) mod tests {
 
         let ws = workspace_base.join("arch-01");
         let copied = fs::read_to_string(ws.join(".claude/settings.json")).unwrap();
-        assert_eq!(copied, original_content, "settings.json content should be byte-for-byte identical");
+        assert_eq!(
+            copied, original_content,
+            "settings.json content should be byte-for-byte identical"
+        );
     }
 
     #[test]
     fn push_cleans_stale_local_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let team_repo = setup_team_repo_for_ws(tmp.path());
-        let team_url = fs::canonicalize(&team_repo).unwrap().to_string_lossy().to_string();
+        let team_url = fs::canonicalize(&team_repo)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         let workspace_base = tmp.path().join("workzone");
         fs::create_dir_all(&workspace_base).unwrap();
 
@@ -1398,21 +1514,40 @@ pub(super) mod tests {
 
         let mock = MockRemoteOps::new(RemoteRepoState::NotFound, false);
         let agent = claude_code_agent();
-        let params = push_ws_params(&team_repo, &workspace_base, "arch-01", &agent, &mock, &team_url);
+        let params = push_ws_params(
+            &team_repo,
+            &workspace_base,
+            "arch-01",
+            &agent,
+            &mock,
+            &team_url,
+        );
         create_workspace_repo(&params).unwrap();
 
         // Junk should be gone, workspace should be fully assembled
         let ws = workspace_base.join("arch-01");
-        assert!(!ws.join("junk.txt").exists(), "stale junk should be cleaned up");
-        assert!(ws.join("ralph.yml").exists(), "ralph.yml missing after cleanup");
-        assert!(ws.join(".botminter.workspace").exists(), "marker missing after cleanup");
+        assert!(
+            !ws.join("junk.txt").exists(),
+            "stale junk should be cleaned up"
+        );
+        assert!(
+            ws.join("ralph.yml").exists(),
+            "ralph.yml missing after cleanup"
+        );
+        assert!(
+            ws.join(".botminter.workspace").exists(),
+            "marker missing after cleanup"
+        );
     }
 
     #[test]
     fn push_empty_repo_cleans_stale_local_dir() {
         let tmp = tempfile::tempdir().unwrap();
         let team_repo = setup_team_repo_for_ws(tmp.path());
-        let team_url = fs::canonicalize(&team_repo).unwrap().to_string_lossy().to_string();
+        let team_url = fs::canonicalize(&team_repo)
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
         let workspace_base = tmp.path().join("workzone");
         fs::create_dir_all(&workspace_base).unwrap();
 
@@ -1423,12 +1558,28 @@ pub(super) mod tests {
 
         let mock = MockRemoteOps::new(RemoteRepoState::Empty, false);
         let agent = claude_code_agent();
-        let params = push_ws_params(&team_repo, &workspace_base, "arch-01", &agent, &mock, &team_url);
+        let params = push_ws_params(
+            &team_repo,
+            &workspace_base,
+            "arch-01",
+            &agent,
+            &mock,
+            &team_url,
+        );
         create_workspace_repo(&params).unwrap();
 
         let ws = workspace_base.join("arch-01");
-        assert!(!ws.join("leftover.txt").exists(), "stale file should be cleaned up");
-        assert!(ws.join("ralph.yml").exists(), "ralph.yml missing after re-create");
-        assert!(ws.join("CLAUDE.md").exists(), "CLAUDE.md missing after re-create");
+        assert!(
+            !ws.join("leftover.txt").exists(),
+            "stale file should be cleaned up"
+        );
+        assert!(
+            ws.join("ralph.yml").exists(),
+            "ralph.yml missing after re-create"
+        );
+        assert!(
+            ws.join("CLAUDE.md").exists(),
+            "CLAUDE.md missing after re-create"
+        );
     }
 }

@@ -125,7 +125,10 @@ pub fn preflight_gh_auth() {
     // Check GH_TOKEN first — it takes priority over `gh auth login` sessions.
     // `gh auth status` returns non-zero if ANY configured account is invalid,
     // even when GH_TOKEN provides a valid session. Validate GH_TOKEN directly.
-    if std::env::var("GH_TOKEN").map(|t| !t.is_empty()).unwrap_or(false) {
+    if std::env::var("GH_TOKEN")
+        .map(|t| !t.is_empty())
+        .unwrap_or(false)
+    {
         let output = Command::new("gh")
             .args(["api", "user", "--jq", ".login"])
             .output()
@@ -245,7 +248,9 @@ impl Drop for DaemonGuard {
             .args(["daemon", "stop", "-t", &self.team_name]);
         let _ = cmd.output();
 
-        let pid_file = self.home.join(format!(".botminter/daemon-{}.pid", self.team_name));
+        let pid_file = self
+            .home
+            .join(format!(".botminter/daemon-{}.pid", self.team_name));
         if let Ok(pid_str) = fs::read_to_string(&pid_file) {
             if let Ok(pid) = pid_str.trim().parse::<u32>() {
                 if is_alive(pid) {
@@ -255,9 +260,15 @@ impl Drop for DaemonGuard {
             }
         }
         for suffix in ["pid", "json"] {
-            let _ = fs::remove_file(self.home.join(format!(".botminter/daemon-{}.{}", self.team_name, suffix)));
+            let _ = fs::remove_file(
+                self.home
+                    .join(format!(".botminter/daemon-{}.{}", self.team_name, suffix)),
+            );
         }
-        let _ = fs::remove_file(self.home.join(format!(".botminter/daemon-{}-poll.json", self.team_name)));
+        let _ = fs::remove_file(
+            self.home
+                .join(format!(".botminter/daemon-{}-poll.json", self.team_name)),
+        );
     }
 }
 
@@ -265,7 +276,9 @@ impl Drop for DaemonGuard {
 
 pub fn cleanup_project_boards(gh_org: &str, gh_token: &str, title_match: &str) {
     let output = Command::new("gh")
-        .args(["project", "list", "--owner", gh_org, "--format", "json", "--limit", "100"])
+        .args([
+            "project", "list", "--owner", gh_org, "--format", "json", "--limit", "100",
+        ])
         .env("GH_TOKEN", gh_token)
         .output()
         .expect("failed to list projects");
@@ -280,7 +293,15 @@ pub fn cleanup_project_boards(gh_org: &str, gh_token: &str, title_match: &str) {
                     if let Some(number) = project["number"].as_u64() {
                         eprintln!("Cleaning up project board #{}: {}", number, title);
                         let _ = Command::new("gh")
-                            .args(["project", "delete", "--owner", gh_org, &number.to_string(), "--format", "json"])
+                            .args([
+                                "project",
+                                "delete",
+                                "--owner",
+                                gh_org,
+                                &number.to_string(),
+                                "--format",
+                                "json",
+                            ])
                             .env("GH_TOKEN", gh_token)
                             .output();
                     }
@@ -293,8 +314,7 @@ pub fn cleanup_project_boards(gh_org: &str, gh_token: &str, title_match: &str) {
 /// Reads the GitHub repo name from a bm config file.
 pub fn repo_from_config(home: &Path) -> String {
     let config_path = home.join(".botminter").join("config.yml");
-    let config = bm::config::load_from(&config_path)
-        .expect("failed to load bm config from home");
+    let config = bm::config::load_from(&config_path).expect("failed to load bm config from home");
     config.teams[0].github_repo.clone()
 }
 
@@ -391,7 +411,12 @@ impl GithubSuite {
             let total = self.cases.len();
 
             let mut state = if let Some(s) = ProgressState::load(suite_name) {
-                eprintln!("  [{}] resuming from case {}/{}", suite_name, s.next_case + 1, s.total_cases);
+                eprintln!(
+                    "  [{}] resuming from case {}/{}",
+                    suite_name,
+                    s.next_case + 1,
+                    s.total_cases
+                );
                 s
             } else {
                 let home_dir = ProgressState::state_dir(suite_name).join("home");
@@ -417,12 +442,8 @@ impl GithubSuite {
             let home_dir = PathBuf::from(&state.home_dir);
 
             // TestEnv::resume reuses existing HOME and restores exports
-            let mut env = TestEnv::resume(
-                home_dir,
-                &cfg.gh_token,
-                &cfg.gh_org,
-                &state.repo_full_name,
-            );
+            let mut env =
+                TestEnv::resume(home_dir, &cfg.gh_token, &cfg.gh_org, &state.repo_full_name);
 
             if !state.setup_done {
                 if let Some(ref setup) = self.setup_fn {
@@ -459,19 +480,35 @@ impl GithubSuite {
                     Ok(()) => {
                         if entry.expect_error.is_some() {
                             eprintln!("  FAILED {} (expected error but succeeded)", entry.name);
-                            failures.push((entry.name.clone(), "expected error but case succeeded".to_string()));
+                            failures.push((
+                                entry.name.clone(),
+                                "expected error but case succeeded".to_string(),
+                            ));
                         } else {
-                            eprintln!("  ok {}  ({}/{} done{})", entry.name, i + 1, total, next_name);
+                            eprintln!(
+                                "  ok {}  ({}/{} done{})",
+                                entry.name,
+                                i + 1,
+                                total,
+                                next_name
+                            );
                         }
                     }
                     Err(e) => {
                         let msg = panic_to_string(e);
                         if let Some(ref verifier) = entry.expect_error {
                             if verifier(&msg) {
-                                eprintln!("  ok {} (expected error verified)  ({}/{} done{})", entry.name, i + 1, total, next_name);
+                                eprintln!(
+                                    "  ok {} (expected error verified)  ({}/{} done{})",
+                                    entry.name,
+                                    i + 1,
+                                    total,
+                                    next_name
+                                );
                             } else {
                                 eprintln!("  FAILED {} (wrong error): {}", entry.name, msg);
-                                failures.push((entry.name.clone(), format!("wrong error: {}", msg)));
+                                failures
+                                    .push((entry.name.clone(), format!("wrong error: {}", msg)));
                             }
                         } else {
                             eprintln!("  FAILED {}: {}", entry.name, msg);
@@ -485,10 +522,18 @@ impl GithubSuite {
             }
 
             if !failures.is_empty() {
-                eprintln!("  Case(s) failed, will retry on next run (cursor stays at {})", state.next_case);
+                eprintln!(
+                    "  Case(s) failed, will retry on next run (cursor stays at {})",
+                    state.next_case
+                );
                 state.save();
-                let msgs: Vec<String> = failures.iter().map(|(n, m)| format!("  {}: {}", n, m)).collect();
-                return Err(format!("{} case(s) failed:\n{}", failures.len(), msgs.join("\n")).into());
+                let msgs: Vec<String> = failures
+                    .iter()
+                    .map(|(n, m)| format!("  {}: {}", n, m))
+                    .collect();
+                return Err(
+                    format!("{} case(s) failed:\n{}", failures.len(), msgs.join("\n")).into(),
+                );
             }
 
             state.next_case = range_end;
@@ -511,11 +556,7 @@ impl GithubSuite {
         Trial::test(name, move || {
             // TestEnv::fresh creates tempdir, bootstraps profiles, stub ralph,
             // git auth, isolated dbus + keyring — everything in one shot.
-            let mut env = TestEnv::fresh(
-                &cfg.gh_token,
-                &cfg.gh_org,
-                &self.repo_full_name,
-            );
+            let mut env = TestEnv::fresh(&cfg.gh_token, &cfg.gh_org, &self.repo_full_name);
 
             if let Some(ref setup) = self.setup_fn {
                 if let Err(e) = catch_unwind(AssertUnwindSafe(|| setup(&mut env))) {
@@ -539,7 +580,10 @@ impl GithubSuite {
                     Ok(()) => {
                         if entry.expect_error.is_some() {
                             eprintln!("  FAILED {} (expected error but succeeded)", entry.name);
-                            failures.push((entry.name.clone(), "expected error but case succeeded".to_string()));
+                            failures.push((
+                                entry.name.clone(),
+                                "expected error but case succeeded".to_string(),
+                            ));
                         } else {
                             eprintln!("  ok {}", entry.name);
                         }
@@ -551,7 +595,8 @@ impl GithubSuite {
                                 eprintln!("  ok {} (expected error verified)", entry.name);
                             } else {
                                 eprintln!("  FAILED {} (wrong error): {}", entry.name, msg);
-                                failures.push((entry.name.clone(), format!("wrong error: {}", msg)));
+                                failures
+                                    .push((entry.name.clone(), format!("wrong error: {}", msg)));
                             }
                         } else {
                             eprintln!("  FAILED {}: {}", entry.name, msg);
@@ -567,7 +612,10 @@ impl GithubSuite {
             if failures.is_empty() {
                 Ok(())
             } else {
-                let msgs: Vec<String> = failures.iter().map(|(n, m)| format!("  {}: {}", n, m)).collect();
+                let msgs: Vec<String> = failures
+                    .iter()
+                    .map(|(n, m)| format!("  {}: {}", n, m))
+                    .collect();
                 Err(format!("{} case(s) failed:\n{}", failures.len(), msgs.join("\n")).into())
             }
         })

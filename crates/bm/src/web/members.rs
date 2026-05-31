@@ -80,8 +80,7 @@ fn build_member_detail(
     let member_manifest_path = member_dir.join("botminter.yml");
     let (role, comment_emoji) = if member_manifest_path.exists() {
         let content = fs::read_to_string(&member_manifest_path).unwrap_or_default();
-        let val: serde_yml::Value =
-            serde_yml::from_str(&content).unwrap_or(serde_yml::Value::Null);
+        let val: serde_yml::Value = serde_yml::from_str(&content).unwrap_or(serde_yml::Value::Null);
         let role = val
             .get("role")
             .and_then(|v| v.as_str())
@@ -335,8 +334,9 @@ mod tests {
     fn setup_fixture_team(tmp: &std::path::Path) -> std::path::PathBuf {
         let team_dir = tmp.join("my-team");
         let team_repo = team_dir.join("team");
-        let fixture_base = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo");
+        let fixture_base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(
+            "../../.agents/planning/2026-03-22-console-web-ui/fixture-gen/fixtures/team-repo",
+        );
         copy_dir_recursive(&fixture_base, &team_repo);
         team_dir
     }
@@ -381,7 +381,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                daemon: Default::default(),
                 vm: None,
             }],
             vms: Vec::new(),
@@ -395,7 +395,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -433,7 +439,10 @@ mod tests {
         }
 
         // Verify alice has correct data
-        let alice = members.iter().find(|m| m["name"] == "superman-alice").unwrap();
+        let alice = members
+            .iter()
+            .find(|m| m["name"] == "superman-alice")
+            .unwrap();
         assert_eq!(alice["role"], "superman");
         assert!(alice["has_ralph_yml"].as_bool().unwrap());
         assert!(alice["hat_count"].as_u64().unwrap() > 0);
@@ -444,7 +453,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app
@@ -472,7 +487,10 @@ mod tests {
         // Raw YAML content
         assert!(detail["ralph_yml"].is_string());
         let ralph_yml = detail["ralph_yml"].as_str().unwrap();
-        assert!(ralph_yml.contains("hats:"), "ralph_yml should contain hats section");
+        assert!(
+            ralph_yml.contains("hats:"),
+            "ralph_yml should contain hats section"
+        );
 
         // CLAUDE.md and PROMPT.md
         assert!(detail["claude_md"].is_string());
@@ -491,7 +509,11 @@ mod tests {
             .and_then(|v| v.as_mapping())
             .map(|m| m.len())
             .unwrap_or(0);
-        assert_eq!(hats.len(), expected_hat_count, "Hat count should match ralph.yml");
+        assert_eq!(
+            hats.len(),
+            expected_hat_count,
+            "Hat count should match ralph.yml"
+        );
 
         // Each hat has required fields
         for hat in hats {
@@ -514,7 +536,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let team_path = setup_fixture_team(tmp.path());
         let config_path = tmp.path().join(".botminter").join("config.yml");
-        write_config(&config_path, "my-team", &team_path, "agentic-sdlc-minimal", "org/test");
+        write_config(
+            &config_path,
+            "my-team",
+            &team_path,
+            "agentic-sdlc-minimal",
+            "org/test",
+        );
 
         let app = test_app(config_path);
         let resp = app

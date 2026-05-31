@@ -144,12 +144,13 @@ impl EventWatcher {
     ) -> Result<Vec<(String, Option<String>, String)>, EventWatcherError> {
         let loop_id = extract_loop_id(path);
 
-        let tracker = self.trackers.entry(path.to_path_buf()).or_insert_with(|| {
-            FileTracker {
+        let tracker = self
+            .trackers
+            .entry(path.to_path_buf())
+            .or_insert_with(|| FileTracker {
                 offset: 0,
                 loop_id: loop_id.clone(),
-            }
-        });
+            });
 
         let file = match std::fs::File::open(path) {
             Ok(f) => f,
@@ -424,7 +425,12 @@ mod tests {
     #[tokio::test]
     async fn poll_detects_significant_events() {
         let tmp = TempDir::new().unwrap();
-        write_event(tmp.path(), "events-run1.jsonl", "build.blocked", "CI failed");
+        write_event(
+            tmp.path(),
+            "events-run1.jsonl",
+            "build.blocked",
+            "CI failed",
+        );
 
         let (tx, mut rx) = mpsc::channel(16);
         let mut watcher = EventWatcher::new(make_config(tmp.path()), tx);
@@ -564,9 +570,11 @@ mod tests {
         std::fs::write(
             &path,
             concat!(
-                r#"{"topic":"task.close","payload":"valid","ts":"2026-03-20T14:30:52Z"}"#, "\n",
+                r#"{"topic":"task.close","payload":"valid","ts":"2026-03-20T14:30:52Z"}"#,
+                "\n",
                 "not json at all\n",
-                r#"{"topic":"LOOP_COMPLETE","ts":"2026-03-20T14:31:00Z"}"#, "\n",
+                r#"{"topic":"LOOP_COMPLETE","ts":"2026-03-20T14:31:00Z"}"#,
+                "\n",
             ),
         )
         .unwrap();
@@ -607,7 +615,12 @@ mod tests {
         assert!(rx.try_recv().is_err());
 
         // Write new content after truncation
-        write_event(tmp.path(), "events-run1.jsonl", "LOOP_COMPLETE", "restarted");
+        write_event(
+            tmp.path(),
+            "events-run1.jsonl",
+            "LOOP_COMPLETE",
+            "restarted",
+        );
         watcher.poll_once_for_test().await.unwrap();
         let msg = rx.try_recv().unwrap();
         assert!(msg.content.contains("LOOP_COMPLETE"));

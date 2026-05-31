@@ -32,9 +32,15 @@ pub fn run(
     // Resolve App credentials from CLI flags (if --reuse-app)
     let app_credentials = if app_flags.reuse_app {
         let app_id = app_flags.app_id.context("--reuse-app requires --app-id")?;
-        let client_id = app_flags.client_id.context("--reuse-app requires --client-id")?;
-        let key_file = app_flags.private_key_file.context("--reuse-app requires --private-key-file")?;
-        let installation_id = app_flags.installation_id.context("--reuse-app requires --installation-id")?;
+        let client_id = app_flags
+            .client_id
+            .context("--reuse-app requires --client-id")?;
+        let key_file = app_flags
+            .private_key_file
+            .context("--reuse-app requires --private-key-file")?;
+        let installation_id = app_flags
+            .installation_id
+            .context("--reuse-app requires --installation-id")?;
         let private_key = fs::read_to_string(key_file)
             .with_context(|| format!("Failed to read private key file: {key_file}"))?;
         Some(AppCredentials {
@@ -63,11 +69,17 @@ pub fn run(
             result.member_dir_name, team.name
         );
     } else {
-        println!("Hired {} as {} in team '{}'.", role, result.member_name, team.name);
+        println!(
+            "Hired {} as {} in team '{}'.",
+            role, result.member_name, team.name
+        );
     }
 
     if result.app_credentials_stored {
-        println!("GitHub App credentials stored for {}.", result.member_dir_name);
+        println!(
+            "GitHub App credentials stored for {}.",
+            result.member_dir_name
+        );
     } else if !team.github_repo.is_empty() && !app_flags.reuse_app {
         // No --reuse-app and team has a GitHub repo: run the interactive manifest flow
         run_manifest_flow_for_member(team, &result.member_dir_name, app_flags.save_credentials)?;
@@ -151,7 +163,8 @@ fn run_manifest_flow_for_member(
             cliclack::log::info(format!(
                 "Click this link to create the GitHub App:\n\
                  \n\
-                   {}", server.start_url,
+                   {}",
+                server.start_url,
             ))?;
         } else {
             eprintln!("Click this link to create the GitHub App:");
@@ -163,7 +176,8 @@ fn run_manifest_flow_for_member(
         server.open_browser = false;
         server.stdin_fallback = true;
 
-        let port = server.start_url
+        let port = server
+            .start_url
             .strip_prefix("http://127.0.0.1:")
             .and_then(|s| s.split('/').next())
             .unwrap_or("PORT");
@@ -204,12 +218,8 @@ fn run_manifest_flow_for_member(
         installation_id: flow_result.installation_id,
     };
 
-    let setup_result = member_lifecycle::setup_app_credentials(
-        team,
-        member_name,
-        &creds,
-        save_credentials,
-    )?;
+    let setup_result =
+        member_lifecycle::setup_app_credentials(team, member_name, &creds, save_credentials)?;
 
     println!("GitHub App credentials stored for {}.", member_name);
     if let Some(path) = &setup_result.credentials_saved_to {
@@ -261,12 +271,9 @@ fn prompt_bridge_token(
 
     let workzone = team.path.parent().unwrap_or(&team.path);
     let state_path = bridge::state_path(workzone, &team.name);
-    let cred_store = bridge::LocalCredentialStore::new(
-        &team.name,
-        &bridge_manifest.metadata.name,
-        state_path,
-    )
-    .with_collection(cfg.keyring_collection.clone());
+    let cred_store =
+        bridge::LocalCredentialStore::new(&team.name, &bridge_manifest.metadata.name, state_path)
+            .with_collection(cfg.keyring_collection.clone());
 
     match cred_store.store(member_name, &token) {
         Ok(()) => println!("Bridge token stored for {}.", member_name),

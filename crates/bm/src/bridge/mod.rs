@@ -11,13 +11,13 @@ pub use credential::{
 };
 pub use identity::{OnboardResult, RotateResult};
 pub use lifecycle::invoke_recipe;
+pub use manifest::{
+    discover, load_manifest, load_state, save_state, state_path, BridgeIdentity,
+    BridgeIdentitySpec, BridgeLifecycle, BridgeManifest, BridgeMetadata, BridgeRoom,
+    BridgeRoomSpec, BridgeSpec, BridgeState,
+};
 pub use provisioning::{ProvisionMemberResult, ProvisionResult};
 pub use room::{LiveRoom, RoomCreateResult};
-pub use manifest::{
-    discover, load_manifest, load_state, save_state, state_path, BridgeIdentity, BridgeIdentitySpec,
-    BridgeLifecycle, BridgeManifest, BridgeMetadata, BridgeRoom, BridgeRoomSpec, BridgeSpec,
-    BridgeState,
-};
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -85,7 +85,13 @@ impl Bridge {
 
     /// Invokes a Just recipe from the bridge directory.
     pub fn invoke_recipe(&self, recipe: &str, args: &[&str]) -> Result<Option<serde_json::Value>> {
-        invoke_recipe(&self.bridge_dir, recipe, args, &self.team_name, self.state_path.parent())
+        invoke_recipe(
+            &self.bridge_dir,
+            recipe,
+            args,
+            &self.team_name,
+            self.state_path.parent(),
+        )
     }
 
     /// Starts the bridge: invokes start recipe, health check, and updates state.
@@ -198,10 +204,7 @@ impl Bridge {
 
     /// Returns the first room's ID, which is the team's default room.
     pub fn default_room_id(&self) -> Option<&str> {
-        self.state
-            .rooms
-            .first()
-            .and_then(|r| r.room_id.as_deref())
+        self.state.rooms.first().and_then(|r| r.room_id.as_deref())
     }
 
     /// Returns the room ID for a specific member's DM room.

@@ -31,11 +31,7 @@ pub struct PreGeneratedCredentials {
 ///
 /// Used by `run_manifest_flow()` to construct the form payload, and by tests
 /// to verify the permission set.
-pub fn build_manifest_json(
-    app_name: &str,
-    team_repo_url: &str,
-    port: u16,
-) -> serde_json::Value {
+pub fn build_manifest_json(app_name: &str, team_repo_url: &str, port: u16) -> serde_json::Value {
     serde_json::json!({
         "name": app_name,
         "url": team_repo_url,
@@ -114,7 +110,10 @@ pub fn store_pregenerated_credentials(
         .store(&credential_keys::private_key(member), &creds.private_key)
         .context("Failed to store private key")?;
     store
-        .store(&credential_keys::installation_id(member), &creds.installation_id)
+        .store(
+            &credential_keys::installation_id(member),
+            &creds.installation_id,
+        )
         .context("Failed to store installation ID")?;
     Ok(())
 }
@@ -123,10 +122,7 @@ pub fn store_pregenerated_credentials(
 ///
 /// Removes the 4 known credential keys. Errors on individual keys are
 /// collected and reported as a single error at the end.
-pub fn remove_member_credentials(
-    store: &dyn KeyValueCredentialStore,
-    member: &str,
-) -> Result<()> {
+pub fn remove_member_credentials(store: &dyn KeyValueCredentialStore, member: &str) -> Result<()> {
     let keys = [
         credential_keys::app_id(member),
         credential_keys::client_id(member),
@@ -144,7 +140,10 @@ pub fn remove_member_credentials(
     if errors.is_empty() {
         Ok(())
     } else {
-        bail!("Failed to remove some credentials:\n  {}", errors.join("\n  "))
+        bail!(
+            "Failed to remove some credentials:\n  {}",
+            errors.join("\n  ")
+        )
     }
 }
 
@@ -287,7 +286,8 @@ fn check_repo_installation(repo: &str, jwt: &str) -> RepoInstallationStatus {
     cmd.args([
         "api",
         &format!("repos/{repo}/installation"),
-        "-H", &auth_header,
+        "-H",
+        &auth_header,
         "--silent",
     ]);
     cmd.stdout(std::process::Stdio::null());
@@ -335,11 +335,8 @@ pub fn collect_team_repos(team: &crate::config::TeamEntry) -> Vec<String> {
 /// Converts a GitHub fork URL to `owner/repo` format.
 /// Returns `None` for non-GitHub or empty URLs.
 pub(crate) fn fork_url_to_owner_repo(url: &str) -> Option<String> {
-    let stripped = url
-        .strip_prefix("https://github.com/")?;
-    let repo = stripped
-        .trim_end_matches('/')
-        .trim_end_matches(".git");
+    let stripped = url.strip_prefix("https://github.com/")?;
+    let repo = stripped.trim_end_matches('/').trim_end_matches(".git");
     if repo.is_empty() || !repo.contains('/') {
         return None;
     }
@@ -493,8 +490,7 @@ impl ManifestFlowServer {
         let stdin_fallback = self.stdin_fallback;
         let api_base = self.state.github_api_base.clone();
         let org = self.state.org.clone();
-        let rt = tokio::runtime::Runtime::new()
-            .context("Failed to create tokio runtime")?;
+        let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
 
         rt.block_on(async {
             let tokio_listener = tokio::net::TcpListener::from_std(self.listener)
@@ -647,9 +643,7 @@ impl ManifestFlowServer {
 /// Polls `GET /app/installations` until an installation appears.
 /// Waits for the code exchange to complete first (exchange_creds populated),
 /// then polls every 3 seconds.
-async fn poll_for_installation(
-    state: Arc<ManifestServerState>,
-) -> Result<ManifestFlowResult> {
+async fn poll_for_installation(state: Arc<ManifestServerState>) -> Result<ManifestFlowResult> {
     // Wait for code exchange to complete
     loop {
         if state.exchange_creds.lock().await.is_some() {
@@ -669,7 +663,14 @@ async fn poll_for_installation(
     loop {
         let creds = state.exchange_creds.lock().await.clone().unwrap();
 
-        match query_installation_id(&creds.client_id, &creds.private_key, &state.org, &state.github_api_base).await {
+        match query_installation_id(
+            &creds.client_id,
+            &creds.private_key,
+            &state.org,
+            &state.github_api_base,
+        )
+        .await
+        {
             Ok(installation_id) => {
                 let result = ManifestFlowResult {
                     app_id: creds.app_id,
@@ -725,8 +726,6 @@ pub fn extract_code_from_url(input: &str) -> Option<String> {
     None
 }
 
-
-
 /// Escapes a string for safe inclusion in HTML attributes and content.
 fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
@@ -737,9 +736,7 @@ fn html_escape(s: &str) -> String {
 }
 
 /// GET /start — serves the auto-submitting HTML form.
-async fn handle_start(
-    State(state): State<Arc<ManifestServerState>>,
-) -> Html<String> {
+async fn handle_start(State(state): State<Arc<ManifestServerState>>) -> Html<String> {
     let form_action = format!(
         "{}/organizations/{}/settings/apps/new?state={}",
         state.github_web_base,
@@ -857,9 +854,7 @@ async fn exchange_manifest_code(code: &str, api_base: &str) -> Result<ExchangeCr
 /// Always queries the GitHub API to discover the installation ID authoritatively.
 /// The `installation_id` query parameter from GitHub's redirect is intentionally
 /// ignored to prevent spoofing by local processes.
-async fn handle_installed(
-    State(state): State<Arc<ManifestServerState>>,
-) -> Html<String> {
+async fn handle_installed(State(state): State<Arc<ManifestServerState>>) -> Html<String> {
     // Short-circuit if result already sent (e.g., by the background poller)
     if state.result_tx.lock().await.is_none() {
         return Html(
@@ -923,7 +918,12 @@ async fn handle_installed(
 /// Queries `GET /app/installations` to find the installation ID for the expected org.
 /// Uses JWT authentication with the newly created App's credentials.
 /// Validates that the installation belongs to the expected organization.
-async fn query_installation_id(client_id: &str, private_key: &str, expected_org: &str, api_base: &str) -> Result<u64> {
+async fn query_installation_id(
+    client_id: &str,
+    private_key: &str,
+    expected_org: &str,
+    api_base: &str,
+) -> Result<u64> {
     let jwt = super::app_auth::generate_jwt(client_id, private_key)
         .context("Failed to generate JWT for installation query")?;
 
@@ -978,18 +978,13 @@ mod tests {
 
     #[test]
     fn build_manifest_json_has_required_fields() {
-        let manifest = build_manifest_json("my-team-superman", "https://github.com/org/my-team", 12345);
+        let manifest =
+            build_manifest_json("my-team-superman", "https://github.com/org/my-team", 12345);
 
         assert_eq!(manifest["name"], "my-team-superman");
         assert_eq!(manifest["url"], "https://github.com/org/my-team");
-        assert_eq!(
-            manifest["redirect_url"],
-            "http://127.0.0.1:12345/callback"
-        );
-        assert_eq!(
-            manifest["setup_url"],
-            "http://127.0.0.1:12345/installed"
-        );
+        assert_eq!(manifest["redirect_url"], "http://127.0.0.1:12345/callback");
+        assert_eq!(manifest["setup_url"], "http://127.0.0.1:12345/installed");
         assert_eq!(manifest["public"], false);
         assert_eq!(manifest["default_events"], serde_json::json!([]));
     }
@@ -1021,7 +1016,10 @@ mod tests {
 
     #[test]
     fn credential_keys_follow_convention() {
-        assert_eq!(credential_keys::app_id("superman"), "superman/github-app-id");
+        assert_eq!(
+            credential_keys::app_id("superman"),
+            "superman/github-app-id"
+        );
         assert_eq!(
             credential_keys::client_id("superman"),
             "superman/github-app-client-id"
@@ -1268,10 +1266,7 @@ mod tests {
         let installations: Vec<Installation> = serde_json::from_str(json).unwrap();
         assert_eq!(installations.len(), 1);
         assert_eq!(installations[0].id, 99999);
-        assert_eq!(
-            installations[0].account.as_ref().unwrap().login,
-            "test-org"
-        );
+        assert_eq!(installations[0].account.as_ref().unwrap().login, "test-org");
     }
 
     #[test]

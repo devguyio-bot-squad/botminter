@@ -55,16 +55,12 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
                 run_test(|| {
                     let env = TestEnv::fresh(&cfg.gh_token, &cfg.gh_org, "");
 
-                    let project = super::github::TempProject::new(
-                        &env,
-                        &cfg.gh_org,
-                        "bm-e2e-list-projects",
-                    )
-                    .expect("Failed to create temp GitHub Project");
+                    let project =
+                        super::github::TempProject::new(&env, &cfg.gh_org, "bm-e2e-list-projects")
+                            .expect("Failed to create temp GitHub Project");
 
-                    let projects =
-                        bm::git::list_projects(&cfg.gh_org)
-                            .expect("list_gh_projects should succeed");
+                    let projects = bm::git::list_projects(&cfg.gh_org)
+                        .expect("list_gh_projects should succeed");
 
                     let found = projects.iter().find(|(n, _)| *n == project.number);
                     assert!(
@@ -78,9 +74,8 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
                     assert_eq!(title, "bm-e2e-list-projects");
 
                     // Idempotency
-                    let projects2 =
-                        bm::git::list_projects(&cfg.gh_org)
-                            .expect("second list_gh_projects should succeed");
+                    let projects2 = bm::git::list_projects(&cfg.gh_org)
+                        .expect("second list_gh_projects should succeed");
                     let found2 = projects2.iter().find(|(n, _)| *n == project.number);
                     assert!(found2.is_some());
                 })
@@ -102,7 +97,8 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
                     // ADR-005's no-process-wide-env rule, necessary because the store
                     // API is called in-process rather than via CLI subprocess.
                     let resolved = env.resolved_env("bm");
-                    let dbus_addr = resolved.get("BM_KEYRING_DBUS")
+                    let dbus_addr = resolved
+                        .get("BM_KEYRING_DBUS")
                         .expect("BM_KEYRING_DBUS should be in resolved env for bm");
 
                     // Safety: tests run single-threaded (--test-threads=1).
@@ -111,18 +107,26 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
                     struct EnvGuard;
                     impl Drop for EnvGuard {
                         fn drop(&mut self) {
-                            unsafe { std::env::remove_var("BM_KEYRING_DBUS"); }
+                            unsafe {
+                                std::env::remove_var("BM_KEYRING_DBUS");
+                            }
                         }
                     }
-                    unsafe { std::env::set_var("BM_KEYRING_DBUS", dbus_addr); }
+                    unsafe {
+                        std::env::set_var("BM_KEYRING_DBUS", dbus_addr);
+                    }
                     let _env_guard = EnvGuard;
 
                     let store = bm::bridge::LocalCredentialStore::new(
-                        "e2e-keyring-test", "telegram", state_path,
+                        "e2e-keyring-test",
+                        "telegram",
+                        state_path,
                     );
 
                     // Store
-                    store.store("test-member", "secret-token-123").expect("store failed");
+                    store
+                        .store("test-member", "secret-token-123")
+                        .expect("store failed");
 
                     // Retrieve
                     let token = store.retrieve("test-member").expect("retrieve failed");
@@ -132,11 +136,15 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
                     env.reset_keyring();
 
                     // After reset, credential should be gone
-                    let after = store.retrieve("test-member").expect("retrieve after reset failed");
+                    let after = store
+                        .retrieve("test-member")
+                        .expect("retrieve after reset failed");
                     assert_eq!(after, None, "credential should be gone after reset");
 
                     // Store again after reset (proves re-setup works)
-                    store.store("test-member", "new-token-456").expect("store after reset failed");
+                    store
+                        .store("test-member", "new-token-456")
+                        .expect("store after reset failed");
                     let token2 = store.retrieve("test-member").expect("retrieve2 failed");
                     assert_eq!(token2.as_deref(), Some("new-token-456"), "token2 mismatch");
 

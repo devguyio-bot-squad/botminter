@@ -259,8 +259,7 @@ mod tests {
     #[tokio::test]
     async fn disabled_heartbeat_exits_on_shutdown() {
         let (tx, _rx) = mpsc::channel(16);
-        let (heartbeat, shutdown, _pending) =
-            Heartbeat::new(HeartbeatConfig::from_secs(0), tx);
+        let (heartbeat, shutdown, _pending) = Heartbeat::new(HeartbeatConfig::from_secs(0), tx);
 
         let handle = tokio::spawn(heartbeat.run());
         shutdown.shutdown().await;
@@ -287,7 +286,8 @@ mod tests {
 
         assert_eq!(msg.priority, super::super::types::Priority::Heartbeat);
         assert!(
-            msg.to_prompt().contains("<bm-context type=\"heartbeat\" channel=\"matrix\">"),
+            msg.to_prompt()
+                .contains("<bm-context type=\"heartbeat\" channel=\"matrix\">"),
             "heartbeat prompt should use envelope format"
         );
 
@@ -372,8 +372,7 @@ mod tests {
     #[test]
     fn new_returns_all_handles() {
         let (tx, _rx) = mpsc::channel(16);
-        let (_heartbeat, _shutdown, _pending) =
-            Heartbeat::new(HeartbeatConfig::default(), tx);
+        let (_heartbeat, _shutdown, _pending) = Heartbeat::new(HeartbeatConfig::default(), tx);
         // All three components created successfully
     }
 

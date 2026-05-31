@@ -60,9 +60,7 @@ pub fn exchange_for_installation_token(
     jwt: &str,
     installation_id: u64,
 ) -> Result<InstallationToken> {
-    let url = format!(
-        "https://api.github.com/app/installations/{installation_id}/access_tokens"
-    );
+    let url = format!("https://api.github.com/app/installations/{installation_id}/access_tokens");
 
     let client = reqwest::blocking::Client::new();
     let response = client
@@ -109,9 +107,7 @@ pub fn uninstall_app(jwt: &str, installation_id: u64) -> Result<()> {
     let status = response.status();
     if !status.is_success() {
         let body = response.text().unwrap_or_default();
-        anyhow::bail!(
-            "GitHub API returned {status} when uninstalling App installation: {body}"
-        );
+        anyhow::bail!("GitHub API returned {status} when uninstalling App installation: {body}");
     }
 
     Ok(())
@@ -128,8 +124,9 @@ mod tests {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("test-fixtures")
             .join("test-only.pem");
-        std::fs::read_to_string(&fixture)
-            .unwrap_or_else(|e| panic!("Failed to read test PEM fixture {}: {e}", fixture.display()))
+        std::fs::read_to_string(&fixture).unwrap_or_else(|e| {
+            panic!("Failed to read test PEM fixture {}: {e}", fixture.display())
+        })
     }
 
     /// Decodes a base64url-encoded JWT segment into a JSON value.
@@ -143,8 +140,7 @@ mod tests {
             _ => {}
         }
 
-        const TABLE: &[u8] =
-            b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        const TABLE: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
         let mut output = Vec::new();
         let mut buf: u32 = 0;
         let mut bits: u32 = 0;
@@ -152,7 +148,10 @@ mod tests {
             if byte == b'=' {
                 break;
             }
-            let val = TABLE.iter().position(|&b| b == byte).expect("invalid base64") as u32;
+            let val = TABLE
+                .iter()
+                .position(|&b| b == byte)
+                .expect("invalid base64") as u32;
             buf = (buf << 6) | val;
             bits += 6;
             if bits >= 8 {

@@ -69,7 +69,8 @@ pub fn status(team_flag: Option<&str>) -> Result<()> {
             if enabled.is_empty() {
                 println!("Enabled members: none");
             } else {
-                let mut names: Vec<&str> = enabled.iter()
+                let mut names: Vec<&str> = enabled
+                    .iter()
                     .map(|k| k.strip_prefix(&format!("{}/", team.name)).unwrap_or(k))
                     .collect();
                 names.sort();

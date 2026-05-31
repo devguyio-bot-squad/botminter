@@ -34,7 +34,10 @@ pub fn run(
                     formation_cfg.name
                 );
                 let result = formation::run_formation_manager(
-                    team, &team_repo, &formation_cfg, &cfg.workzone,
+                    team,
+                    &team_repo,
+                    &formation_cfg,
+                    &cfg.workzone,
                 )?;
                 eprintln!(
                     "Formation '{}' deployed successfully.",
@@ -66,21 +69,13 @@ pub fn run(
 
         // Bridge auto-start (command-layer responsibility, not formation)
         if !no_bridge && member_filter.is_none() && team.bridge_lifecycle.start_on_up {
-            result.bridge =
-                formation::auto_start_bridge(&team_repo, &team.name, &cfg.workzone);
+            result.bridge = formation::auto_start_bridge(&team_repo, &team.name, &cfg.workzone);
         }
 
         result
     } else {
         // v1 team (no formations dir) — legacy path
-        formation::start_local_members(
-            team,
-            &cfg,
-            &team_repo,
-            member_filter,
-            no_bridge,
-            None,
-        )?
+        formation::start_local_members(team, &cfg, &team_repo, member_filter, no_bridge, None)?
     };
 
     // Display results
@@ -264,8 +259,13 @@ mod tests {
         use crate::formation;
         use anyhow::Result;
 
-        let _: fn(&std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32> =
-            formation::launch_ralph;
+        let _: fn(
+            &std::path::Path,
+            Option<&str>,
+            Option<&str>,
+            Option<&str>,
+            Option<&std::path::Path>,
+        ) -> Result<u32> = formation::launch_ralph;
     }
 
     #[test]

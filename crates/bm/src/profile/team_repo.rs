@@ -116,8 +116,8 @@ struct MemberManifest {
 /// Reads and parses the botminter.yml manifest from a team repo directory.
 pub fn read_team_repo_manifest(team_repo: &Path) -> Result<ProfileManifest> {
     let manifest_path = team_repo.join("botminter.yml");
-    let contents = fs::read_to_string(&manifest_path)
-        .context("Failed to read team repo's botminter.yml")?;
+    let contents =
+        fs::read_to_string(&manifest_path).context("Failed to read team repo's botminter.yml")?;
     serde_yml::from_str(&contents).context("Failed to parse botminter.yml")
 }
 
@@ -125,19 +125,13 @@ pub fn read_team_repo_manifest(team_repo: &Path) -> Result<ProfileManifest> {
 pub fn read_team_schema(team_repo: &Path) -> Result<String> {
     let manifest_path = team_repo.join("botminter.yml");
     if !manifest_path.exists() {
-        bail!(
-            "Team repo at {} has no botminter.yml",
-            team_repo.display()
-        );
+        bail!("Team repo at {} has no botminter.yml", team_repo.display());
     }
-    let contents = fs::read_to_string(&manifest_path)
-        .context("Failed to read team botminter.yml")?;
+    let contents =
+        fs::read_to_string(&manifest_path).context("Failed to read team botminter.yml")?;
     let val: serde_yml::Value =
         serde_yml::from_str(&contents).context("Failed to parse team botminter.yml")?;
-    Ok(val["schema_version"]
-        .as_str()
-        .unwrap_or("")
-        .to_string())
+    Ok(val["schema_version"].as_str().unwrap_or("").to_string())
 }
 
 /// Lists non-hidden files in a directory, returning their names sorted.
@@ -211,9 +205,8 @@ pub fn infer_role_from_dir(dir_name: &str) -> String {
 pub fn validate_knowledge_path(path: &str) -> Result<()> {
     let parts: Vec<&str> = path.split('/').collect();
 
-    let is_knowledge_or_invariant = |segment: &str| -> bool {
-        segment == "knowledge" || segment == "invariants"
-    };
+    let is_knowledge_or_invariant =
+        |segment: &str| -> bool { segment == "knowledge" || segment == "invariants" };
 
     let valid = match parts.first() {
         Some(&"knowledge") | Some(&"invariants") => true,
@@ -260,10 +253,9 @@ pub fn augment_manifest_with_projects(
         })
         .collect();
 
-    let contents = serde_yml::to_string(&manifest)
-        .context("Failed to serialize augmented botminter.yml")?;
-    fs::write(&manifest_path, contents)
-        .context("Failed to write augmented botminter.yml")?;
+    let contents =
+        serde_yml::to_string(&manifest).context("Failed to serialize augmented botminter.yml")?;
+    fs::write(&manifest_path, contents).context("Failed to write augmented botminter.yml")?;
 
     Ok(())
 }
@@ -322,10 +314,9 @@ pub fn record_bridge_in_manifest(
         }
     }
 
-    let updated = serde_yml::to_string(&doc)
-        .context("Failed to serialize team botminter.yml with bridge")?;
-    fs::write(&manifest_path, updated)
-        .context("Failed to write team botminter.yml with bridge")?;
+    let updated =
+        serde_yml::to_string(&doc).context("Failed to serialize team botminter.yml with bridge")?;
+    fs::write(&manifest_path, updated).context("Failed to write team botminter.yml with bridge")?;
 
     Ok(())
 }
@@ -360,11 +351,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let member_dir = tmp.path().join("architect-alice");
         fs::create_dir(&member_dir).unwrap();
-        fs::write(
-            member_dir.join("botminter.yml"),
-            "role: architect\n",
-        )
-        .unwrap();
+        fs::write(member_dir.join("botminter.yml"), "role: architect\n").unwrap();
 
         let role = read_member_role(tmp.path(), "architect-alice");
         assert_eq!(role, "architect");
@@ -399,11 +386,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let member_dir = tmp.path().join("po-bob");
         fs::create_dir(&member_dir).unwrap();
-        fs::write(
-            member_dir.join("botminter.yml"),
-            "schema_version: '0.3'\n",
-        )
-        .unwrap();
+        fs::write(member_dir.join("botminter.yml"), "schema_version: '0.3'\n").unwrap();
 
         let role = read_member_role(tmp.path(), "po-bob");
         assert_eq!(role, "po");
@@ -639,7 +622,11 @@ mod tests {
         let result = validate_bridge_selection("slack", &bridges);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("telegram"), "Error should list available bridges: {}", err);
+        assert!(
+            err.contains("telegram"),
+            "Error should list available bridges: {}",
+            err
+        );
     }
 
     #[test]
@@ -648,7 +635,11 @@ mod tests {
         let result = validate_bridge_selection("telegram", &bridges);
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("no bridges"), "Error should say no bridges available: {}", err);
+        assert!(
+            err.contains("no bridges"),
+            "Error should say no bridges available: {}",
+            err
+        );
     }
 
     // ── record_bridge_in_manifest ───────────────────────────────
@@ -659,7 +650,8 @@ mod tests {
         fs::write(
             tmp.path().join("botminter.yml"),
             "name: test\nschema_version: '1.0'\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let bridges = vec![BridgeDef {
             name: "telegram".to_string(),
@@ -670,8 +662,15 @@ mod tests {
         record_bridge_in_manifest(tmp.path(), "telegram", &bridges).unwrap();
 
         let contents = fs::read_to_string(tmp.path().join("botminter.yml")).unwrap();
-        assert!(contents.contains("bridge: telegram"), "Should contain bridge field: {}", contents);
-        assert!(!contents.contains("operator"), "External bridge should not set operator");
+        assert!(
+            contents.contains("bridge: telegram"),
+            "Should contain bridge field: {}",
+            contents
+        );
+        assert!(
+            !contents.contains("operator"),
+            "External bridge should not set operator"
+        );
     }
 
     #[test]
@@ -680,7 +679,8 @@ mod tests {
         fs::write(
             tmp.path().join("botminter.yml"),
             "name: test\nschema_version: '1.0'\n",
-        ).unwrap();
+        )
+        .unwrap();
 
         let bridges = vec![BridgeDef {
             name: "tuwunel".to_string(),
@@ -692,7 +692,10 @@ mod tests {
 
         let contents = fs::read_to_string(tmp.path().join("botminter.yml")).unwrap();
         assert!(contents.contains("bridge: tuwunel"));
-        assert!(contents.contains("bridge_username: bmadmin"), "Local bridge should set operator");
+        assert!(
+            contents.contains("bridge_username: bmadmin"),
+            "Local bridge should set operator"
+        );
     }
 
     // ── augment_manifest_with_projects ────────────────────────────
@@ -705,13 +708,21 @@ mod tests {
             "name: test\nversion: '1.0.0'\nschema_version: '1.0'\ndescription: Test\ndisplay_name: Test\n",
         ).unwrap();
 
-        let projects = vec![
-            ("my-app".to_string(), "https://github.com/org/my-app.git".to_string()),
-        ];
+        let projects = vec![(
+            "my-app".to_string(),
+            "https://github.com/org/my-app.git".to_string(),
+        )];
         augment_manifest_with_projects(tmp.path(), &projects).unwrap();
 
         let contents = fs::read_to_string(tmp.path().join("botminter.yml")).unwrap();
-        assert!(contents.contains("my-app"), "Should contain project name: {}", contents);
-        assert!(contents.contains("https://github.com/org/my-app.git"), "Should contain project URL");
+        assert!(
+            contents.contains("my-app"),
+            "Should contain project name: {}",
+            contents
+        );
+        assert!(
+            contents.contains("https://github.com/org/my-app.git"),
+            "Should contain project URL"
+        );
     }
 }

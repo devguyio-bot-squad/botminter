@@ -29,34 +29,71 @@ pub fn run(team_flag: Option<&str>, discover: bool, _autonomous: bool) -> Result
     Ok(())
 }
 
-/// Discover existing permanent workspaces for a team.
-fn discover_permanent_workspaces(team_flag: Option<&str>) -> Result<()> {
-    let cfg = config::load()?;
-    let team = config::resolve_team(&cfg, team_flag)?;
-
-    println!("Discovering permanent workspaces for team '{}'...", team.name);
-
-    // Scan team directory for permanent workspace directories
-    let team_path = &team.path;
-    let mut found_workspaces = Vec::new();
+/// Find permanent workspace names in a team directory.
+///
+/// Scans the team directory for subdirectories containing a `.botminter.workspace` marker.
+/// Excludes the "team" directory (which is the team repo itself).
+///
+/// Returns workspace names (directory names) sorted alphabetically.
+fn find_permanent_workspaces(team_path: &Path) -> Result<Vec<String>> {
+    let mut found = Vec::new();
 
     if let Ok(entries) = fs::read_dir(team_path) {
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
-            if path.is_dir() {
-                // Check for workspace marker
-                let marker = path.join(".botminter.workspace");
-                if marker.exists() {
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        // Skip the team repo itself
-                        if name != "team" {
-                            found_workspaces.push(name.to_string());
-                        }
+            if path.is_dir() && has_workspace_marker(&path) {
+                if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                    if name != "team" {
+                        found.push(name.to_string());
                     }
                 }
             }
         }
     }
+
+    found.sort();
+    Ok(found)
+}
+
+/// Find permanent workspace paths in a team directory.
+///
+/// Similar to `find_permanent_workspaces()` but returns full paths instead of names.
+/// Useful when you need to operate on the workspace directories directly.
+fn find_permanent_workspace_paths(team_path: &Path) -> Result<Vec<std::path::PathBuf>> {
+    let mut found = Vec::new();
+
+    if let Ok(entries) = fs::read_dir(team_path) {
+        for entry in entries.filter_map(Result::ok) {
+            let path = entry.path();
+            if path.is_dir() && has_workspace_marker(&path) {
+                if let Some(name) = path.file_name() {
+                    if name != "team" {
+                        found.push(path);
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(found)
+}
+
+/// Check if a directory contains a `.botminter.workspace` marker file.
+fn has_workspace_marker(path: &Path) -> bool {
+    path.join(".botminter.workspace").exists()
+}
+
+/// Discover existing permanent workspaces for a team.
+fn discover_permanent_workspaces(team_flag: Option<&str>) -> Result<()> {
+    let cfg = config::load()?;
+    let team = config::resolve_team(&cfg, team_flag)?;
+
+    println!(
+        "Discovering permanent workspaces for team '{}'...",
+        team.name
+    );
+
+    let found_workspaces = find_permanent_workspaces(&team.path)?;
 
     if found_workspaces.is_empty() {
         println!("No permanent workspaces found.");
@@ -75,28 +112,12 @@ fn migrate_team(team_name: &str) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, Some(team_name))?;
 
-    println!("Migrating team '{}' to ephemeral session model...", team.name);
+    println!(
+        "Migrating team '{}' to ephemeral session model...",
+        team.name
+    );
 
-    // Find permanent workspaces
-    let team_path = &team.path;
-    let mut workspace_dirs = Vec::new();
-
-    if let Ok(entries) = fs::read_dir(team_path) {
-        for entry in entries.filter_map(Result::ok) {
-            let path = entry.path();
-            if path.is_dir() {
-                let marker = path.join(".botminter.workspace");
-                if marker.exists() {
-                    if let Some(name) = path.file_name() {
-                        // Skip the team repo itself
-                        if name != "team" {
-                            workspace_dirs.push(path.clone());
-                        }
-                    }
-                }
-            }
-        }
-    }
+    let workspace_dirs = find_permanent_workspace_paths(&team.path)?;
 
     if workspace_dirs.is_empty() {
         println!("No permanent workspaces found for team '{}'.", team.name);
@@ -104,16 +125,24 @@ fn migrate_team(team_name: &str) -> Result<()> {
     }
 
     // Create shared-clones directory
-    let home = dirs::home_dir().context("Could not determine home directory")?;
+    let home = dirs::home_dir()
+        .context("Could not determine home directory for shared-clones initialization")?;
     let shared_clones_dir = home.join(".botminter").join("shared-clones");
-    fs::create_dir_all(&shared_clones_dir)
-        .context("Failed to create shared-clones directory")?;
+    fs::create_dir_all(&shared_clones_dir).with_context(|| {
+        format!(
+            "Failed to create shared-clones directory at {}",
+            shared_clones_dir.display()
+        )
+    })?;
 
-    println!("Created shared-clones directory: {}", shared_clones_dir.display());
+    println!(
+        "Created shared-clones directory: {}",
+        shared_clones_dir.display()
+    );
 
     // Initialize shared clones from permanent workspace repos
     for workspace_dir in &workspace_dirs {
-        migrate_workspace_repos(workspace_dir, &shared_clones_dir, &team)?;
+        migrate_workspace_repos(workspace_dir, &shared_clones_dir, team)?;
     }
 
     println!("Migration complete. Use 'bm start' to create ephemeral sessions.");
@@ -121,6 +150,15 @@ fn migrate_team(team_name: &str) -> Result<()> {
 }
 
 /// Migrate repos from a permanent workspace to shared clones.
+///
+/// Scans a workspace directory for team repo and project repos, then creates
+/// bare clones in the shared-clones directory. This pre-populates the shared
+/// clone cache from existing local checkouts, avoiding slow remote fetches.
+///
+/// # Arguments
+/// * `workspace_dir` - Path to the permanent workspace (contains team/ and projects/)
+/// * `shared_clones_dir` - Path to ~/.botminter/shared-clones
+/// * `team` - Team configuration (used for naming the team repo clone)
 fn migrate_workspace_repos(
     workspace_dir: &Path,
     shared_clones_dir: &Path,
@@ -152,11 +190,21 @@ fn migrate_workspace_repos(
 }
 
 /// Check if a directory is a git repository.
+///
+/// Returns true if the directory contains a `.git` subdirectory.
 fn is_git_repo(path: &Path) -> bool {
     path.join(".git").exists()
 }
 
 /// Clone a local repo to shared-clones as a bare repository.
+///
+/// Creates a bare clone (git clone --bare) from a local source repository
+/// to the shared-clones directory. Skips if the target already exists.
+///
+/// # Arguments
+/// * `source` - Path to the source git repository
+/// * `shared_clones_dir` - Path to ~/.botminter/shared-clones
+/// * `repo_name` - Name for the target bare repository (e.g., "my-team-team" or "my-project")
 fn clone_to_shared(source: &Path, shared_clones_dir: &Path, repo_name: &str) -> Result<()> {
     let target = shared_clones_dir.join(repo_name);
 
@@ -174,7 +222,13 @@ fn clone_to_shared(source: &Path, shared_clones_dir: &Path, repo_name: &str) -> 
         .arg(source)
         .arg(&target)
         .output()
-        .context("Failed to run git clone --bare")?;
+        .with_context(|| {
+            format!(
+                "Failed to execute git clone --bare from {} to {}",
+                source.display(),
+                target.display()
+            )
+        })?;
 
     if !output.status.success() {
         bail!(

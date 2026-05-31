@@ -1,5 +1,5 @@
-use std::collections::BinaryHeap;
 use std::cmp::Ordering;
+use std::collections::BinaryHeap;
 
 use super::types::BrainMessage;
 

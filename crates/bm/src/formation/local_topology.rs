@@ -10,11 +10,7 @@ use crate::topology::{self, Endpoint, MemberTopology, Topology};
 ///
 /// Builds a `Topology` from the current runtime state for the given team
 /// and saves it to disk. Only members belonging to `team_name` are included.
-pub fn write_local_topology(
-    workzone: &Path,
-    team_name: &str,
-    state: &RuntimeState,
-) -> Result<()> {
+pub fn write_local_topology(workzone: &Path, team_name: &str, state: &RuntimeState) -> Result<()> {
     let team_prefix = format!("{}/", team_name);
     let mut members = HashMap::new();
 

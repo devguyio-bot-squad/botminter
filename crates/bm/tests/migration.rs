@@ -29,7 +29,12 @@ fn bm(home: &Path) -> Command {
 /// - {workzone}/my-team/engineer-alice/projects/myproject/ (project submodule)
 ///
 /// Returns (tmp_dir, workzone_path, team_path, workspace_path)
-fn setup_permanent_workspace() -> (TempDir, std::path::PathBuf, std::path::PathBuf, std::path::PathBuf) {
+fn setup_permanent_workspace() -> (
+    TempDir,
+    std::path::PathBuf,
+    std::path::PathBuf,
+    std::path::PathBuf,
+) {
     let tmp = tempfile::tempdir().unwrap();
     let home = tmp.path();
     let workzone = home.join("workzone");
@@ -170,10 +175,7 @@ fn test_bm_minty_discovers_permanent_workspaces() {
 
     // Run `bm minty --discover` (or similar flag to trigger discovery)
     // This should scan for permanent workspaces and report findings
-    let output = bm(home)
-        .args(["minty", "--discover"])
-        .output()
-        .unwrap();
+    let output = bm(home).args(["minty", "--discover"]).output().unwrap();
 
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
@@ -182,7 +184,8 @@ fn test_bm_minty_discovers_permanent_workspaces() {
     assert!(
         stdout.contains("engineer-alice") || stderr.contains("engineer-alice"),
         "minty --discover should find permanent workspace 'engineer-alice'\nstdout: {}\nstderr: {}",
-        stdout, stderr
+        stdout,
+        stderr
     );
 
     // Verify workspace directory still exists (not modified)
@@ -199,10 +202,7 @@ fn test_bm_minty_initializes_shared_clones() {
 
     // Run `bm minty` to initialize shared clones
     // This should create ~/.botminter/shared-clones/ with team and project repos
-    let output = bm(home)
-        .args(["minty", "-t", "my-team"])
-        .output()
-        .unwrap();
+    let output = bm(home).args(["minty", "-t", "my-team"]).output().unwrap();
 
     // Check that shared clones directory was created
     let shared_clones = home.join(".botminter").join("shared-clones");
@@ -218,15 +218,13 @@ fn test_bm_minty_initializes_shared_clones() {
     assert!(
         team_clone.exists(),
         "bm minty should clone team repo to shared-clones\nshared_clones contents: {:?}",
-        std::fs::read_dir(&shared_clones)
-            .ok()
-            .and_then(|entries| {
-                entries
-                    .filter_map(Result::ok)
-                    .map(|e| e.file_name().to_string_lossy().to_string())
-                    .collect::<Vec<_>>()
-                    .into()
-            })
+        std::fs::read_dir(&shared_clones).ok().and_then(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .map(|e| e.file_name().to_string_lossy().to_string())
+                .collect::<Vec<_>>()
+                .into()
+        })
     );
 }
 
@@ -236,10 +234,7 @@ fn test_first_bm_start_creates_valid_session() {
     let home = tmp.path();
 
     // First run `bm minty` to initialize shared clones
-    let minty_output = bm(home)
-        .args(["minty", "-t", "my-team"])
-        .output()
-        .unwrap();
+    let minty_output = bm(home).args(["minty", "-t", "my-team"]).output().unwrap();
 
     assert!(
         minty_output.status.success(),
@@ -256,7 +251,8 @@ fn test_first_bm_start_creates_valid_session() {
     // Should succeed in creating a session
     // (Actual validation would check session directory, process, etc.)
     assert!(
-        start_output.status.success() || String::from_utf8_lossy(&start_output.stderr).contains("session"),
+        start_output.status.success()
+            || String::from_utf8_lossy(&start_output.stderr).contains("session"),
         "bm start after migration should create valid session\nstdout: {}\nstderr: {}",
         String::from_utf8_lossy(&start_output.stdout),
         String::from_utf8_lossy(&start_output.stderr)
@@ -283,22 +279,27 @@ fn test_bm_teams_sync_fails_with_migration_guidance() {
     assert!(
         !output.status.success(),
         "bm teams sync should fail after migration\nstdout: {}\nstderr: {}",
-        stdout, stderr
+        stdout,
+        stderr
     );
 
     // Error message should explain migration
     let combined = format!("{}{}", stdout, stderr);
     assert!(
-        combined.contains("session") || combined.contains("minty") || combined.contains("migration"),
+        combined.contains("session")
+            || combined.contains("minty")
+            || combined.contains("migration"),
         "Error should explain sessions replace sync and mention migration\nstdout: {}\nstderr: {}",
-        stdout, stderr
+        stdout,
+        stderr
     );
 
     // Should guide user to use `bm minty` and `bm start`
     assert!(
         combined.contains("bm minty") || combined.contains("bm start"),
         "Error should guide user to new commands\nstdout: {}\nstderr: {}",
-        stdout, stderr
+        stdout,
+        stderr
     );
 }
 
@@ -316,14 +317,11 @@ fn test_permanent_workspaces_untouched_after_migration() {
         .map(|e| e.file_name())
         .collect();
 
-    let marker_content_before = std::fs::read_to_string(workspace_path.join(".botminter.workspace"))
-        .unwrap();
+    let marker_content_before =
+        std::fs::read_to_string(workspace_path.join(".botminter.workspace")).unwrap();
 
     // Run migration command (bm minty)
-    let _ = bm(home)
-        .args(["minty", "-t", "my-team"])
-        .output()
-        .unwrap();
+    let _ = bm(home).args(["minty", "-t", "my-team"]).output().unwrap();
 
     // Verify workspace directory still exists
     assert!(
@@ -344,8 +342,8 @@ fn test_permanent_workspaces_untouched_after_migration() {
     );
 
     // Verify marker file unchanged
-    let marker_content_after = std::fs::read_to_string(workspace_path.join(".botminter.workspace"))
-        .unwrap();
+    let marker_content_after =
+        std::fs::read_to_string(workspace_path.join(".botminter.workspace")).unwrap();
 
     assert_eq!(
         marker_content_before, marker_content_after,
@@ -367,10 +365,7 @@ fn test_e2e_migration_journey() {
     );
 
     // Step 2: Run `bm minty` to initialize migration
-    let minty_output = bm(home)
-        .args(["minty", "-t", "my-team"])
-        .output()
-        .unwrap();
+    let minty_output = bm(home).args(["minty", "-t", "my-team"]).output().unwrap();
 
     assert!(
         minty_output.status.success(),
@@ -403,10 +398,7 @@ fn test_e2e_migration_journey() {
     );
 
     let marker = workspace_path.join(".botminter.workspace");
-    assert!(
-        marker.exists(),
-        "Workspace marker should still exist"
-    );
+    assert!(marker.exists(), "Workspace marker should still exist");
 
     // Step 6: Verify can start session
     let start_output = bm(home)

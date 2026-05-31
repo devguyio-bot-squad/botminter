@@ -31,10 +31,7 @@ pub fn is_relevant_event(event_type: &str) -> bool {
 }
 
 /// Polls the GitHub events API for new events.
-pub fn poll_github_events(
-    github_repo: &str,
-    poll_state: &PollState,
-) -> Result<Vec<GitHubEvent>> {
+pub fn poll_github_events(github_repo: &str, poll_state: &PollState) -> Result<Vec<GitHubEvent>> {
     let output = Command::new("gh")
         .args([
             "api",
@@ -172,8 +169,7 @@ mod tests {
     fn webhook_signature_invalid() {
         let secret = "mysecret";
         let body = r#"{"action":"opened"}"#;
-        let bad_sig =
-            "sha256=0000000000000000000000000000000000000000000000000000000000000000";
+        let bad_sig = "sha256=0000000000000000000000000000000000000000000000000000000000000000";
 
         assert!(!validate_webhook_signature(secret, body, Some(bad_sig)));
     }
@@ -203,8 +199,7 @@ mod tests {
 
     #[test]
     fn github_event_deser() {
-        let json =
-            r#"[{"id":"12345","type":"IssuesEvent"},{"id":"12346","type":"PushEvent"}]"#;
+        let json = r#"[{"id":"12345","type":"IssuesEvent"},{"id":"12346","type":"PushEvent"}]"#;
         let events: Vec<GitHubEvent> = serde_json::from_str(json).unwrap();
 
         assert_eq!(events.len(), 2);

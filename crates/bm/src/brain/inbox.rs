@@ -46,10 +46,7 @@ pub fn write_message(path: &Path, from: &str, message: &str) -> anyhow::Result<(
         fs::create_dir_all(parent)?;
     }
 
-    let file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)?;
+    let file = OpenOptions::new().create(true).append(true).open(path)?;
 
     file.lock_exclusive()?;
     let result = write_line(&file, from, trimmed);
@@ -186,7 +183,10 @@ mod tests {
     fn inbox_path_construction() {
         let root = PathBuf::from("/some/workspace");
         let path = inbox_path(&root);
-        assert_eq!(path, PathBuf::from("/some/workspace/.ralph/loop-inbox.jsonl"));
+        assert_eq!(
+            path,
+            PathBuf::from("/some/workspace/.ralph/loop-inbox.jsonl")
+        );
     }
 
     // --- write_message ---
@@ -315,8 +315,10 @@ mod tests {
         let path = inbox_path(tmp.path());
         fs::create_dir_all(path.parent().unwrap()).unwrap();
 
-        let valid1 = serde_json::json!({"ts": "2026-03-21T10:00:00Z", "from": "brain", "message": "valid1"});
-        let valid2 = serde_json::json!({"ts": "2026-03-21T10:01:00Z", "from": "brain", "message": "valid2"});
+        let valid1 =
+            serde_json::json!({"ts": "2026-03-21T10:00:00Z", "from": "brain", "message": "valid1"});
+        let valid2 =
+            serde_json::json!({"ts": "2026-03-21T10:01:00Z", "from": "brain", "message": "valid2"});
 
         let content = format!("{}\nnot json at all\n{}\n", valid1, valid2);
         fs::write(&path, content).unwrap();

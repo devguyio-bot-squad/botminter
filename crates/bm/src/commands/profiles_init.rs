@@ -34,9 +34,8 @@ fn run_with_reader(force: bool, reader: &mut dyn BufRead) -> Result<()> {
         BTreeSet::new()
     };
 
-    std::fs::create_dir_all(&target).with_context(|| {
-        format!("Failed to create profiles directory {}", target.display())
-    })?;
+    std::fs::create_dir_all(&target)
+        .with_context(|| format!("Failed to create profiles directory {}", target.display()))?;
 
     // Fresh install — extract everything
     if existing_on_disk.is_empty() {
@@ -69,8 +68,14 @@ fn run_with_reader(force: bool, reader: &mut dyn BufRead) -> Result<()> {
     // Summary
     let counts = (
         actions.iter().filter(|(_, a)| *a == Action::New).count(),
-        actions.iter().filter(|(_, a)| *a == Action::Overwritten).count(),
-        actions.iter().filter(|(_, a)| *a == Action::Skipped).count(),
+        actions
+            .iter()
+            .filter(|(_, a)| *a == Action::Overwritten)
+            .count(),
+        actions
+            .iter()
+            .filter(|(_, a)| *a == Action::Skipped)
+            .count(),
     );
     println!("\nProfiles directory: {}", target.display());
     for (name, action) in &actions {
@@ -81,7 +86,10 @@ fn run_with_reader(force: bool, reader: &mut dyn BufRead) -> Result<()> {
         };
         println!("  {} ({})", name, label);
     }
-    println!("\nSummary: {} new, {} overwritten, {} skipped", counts.0, counts.1, counts.2);
+    println!(
+        "\nSummary: {} new, {} overwritten, {} skipped",
+        counts.0, counts.1, counts.2
+    );
 
     extract_minty(&target)?;
     Ok(())
@@ -106,7 +114,10 @@ fn extract_minty(profiles_target: &std::path::Path) -> Result<()> {
         .context("Could not determine botminter config parent directory")?;
     let minty_target = botminter_config.join("minty");
     std::fs::create_dir_all(&minty_target).with_context(|| {
-        format!("Failed to create minty directory {}", minty_target.display())
+        format!(
+            "Failed to create minty directory {}",
+            minty_target.display()
+        )
     })?;
     profile::extract_minty_to_disk(&minty_target)?;
     println!("Extracted minty config to {}", minty_target.display());
@@ -265,8 +276,18 @@ mod tests {
         let profiles_target = tmp.path().join("botminter").join("profiles");
         std::fs::create_dir_all(&profiles_target).unwrap();
         extract_minty(&profiles_target).unwrap();
-        let skills_dir = tmp.path().join("botminter").join("minty").join(".claude").join("skills");
-        for skill in &["team-overview", "profile-browser", "hire-guide", "workspace-doctor"] {
+        let skills_dir = tmp
+            .path()
+            .join("botminter")
+            .join("minty")
+            .join(".claude")
+            .join("skills");
+        for skill in &[
+            "team-overview",
+            "profile-browser",
+            "hire-guide",
+            "workspace-doctor",
+        ] {
             assert!(skills_dir.join(skill).join("SKILL.md").exists());
         }
     }
@@ -277,12 +298,24 @@ mod tests {
         let profiles_target = tmp.path().join("botminter").join("profiles");
         std::fs::create_dir_all(&profiles_target).unwrap();
         extract_minty(&profiles_target).unwrap();
-        let skills_dir = tmp.path().join("botminter").join("minty").join(".claude").join("skills");
-        for skill in &["team-overview", "profile-browser", "hire-guide", "workspace-doctor"] {
+        let skills_dir = tmp
+            .path()
+            .join("botminter")
+            .join("minty")
+            .join(".claude")
+            .join("skills");
+        for skill in &[
+            "team-overview",
+            "profile-browser",
+            "hire-guide",
+            "workspace-doctor",
+        ] {
             let content = std::fs::read_to_string(skills_dir.join(skill).join("SKILL.md")).unwrap();
             assert!(content.starts_with("---\n"));
-            let frontmatter_end = content[4..].find("\n---\n")
-                .expect(&format!("Skill {} should have closing frontmatter delimiter", skill));
+            let frontmatter_end = content[4..].find("\n---\n").expect(&format!(
+                "Skill {} should have closing frontmatter delimiter",
+                skill
+            ));
             let frontmatter = &content[4..4 + frontmatter_end];
             assert!(frontmatter.contains("name:"));
             assert!(frontmatter.contains("description:"));
@@ -296,9 +329,9 @@ mod tests {
         let profiles_target = tmp.path().join("botminter").join("profiles");
         std::fs::create_dir_all(&profiles_target).unwrap();
         extract_minty(&profiles_target).unwrap();
-        let prompt = std::fs::read_to_string(
-            tmp.path().join("botminter").join("minty").join("prompt.md"),
-        ).unwrap();
+        let prompt =
+            std::fs::read_to_string(tmp.path().join("botminter").join("minty").join("prompt.md"))
+                .unwrap();
         assert!(prompt.contains("Minty"));
         assert!(prompt.contains("BotMinter"));
         assert!(prompt.contains("profiles-only mode"));
@@ -311,10 +344,14 @@ mod tests {
         std::fs::create_dir_all(&profiles_target).unwrap();
         extract_minty(&profiles_target).unwrap();
         let config_content = std::fs::read_to_string(
-            tmp.path().join("botminter").join("minty").join("config.yml"),
-        ).unwrap();
-        let yaml: serde_yml::Value = serde_yml::from_str(&config_content)
-            .expect("config.yml should be valid YAML");
+            tmp.path()
+                .join("botminter")
+                .join("minty")
+                .join("config.yml"),
+        )
+        .unwrap();
+        let yaml: serde_yml::Value =
+            serde_yml::from_str(&config_content).expect("config.yml should be valid YAML");
         assert!(yaml.get("prompt").is_some());
         assert!(yaml.get("skills_dir").is_some());
     }
@@ -326,6 +363,11 @@ mod tests {
         std::fs::create_dir_all(&profiles_target).unwrap();
         extract_minty(&profiles_target).unwrap();
         extract_minty(&profiles_target).unwrap();
-        assert!(tmp.path().join("botminter").join("minty").join("prompt.md").exists());
+        assert!(tmp
+            .path()
+            .join("botminter")
+            .join("minty")
+            .join("prompt.md")
+            .exists());
     }
 }

@@ -57,19 +57,15 @@ fn parse_open_tag(line: &str, syntax: CommentSyntax) -> Option<&str> {
 fn is_close_tag(line: &str, syntax: CommentSyntax) -> bool {
     let trimmed = line.trim();
     match syntax {
-        CommentSyntax::Html => {
-            trimmed
-                .strip_prefix("<!--")
-                .and_then(|s| s.strip_suffix("-->"))
-                .map(|s| s.trim() == "-agent")
-                .unwrap_or(false)
-        }
-        CommentSyntax::Hash => {
-            trimmed
-                .strip_prefix('#')
-                .map(|s| s.trim() == "-agent")
-                .unwrap_or(false)
-        }
+        CommentSyntax::Html => trimmed
+            .strip_prefix("<!--")
+            .and_then(|s| s.strip_suffix("-->"))
+            .map(|s| s.trim() == "-agent")
+            .unwrap_or(false),
+        CommentSyntax::Hash => trimmed
+            .strip_prefix('#')
+            .map(|s| s.trim() == "-agent")
+            .unwrap_or(false),
     }
 }
 
@@ -120,7 +116,10 @@ pub fn filter_agent_tags(content: &str, agent: &str, comment_syntax: CommentSynt
 /// Collects all distinct agent names referenced by `+agent:NAME` tags in the content.
 ///
 /// Returns an empty set if the content has no agent tags.
-pub fn collect_agent_names(content: &str, syntax: CommentSyntax) -> std::collections::BTreeSet<String> {
+pub fn collect_agent_names(
+    content: &str,
+    syntax: CommentSyntax,
+) -> std::collections::BTreeSet<String> {
     let mut agents = std::collections::BTreeSet::new();
     for line in content.lines() {
         if let Some(name) = parse_open_tag(line, syntax) {
@@ -154,8 +153,14 @@ mod tests {
 
     #[test]
     fn empty_input_returns_empty() {
-        assert_eq!(filter_agent_tags("", "claude-code", CommentSyntax::Html), "");
-        assert_eq!(filter_agent_tags("", "claude-code", CommentSyntax::Hash), "");
+        assert_eq!(
+            filter_agent_tags("", "claude-code", CommentSyntax::Html),
+            ""
+        );
+        assert_eq!(
+            filter_agent_tags("", "claude-code", CommentSyntax::Hash),
+            ""
+        );
     }
 
     #[test]

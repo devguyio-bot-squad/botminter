@@ -24,7 +24,11 @@ impl TempRepo {
     }
 
     /// Creates a new private GitHub repository under a specific organization via TestEnv.
-    pub fn new_in_org(env: &super::test_env::TestEnv, prefix: &str, org: &str) -> Result<Self, String> {
+    pub fn new_in_org(
+        env: &super::test_env::TestEnv,
+        prefix: &str,
+        org: &str,
+    ) -> Result<Self, String> {
         let timestamp = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap()
@@ -33,7 +37,8 @@ impl TempRepo {
         let full_name = format!("{}/{}", org, repo_name);
         let drop_env = env.resolved_env("gh");
 
-        let output = env.command("gh")
+        let output = env
+            .command("gh")
             .args(["repo", "create", &full_name, "--private"])
             .output();
         if !output.status.success() {
@@ -45,9 +50,11 @@ impl TempRepo {
         }
 
         eprintln!("TempRepo created: {}", full_name);
-        Ok(TempRepo { full_name, drop_env })
+        Ok(TempRepo {
+            full_name,
+            drop_env,
+        })
     }
-
 }
 
 impl Drop for TempRepo {
@@ -106,7 +113,14 @@ pub fn list_labels(repo: &str) -> Vec<String> {
 pub fn list_labels_json(repo: &str) -> Vec<(String, String)> {
     let output = Command::new("gh")
         .args([
-            "label", "list", "-R", repo, "--json", "name,color", "--limit", "200",
+            "label",
+            "list",
+            "-R",
+            repo,
+            "--json",
+            "name,color",
+            "--limit",
+            "200",
         ])
         .output()
         .expect("failed to run gh label list --json");
@@ -142,8 +156,11 @@ impl TempProject {
     pub fn new(env: &super::test_env::TestEnv, owner: &str, title: &str) -> Result<Self, String> {
         let drop_env = env.resolved_env("gh");
 
-        let output = env.command("gh")
-            .args(["project", "create", "--owner", owner, "--title", title, "--format", "json"])
+        let output = env
+            .command("gh")
+            .args([
+                "project", "create", "--owner", owner, "--title", title, "--format", "json",
+            ])
             .output();
 
         if !output.status.success() {
@@ -171,18 +188,29 @@ impl TempProject {
 
 impl Drop for TempProject {
     fn drop(&mut self) {
-        eprintln!("TempProject dropping: {}/project#{}", self.owner, self.number);
+        eprintln!(
+            "TempProject dropping: {}/project#{}",
+            self.owner, self.number
+        );
         // Raw Command is acceptable in Drop per ADR-0005 (panic-safety cleanup).
         let mut cmd = Command::new("gh");
         cmd.args([
-            "project", "delete", "--owner", &self.owner,
-            &self.number.to_string(), "--format", "json",
+            "project",
+            "delete",
+            "--owner",
+            &self.owner,
+            &self.number.to_string(),
+            "--format",
+            "json",
         ]);
         cmd.env_clear();
         cmd.envs(&self.drop_env);
         match cmd.output() {
             Ok(o) if o.status.success() => {
-                eprintln!("TempProject deleted: {}/project#{}", self.owner, self.number);
+                eprintln!(
+                    "TempProject deleted: {}/project#{}",
+                    self.owner, self.number
+                );
             }
             Ok(o) => {
                 eprintln!(
@@ -244,7 +272,14 @@ pub fn list_project_status_options(owner: &str, project_number: u64) -> Vec<Stri
 pub fn list_issues(repo: &str) -> Vec<String> {
     let output = Command::new("gh")
         .args([
-            "issue", "list", "-R", repo, "--json", "title", "--jq", ".[].title",
+            "issue",
+            "list",
+            "-R",
+            repo,
+            "--json",
+            "title",
+            "--jq",
+            ".[].title",
         ])
         .output()
         .expect("failed to run gh issue list");
@@ -259,4 +294,3 @@ pub fn list_issues(repo: &str) -> Vec<String> {
         .map(|l| l.to_string())
         .collect()
 }
-

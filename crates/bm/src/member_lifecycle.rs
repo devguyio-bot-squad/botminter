@@ -253,7 +253,11 @@ pub fn fire_member(params: &FireParams, formation: &dyn Formation) -> Result<Fir
     }
 
     // Step 6: Remove member workspace
-    let workspace_dir = params.config.workzone.join(&params.team.name).join(params.member);
+    let workspace_dir = params
+        .config
+        .workzone
+        .join(&params.team.name)
+        .join(params.member);
     if workspace_dir.is_dir() {
         match fs::remove_dir_all(&workspace_dir) {
             Ok(()) => result.workspace_removed = true,
@@ -266,7 +270,13 @@ pub fn fire_member(params: &FireParams, formation: &dyn Formation) -> Result<Fir
 
     // Step 7: Delete GitHub workspace repo (conditional)
     if params.delete_repo {
-        if let Some(org) = params.team.github_repo.split('/').next().filter(|s| !s.is_empty()) {
+        if let Some(org) = params
+            .team
+            .github_repo
+            .split('/')
+            .next()
+            .filter(|s| !s.is_empty())
+        {
             let ws_repo_name = format!("{}/{}-{}", org, params.team.name, params.member);
             match git::delete_repo(&ws_repo_name) {
                 Ok(()) => result.repo_deleted = true,
@@ -314,7 +324,8 @@ fn uninstall_app(team: &TeamEntry, member: &str) -> Result<bool> {
 
     let client_id = cred_store.retrieve(&manifest_flow::credential_keys::client_id(member))?;
     let private_key = cred_store.retrieve(&manifest_flow::credential_keys::private_key(member))?;
-    let installation_id = cred_store.retrieve(&manifest_flow::credential_keys::installation_id(member))?;
+    let installation_id =
+        cred_store.retrieve(&manifest_flow::credential_keys::installation_id(member))?;
 
     match (client_id, private_key, installation_id) {
         (Some(cid), Some(key), Some(iid)) => {

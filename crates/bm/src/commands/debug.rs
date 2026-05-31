@@ -105,10 +105,7 @@ fn show_llm_conversation(workspace: &Path, max_entries: usize) {
         Some(dir) => dir,
         None => {
             println!("── LLM conversation ──");
-            println!(
-                "  (no Claude Code logs found for {})",
-                workspace.display()
-            );
+            println!("  (no Claude Code logs found for {})", workspace.display());
             println!();
             return;
         }
@@ -130,7 +127,10 @@ fn show_llm_conversation(workspace: &Path, max_entries: usize) {
         .unwrap_or("unknown");
     let short_id = &session_id[..session_id.len().min(8)];
 
-    println!("── LLM conversation (session {}, last {} entries) ──", short_id, max_entries);
+    println!(
+        "── LLM conversation (session {}, last {} entries) ──",
+        short_id, max_entries
+    );
 
     let file = match fs::File::open(&jsonl_path) {
         Ok(f) => f,
@@ -205,9 +205,7 @@ fn format_tool_use(block: &serde_json::Value, timestamp: &str) -> Option<String>
     let input = &block["input"];
 
     // Strip mcp__acp__ prefix for readability
-    let short_name = name
-        .strip_prefix("mcp__acp__")
-        .unwrap_or(name);
+    let short_name = name.strip_prefix("mcp__acp__").unwrap_or(name);
 
     // For Bash, show command and background flag
     if short_name == "Bash" {
@@ -233,19 +231,21 @@ fn format_tool_use(block: &serde_json::Value, timestamp: &str) -> Option<String>
             timestamp, short_name, file_name
         ))
     } else if short_name == "Grep" || short_name == "Glob" {
-        let pattern = input["pattern"]
-            .as_str()
-            .unwrap_or("?");
+        let pattern = input["pattern"].as_str().unwrap_or("?");
         Some(format!(
             "[{}] TOOL: {} {{ \"{}\" }}",
-            timestamp, short_name, truncate(pattern, 40)
+            timestamp,
+            short_name,
+            truncate(pattern, 40)
         ))
     } else {
         // Generic: show tool name + truncated input
         let input_str = input.to_string();
         Some(format!(
             "[{}] TOOL: {} {{ {} }}",
-            timestamp, short_name, truncate(&input_str, 80)
+            timestamp,
+            short_name,
+            truncate(&input_str, 80)
         ))
     }
 }
@@ -267,9 +267,7 @@ fn format_text(block: &serde_json::Value, timestamp: &str) -> Option<String> {
 fn claude_project_dir(workspace: &Path) -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let ws_abs = workspace.canonicalize().ok()?;
-    let dir_name = ws_abs
-        .to_str()?
-        .replace(['/', '.'], "-");
+    let dir_name = ws_abs.to_str()?.replace(['/', '.'], "-");
     let dir = home.join(".claude").join("projects").join(&dir_name);
     dir.is_dir().then_some(dir)
 }
@@ -279,11 +277,7 @@ fn find_latest_jsonl(dir: &Path) -> Option<PathBuf> {
     let mut jsonl_files: Vec<_> = fs::read_dir(dir)
         .ok()?
         .filter_map(|e| e.ok())
-        .filter(|e| {
-            e.path()
-                .extension()
-                .is_some_and(|ext| ext == "jsonl")
-        })
+        .filter(|e| e.path().extension().is_some_and(|ext| ext == "jsonl"))
         .collect();
 
     jsonl_files.sort_by_key(|e| {
@@ -309,7 +303,10 @@ fn extract_time(ts: &str) -> Option<String> {
 /// Truncate a string to max_len, appending "..." if truncated.
 fn truncate(s: &str, max_len: usize) -> String {
     // Normalize whitespace (collapse newlines/tabs to spaces)
-    let normalized: String = s.chars().map(|c| if c.is_whitespace() { ' ' } else { c }).collect();
+    let normalized: String = s
+        .chars()
+        .map(|c| if c.is_whitespace() { ' ' } else { c })
+        .collect();
     if normalized.len() <= max_len {
         normalized
     } else {
@@ -330,10 +327,7 @@ mod tests {
         // Verify the path transformation logic
         let path = "/home/user/.botminter/workspaces/team/member";
         let expected = path.replace('/', "-").replace('.', "-");
-        assert_eq!(
-            expected,
-            "-home-user--botminter-workspaces-team-member"
-        );
+        assert_eq!(expected, "-home-user--botminter-workspaces-team-member");
     }
 
     #[test]

@@ -162,8 +162,7 @@ pub fn load_from(path: &Path) -> Result<BotminterConfig> {
         bail!("No teams configured. Run `bm init` first.");
     }
 
-    let contents =
-        fs::read_to_string(path).context("Failed to read config file")?;
+    let contents = fs::read_to_string(path).context("Failed to read config file")?;
 
     let config: BotminterConfig =
         serde_yml::from_str(&contents).context("Failed to parse config file")?;
@@ -206,12 +205,10 @@ pub fn save_to(path: &Path, config: &BotminterConfig) -> Result<()> {
 
     // Set file permissions to 0600 (owner read/write only)
     let perms = fs::Permissions::from_mode(CONFIG_PERMISSIONS);
-    fs::set_permissions(path, perms)
-        .context("Failed to set config file permissions to 0600")?;
+    fs::set_permissions(path, perms).context("Failed to set config file permissions to 0600")?;
 
     Ok(())
 }
-
 
 /// Loads the existing config or returns a fresh default.
 pub fn load_or_default() -> BotminterConfig {
@@ -261,17 +258,14 @@ pub fn check_prerequisites() -> Result<()> {
 }
 
 /// Resolves which team to operate on: explicit flag > default_team > error.
-pub fn resolve_team<'a>(
-    config: &'a BotminterConfig,
-    flag: Option<&str>,
-) -> Result<&'a TeamEntry> {
+pub fn resolve_team<'a>(config: &'a BotminterConfig, flag: Option<&str>) -> Result<&'a TeamEntry> {
     let team_name = match flag {
         Some(name) => name.to_string(),
         None => match &config.default_team {
             Some(name) => name.clone(),
-            None => bail!(
-                "No default team set. Use `-t <team>` or run `bm init` to create a team."
-            ),
+            None => {
+                bail!("No default team set. Use `-t <team>` or run `bm init` to create a team.")
+            }
         },
     };
 
@@ -347,7 +341,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                daemon: Default::default(),
                 vm: None,
             }],
             vms: Vec::new(),
@@ -409,8 +403,8 @@ mod tests {
                     coding_agent: None,
                     project_number: None,
                     bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
-                vm: None,
+                    daemon: Default::default(),
+                    vm: None,
                 },
                 TeamEntry {
                     name: "other".to_string(),
@@ -421,8 +415,8 @@ mod tests {
                     coding_agent: None,
                     project_number: None,
                     bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
-                vm: None,
+                    daemon: Default::default(),
+                    vm: None,
                 },
             ],
             vms: Vec::new(),
@@ -449,7 +443,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                daemon: Default::default(),
                 vm: None,
             }],
             vms: Vec::new(),
@@ -491,8 +485,16 @@ mod tests {
     fn expand_tilde_home_prefix() {
         let result = expand_tilde("~/projects");
         let result_str = result.to_string_lossy();
-        assert!(!result_str.starts_with("~"), "Should expand ~: {}", result_str);
-        assert!(result_str.ends_with("projects"), "Should keep suffix: {}", result_str);
+        assert!(
+            !result_str.starts_with("~"),
+            "Should expand ~: {}",
+            result_str
+        );
+        assert!(
+            result_str.ends_with("projects"),
+            "Should keep suffix: {}",
+            result_str
+        );
     }
 
     #[test]
@@ -521,7 +523,7 @@ mod tests {
                 coding_agent: None,
                 project_number: None,
                 bridge_lifecycle: Default::default(),
-            daemon: Default::default(),
+                daemon: Default::default(),
                 vm: None,
             }],
             vms: Vec::new(),

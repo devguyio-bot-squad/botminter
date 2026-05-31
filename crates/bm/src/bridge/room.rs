@@ -167,8 +167,7 @@ mod tests {
     fn stub_bridge() -> (Bridge, tempfile::TempDir) {
         let tmp = tempfile::tempdir().unwrap();
         let state_path = tmp.path().join("bridge-state.json");
-        let bridge =
-            Bridge::new(stub_bridge_dir(), state_path, "test-team".to_string()).unwrap();
+        let bridge = Bridge::new(stub_bridge_dir(), state_path, "test-team".to_string()).unwrap();
         (bridge, tmp)
     }
 

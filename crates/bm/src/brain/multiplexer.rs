@@ -147,7 +147,12 @@ impl Multiplexer {
     /// - `MultiplexerShutdown`: signal clean shutdown
     pub fn new(
         config: MultiplexerConfig,
-    ) -> (Self, MultiplexerInput, MultiplexerOutput, MultiplexerShutdown) {
+    ) -> (
+        Self,
+        MultiplexerInput,
+        MultiplexerOutput,
+        MultiplexerShutdown,
+    ) {
         let (input_tx, input_rx) = mpsc::channel(64);
         let (output_tx, output_rx) = mpsc::channel(256);
         let (shutdown_tx, shutdown_rx) = mpsc::channel(1);
@@ -219,7 +224,9 @@ impl Multiplexer {
         .await
         .map_err(|_| {
             tracing::error!("ACP session creation timed out after 120s");
-            MultiplexerError::Acp(AcpError::InitFailed("session creation timed out after 120s".into()))
+            MultiplexerError::Acp(AcpError::InitFailed(
+                "session creation timed out after 120s".into(),
+            ))
         })??;
 
         tracing::info!(session_id = %session_id, "Brain multiplexer session started");

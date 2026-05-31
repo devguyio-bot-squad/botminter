@@ -134,15 +134,29 @@ mod tests {
         let manifest = profile::read_manifest_from(profile_name, profiles_tmp.path()).unwrap();
 
         setup_new_team_repo(
-            &team_repo, profile_name, &manifest,
-            &[], &[], None,
+            &team_repo,
+            profile_name,
+            &manifest,
+            &[],
+            &[],
+            None,
             Some(profiles_tmp.path()),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(team_repo.join(".git").exists(), "Should have git repo");
-        assert!(team_repo.join("members").exists(), "Should have members dir");
-        assert!(team_repo.join("projects").exists(), "Should have projects dir");
-        assert!(team_repo.join("botminter.yml").exists(), "Should have manifest");
+        assert!(
+            team_repo.join("members").exists(),
+            "Should have members dir"
+        );
+        assert!(
+            team_repo.join("projects").exists(),
+            "Should have projects dir"
+        );
+        assert!(
+            team_repo.join("botminter.yml").exists(),
+            "Should have manifest"
+        );
     }
 
     #[test]
@@ -159,10 +173,15 @@ mod tests {
         if !manifest.bridges.is_empty() {
             let bridge_name = &manifest.bridges[0].name;
             setup_new_team_repo(
-                &team_repo, profile_name, &manifest,
-                &[], &[], Some(bridge_name),
+                &team_repo,
+                profile_name,
+                &manifest,
+                &[],
+                &[],
+                Some(bridge_name),
                 Some(profiles_tmp.path()),
-            ).unwrap();
+            )
+            .unwrap();
 
             let contents = fs::read_to_string(team_repo.join("botminter.yml")).unwrap();
             assert!(contents.contains(&format!("bridge: {}", bridge_name)));
@@ -180,12 +199,20 @@ mod tests {
         let profile_name = &profiles[0];
         let manifest = profile::read_manifest_from(profile_name, profiles_tmp.path()).unwrap();
 
-        let projects = vec![("my-app".to_string(), "https://github.com/org/my-app.git".to_string())];
+        let projects = vec![(
+            "my-app".to_string(),
+            "https://github.com/org/my-app.git".to_string(),
+        )];
         setup_new_team_repo(
-            &team_repo, profile_name, &manifest,
-            &[], &projects, None,
+            &team_repo,
+            profile_name,
+            &manifest,
+            &[],
+            &projects,
+            None,
             Some(profiles_tmp.path()),
-        ).unwrap();
+        )
+        .unwrap();
 
         assert!(team_repo.join("projects/my-app/knowledge").exists());
         assert!(team_repo.join("projects/my-app/invariants").exists());
@@ -198,20 +225,30 @@ mod tests {
 
         // Set up git config for the test environment
         let gitconfig = tmp.path().join(".gitconfig");
-        fs::write(&gitconfig, "[user]\n\tname = Test\n\temail = test@test.com\n").unwrap();
+        fs::write(
+            &gitconfig,
+            "[user]\n\tname = Test\n\temail = test@test.com\n",
+        )
+        .unwrap();
         let orig_home = std::env::var("HOME").ok();
         std::env::set_var("HOME", tmp.path());
 
         let profiles_tmp = tempfile::tempdir().unwrap();
         profile::embedded::extract_embedded_to_disk(profiles_tmp.path()).unwrap();
-        let manifest = profile::read_manifest_from("agentic-sdlc-minimal", profiles_tmp.path()).unwrap();
+        let manifest =
+            profile::read_manifest_from("agentic-sdlc-minimal", profiles_tmp.path()).unwrap();
 
         let members = vec![("engineer".to_string(), "bob".to_string())];
         setup_new_team_repo(
-            &team_repo, "agentic-sdlc-minimal", &manifest,
-            &members, &[], None,
+            &team_repo,
+            "agentic-sdlc-minimal",
+            &manifest,
+            &members,
+            &[],
+            None,
             Some(profiles_tmp.path()),
-        ).unwrap();
+        )
+        .unwrap();
 
         let ralph_yml = team_repo.join("members/engineer-bob/ralph.yml");
         assert!(ralph_yml.exists(), "Member ralph.yml should exist");

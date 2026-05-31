@@ -36,16 +36,10 @@ pub fn run(workspace: &str, system_prompt: &str, acp_binary: &str) -> Result<()>
 
     let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
 
-    rt.block_on(async {
-        run_brain(workspace_path, prompt_content, acp_binary.to_string()).await
-    })
+    rt.block_on(async { run_brain(workspace_path, prompt_content, acp_binary.to_string()).await })
 }
 
-async fn run_brain(
-    workspace: PathBuf,
-    system_prompt: String,
-    acp_binary: String,
-) -> Result<()> {
+async fn run_brain(workspace: PathBuf, system_prompt: String, acp_binary: String) -> Result<()> {
     let config = MultiplexerConfig {
         acp_binary,
         cwd: workspace.clone(),
@@ -62,7 +56,11 @@ async fn run_brain(
     // Spawn bridge adapter (reader + writer) if all env vars are present
     let bridge_config = resolve_bridge_config(&workspace);
     let bridge_reader_shutdown_tx = if let Some(cfg) = bridge_config {
-        let mode = if cfg.room_id.is_some() { "locked" } else { "discovery" };
+        let mode = if cfg.room_id.is_some() {
+            "locked"
+        } else {
+            "discovery"
+        };
         tracing::info!(
             room_id = ?cfg.room_id,
             own_user_id = %cfg.own_user_id,

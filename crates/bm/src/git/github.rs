@@ -29,10 +29,7 @@ pub fn verify_fork_url(url: &str) -> Result<()> {
         let path_str = url.strip_prefix("file://").unwrap();
         let path = Path::new(path_str);
         if !path.join(".git").is_dir() {
-            bail!(
-                "Repository '{}' not found or is not a git repository.",
-                url
-            );
+            bail!("Repository '{}' not found or is not a git repository.", url);
         }
         return Ok(());
     }
@@ -54,19 +51,15 @@ pub fn verify_fork_url(url: &str) -> Result<()> {
             "Repository '{}' not found or not accessible.\n\
              Check the URL and ensure your token has access.\n\
              To verify manually:  gh repo view {}",
-            url, url
+            url,
+            url
         );
     }
     Ok(())
 }
 
 /// Creates a single label on a GitHub repo. Idempotent (uses --force).
-pub fn create_github_label(
-    repo: &str,
-    name: &str,
-    color: &str,
-    description: &str,
-) -> Result<()> {
+pub fn create_github_label(repo: &str, name: &str, color: &str, description: &str) -> Result<()> {
     let mut cmd = Command::new("gh");
     cmd.args([
         "label",
@@ -83,41 +76,25 @@ pub fn create_github_label(
 
     apply_detected_token(&mut cmd);
 
-    let output = cmd.output().with_context(|| {
-        format!("Failed to create label '{}'", name)
-    })?;
+    let output = cmd
+        .output()
+        .with_context(|| format!("Failed to create label '{}'", name))?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "Failed to create label '{}': {}",
-            name,
-            stderr.trim(),
-        );
+        bail!("Failed to create label '{}': {}", name, stderr.trim(),);
     }
 
     Ok(())
 }
 
 /// Finds a GitHub Project by title for the given owner. Returns the project number.
-pub fn find_project_number(
-    owner: &str,
-    team_name: &str,
-) -> Result<u64> {
+pub fn find_project_number(owner: &str, team_name: &str) -> Result<u64> {
     let board_title = format!("{} Board", team_name);
     let mut cmd = Command::new("gh");
-    cmd.args([
-        "project",
-        "list",
-        "--owner",
-        owner,
-        "--format",
-        "json",
-    ]);
+    cmd.args(["project", "list", "--owner", owner, "--format", "json"]);
     apply_detected_token(&mut cmd);
-    let output = cmd
-        .output()
-        .context("Failed to run `gh project list`")?;
+    let output = cmd.output().context("Failed to run `gh project list`")?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("gh project list failed: {}", stderr.trim());
@@ -135,7 +112,12 @@ pub fn find_project_number(
                 .find(|p| p["title"].as_str() == Some(&board_title))
                 .and_then(|p| p["number"].as_u64())
         })
-        .with_context(|| format!("No project named '{}' found for owner '{}'", board_title, owner))
+        .with_context(|| {
+            format!(
+                "No project named '{}' found for owner '{}'",
+                board_title, owner
+            )
+        })
 }
 
 /// Finds the built-in Status field ID and updates its options via GraphQL.
@@ -168,8 +150,8 @@ pub fn sync_project_status_field(
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let fields_json: serde_json::Value = serde_json::from_str(stdout.trim())
-        .context("Could not parse field-list JSON")?;
+    let fields_json: serde_json::Value =
+        serde_json::from_str(stdout.trim()).context("Could not parse field-list JSON")?;
 
     let field_id = fields_json["fields"]
         .as_array()
@@ -188,10 +170,7 @@ pub fn sync_project_status_field(
         .iter()
         .map(|s| {
             let color = color_for_status(&s.name);
-            format!(
-                "{{name:\"{}\",color:{},description:\"\"}}",
-                s.name, color
-            )
+            format!("{{name:\"{}\",color:{},description:\"\"}}", s.name, color)
         })
         .collect();
 
@@ -280,10 +259,7 @@ pub fn delete_repo(repo_name: &str) -> Result<()> {
 /// Uses a two-phase approach to avoid GitHub's repo propagation race:
 /// `gh repo create --source .` (creates repo + adds remote), then waits
 /// for the repo to be visible before pushing.
-pub fn create_repo_and_push(
-    local_repo: &Path,
-    repo_name: &str,
-) -> Result<()> {
+pub fn create_repo_and_push(local_repo: &Path, repo_name: &str) -> Result<()> {
     // Phase 1: Create repo and set up remote (no push yet).
     // `--source .` tells gh to add the `origin` remote pointing at the new repo.
     let mut cmd = Command::new("gh");
@@ -378,14 +354,10 @@ pub fn clone_repo(parent_dir: &Path, repo_name: &str) -> Result<()> {
 pub fn list_repos(owner: &str) -> Result<Vec<String>> {
     let mut cmd = Command::new("gh");
     cmd.args([
-            "repo", "list", owner,
-            "--limit", "50",
-            "--json", "name",
-            "--jq", ".[].name",
-        ]);
+        "repo", "list", owner, "--limit", "50", "--json", "name", "--jq", ".[].name",
+    ]);
     apply_detected_token(&mut cmd);
-    let output = cmd.output()
-        .context("Failed to list repos")?;
+    let output = cmd.output().context("Failed to list repos")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -393,26 +365,23 @@ pub fn list_repos(owner: &str) -> Result<Vec<String>> {
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.lines().filter(|l| !l.is_empty()).map(String::from).collect())
+    Ok(stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect())
 }
 
 /// Lists GitHub Project boards for a given owner. Returns `(number, title)` pairs.
 pub fn list_projects(owner: &str) -> Result<Vec<(u64, String)>> {
     let mut cmd = Command::new("gh");
-    cmd.args([
-            "project", "list", "--owner", owner, "--format", "json",
-        ]);
+    cmd.args(["project", "list", "--owner", owner, "--format", "json"]);
     apply_detected_token(&mut cmd);
-    let output = cmd.output()
-        .context("Failed to run `gh project list`")?;
+    let output = cmd.output().context("Failed to run `gh project list`")?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
-        bail!(
-            "Failed to list projects for '{}': {}",
-            owner,
-            stderr.trim()
-        );
+        bail!("Failed to list projects for '{}': {}", owner, stderr.trim());
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -432,16 +401,10 @@ pub fn list_projects(owner: &str) -> Result<Vec<(u64, String)>> {
 }
 
 /// Creates a GitHub Project (v2), syncs the Status field options, and returns the project number.
-pub fn create_project(
-    owner: &str,
-    title: &str,
-    statuses: &[profile::StatusDef],
-) -> Result<u64> {
+pub fn create_project(owner: &str, title: &str, statuses: &[profile::StatusDef]) -> Result<u64> {
     let mut cmd = Command::new("gh");
     cmd.args([
-        "project", "create", "--owner", owner,
-        "--title", title,
-        "--format", "json",
+        "project", "create", "--owner", owner, "--title", title, "--format", "json",
     ]);
     apply_detected_token(&mut cmd);
     let output = cmd.output().context("Failed to run `gh project create`")?;
@@ -464,10 +427,7 @@ pub fn create_project(
 
 /// Bootstraps labels on a GitHub repo from profile label definitions.
 /// Idempotent — uses `--force` per label.
-pub fn bootstrap_labels(
-    repo: &str,
-    labels: &[profile::LabelDef],
-) -> Result<()> {
+pub fn bootstrap_labels(repo: &str, labels: &[profile::LabelDef]) -> Result<()> {
     for label in labels {
         create_github_label(repo, &label.name, &label.color, &label.description)?;
     }
@@ -552,8 +512,7 @@ pub fn get_user_login() -> Result<String> {
     let mut cmd = Command::new("gh");
     cmd.args(["api", "user", "--jq", ".login"]);
     apply_detected_token(&mut cmd);
-    let output = cmd.output()
-        .context("Failed to get GitHub user")?;
+    let output = cmd.output().context("Failed to get GitHub user")?;
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
@@ -563,10 +522,13 @@ pub fn list_user_orgs() -> Result<Vec<String>> {
     let mut cmd = Command::new("gh");
     cmd.args(["api", "user/orgs", "--jq", ".[].login"]);
     apply_detected_token(&mut cmd);
-    let output = cmd.output()
-        .context("Failed to list GitHub orgs")?;
+    let output = cmd.output().context("Failed to list GitHub orgs")?;
     let stdout = String::from_utf8_lossy(&output.stdout);
-    Ok(stdout.lines().filter(|l| !l.is_empty()).map(String::from).collect())
+    Ok(stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(String::from)
+        .collect())
 }
 
 #[cfg(test)]
@@ -637,7 +599,11 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("test-repo");
         std::fs::create_dir_all(&repo).unwrap();
-        Command::new("git").args(["init", "-b", "main"]).current_dir(&repo).output().unwrap();
+        Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
         let url = format!("file://{}", repo.to_string_lossy());
         assert!(verify_fork_url(&url).is_ok());
     }
@@ -647,7 +613,11 @@ mod tests {
         let result = verify_fork_url("file:///tmp/does-not-exist-repo-xyz");
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("not found") || err.contains("not a git repository"), "{}", err);
+        assert!(
+            err.contains("not found") || err.contains("not a git repository"),
+            "{}",
+            err
+        );
     }
 
     // ── mask_token ──────────────────────────────────────────────

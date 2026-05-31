@@ -333,8 +333,9 @@ fn resolve_bridge_credentials(
     if let Some(ref dir) = bridge::discover(team_repo, &team.name)? {
         let bstate_path = bridge::state_path(&cfg.workzone, &team.name);
         let b = bridge::Bridge::new(dir.clone(), bstate_path.clone(), team.name.clone())?;
-        let store = bridge::LocalCredentialStore::new(&team.name, b.bridge_name(), bstate_path.clone())
-            .with_collection(cfg.keyring_collection.clone());
+        let store =
+            bridge::LocalCredentialStore::new(&team.name, b.bridge_name(), bstate_path.clone())
+                .with_collection(cfg.keyring_collection.clone());
         let bname = Some(b.bridge_name().to_string());
         let surl = b.service_url().map(|s| s.to_string());
 
@@ -357,9 +358,7 @@ fn resolve_bridge_credentials(
             credential_store: Some(store),
             bridge_type_name: bname,
             service_url: surl,
-            user_id_by_member: Box::new(move |member_name: &str| {
-                b.member_user_id(member_name)
-            }),
+            user_id_by_member: Box::new(move |member_name: &str| b.member_user_id(member_name)),
             room_id_by_member: Box::new(move |member_name: &str| {
                 member_rooms.get(member_name).cloned()
             }),
@@ -396,7 +395,6 @@ pub(crate) fn resolve_app_credentials_and_deliver(
     member_name: &str,
     workspace: &Path,
 ) -> Result<Option<PathBuf>> {
-
     // Check if this member has App credentials
     let client_id = match store.retrieve(&credential_keys::client_id(member_name))? {
         Some(v) => v,
@@ -406,10 +404,11 @@ pub(crate) fn resolve_app_credentials_and_deliver(
         Some(v) => v,
         None => return Ok(None),
     };
-    let installation_id_str = match store.retrieve(&credential_keys::installation_id(member_name))? {
-        Some(v) => v,
-        None => return Ok(None),
-    };
+    let installation_id_str =
+        match store.retrieve(&credential_keys::installation_id(member_name))? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
     let installation_id: u64 = installation_id_str
         .parse()
         .context("Invalid installation ID in credential store")?;

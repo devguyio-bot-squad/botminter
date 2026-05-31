@@ -65,8 +65,8 @@ pub fn invoke_recipe(
     if config_file.exists() {
         let contents = fs::read_to_string(&config_file)
             .context("Failed to read bridge config exchange output")?;
-        let value: serde_json::Value =
-            serde_json::from_str(&contents).context("Failed to parse bridge config exchange JSON")?;
+        let value: serde_json::Value = serde_json::from_str(&contents)
+            .context("Failed to parse bridge config exchange JSON")?;
         Ok(Some(value))
     } else {
         Ok(None)
@@ -120,7 +120,8 @@ mod tests {
     #[test]
     fn invoke_recipe_room_create() {
         let bridge_dir = stub_bridge_dir();
-        let result = invoke_recipe(&bridge_dir, "room-create", &["general"], "test-team", None).unwrap();
+        let result =
+            invoke_recipe(&bridge_dir, "room-create", &["general"], "test-team", None).unwrap();
         assert!(result.is_some());
         let val = result.unwrap();
         assert_eq!(val["name"], "general");

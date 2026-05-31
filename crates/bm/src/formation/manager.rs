@@ -66,12 +66,8 @@ pub fn run_formation_manager(
     env_vars.push(("BM_TEAM_NAME".to_string(), team.name.clone()));
     env_vars.push(("BM_TEAM_REPO".to_string(), team_repo.display().to_string()));
 
-    let status = session::oneshot_ralph_session(
-        &formation_dir,
-        &prompt_path,
-        &ralph_yml_path,
-        &env_vars,
-    )?;
+    let status =
+        session::oneshot_ralph_session(&formation_dir, &prompt_path, &ralph_yml_path, &env_vars)?;
 
     if !status.success() {
         bail!(

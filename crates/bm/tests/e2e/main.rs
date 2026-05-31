@@ -187,10 +187,7 @@ fn extract_custom_args(args: &[String]) -> ParsedArgs {
         }
     }
     if !missing.is_empty() {
-        eprintln!(
-            "Error: missing required arguments: {}",
-            missing.join(", ")
-        );
+        eprintln!("Error: missing required arguments: {}", missing.join(", "));
         std::process::exit(1);
     }
 
@@ -229,7 +226,10 @@ fn handle_reset(suite_filter: &Option<String>) {
 
             // Stop tg-mock container
             if let Some(cid) = &state.tg_mock_container_id {
-                eprintln!("Stopping tg-mock container {}...", &cid[..12.min(cid.len())]);
+                eprintln!(
+                    "Stopping tg-mock container {}...",
+                    &cid[..12.min(cid.len())]
+                );
                 let _ = std::process::Command::new("podman")
                     .args(["stop", "-t", "2", cid])
                     .output();

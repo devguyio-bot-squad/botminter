@@ -61,12 +61,8 @@ pub fn read_member_info(member_dir: &Path, member_name: &str) -> Result<(String,
             .with_context(|| format!("Failed to read {}", manifest_path.display()))?;
         let manifest: MemberManifest = serde_yml::from_str(&contents)
             .with_context(|| format!("Failed to parse {}", manifest_path.display()))?;
-        let role = manifest
-            .role
-            .unwrap_or_else(|| infer_role(member_name));
-        let display_name = manifest
-            .name
-            .unwrap_or_else(|| member_name.to_string());
+        let role = manifest.role.unwrap_or_else(|| infer_role(member_name));
+        let display_name = manifest.name.unwrap_or_else(|| member_name.to_string());
         Ok((role, display_name))
     } else {
         Ok((infer_role(member_name), member_name.to_string()))

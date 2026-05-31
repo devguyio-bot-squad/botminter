@@ -85,10 +85,7 @@ pub fn bootstrap_vm_fn(
         );
 
         // Verify VM exists and is running
-        let list_out = env
-            .command("limactl")
-            .args(["list", "--json"])
-            .output();
+        let list_out = env.command("limactl").args(["list", "--json"]).output();
         let stdout = String::from_utf8_lossy(&list_out.stdout);
         let found_running = stdout.lines().any(|line| {
             serde_json::from_str::<serde_json::Value>(line)
@@ -197,10 +194,7 @@ pub fn bootstrap_teardown_fn(
         );
 
         // Verify VM is gone
-        let list_after = env
-            .command("limactl")
-            .args(["list", "--json"])
-            .output();
+        let list_after = env.command("limactl").args(["list", "--json"]).output();
         let after_stdout = String::from_utf8_lossy(&list_after.stdout);
         let still_exists = after_stdout.lines().any(|line| {
             serde_json::from_str::<serde_json::Value>(line)
