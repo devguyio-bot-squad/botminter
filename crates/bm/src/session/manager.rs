@@ -9,6 +9,7 @@ use chrono::Utc;
 use super::lock::WorkItemLock;
 use super::registry::SessionRegistry;
 use super::types::{SessionId, SessionRecord, SessionState, SessionType};
+use crate::workspace::{push_with_rebase_retry, DEFAULT_MAX_RETRIES};
 
 /// Describes the state of a single project repo after session deactivation.
 #[derive(Debug, Clone)]
@@ -105,11 +106,11 @@ impl SessionManager {
             .ok_or_else(|| anyhow::anyhow!("Session {} not found", id))?
             .clone();
 
-        let dirty_repos = session
-            .workspace_path
-            .as_deref()
-            .map(inspect_dirty_repos)
-            .unwrap_or_default();
+        let mut dirty_repos = vec![];
+        if let Some(ref wp) = session.workspace_path {
+            dirty_repos = inspect_dirty_repos(wp);
+            push_and_refresh_dirty(&mut dirty_repos, wp);
+        }
 
         self.registry.update_state(id, SessionState::Completed)?;
         self.registry.save()?;
@@ -139,6 +140,31 @@ impl SessionManager {
     /// Look up a session by ID. Returns None if the session does not exist.
     pub fn get(&self, id: &SessionId) -> Option<&SessionRecord> {
         self.registry.get(id)
+    }
+}
+
+/// Push unpushed branches for each dirty repo and refresh its state in-place.
+///
+/// For each repo with unpushed commits, resolves the current branch and calls
+/// `push_with_rebase_retry`. On success, clears `unpushed_branches`. Non-fatal:
+/// push failures are never propagated as Err from `deactivate_session`.
+fn push_and_refresh_dirty(dirty_repos: &mut [DirtyRepo], workspace_path: &Path) {
+    for repo in dirty_repos.iter_mut() {
+        if repo.unpushed_branches.is_empty() {
+            continue;
+        }
+        let repo_path = workspace_path.join("projects").join(&repo.name);
+        let branch_out = Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(&repo_path)
+            .output();
+        let branch = match branch_out {
+            Ok(o) if o.status.success() => String::from_utf8_lossy(&o.stdout).trim().to_string(),
+            _ => continue,
+        };
+        if push_with_rebase_retry(&repo_path, "origin", &branch, DEFAULT_MAX_RETRIES).is_ok() {
+            repo.unpushed_branches.clear();
+        }
     }
 }
 
@@ -384,6 +410,256 @@ mod tests {
         assert_ne!(
             active[0].session_id, r1.session_id,
             "deactivated session must not be in active list"
+        );
+    }
+}
+
+#[cfg(test)]
+mod session_push_integration_tests {
+    use super::*;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::Command;
+    use tempfile::TempDir;
+
+    // ── fixtures ─────────────────────────────────────────────────────────────
+
+    fn init_bare_repo(tmp: &TempDir, name: &str) -> PathBuf {
+        let bare = tmp.path().join(format!("{name}.git"));
+        fs::create_dir_all(&bare).unwrap();
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main"])
+            .arg(&bare)
+            .output()
+            .unwrap();
+        let seed = tmp.path().join(format!("{name}-seed"));
+        Command::new("git")
+            .args(["clone", bare.to_str().unwrap(), seed.to_str().unwrap()])
+            .output()
+            .unwrap();
+        fs::write(seed.join("file.txt"), "initial\n").unwrap();
+        git_commit_all(&seed, "init");
+        Command::new("git")
+            .args(["-C", seed.to_str().unwrap(), "push"])
+            .output()
+            .unwrap();
+        bare
+    }
+
+    fn clone_into_workspace_projects(bare: &Path, workspace: &Path, project_name: &str) -> PathBuf {
+        let projects = workspace.join("projects");
+        fs::create_dir_all(&projects).unwrap();
+        let dest = projects.join(project_name);
+        Command::new("git")
+            .args(["clone", bare.to_str().unwrap(), dest.to_str().unwrap()])
+            .output()
+            .unwrap();
+        dest
+    }
+
+    fn git_commit_all(repo: &Path, msg: &str) {
+        Command::new("git")
+            .args(["-C", repo.to_str().unwrap(), "add", "."])
+            .output()
+            .unwrap();
+        Command::new("git")
+            .args([
+                "-C",
+                repo.to_str().unwrap(),
+                "-c",
+                "user.email=test@test.com",
+                "-c",
+                "user.name=Test",
+                "commit",
+                "-m",
+                msg,
+            ])
+            .output()
+            .unwrap();
+    }
+
+    // ── tests ─────────────────────────────────────────────────────────────────
+
+    // AC-14b: successful push → unpushed_branches cleared
+    #[test]
+    fn push_succeeds_clears_unpushed_branches() {
+        let tmp = TempDir::new().unwrap();
+        let bare = init_bare_repo(&tmp, "repo");
+        let workspace = tmp.path().join("ws/alice");
+        let project = clone_into_workspace_projects(&bare, &workspace, "my-project");
+
+        fs::write(project.join("change.txt"), "alice change\n").unwrap();
+        git_commit_all(&project, "alice commit");
+
+        let mut dirty = inspect_dirty_repos(&workspace);
+        assert!(
+            !dirty.is_empty() && !dirty[0].unpushed_branches.is_empty(),
+            "setup: project must have unpushed commits"
+        );
+
+        push_and_refresh_dirty(&mut dirty, &workspace);
+
+        assert!(
+            dirty[0].unpushed_branches.is_empty(),
+            "unpushed_branches must be cleared after successful push"
+        );
+    }
+
+    // AC-14b: NFF rejection → fetch+rebase+retry succeeds → branches cleared
+    #[test]
+    fn nff_conflict_rebase_retry_succeeds_clears_unpushed() {
+        let tmp = TempDir::new().unwrap();
+        let bare = init_bare_repo(&tmp, "repo");
+
+        // clone_a advances bare (non-conflicting file)
+        let clone_a = tmp.path().join("clone-a");
+        Command::new("git")
+            .args(["clone", bare.to_str().unwrap(), clone_a.to_str().unwrap()])
+            .output()
+            .unwrap();
+        fs::write(clone_a.join("from_a.txt"), "from a\n").unwrap();
+        git_commit_all(&clone_a, "advance bare");
+        Command::new("git")
+            .args(["-C", clone_a.to_str().unwrap(), "push"])
+            .output()
+            .unwrap();
+
+        // workspace clone: non-conflicting commit (different file → rebase will succeed)
+        let workspace = tmp.path().join("ws/bob");
+        let project = clone_into_workspace_projects(&bare, &workspace, "my-project");
+        fs::write(project.join("from_bob.txt"), "from bob\n").unwrap();
+        git_commit_all(&project, "bob commit");
+
+        let mut dirty = inspect_dirty_repos(&workspace);
+        assert!(
+            !dirty.is_empty() && !dirty[0].unpushed_branches.is_empty(),
+            "setup: project must have unpushed commits"
+        );
+
+        push_and_refresh_dirty(&mut dirty, &workspace);
+
+        assert!(
+            dirty[0].unpushed_branches.is_empty(),
+            "unpushed_branches must be cleared after rebase+retry succeeds"
+        );
+    }
+
+    // AC-14b: all push attempts fail (rebase conflict) → unpushed_branches preserved
+    #[test]
+    fn push_fails_max_retries_repo_stays_dirty() {
+        let tmp = TempDir::new().unwrap();
+        let bare = init_bare_repo(&tmp, "repo");
+
+        // Both clones start from the same bare state so they diverge after clone_a pushes.
+        let clone_a = tmp.path().join("clone-a");
+        Command::new("git")
+            .args(["clone", bare.to_str().unwrap(), clone_a.to_str().unwrap()])
+            .output()
+            .unwrap();
+
+        // workspace cloned BEFORE clone_a pushes so it is behind bare when push is attempted
+        let workspace = tmp.path().join("ws/dan");
+        let project = clone_into_workspace_projects(&bare, &workspace, "my-project");
+
+        // clone_a: conflicting change on the same file → advances bare
+        fs::write(clone_a.join("file.txt"), "version A\n").unwrap();
+        git_commit_all(&clone_a, "A modifies file.txt");
+        Command::new("git")
+            .args(["-C", clone_a.to_str().unwrap(), "push"])
+            .output()
+            .unwrap();
+
+        // workspace: conflicting change on the same file → rebase will conflict
+        fs::write(project.join("file.txt"), "version B\n").unwrap();
+        git_commit_all(&project, "B modifies file.txt");
+
+        let mut dirty = inspect_dirty_repos(&workspace);
+        assert!(
+            !dirty.is_empty() && !dirty[0].unpushed_branches.is_empty(),
+            "setup: project must have unpushed commits"
+        );
+        let original_count = dirty[0].unpushed_branches.len();
+
+        push_and_refresh_dirty(&mut dirty, &workspace);
+
+        assert_eq!(
+            dirty[0].unpushed_branches.len(),
+            original_count,
+            "unpushed_branches must be preserved when push fails"
+        );
+    }
+
+    // AC-14b: repo with only uncommitted changes (no unpushed commits) → no push attempted
+    #[test]
+    fn uncommitted_only_repo_not_pushed() {
+        let tmp = TempDir::new().unwrap();
+        let bare = init_bare_repo(&tmp, "repo");
+        let workspace = tmp.path().join("ws/eve");
+        let project = clone_into_workspace_projects(&bare, &workspace, "my-project");
+
+        // Write a file but do NOT commit — only has_uncommitted=true, unpushed_branches=[]
+        fs::write(project.join("uncommitted.txt"), "not committed\n").unwrap();
+
+        let mut dirty = inspect_dirty_repos(&workspace);
+        // The repo is dirty (uncommitted file) but has no unpushed commits
+        let repos_without_unpushed: Vec<_> = dirty
+            .iter()
+            .filter(|r| r.has_uncommitted && r.unpushed_branches.is_empty())
+            .collect();
+        assert!(
+            !repos_without_unpushed.is_empty(),
+            "setup: must have a repo with uncommitted-only changes"
+        );
+
+        push_and_refresh_dirty(&mut dirty, &workspace);
+
+        let repos_with_unpushed: Vec<_> = dirty
+            .iter()
+            .filter(|r| !r.unpushed_branches.is_empty())
+            .collect();
+        assert!(
+            repos_with_unpushed.is_empty(),
+            "uncommitted-only repos must not gain unpushed_branches entries"
+        );
+    }
+
+    // AC-14b: push failure must not cause deactivate_session to return Err
+    #[test]
+    fn push_failure_is_nonfatal() {
+        let tmp = TempDir::new().unwrap();
+        let bare = init_bare_repo(&tmp, "repo");
+
+        // clone_a: conflicting change → push to advance bare
+        let clone_a = tmp.path().join("clone-a");
+        Command::new("git")
+            .args(["clone", bare.to_str().unwrap(), clone_a.to_str().unwrap()])
+            .output()
+            .unwrap();
+        fs::write(clone_a.join("file.txt"), "version A\n").unwrap();
+        git_commit_all(&clone_a, "A modifies file.txt");
+        Command::new("git")
+            .args(["-C", clone_a.to_str().unwrap(), "push"])
+            .output()
+            .unwrap();
+
+        // workspace: conflicting change → push during deactivation will fail
+        let workspace_base = tmp.path().join("workspaces");
+        let workspace = workspace_base.join("frank");
+        let project = clone_into_workspace_projects(&bare, &workspace, "my-project");
+        fs::write(project.join("file.txt"), "frank version\n").unwrap();
+        git_commit_all(&project, "frank modifies file.txt");
+
+        let registry_path = tmp.path().join("sessions.json");
+        let mut manager = SessionManager::new(workspace_base, registry_path).unwrap();
+        let record = manager
+            .create_session("frank", SessionType::Interactive)
+            .unwrap();
+
+        let result = manager.deactivate_session(&record.session_id);
+        assert!(
+            result.is_ok(),
+            "deactivate_session must return Ok even when push fails: {:?}",
+            result
         );
     }
 }

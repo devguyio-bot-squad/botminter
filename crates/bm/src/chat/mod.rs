@@ -504,6 +504,10 @@ pub fn build_meeting_prompt(prompt: Option<&str>, user_input: Option<&str>) -> O
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+
+    // Tests that mutate process-global env vars must serialize via this lock.
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     fn sample_params() -> (Vec<String>, BTreeMap<String, String>, String) {
         let guardrails = vec![
@@ -1035,6 +1039,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_sets_gh_config_dir_when_hosts_yml_present() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
@@ -1061,6 +1066,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_removes_conflicting_tokens() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
@@ -1092,6 +1098,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_noop_when_no_config_dir() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
 
         std::env::set_var("GH_TOKEN", "preserved");
@@ -1122,6 +1129,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_noop_when_hosts_yml_missing() {
+        let _lock = ENV_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
