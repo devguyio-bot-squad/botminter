@@ -50,6 +50,13 @@ pub struct DirtyRepoInfo {
     pub unpushed_branches: Vec<String>,
 }
 
+impl DirtyRepoInfo {
+    /// True if this repo needs finalization (has uncommitted changes or unpushed branches).
+    pub fn is_dirty(&self) -> bool {
+        self.has_uncommitted || !self.unpushed_branches.is_empty()
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StartSessionResponse {
     pub ok: bool,
