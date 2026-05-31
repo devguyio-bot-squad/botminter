@@ -9,7 +9,7 @@ use libc;
 
 use super::lock::WorkItemLock;
 use super::registry::SessionRegistry;
-use super::types::{SessionId, SessionRecord, SessionState, SessionType};
+use super::types::{FinalizationResult, GitState, SessionId, SessionRecord, SessionState, SessionType};
 use crate::session::finalization::subagent::{
     launch_finalization_subagent, retrigger_finalization,
 };
@@ -43,6 +43,8 @@ pub struct SessionInspection {
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub state_transitioned_at: chrono::DateTime<chrono::Utc>,
     pub workspace_path: Option<std::path::PathBuf>,
+    pub finalization_results: Option<FinalizationResult>,
+    pub git_state: Option<GitState>,
 }
 
 /// Filter predicate for bulk session cleanup.
@@ -116,6 +118,7 @@ impl SessionManager {
             state_transitioned_at: now,
             agent_pid: None,
             workspace_path: Some(workspace_path),
+            finalization_result: None,
         };
 
         self.registry.register(record)?;
@@ -295,6 +298,8 @@ impl SessionManager {
             created_at: session.created_at,
             state_transitioned_at: session.state_transitioned_at,
             workspace_path: session.workspace_path,
+            finalization_results: session.finalization_result,
+            git_state: None,
         })
     }
 
@@ -1177,6 +1182,7 @@ mod session_cleanup_inspection_tests {
             state_transitioned_at: Utc::now(),
             agent_pid: None,
             workspace_path,
+            finalization_result: None,
         };
         let id = record.session_id.clone();
         manager.registry.register(record).unwrap();
@@ -1288,6 +1294,7 @@ mod session_cleanup_inspection_tests {
                 state_transitioned_at: Utc::now() - chrono::Duration::hours(49),
                 agent_pid: None,
                 workspace_path: Some(ws_old.clone()),
+                finalization_result: None,
             };
             manager.registry.register(record).unwrap();
             id
@@ -1356,6 +1363,7 @@ mod restart_recovery_tests {
             state_transitioned_at: Utc::now(),
             agent_pid: pid,
             workspace_path: None,
+            finalization_result: None,
         };
         manager.registry.register(record).unwrap();
         id

@@ -9,8 +9,9 @@ use super::api::{
 };
 use super::config::{DaemonConfig, DaemonPaths};
 use super::session_api::{
-    ForceStopResponse, RetriggerFinalizationResponse, SessionHistoryInfo, SessionInfo,
-    SessionsListResponse, StartSessionRequest, StartSessionResponse, StopSessionResponse,
+    BulkCleanupResponse, CleanupSessionResponse, ForceStopResponse, InspectSessionResponse,
+    RetriggerFinalizationResponse, SessionHistoryInfo, SessionInfo, SessionsListResponse,
+    StartSessionRequest, StartSessionResponse, StopSessionResponse,
 };
 use crate::state;
 
@@ -301,6 +302,83 @@ impl DaemonClient {
 
         resp.json::<RetriggerFinalizationResponse>()
             .context("Failed to parse retrigger finalization response")
+    }
+
+    /// GET /api/sessions/{id}/inspect — return structured summary of a session.
+    pub fn inspect_session(&self, session_id: &str) -> Result<InspectSessionResponse> {
+        let url = format!("{}/api/sessions/{}/inspect", self.base_url, session_id);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session inspect: {}", status, body);
+        }
+
+        resp.json::<InspectSessionResponse>()
+            .context("Failed to parse session inspect response")
+    }
+
+    /// DELETE /api/sessions/{id}/cleanup — remove a session's workspace and registry entry.
+    pub fn cleanup_session(&self, session_id: &str) -> Result<CleanupSessionResponse> {
+        let url = format!("{}/api/sessions/{}/cleanup", self.base_url, session_id);
+        let resp = self
+            .client
+            .delete(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session cleanup: {}", status, body);
+        }
+
+        resp.json::<CleanupSessionResponse>()
+            .context("Failed to parse session cleanup response")
+    }
+
+    /// DELETE /api/sessions/cleanup — bulk cleanup of retained sessions.
+    pub fn bulk_cleanup_sessions(
+        &self,
+        all: bool,
+        member: Option<&str>,
+        older_than: Option<&str>,
+    ) -> Result<BulkCleanupResponse> {
+        let mut url = format!("{}/api/sessions/cleanup", self.base_url);
+        let mut sep = '?';
+        if all {
+            url.push(sep);
+            url.push_str("all=true");
+            sep = '&';
+        }
+        if let Some(m) = member {
+            url.push(sep);
+            url.push_str(&format!("member={m}"));
+            sep = '&';
+        }
+        if let Some(d) = older_than {
+            url.push(sep);
+            url.push_str(&format!("older_than={d}"));
+        }
+        let resp = self
+            .client
+            .delete(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for bulk cleanup: {}", status, body);
+        }
+
+        resp.json::<BulkCleanupResponse>()
+            .context("Failed to parse bulk cleanup response")
     }
 }
 

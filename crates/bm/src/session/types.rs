@@ -93,6 +93,31 @@ impl std::fmt::Display for SessionState {
     }
 }
 
+/// Finalization outcome status.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FinalizationExitStatus {
+    Success,
+    Failure,
+}
+
+/// Result of a completed finalization — written into SessionRecord when finalization ends.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FinalizationResult {
+    pub committed_repos: Vec<String>,
+    pub pushed_branches: Vec<String>,
+    pub recovery_branches: Vec<String>,
+    pub issue_urls: Vec<String>,
+    pub exit_status: FinalizationExitStatus,
+}
+
+/// Snapshot of git state in a session's workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitState {
+    pub branches: Vec<String>,
+    pub has_uncommitted: bool,
+    pub unpushed_commits: Vec<String>,
+}
+
 /// A persistent record of a tracked session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRecord {
@@ -104,6 +129,8 @@ pub struct SessionRecord {
     pub state_transitioned_at: DateTime<Utc>,
     pub agent_pid: Option<u32>,
     pub workspace_path: Option<PathBuf>,
+    #[serde(default)]
+    pub finalization_result: Option<FinalizationResult>,
 }
 
 #[cfg(test)]
@@ -120,6 +147,7 @@ mod tests {
             state_transitioned_at: Utc::now(),
             agent_pid: None,
             workspace_path: None,
+            finalization_result: None,
         }
     }
 
