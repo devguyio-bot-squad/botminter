@@ -1,15 +1,18 @@
 mod context;
+mod git_push;
+pub mod hydration;
 mod repo;
 mod robot;
 mod sync;
 mod team_sync;
 mod util;
 
+pub use context::{inject_project_sections, inject_project_skill_dirs, inject_workspace_context};
+pub use git_push::{push_with_rebase_retry, DEFAULT_MAX_RETRIES};
 pub use repo::{
     assemble_workspace_repo_context, create_workspace_repo, GhRemoteOps, RemoteRepoOps,
     RemoteRepoState, WorkspaceRepoParams,
 };
-pub use context::{inject_project_sections, inject_project_skill_dirs, inject_workspace_context};
 pub use robot::{inject_robot_config, inject_robot_enabled, RobotBridgeConfig};
 pub use sync::{find_workspace, list_member_dirs, sync_workspace, SyncEvent, SyncResult};
 pub use team_sync::{sync_team_workspaces, TeamSyncEvent, TeamSyncParams, TeamSyncResult};
