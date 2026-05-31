@@ -30,33 +30,15 @@ fn needs_fetch(clone_dir: &Path, threshold: Duration) -> bool {
 
 /// Touches `.bm_last_fetch` in the clone dir to record the time of the last fetch.
 fn touch_fetch_marker(clone_dir: &Path) -> Result<()> {
-    fs::write(clone_dir.join(".bm_last_fetch"), "")
-        .context("Failed to write fetch marker")
-}
-
-/// Run a git command in `dir`, returning stderr on failure.
-fn git(dir: &Path, args: &[&str]) -> Result<()> {
-    let out = Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .with_context(|| format!("Failed to spawn git {}", args.join(" ")))?;
-    if !out.status.success() {
-        bail!(
-            "git {} failed: {}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr).trim()
-        );
-    }
-    Ok(())
+    fs::write(clone_dir.join(".bm_last_fetch"), "").context("Failed to write fetch marker")
 }
 
 /// Read the bare-clone directory that owns the linked worktree at `target`.
 /// The worktree's `.git` file contains `gitdir: <bare>/worktrees/<name>`.
 fn clone_dir_for_worktree(target: &Path) -> Result<PathBuf> {
     let git_file = target.join(".git");
-    let content = fs::read_to_string(&git_file)
-        .with_context(|| format!("Failed to read {:?}", git_file))?;
+    let content =
+        fs::read_to_string(&git_file).with_context(|| format!("Failed to read {:?}", git_file))?;
     let gitdir_str = content
         .lines()
         .find_map(|l| l.strip_prefix("gitdir: "))
@@ -112,54 +94,58 @@ impl RepoSource for GitWorktreeSource {
 
         if !clone_dir.exists() {
             // First use: create a bare clone of the remote.
-            fs::create_dir_all(&self.clones_dir)
-                .context("Failed to create clones directory")?;
-            let out = Command::new("git")
-                .args(["clone", "--bare", repo_url, clone_dir.to_str().unwrap()])
-                .output()
-                .context("Failed to spawn git clone --bare")?;
-            if !out.status.success() {
-                bail!(
-                    "git clone --bare {} failed: {}",
-                    repo_url,
-                    String::from_utf8_lossy(&out.stderr).trim()
-                );
+            fs::create_dir_all(&self.clones_dir).context("Failed to create clones directory")?;
+            // On failure, remove the partial clone dir so retries start fresh.
+            if let Err(e) = super::util::git_cmd(
+                &self.clones_dir,
+                &["clone", "--bare", repo_url, clone_dir.to_str().unwrap()],
+            ) {
+                let _ = fs::remove_dir_all(&clone_dir);
+                return Err(e).with_context(|| {
+                    format!(
+                        "Failed to clone '{}' — check the URL and network connectivity",
+                        repo_url
+                    )
+                });
             }
             touch_fetch_marker(&clone_dir)?;
         } else if needs_fetch(&clone_dir, self.freshness_threshold) {
             // Existing clone is stale: fetch all refs.
-            git(&clone_dir, &["fetch", "--all", "--prune"])
-                .context("git fetch failed on shared clone")?;
+            super::util::git_cmd(&clone_dir, &["fetch", "--all", "--prune"]).with_context(
+                || {
+                    format!(
+                        "git fetch failed on shared clone at '{}' — check network connectivity",
+                        clone_dir.display()
+                    )
+                },
+            )?;
             touch_fetch_marker(&clone_dir)?;
         }
 
         // Resolve the ref to check out (detached HEAD to avoid branch-lock conflicts).
         let commit_ish = match branch {
             Some(b) => b.to_string(),
-            None => {
-                let out = Command::new("git")
-                    .args(["rev-parse", "HEAD"])
-                    .current_dir(&clone_dir)
-                    .output()
-                    .context("Failed to resolve HEAD")?;
-                if out.status.success() {
-                    String::from_utf8_lossy(&out.stdout).trim().to_string()
-                } else {
-                    // Fallback: let git pick the default
-                    "HEAD".to_string()
-                }
-            }
+            None => super::util::git_cmd_output(&clone_dir, &["rev-parse", "HEAD"])
+                .ok()
+                .map(|s| s.trim().to_string())
+                .unwrap_or_else(|| "HEAD".to_string()),
         };
 
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).context("Failed to create worktree parent dir")?;
         }
 
-        git(
+        super::util::git_cmd(
             &clone_dir,
-            &["worktree", "add", "--detach", target.to_str().unwrap(), &commit_ish],
+            &[
+                "worktree",
+                "add",
+                "--detach",
+                target.to_str().unwrap(),
+                &commit_ish,
+            ],
         )
-        .with_context(|| format!("git worktree add failed for {:?}", target))
+        .with_context(|| format!("git worktree add failed for '{}'", target.display()))
     }
 
     fn deprovision(&self, target: &Path) -> Result<()> {
@@ -167,8 +153,8 @@ impl RepoSource for GitWorktreeSource {
             return Ok(());
         }
         // Find the owning bare clone, remove the worktree entry, then prune.
-        let clone_dir = clone_dir_for_worktree(target)
-            .context("Failed to find owning clone for worktree")?;
+        let clone_dir =
+            clone_dir_for_worktree(target).context("Failed to find owning clone for worktree")?;
 
         let _ = Command::new("git")
             .args(["worktree", "remove", "--force", target.to_str().unwrap()])
@@ -243,10 +229,7 @@ impl ConfigAssembler {
         // Validate skill directories and collect warnings for missing ones.
         for dir in &config.skill_dirs {
             if !dir.exists() {
-                warnings.push(format!(
-                    "Skill directory not found: {}",
-                    dir.display()
-                ));
+                warnings.push(format!("Skill directory not found: {}", dir.display()));
             }
         }
 
@@ -274,9 +257,10 @@ impl CredentialRelay {
         let path = self.credentials_base.join(member_name);
         if !path.exists() {
             bail!(
-                "No credential directory for member '{}' (expected {:?})",
+                "No credential directory for member '{}' at {} \
+                 — run 'bm credentials export' or verify member configuration",
                 member_name,
-                path
+                path.display()
             );
         }
         Ok(path)
@@ -289,8 +273,15 @@ impl CredentialRelay {
 /// identify bottlenecks (clone fetch latency vs worktree creation vs config assembly).
 #[derive(Debug, Clone)]
 pub struct HydrationTiming {
+    /// Time spent in clone/fetch operations inside `RepoSource::provision()`.
+    /// Currently always 0 because fetch and worktree creation are not timed
+    /// separately inside `provision()` — this field is reserved for future
+    /// lower-level instrumentation.
     pub clone_fetch_ms: u64,
+    /// Total time spent in `RepoSource::provision()` across all repos,
+    /// including any clone fetch and worktree creation.
     pub worktree_create_ms: u64,
+    /// Time spent assembling workspace config (marker file, skill validation).
     pub config_assembly_ms: u64,
 }
 
@@ -346,13 +337,22 @@ impl<R: RepoSource> WorkspaceHydrator<R> {
         config: AssemblyConfig,
     ) -> Result<HydrationResult> {
         let workspace_path = self.sessions_base.join(member).join(session_id.as_str());
-        fs::create_dir_all(&workspace_path)
-            .with_context(|| format!("Failed to create workspace at {:?}", workspace_path))?;
+        fs::create_dir_all(&workspace_path).with_context(|| {
+            format!(
+                "Failed to create workspace directory at {} — check available disk space",
+                workspace_path.display()
+            )
+        })?;
 
         let projects_dir = workspace_path.join("projects");
         if let Err(e) = fs::create_dir_all(&projects_dir) {
             let _ = fs::remove_dir_all(&workspace_path);
-            return Err(e).context("Failed to create projects directory");
+            return Err(e).with_context(|| {
+                format!(
+                    "Failed to create projects directory at {} — check available disk space",
+                    projects_dir.display()
+                )
+            });
         }
 
         // Provision each repo as a git worktree.  Track what was created for rollback.
@@ -366,7 +366,10 @@ impl<R: RepoSource> WorkspaceHydrator<R> {
                 }
                 let _ = fs::remove_dir_all(&workspace_path);
                 return Err(e).with_context(|| {
-                    format!("Failed to provision repo '{}' (project '{}')", url, project_name)
+                    format!(
+                        "Failed to provision repo '{}' (project '{}')",
+                        url, project_name
+                    )
                 });
             }
             provisioned.push(project_path);
@@ -382,7 +385,13 @@ impl<R: RepoSource> WorkspaceHydrator<R> {
                     let _ = self.repo_source.deprovision(p);
                 }
                 let _ = fs::remove_dir_all(&workspace_path);
-                return Err(e).context("Failed to assemble workspace config");
+                return Err(e).with_context(|| {
+                    format!(
+                        "Failed to assemble workspace config for session {} \
+                         — verify team repo path and member configuration",
+                        session_id.as_str()
+                    )
+                });
             }
         };
         let config_assembly_ms = assembly_start.elapsed().as_millis() as u64;
@@ -410,9 +419,12 @@ impl<R: RepoSource> WorkspaceHydrator<R> {
 
         let projects_dir = workspace_path.join("projects");
         if projects_dir.is_dir() {
-            for entry in fs::read_dir(&projects_dir)
-                .with_context(|| format!("Failed to list {:?}", projects_dir))?
-            {
+            for entry in fs::read_dir(&projects_dir).with_context(|| {
+                format!(
+                    "Failed to list projects directory at {} during teardown",
+                    projects_dir.display()
+                )
+            })? {
                 let path = entry?.path();
                 if path.is_dir() {
                     let _ = self.repo_source.deprovision(&path);
@@ -420,8 +432,12 @@ impl<R: RepoSource> WorkspaceHydrator<R> {
             }
         }
 
-        fs::remove_dir_all(&workspace_path)
-            .with_context(|| format!("Failed to remove workspace {:?}", workspace_path))
+        fs::remove_dir_all(&workspace_path).with_context(|| {
+            format!(
+                "Failed to remove workspace at {} — check that no processes hold open files",
+                workspace_path.display()
+            )
+        })
     }
 }
 
@@ -479,7 +495,11 @@ mod tests {
         GitWorktreeSource::new(tmp.path().join("clones"), Duration::from_secs(300))
     }
 
-    fn make_assembly_config(tmp: &TempDir, session_id: SessionId, repo_url: &str) -> AssemblyConfig {
+    fn make_assembly_config(
+        tmp: &TempDir,
+        session_id: SessionId,
+        repo_url: &str,
+    ) -> AssemblyConfig {
         AssemblyConfig {
             session_id,
             member_name: "alice".to_string(),
@@ -501,7 +521,9 @@ mod tests {
         let target = tmp.path().join("ws");
 
         // provision must succeed and produce a workspace with no uncommitted changes
-        source.provision(repo.to_str().unwrap(), None, &target).unwrap();
+        source
+            .provision(repo.to_str().unwrap(), None, &target)
+            .unwrap();
 
         let status = Command::new("git")
             .args(["-C", target.to_str().unwrap(), "status", "--porcelain"])
@@ -524,8 +546,12 @@ mod tests {
         let ws_a = tmp.path().join("ws-a");
         let ws_b = tmp.path().join("ws-b");
 
-        source.provision(repo.to_str().unwrap(), None, &ws_a).unwrap();
-        source.provision(repo.to_str().unwrap(), None, &ws_b).unwrap();
+        source
+            .provision(repo.to_str().unwrap(), None, &ws_a)
+            .unwrap();
+        source
+            .provision(repo.to_str().unwrap(), None, &ws_b)
+            .unwrap();
 
         // Writing to workspace A must not affect workspace B
         fs::write(ws_a.join("mutation.txt"), "only in A").unwrap();
@@ -575,8 +601,7 @@ mod tests {
         let assembler = ConfigAssembler::new(tmp.path().join("team"), "alice".to_string());
         let relay = CredentialRelay::new(tmp.path().join("credentials"));
         let sessions_base = tmp.path().join("sessions");
-        let hydrator =
-            WorkspaceHydrator::new(source, assembler, relay, sessions_base.clone());
+        let hydrator = WorkspaceHydrator::new(source, assembler, relay, sessions_base.clone());
 
         let session_id = SessionId::new();
         let config = make_assembly_config(
@@ -613,11 +638,7 @@ mod tests {
             WorkspaceHydrator::new(source, assembler, relay, tmp.path().join("sessions"));
 
         let session_id = SessionId::new();
-        let config = make_assembly_config(
-            &tmp,
-            session_id.clone(),
-            "file:///no-such-repo.git",
-        );
+        let config = make_assembly_config(&tmp, session_id.clone(), "file:///no-such-repo.git");
 
         let err = hydrator
             .hydrate(
@@ -630,10 +651,7 @@ mod tests {
 
         let msg = err.to_string();
         // AC-4: error must describe the failing operation and underlying cause
-        assert!(
-            !msg.is_empty(),
-            "error message must be non-empty"
-        );
+        assert!(!msg.is_empty(), "error message must be non-empty");
     }
 
     // ── AC-5: Skills Available ──────────────────────────────────────────────
@@ -660,9 +678,9 @@ mod tests {
         let warnings = assembler.assemble(&workspace, &config).unwrap();
         // AC-5: missing skill dir must appear in warnings, not cause an error
         assert!(
-            warnings
-                .iter()
-                .any(|w| w.contains("missing-dir") || w.contains("not found") || w.contains("missing")),
+            warnings.iter().any(|w| w.contains("missing-dir")
+                || w.contains("not found")
+                || w.contains("missing")),
             "missing skill dir must be reported as a warning, got: {:?}",
             warnings
         );
@@ -711,7 +729,9 @@ mod tests {
         let target = tmp.path().join("ws");
 
         // Must succeed: fetch ran and worktree was created from fresh state
-        source.provision(repo.to_str().unwrap(), None, &target).unwrap();
+        source
+            .provision(repo.to_str().unwrap(), None, &target)
+            .unwrap();
 
         assert!(
             target.exists(),
@@ -770,8 +790,7 @@ mod tests {
 
         assembler.assemble(&workspace, &config).unwrap();
 
-        let marker =
-            fs::read_to_string(workspace.join(".botminter.workspace")).unwrap();
+        let marker = fs::read_to_string(workspace.join(".botminter.workspace")).unwrap();
         assert!(
             marker.contains(session_id.as_str()),
             "workspace marker must contain session ID '{}', got:\n{}",
@@ -789,8 +808,13 @@ mod tests {
         let source = git_worktree_source(&tmp);
         let target = tmp.path().join("ws");
 
-        source.provision(repo.to_str().unwrap(), None, &target).unwrap();
-        assert!(target.exists(), "precondition: workspace must exist after provision");
+        source
+            .provision(repo.to_str().unwrap(), None, &target)
+            .unwrap();
+        assert!(
+            target.exists(),
+            "precondition: workspace must exist after provision"
+        );
 
         source.deprovision(&target).unwrap();
 
