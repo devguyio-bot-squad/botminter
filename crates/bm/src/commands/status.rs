@@ -821,23 +821,14 @@ mod session_extended_display_tests {
     // AC-17: --since filter excludes sessions whose end_time is outside the window.
     #[test]
     fn history_display_since_filter_excludes_old_sessions() {
+        let now = chrono::Utc::now();
+        let recent_end = (now - chrono::Duration::hours(2)).to_rfc3339();
+        let recent_start = (now - chrono::Duration::hours(20)).to_rfc3339();
+        let old_end = (now - chrono::Duration::hours(48)).to_rfc3339();
+        let old_start = (now - chrono::Duration::hours(72)).to_rfc3339();
         let entries = vec![
-            // recent: end_time within last 24h (relative to 2026-05-31T06:00:00Z)
-            make_history_entry(
-                "recent",
-                "alice",
-                "2026-05-30T12:00:00Z",
-                "2026-05-31T04:00:00Z",
-                true,
-            ),
-            // old: end_time 48h ago
-            make_history_entry(
-                "oldone",
-                "alice",
-                "2026-05-29T00:00:00Z",
-                "2026-05-29T01:00:00Z",
-                true,
-            ),
+            make_history_entry("recent", "alice", &recent_start, &recent_end, true),
+            make_history_entry("oldone", "alice", &old_start, &old_end, true),
         ];
         let fetcher = move || -> Result<Vec<SessionHistoryInfo>> { Ok(entries.clone()) };
         let mut buf = Vec::new();
