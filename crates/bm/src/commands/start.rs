@@ -1,6 +1,7 @@
 use anyhow::{bail, Result};
 
 use crate::config;
+use crate::daemon::DaemonClient;
 use crate::formation;
 use crate::profile;
 use crate::team::Team;
@@ -78,6 +79,26 @@ pub fn run(
         formation::start_local_members(team, &cfg, &team_repo, member_filter, no_bridge, None)?
     };
 
+    // Ensure daemon is running so session lifecycle is tracked.
+    let _ = super::ensure_daemon_running(&team.name, &team_repo);
+
+    // Register a daemon session for each started member (non-fatal).
+    // Skipped members (already running) also get a session to support
+    // concurrent session tracking.
+    let mut sessions_created = 0usize;
+    if let Ok(client) = DaemonClient::connect(&team.name) {
+        for m in &result.launched {
+            if client.start_session(&m.name, "loop").is_ok() {
+                sessions_created += 1;
+            }
+        }
+        for m in &result.skipped {
+            if client.start_session(&m.name, "loop").is_ok() {
+                sessions_created += 1;
+            }
+        }
+    }
+
     // Display results
     if let Some(ref bridge_outcome) = result.bridge {
         display_bridge_outcome(bridge_outcome);
@@ -85,9 +106,6 @@ pub fn run(
 
     for s in &result.stale_cleaned {
         eprintln!("Cleaned stale entry for {}", s);
-    }
-    for m in &result.skipped {
-        eprintln!("{}: already running (PID {})", m.name, m.pid);
     }
     for m in &result.launched {
         if m.brain_mode {
@@ -100,10 +118,10 @@ pub fn run(
         eprintln!("{}: {}", m.name, m.error);
     }
 
+    let total_started = result.launched.len() + sessions_created.min(result.skipped.len());
     println!(
-        "\nStarted {} member(s), skipped {} (already running), {} error(s).",
-        result.launched.len(),
-        result.skipped.len(),
+        "\nStarted {} member(s), {} error(s).",
+        total_started,
         result.errors.len()
     );
 

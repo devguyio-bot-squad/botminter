@@ -27,6 +27,8 @@ pub mod status;
 pub mod stop;
 pub mod teams;
 
+use std::path::Path;
+
 use anyhow::Result;
 
 use crate::profile::{self, ProfileInitResult};
@@ -55,7 +57,7 @@ pub(crate) fn ensure_profiles(config_warning: bool) -> Result<()> {
         }
     }
 
-    // Check config file permissions
+    // Check config file permissions (not related to daemon)
     if config_warning {
         if let Ok(path) = crate::config::config_path() {
             if let Some(warning) = crate::config::check_permissions_warning(&path) {
@@ -65,4 +67,19 @@ pub(crate) fn ensure_profiles(config_warning: bool) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Ensures a daemon is running for the given team, starting one if needed.
+///
+/// Used by `bm start` and `bm chat` to guarantee session lifecycle tracking.
+/// Non-fatal: returns Ok(()) even if the daemon cannot be started (e.g., schema
+/// mismatch), allowing the command to proceed without session tracking.
+pub(crate) fn ensure_daemon_running(team_name: &str, team_repo: &Path) -> Result<()> {
+    match crate::daemon::query_status(team_name) {
+        Ok(crate::daemon::DaemonStatusInfo::Running { .. }) => Ok(()),
+        _ => {
+            crate::daemon::start_daemon(team_name, team_repo, "poll", 0, 60, "127.0.0.1")?;
+            Ok(())
+        }
+    }
 }

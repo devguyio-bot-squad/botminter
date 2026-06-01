@@ -6,7 +6,7 @@ use comfy_table::{
 };
 
 use crate::config;
-use crate::daemon::{DaemonClient, SessionHistoryInfo, SessionsListResponse};
+use crate::daemon::{DaemonClient, SessionHistoryInfo, SessionInfo, SessionsListResponse};
 use crate::state::{self, MemberStatus};
 
 pub fn run(
@@ -19,6 +19,20 @@ pub fn run(
 ) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
+
+    let team_name = team.name.clone();
+
+    // When --json is set, skip all text output and only emit structured JSON.
+    if json {
+        if history {
+            let fetcher = move || DaemonClient::connect(&team_name)?.list_session_history();
+            fetch_and_display_history(true, member_filter, since, &mut std::io::stdout(), &fetcher)?;
+        } else {
+            let fetcher = move || DaemonClient::connect(&team_name)?.list_sessions();
+            fetch_and_display_sessions(true, &mut std::io::stdout(), &fetcher)?;
+        }
+        return Ok(());
+    }
 
     let info = state::gather_status(team, &cfg, verbose)?;
 
@@ -140,13 +154,13 @@ pub fn run(
         }
     }
 
-    let team_name = team.name.clone();
+    let team_name_for_fetch = team.name.clone();
     if history {
-        let fetcher = move || DaemonClient::connect(&team_name)?.list_session_history();
-        fetch_and_display_history(json, member_filter, since, &mut std::io::stdout(), &fetcher)?;
+        let fetcher = move || DaemonClient::connect(&team_name_for_fetch)?.list_session_history();
+        fetch_and_display_history(false, member_filter, since, &mut std::io::stdout(), &fetcher)?;
     } else {
-        let fetcher = move || DaemonClient::connect(&team_name)?.list_sessions();
-        fetch_and_display_sessions(json, &mut std::io::stdout(), &fetcher)?;
+        let fetcher = move || DaemonClient::connect(&team_name_for_fetch)?.list_sessions();
+        fetch_and_display_sessions(false, &mut std::io::stdout(), &fetcher)?;
     }
 
     Ok(())
@@ -160,12 +174,25 @@ pub(crate) fn fetch_and_display_sessions<W: Write>(
     let sessions = match session_fetcher() {
         Ok(resp) => resp.sessions,
         Err(_) => {
-            if json {
-                writeln!(writer, "{{\"sessions\":[]}}")?;
+            // Daemon not running — try reading session state from the registry file.
+            let fallback = read_sessions_from_registry();
+            if !fallback.is_empty() {
+                if json {
+                    let resp = SessionsListResponse {
+                        sessions: fallback,
+                    };
+                    writeln!(writer, "{}", serde_json::to_string(&resp)?)?;
+                    return Ok(());
+                }
+                fallback
             } else {
-                writeln!(writer, "Sessions: none (daemon not running)")?;
+                if json {
+                    writeln!(writer, "{{\"sessions\":[]}}")?;
+                } else {
+                    writeln!(writer, "Sessions: none (daemon not running)")?;
+                }
+                return Ok(());
             }
-            return Ok(());
         }
     };
 
@@ -352,6 +379,81 @@ fn format_timestamp(ts: &str) -> String {
     } else {
         ts.to_string()
     }
+}
+
+/// Reads session records from the on-disk registry when the daemon is not running.
+fn read_sessions_from_registry() -> Vec<SessionInfo> {
+    use crate::session::registry::SessionRegistry;
+    use crate::session::types::{SessionState, SessionType};
+
+    let cfg = match config::load() {
+        Ok(c) => c,
+        Err(_) => return vec![],
+    };
+    let team = cfg
+        .default_team
+        .as_ref()
+        .and_then(|name| cfg.teams.iter().find(|t| t.name == *name))
+        .or(cfg.teams.first());
+    let team = match team {
+        Some(t) => t,
+        None => return vec![],
+    };
+
+    let home = dirs::home_dir().unwrap_or_default();
+    let registry_path = home
+        .join(".botminter")
+        .join(format!("sessions-{}", team.name))
+        .join("registry.json");
+
+    let registry = match SessionRegistry::load(registry_path) {
+        Ok(r) => r,
+        Err(_) => return vec![],
+    };
+
+    let records: Vec<_> = registry
+        .list()
+        .into_iter()
+        .filter(|r| !matches!(r.current_state, SessionState::Retained))
+        .collect();
+
+    let active_count: std::collections::HashMap<String, u32> = records
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.current_state,
+                SessionState::Active | SessionState::Creating | SessionState::Finalizing
+            )
+        })
+        .fold(std::collections::HashMap::new(), |mut acc, r| {
+            *acc.entry(r.member_name.clone()).or_insert(0) += 1;
+            acc
+        });
+
+    records
+        .iter()
+        .map(|r| {
+            let stype = match r.session_type {
+                SessionType::Loop => "loop",
+                SessionType::Brain => "brain",
+                SessionType::Interactive => "interactive",
+            };
+            let count = *active_count.get(&r.member_name).unwrap_or(&0);
+            SessionInfo {
+                session_id: r.session_id.as_str().to_string(),
+                owning_member: r.member_name.clone(),
+                session_type: stype.to_string(),
+                current_state: r.current_state.to_string(),
+                start_time: r.created_at.to_rfc3339(),
+                workspace_path: r
+                    .workspace_path
+                    .as_ref()
+                    .map(|p| p.to_string_lossy().to_string()),
+                state_transitioned_at: r.state_transitioned_at.to_rfc3339(),
+                concurrent_count: count,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]

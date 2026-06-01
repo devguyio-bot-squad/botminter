@@ -186,6 +186,10 @@ async fn run_daemon_async(
             delete(session_api::force_stop_session_handler),
         )
         .route(
+            "/api/sessions/{id}/fail",
+            post(session_api::fail_session_handler),
+        )
+        .route(
             "/api/sessions/{id}/finalize",
             post(session_api::retrigger_finalization_handler),
         )

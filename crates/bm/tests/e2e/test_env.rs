@@ -22,6 +22,11 @@ use std::time::Duration;
 
 /// Path to the stub ralph script.
 const STUB_RALPH_SCRIPT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/e2e/stub-ralph.sh");
+/// Path to the stub coding-agent script (simulates claude/coding agent binary).
+const STUB_AGENT_SCRIPT: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/e2e/stub-agent.sh");
+/// Path to the stub finalization script (simulates finalization subagent).
+const STUB_FINALIZATION_SCRIPT: &str =
+    concat!(env!("CARGO_MANIFEST_DIR"), "/tests/e2e/stub-finalization.sh");
 
 // ── TestEnv ─────────────────────────────────────────────────────────
 
@@ -128,6 +133,16 @@ impl TestEnv {
         let stub_path = stub_dir.join("ralph");
         fs::copy(STUB_RALPH_SCRIPT, &stub_path).expect("failed to copy stub-ralph.sh");
         fs::set_permissions(&stub_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let stub_agent_path = stub_dir.join("claude");
+        fs::copy(STUB_AGENT_SCRIPT, &stub_agent_path).expect("failed to copy stub-agent.sh");
+        fs::set_permissions(&stub_agent_path, fs::Permissions::from_mode(0o755)).unwrap();
+
+        let stub_finalization_path = stub_dir.join("bm-finalize");
+        fs::copy(STUB_FINALIZATION_SCRIPT, &stub_finalization_path)
+            .expect("failed to copy stub-finalization.sh");
+        fs::set_permissions(&stub_finalization_path, fs::Permissions::from_mode(0o755))
+            .unwrap();
 
         let path = format!(
             "{}:{}",
@@ -398,12 +413,20 @@ impl TestEnv {
         fs::remove_dir_all(&self.home).unwrap();
         fs::create_dir_all(&self.home).unwrap();
 
-        // Reinstall stub ralph
+        // Reinstall stubs
         let stub_dir = self.home.join("stub-bin");
         fs::create_dir_all(&stub_dir).unwrap();
         let stub_path = stub_dir.join("ralph");
         fs::copy(STUB_RALPH_SCRIPT, &stub_path).expect("failed to copy stub-ralph.sh");
         fs::set_permissions(&stub_path, fs::Permissions::from_mode(0o755)).unwrap();
+        let stub_agent_path = stub_dir.join("claude");
+        fs::copy(STUB_AGENT_SCRIPT, &stub_agent_path).expect("failed to copy stub-agent.sh");
+        fs::set_permissions(&stub_agent_path, fs::Permissions::from_mode(0o755)).unwrap();
+        let stub_finalization_path = stub_dir.join("bm-finalize");
+        fs::copy(STUB_FINALIZATION_SCRIPT, &stub_finalization_path)
+            .expect("failed to copy stub-finalization.sh");
+        fs::set_permissions(&stub_finalization_path, fs::Permissions::from_mode(0o755))
+            .unwrap();
 
         // Re-bootstrap profiles
         let profiles_base = self.home.join(".config").join("botminter").join("profiles");

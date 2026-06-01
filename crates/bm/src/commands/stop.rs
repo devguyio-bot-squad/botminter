@@ -2,7 +2,8 @@ use anyhow::{bail, Result};
 
 use crate::config;
 use crate::daemon::{
-    ForceStopResponse, RetriggerFinalizationResponse, SessionsListResponse, StopSessionResponse,
+    DaemonClient, ForceStopResponse, RetriggerFinalizationResponse, SessionsListResponse,
+    StopSessionResponse,
 };
 use crate::formation;
 use crate::team::Team;
@@ -136,6 +137,9 @@ pub fn run(
     let local_formation = formation::create_local_formation(&team.name)?;
     let team_api = Team::new(team, local_formation);
 
+    // Deactivate daemon sessions BEFORE Team::stop(), which may stop the daemon.
+    deactivate_sessions_for_stop(&team.name, member_filter, force);
+
     let result = team_api.stop(&cfg, member_filter, force, bridge_flag, stop_all)?;
 
     // Display: specific member not running
@@ -205,6 +209,43 @@ pub fn run(
     }
 
     Ok(())
+}
+
+/// Deactivate daemon sessions before stopping members.
+///
+/// Must run BEFORE Team::stop(), which may stop the daemon itself.
+/// For force stop: force-stops all matching sessions (→ Killed).
+/// For graceful stop: gracefully deactivates matching sessions (→ Completed/Finalizing).
+fn deactivate_sessions_for_stop(team_name: &str, member_filter: Option<&str>, force: bool) {
+    let client = match DaemonClient::connect(team_name) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    let sessions = match client.list_sessions() {
+        Ok(resp) => resp.sessions,
+        Err(_) => return,
+    };
+
+    for session in &sessions {
+        if session.current_state != "Active" && session.current_state != "Finalizing" {
+            continue;
+        }
+        let matches = if let Some(target) = member_filter {
+            session.owning_member == target
+                || session.owning_member.ends_with(&format!("-{target}"))
+        } else {
+            true
+        };
+
+        if matches {
+            if force {
+                let _ = client.force_stop_session(&session.session_id);
+            } else {
+                let _ = client.stop_session(&session.session_id);
+            }
+        }
+    }
 }
 
 #[cfg(test)]

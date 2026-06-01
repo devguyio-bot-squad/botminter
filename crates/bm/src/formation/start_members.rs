@@ -543,14 +543,25 @@ fn discover_members(team_repo: &Path, member_filter: Option<&str>) -> Result<Vec
     }
 
     if let Some(target) = member_filter {
-        if !all_member_dirs.iter().any(|d| d == target) {
-            bail!(
-                "Member '{}' not found. Available: {}",
-                target,
-                all_member_dirs.join(", ")
-            );
+        // Exact match first, then fuzzy suffix match ("alice" → "engineer-alice")
+        if let Some(exact) = all_member_dirs.iter().find(|d| *d == target) {
+            Ok(vec![exact.clone()])
+        } else {
+            let suffix = format!("-{target}");
+            let matches: Vec<_> = all_member_dirs
+                .iter()
+                .filter(|d| d.ends_with(&suffix))
+                .cloned()
+                .collect();
+            if matches.is_empty() {
+                bail!(
+                    "Member '{}' not found. Available: {}",
+                    target,
+                    all_member_dirs.join(", ")
+                );
+            }
+            Ok(matches)
         }
-        Ok(vec![target.to_string()])
     } else {
         Ok(all_member_dirs)
     }

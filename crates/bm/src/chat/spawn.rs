@@ -162,7 +162,7 @@ pub fn spawn_and_wait_agent(
     drop(tmp_path);
 
     // Deactivate the daemon session and build the summary.
-    let deactivation = stop_daemon_session(&team.name, session_id);
+    let deactivation = stop_daemon_session(&team.name, session_id, exit_code);
 
     Ok(SpawnWaitResult {
         exit_code,
@@ -173,7 +173,14 @@ pub fn spawn_and_wait_agent(
 /// Attempts to stop the daemon session and returns a `DeactivationSummary`.
 /// Returns `None` gracefully if the daemon is not running or no session_id
 /// was provided — callers should treat this as "clean exit, no session".
-fn stop_daemon_session(team_name: &str, session_id: &str) -> Option<DeactivationSummary> {
+///
+/// When `exit_code` is non-zero, the session is marked as Failed instead of
+/// proceeding with normal deactivation (which would transition to Completed).
+fn stop_daemon_session(
+    team_name: &str,
+    session_id: &str,
+    exit_code: i32,
+) -> Option<DeactivationSummary> {
     if session_id.is_empty() {
         return None;
     }
@@ -182,6 +189,14 @@ fn stop_daemon_session(team_name: &str, session_id: &str) -> Option<Deactivation
         Ok(c) => c,
         Err(_) => return None,
     };
+
+    if exit_code != 0 {
+        let _ = client.fail_session(session_id);
+        return Some(DeactivationSummary {
+            session_id: session_id.to_string(),
+            dirty_repos: vec![],
+        });
+    }
 
     let stop_resp = match client.stop_session(session_id) {
         Ok(r) => r,

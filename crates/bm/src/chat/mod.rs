@@ -51,8 +51,10 @@ pub fn prepare_chat_session(
     member: &str,
     hat: Option<&str>,
 ) -> Result<AgentSession> {
-    // Verify member exists
-    let member_dir = team_repo.join("members").join(member);
+    // Resolve member name — supports both full dir name ("engineer-alice")
+    // and short name ("alice") by matching `*-{name}` in the members dir.
+    let resolved_member = resolve_member_name(team_repo, member)?;
+    let member_dir = team_repo.join("members").join(&resolved_member);
     if !member_dir.is_dir() {
         bail!(
             "Member '{}' not found in team '{}'. \
@@ -62,7 +64,7 @@ pub fn prepare_chat_session(
         );
     }
 
-    let ws_path = team_path.join(member);
+    let ws_path = team_path.join(&resolved_member);
 
     // Read ralph.yml — try workspace, fall back to member dir, then defaults
     let ralph_yml_path = ws_path.join("ralph.yml");
@@ -423,6 +425,38 @@ pub fn launch_session(
     }
 
     Ok(())
+}
+
+/// Resolves a member name: tries exact match first, then suffix match (`*-{name}`).
+///
+/// Given "alice", finds "engineer-alice" if "alice" dir doesn't exist.
+pub fn resolve_member_name(team_repo: &Path, name: &str) -> Result<String> {
+    let members_dir = team_repo.join("members");
+    let exact = members_dir.join(name);
+    if exact.is_dir() {
+        return Ok(name.to_string());
+    }
+    // Try suffix match: look for dirs ending with "-{name}"
+    let suffix = format!("-{name}");
+    if let Ok(entries) = std::fs::read_dir(&members_dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let dir_name = match entry.file_name().into_string() {
+                Ok(n) => n,
+                Err(_) => continue,
+            };
+            if dir_name.starts_with('.') || !entry.path().is_dir() {
+                continue;
+            }
+            if dir_name.ends_with(&suffix) {
+                return Ok(dir_name);
+            }
+        }
+    }
+    bail!(
+        "Member '{}' not found in team. \
+         Run `bm members list` to see hired members.",
+        name
+    );
 }
 
 /// Resolves a member name from a role. Scans the team repo's `members/`

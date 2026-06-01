@@ -186,6 +186,15 @@ impl SessionManager {
         })
     }
 
+    /// Return all sessions (including terminal states, excluding Retained).
+    pub fn list_all(&self) -> Vec<&SessionRecord> {
+        self.registry
+            .list()
+            .into_iter()
+            .filter(|s| !matches!(s.current_state, SessionState::Retained))
+            .collect()
+    }
+
     /// Return all sessions that are not in a terminal state (Creating, Active, Finalizing).
     pub fn list_active(&self) -> Vec<&SessionRecord> {
         self.registry
@@ -226,6 +235,12 @@ impl SessionManager {
 
     /// Transition a Finalizing session to Failed when remote preservation is impossible.
     pub fn finalization_failed(&mut self, id: &SessionId) -> Result<()> {
+        self.registry.update_state(id, SessionState::Failed)?;
+        self.registry.save()
+    }
+
+    /// Mark an Active session as Failed (e.g., agent exited with non-zero code).
+    pub fn fail_session(&mut self, id: &SessionId) -> Result<()> {
         self.registry.update_state(id, SessionState::Failed)?;
         self.registry.save()
     }

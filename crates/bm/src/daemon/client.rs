@@ -257,6 +257,25 @@ impl DaemonClient {
             .context("Failed to parse session get response")
     }
 
+    /// POST /api/sessions/{id}/fail — mark an Active session as Failed.
+    pub fn fail_session(&self, session_id: &str) -> Result<super::session_api::FailSessionResponse> {
+        let url = format!("{}/api/sessions/{}/fail", self.base_url, session_id);
+        let resp = self
+            .client
+            .post(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {url}"))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for fail session: {}", status, body);
+        }
+
+        resp.json::<super::session_api::FailSessionResponse>()
+            .context("Failed to parse fail session response")
+    }
+
     /// DELETE /api/sessions/{id}?force=true — force-stop a session immediately.
     ///
     /// Transitions Active → Killed or Finalizing → Killed without finalization.

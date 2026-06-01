@@ -143,6 +143,15 @@ pub struct InspectSessionResponse {
     pub git_state: Option<GitState>,
 }
 
+/// Response for POST /api/sessions/{id}/fail.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct FailSessionResponse {
+    pub ok: bool,
+    pub session_id: String,
+    pub new_state: String,
+    pub error: Option<String>,
+}
+
 /// Response for DELETE /api/sessions/{id}/cleanup.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct CleanupSessionResponse {
@@ -276,7 +285,7 @@ pub(super) async fn start_session_handler(
     }
 }
 
-/// GET /api/sessions — list all active sessions.
+/// GET /api/sessions — list all sessions (active and terminal).
 pub(super) async fn list_sessions_handler(
     State(state): State<DaemonState>,
 ) -> (StatusCode, Json<serde_json::Value>) {
@@ -284,18 +293,18 @@ pub(super) async fn list_sessions_handler(
 
     let sessions = tokio::task::spawn_blocking(move || {
         let m = manager.lock().unwrap();
-        let records = m.list_active();
-        let counts: std::collections::HashMap<String, u32> =
-            records
+        let active_records = m.list_active();
+        let active_counts: std::collections::HashMap<String, u32> =
+            active_records
                 .iter()
                 .fold(std::collections::HashMap::new(), |mut acc, r| {
                     *acc.entry(r.member_name.clone()).or_insert(0) += 1;
                     acc
                 });
-        records
+        m.list_all()
             .iter()
             .map(|r| {
-                let count = *counts.get(&r.member_name).unwrap_or(&1);
+                let count = *active_counts.get(&r.member_name).unwrap_or(&0);
                 record_to_info_with_count(r, count)
             })
             .collect::<Vec<_>>()
@@ -377,6 +386,49 @@ pub(super) async fn force_stop_session_handler(
             Json(serde_json::json!({
                 "ok": false,
                 "code": "force_stop_failed",
+                "error": e.to_string()
+            })),
+        ),
+        Err(_) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "ok": false,
+                "code": "internal_error",
+                "error": "internal error"
+            })),
+        ),
+    }
+}
+
+/// POST /api/sessions/{id}/fail — mark an Active session as Failed.
+pub(super) async fn fail_session_handler(
+    State(state): State<DaemonState>,
+    Path(session_id_str): Path<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let session_id = SessionId::from_string(session_id_str.clone());
+    let manager = Arc::clone(&state.session_manager);
+
+    let result = tokio::task::spawn_blocking(move || {
+        let mut m = manager.lock().unwrap();
+        m.fail_session(&session_id)
+    })
+    .await;
+
+    match result {
+        Ok(Ok(())) => {
+            let resp = FailSessionResponse {
+                ok: true,
+                session_id: session_id_str,
+                new_state: "Failed".to_string(),
+                error: None,
+            };
+            (StatusCode::OK, Json(serde_json::to_value(resp).unwrap()))
+        }
+        Ok(Err(e)) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "ok": false,
+                "code": "fail_session_error",
                 "error": e.to_string()
             })),
         ),

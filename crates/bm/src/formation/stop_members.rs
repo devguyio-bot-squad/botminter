@@ -61,12 +61,14 @@ pub fn stop_local_members(
         .map(|(key, rt)| (key.clone(), rt.pid, rt.workspace.clone(), rt.brain_mode))
         .collect();
 
-    // Filter to a single member if requested
+    // Filter to a single member if requested (supports short names: "alice" matches "engineer-alice")
     let running: Vec<_> = if let Some(target) = member_filter {
         let target_key = format!("{}/{}", team_name, target);
         all_running
             .into_iter()
-            .filter(|(k, _, _, _)| *k == target_key)
+            .filter(|(k, _, _, _)| {
+                *k == target_key || k.ends_with(&format!("-{target}"))
+            })
             .collect()
     } else {
         all_running

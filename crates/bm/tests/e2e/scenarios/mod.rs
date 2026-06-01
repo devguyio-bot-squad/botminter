@@ -1,6 +1,7 @@
 pub mod manifest_journey;
 pub mod operator_journey;
 pub mod rc_operator_journey;
+pub mod session_journey;
 pub mod tg_operator_journey;
 
 use super::helpers::{E2eConfig, ProgressiveMode};
@@ -10,6 +11,7 @@ const ALL_SUITES: &[&str] = &[
     "scenario_manifest_journey",
     "scenario_operator_journey",
     "scenario_rc_operator_journey",
+    "scenario_session_journey",
     "scenario_tg_operator_journey",
 ];
 
@@ -20,6 +22,7 @@ pub fn tests(config: &E2eConfig) -> Vec<Trial> {
                 manifest_journey::scenario(config),
                 operator_journey::scenario(config),
                 rc_operator_journey::scenario(config),
+                session_journey::scenario(config),
                 tg_operator_journey::scenario(config),
             ]
         }
@@ -69,6 +72,7 @@ fn build_progressive_suite(name: &str, config: &E2eConfig) -> Option<Trial> {
         "scenario_manifest_journey" => manifest_journey::scenario_progressive(config),
         "scenario_operator_journey" => operator_journey::scenario_progressive(config),
         "scenario_rc_operator_journey" => rc_operator_journey::scenario_progressive(config),
+        "scenario_session_journey" => session_journey::scenario_progressive(config),
         "scenario_tg_operator_journey" => tg_operator_journey::scenario_progressive(config),
         _ => unreachable!(),
     };
