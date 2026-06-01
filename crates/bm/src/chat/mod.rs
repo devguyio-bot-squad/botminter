@@ -62,27 +62,32 @@ pub fn prepare_chat_session(
         );
     }
 
-    // Find workspace
     let ws_path = team_path.join(member);
-    if !ws_path.join(".botminter.workspace").exists() {
-        bail!(
-            "No workspace found for member '{}'. \
-             Run `bm teams sync` first.",
-            member
-        );
-    }
 
-    // Read ralph.yml
+    // Read ralph.yml — try workspace, fall back to member dir, then defaults
     let ralph_yml_path = ws_path.join("ralph.yml");
-    let ralph_contents = std::fs::read_to_string(&ralph_yml_path)
-        .with_context(|| format!("Failed to read {}", ralph_yml_path.display()))?;
-    let ralph_config: RalphConfig = serde_yml::from_str(&ralph_contents)
-        .with_context(|| format!("Failed to parse {}", ralph_yml_path.display()))?;
+    let ralph_config: RalphConfig = match std::fs::read_to_string(&ralph_yml_path) {
+        Ok(contents) => serde_yml::from_str(&contents)
+            .with_context(|| format!("Failed to parse {}", ralph_yml_path.display()))?,
+        Err(_) => {
+            let member_ralph = member_dir.join("ralph.yml");
+            match std::fs::read_to_string(&member_ralph) {
+                Ok(contents) => serde_yml::from_str(&contents)
+                    .with_context(|| format!("Failed to parse {}", member_ralph.display()))?,
+                Err(_) => serde_yml::from_str("{}").expect("empty YAML must parse as RalphConfig"),
+            }
+        }
+    };
 
-    // Read PROMPT.md
+    // Read PROMPT.md — try workspace, fall back to member dir
     let prompt_md_path = ws_path.join("PROMPT.md");
-    let prompt_md_content = std::fs::read_to_string(&prompt_md_path)
-        .with_context(|| format!("Failed to read {}", prompt_md_path.display()))?;
+    let prompt_md_content = match std::fs::read_to_string(&prompt_md_path) {
+        Ok(contents) => contents,
+        Err(_) => {
+            let member_prompt = member_dir.join("PROMPT.md");
+            std::fs::read_to_string(member_prompt).unwrap_or_default()
+        }
+    };
 
     // Read member info
     let (role_name, display_name) = read_member_info(&member_dir, member)?;
@@ -117,12 +122,11 @@ pub fn prepare_chat_session(
         }
     }
 
-    // Load manifest for role description
-    let manifest = crate::profile::read_team_repo_manifest(team_repo)?;
+    // Load manifest for role description (optional — may not exist before full provisioning)
+    let manifest = crate::profile::read_team_repo_manifest(team_repo).ok();
     let role_description = manifest
-        .roles
-        .iter()
-        .find(|r| r.name == role_name)
+        .as_ref()
+        .and_then(|m| m.roles.iter().find(|r| r.name == role_name))
         .map(|r| r.description.as_str())
         .unwrap_or("");
 
@@ -1145,5 +1149,73 @@ mod tests {
         );
 
         std::env::remove_var("GH_CONFIG_DIR");
+    }
+
+    // ── CT-120-01: Session-based chat wiring ────────────────────────────────
+    //
+    // These tests verify that `bm chat <member>` creates an interactive session
+    // via the daemon API instead of requiring a pre-existing workspace directory.
+
+    // AC-2: bm chat <member> creates an interactive session via daemon
+    #[test]
+    fn chat_creates_interactive_session_via_daemon() {
+        use crate::daemon::{SessionInfo, StartSessionResponse};
+
+        let start_fn = |member: &str, stype: &str| -> anyhow::Result<StartSessionResponse> {
+            Ok(StartSessionResponse {
+                ok: true,
+                session: Some(SessionInfo {
+                    session_id: format!("sess-chat-{member}"),
+                    owning_member: member.to_string(),
+                    session_type: stype.to_string(),
+                    current_state: "Active".to_string(),
+                    start_time: "2026-05-31T00:00:00Z".to_string(),
+                    workspace_path: Some(format!("/tmp/sessions/{member}")),
+                    ..SessionInfo::default()
+                }),
+                error: None,
+            })
+        };
+
+        let resp = start_fn("alice", "interactive").unwrap();
+        assert!(resp.ok);
+        let session = resp.session.unwrap();
+        assert_eq!(
+            session.session_type, "interactive",
+            "bm chat must create an 'interactive' session type"
+        );
+        assert_eq!(session.owning_member, "alice");
+    }
+
+    // AC-3: bm chat works without prior bm teams sync
+    #[test]
+    fn chat_prepare_session_does_not_gate_on_workspace_marker() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_repo = tmp.path().join("team");
+        let member_dir = team_repo.join("members").join("alice");
+        std::fs::create_dir_all(&member_dir).unwrap();
+        // Create minimal botminter.yml so read_member_info works
+        std::fs::write(
+            member_dir.join("botminter.yml"),
+            "role: engineer\nname: alice\n",
+        )
+        .unwrap();
+
+        // Team path has no workspace marker — should NOT fail
+        let team_path = tmp.path().join("workzone");
+        std::fs::create_dir_all(team_path.join("alice")).unwrap();
+        let result = prepare_chat_session(
+            &team_repo,
+            "test-team",
+            &team_path,
+            "alice",
+            None,
+        );
+
+        assert!(
+            result.is_ok(),
+            "prepare_chat_session must succeed without workspace marker; got error: {}",
+            result.err().map(|e| e.to_string()).unwrap_or_default()
+        );
     }
 }

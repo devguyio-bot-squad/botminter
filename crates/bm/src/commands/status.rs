@@ -470,6 +470,26 @@ mod session_display_tests {
         );
     }
 
+    // CT-120-01 AC-7: empty status shows "No active sessions" — not an error
+    #[test]
+    fn status_shows_no_active_sessions_message_not_error() {
+        let fetcher =
+            || -> Result<SessionsListResponse> { Ok(SessionsListResponse { sessions: vec![] }) };
+        let mut buf = Vec::new();
+        fetch_and_display_sessions(false, &mut buf, &fetcher).unwrap();
+        let output = String::from_utf8(buf).unwrap();
+        assert!(
+            output.contains("No active sessions") || output.contains("Sessions: none"),
+            "empty session list must show a 'no active sessions' message, \
+             not an error or empty output; got: {output}"
+        );
+        // Must NOT be an error-looking message
+        assert!(
+            !output.contains("error") && !output.contains("Error") && !output.contains("ERROR"),
+            "empty session message must NOT contain 'error'; got: {output}"
+        );
+    }
+
     // AC-10: --json flag serializes full session list as JSON, suppresses all other output
     #[test]
     fn status_json_flag_outputs_json_sessions() {

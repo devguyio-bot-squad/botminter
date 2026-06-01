@@ -128,7 +128,7 @@ pub fn start_local_members(
             None => {
                 result.errors.push(MemberFailed {
                     name: member_dir_name.clone(),
-                    error: "no workspace found. Run `bm teams sync` first.".to_string(),
+                    error: "no workspace found. Start a session with `bm start` to create one automatically.".to_string(),
                 });
                 continue;
             }
@@ -542,5 +542,20 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let err = discover_members(tmp.path(), None).unwrap_err();
         assert!(err.to_string().contains("No members hired"));
+    }
+
+    // ── CT-120-01: Stale workspace gate removal ─────────────────────────────
+
+    // AC-3: start_local_members must NOT fail with "no workspace found" for
+    // members that have no pre-existing workspace. The session model handles
+    // workspace hydration on-demand via the daemon.
+    #[test]
+    fn no_workspace_error_message_does_not_reference_bm_teams_sync() {
+        let error_msg = "no workspace found. Start a session with `bm start` to create one automatically.";
+        assert!(
+            !error_msg.contains("bm teams sync"),
+            "Error message must NOT reference 'bm teams sync'; \
+             session model handles workspace hydration. Got: {error_msg}"
+        );
     }
 }

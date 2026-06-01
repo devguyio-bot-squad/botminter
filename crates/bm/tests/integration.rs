@@ -2449,14 +2449,15 @@ fn chat_without_workspace_errors() {
     let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
     let role = &roles[0];
 
-    // Hire but don't create workspace
+    // Hire but don't create workspace — session model no longer gates on
+    // workspace presence, so chat proceeds and fails at agent spawn instead
     bm_hire(tmp.path(), role, "bob", "chat-nows-team");
     let member_name = format!("{}-bob", role);
 
     let stderr = bm_run_fail(tmp.path(), &["chat", &member_name, "-t", "chat-nows-team"]);
     assert!(
-        stderr.contains("No workspace") || stderr.contains("sync"),
-        "should mention missing workspace, stderr:\n{}",
+        stderr.contains("spawn") || stderr.contains("coding agent") || stderr.contains("No workspace"),
+        "should fail when chat prerequisites not met, stderr:\n{}",
         stderr
     );
 }

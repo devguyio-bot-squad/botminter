@@ -25,10 +25,10 @@ fn next_steps_message(
     team_repo: &Path,
     bridge_selected: bool,
 ) -> String {
-    let sync_cmd = if bridge_selected {
-        "bm teams sync --all     Push team repo, provision workspaces and bridge"
+    let start_cmd = if bridge_selected {
+        "bm start <member>       Start a session (workspace and bridge provisioned automatically)"
     } else {
-        "bm teams sync --repos   Push team repo and provision workspaces"
+        "bm start <member>       Start a session (workspace created automatically)"
     };
     let summary = profile::gather_team_summary(team_repo);
     let members_text = if summary.members.is_empty() {
@@ -62,7 +62,7 @@ fn next_steps_message(
         team_dir.display(),
         members_text,
         projects_text,
-        sync_cmd,
+        start_cmd,
     )
 }
 
@@ -1205,5 +1205,53 @@ members:
         assert_eq!(app_section["app_id"].as_str().unwrap(), "789");
         assert_eq!(app_section["client_id"].as_str().unwrap(), "Iv1.def");
         assert_eq!(app_section["installation_id"].as_str().unwrap(), "012");
+    }
+
+    // ── CT-120-01: Stale sync guidance removal ──────────────────────────────
+
+    // AC-5: bm init next_steps does not mention "bm teams sync" as a prerequisite
+    #[test]
+    fn next_steps_does_not_mention_bm_teams_sync() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_dir = tmp.path().join("my-team");
+        let team_repo = team_dir.join("team");
+        fs::create_dir_all(&team_repo).unwrap();
+
+        // Create minimal manifest so gather_team_summary doesn't fail
+        fs::write(
+            team_repo.join("botminter.yml"),
+            "schema_version: '1.0'\nroles: []\n",
+        )
+        .unwrap();
+
+        let message = next_steps_message("my-team", &team_dir, &team_repo, false);
+
+        assert!(
+            !message.contains("bm teams sync"),
+            "next_steps_message must NOT mention 'bm teams sync' as a prerequisite; \
+             session model handles workspace hydration on-demand. Got:\n{message}"
+        );
+    }
+
+    // AC-5: stale sync guidance also absent with bridge selected
+    #[test]
+    fn next_steps_with_bridge_does_not_mention_bm_teams_sync() {
+        let tmp = tempfile::tempdir().unwrap();
+        let team_dir = tmp.path().join("my-team");
+        let team_repo = team_dir.join("team");
+        fs::create_dir_all(&team_repo).unwrap();
+
+        fs::write(
+            team_repo.join("botminter.yml"),
+            "schema_version: '1.0'\nroles: []\n",
+        )
+        .unwrap();
+
+        let message = next_steps_message("my-team", &team_dir, &team_repo, true);
+
+        assert!(
+            !message.contains("bm teams sync"),
+            "next_steps_message (with bridge) must NOT mention 'bm teams sync'. Got:\n{message}"
+        );
     }
 }
