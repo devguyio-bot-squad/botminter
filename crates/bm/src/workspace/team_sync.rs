@@ -122,16 +122,16 @@ pub fn sync_team_workspaces(params: &TeamSyncParams) -> Result<TeamSyncResult> {
 
         if ws.join(".botminter.workspace").exists() {
             // Existing workspace — sync it
-            match workspace::sync_workspace(
-                &ws,
+            match workspace::sync_workspace(&workspace::SyncWorkspaceParams {
+                ws_root: &ws,
                 member_dir_name,
-                params.coding_agent,
-                params.verbose,
-                params.repos,
-                params.project_number,
-                params.github_repo,
-                &project_refs,
-            ) {
+                coding_agent: params.coding_agent,
+                verbose: params.verbose,
+                push: params.repos,
+                project_number: params.project_number,
+                github_repo: params.github_repo,
+                projects: &project_refs,
+            }) {
                 Ok(sync_result) => {
                     events.push(TeamSyncEvent::WorkspaceSynced {
                         name: member_dir_name.clone(),

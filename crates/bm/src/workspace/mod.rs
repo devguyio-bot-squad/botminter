@@ -11,7 +11,7 @@ pub use repo::{
 };
 pub use context::{inject_project_sections, inject_project_skill_dirs, inject_workspace_context};
 pub use robot::{inject_robot_config, inject_robot_enabled, RobotBridgeConfig};
-pub use sync::{find_workspace, list_member_dirs, sync_workspace, SyncEvent, SyncResult};
+pub use sync::{find_workspace, list_member_dirs, sync_workspace, SyncEvent, SyncResult, SyncWorkspaceParams};
 pub use team_sync::{sync_team_workspaces, TeamSyncEvent, TeamSyncParams, TeamSyncResult};
 pub use util::{
     workspace_git_branch, workspace_remote_url, workspace_submodule_status, SubmoduleState,

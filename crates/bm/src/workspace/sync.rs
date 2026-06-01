@@ -70,6 +70,18 @@ pub(super) fn write_workspace_marker(ws_root: &Path, member_dir_name: &str) -> R
         .context("Failed to write .botminter.workspace marker")
 }
 
+/// All parameters needed for `sync_workspace`.
+pub struct SyncWorkspaceParams<'a> {
+    pub ws_root: &'a Path,
+    pub member_dir_name: &'a str,
+    pub coding_agent: &'a CodingAgentDef,
+    pub verbose: bool,
+    pub push: bool,
+    pub project_number: Option<u64>,
+    pub github_repo: Option<&'a str>,
+    pub projects: &'a [(&'a str, &'a str)],
+}
+
 /// Syncs an existing workspace by updating submodules, re-copying context files,
 /// re-assembling agent directory, and committing+pushing any changes.
 ///
@@ -79,16 +91,16 @@ pub(super) fn write_workspace_marker(ws_root: &Path, member_dir_name: &str) -> R
 ///
 /// Returns a `SyncResult` with events describing what happened. The caller
 /// decides whether and how to display these events (e.g., only in verbose mode).
-pub fn sync_workspace(
-    ws_root: &Path,
-    member_dir_name: &str,
-    coding_agent: &CodingAgentDef,
-    verbose: bool,
-    push: bool,
-    project_number: Option<u64>,
-    github_repo: Option<&str>,
-    projects: &[(&str, &str)],
-) -> Result<SyncResult> {
+pub fn sync_workspace(params: &SyncWorkspaceParams) -> Result<SyncResult> {
+    let ws_root = params.ws_root;
+    let member_dir_name = params.member_dir_name;
+    let coding_agent = params.coding_agent;
+    let verbose = params.verbose;
+    let push = params.push;
+    let project_number = params.project_number;
+    let github_repo = params.github_repo;
+    let projects = params.projects;
+
     let mut result = SyncResult::default();
     let team_dir = ws_root.join("team");
 
@@ -292,11 +304,11 @@ fn migrate_to_main(sub_dir: &Path, result: &mut SyncResult) -> Result<()> {
         None
     };
 
-    if git_cmd(sub_dir, &["checkout", "main"]).is_err() {
-        if git_cmd(sub_dir, &["checkout", "-b", "main", "origin/main"]).is_err() {
-            eprintln!("Warning: could not checkout main in {}", sub_dir.display());
-            return Ok(());
-        }
+    if git_cmd(sub_dir, &["checkout", "main"]).is_err()
+        && git_cmd(sub_dir, &["checkout", "-b", "main", "origin/main"]).is_err()
+    {
+        eprintln!("Warning: could not checkout main in {}", sub_dir.display());
+        return Ok(());
     }
 
     if let Some(old_branch) = old_branch {
@@ -335,6 +347,23 @@ mod tests {
         (ws, member.to_string(), agent)
     }
 
+    fn default_sync_params<'a>(
+        ws_root: &'a Path,
+        member_dir_name: &'a str,
+        coding_agent: &'a CodingAgentDef,
+    ) -> SyncWorkspaceParams<'a> {
+        SyncWorkspaceParams {
+            ws_root,
+            member_dir_name,
+            coding_agent,
+            verbose: false,
+            push: false,
+            project_number: None,
+            github_repo: None,
+            projects: &[],
+        }
+    }
+
     #[test]
     fn sync_recopies_changed_ralph_yml() {
         let tmp = tempfile::tempdir().unwrap();
@@ -352,7 +381,7 @@ mod tests {
         let source = ws.join("team/members").join(&member).join("ralph.yml");
         fs::write(&source, "updated: true").unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         assert_eq!(
             fs::read_to_string(ws.join("ralph.yml")).unwrap(),
@@ -380,7 +409,7 @@ mod tests {
         fs::create_dir_all(&member_agents).unwrap();
         fs::write(member_agents.join("new-agent.md"), "# New Agent").unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         let new_count = fs::read_dir(&agents_dir)
             .unwrap()
@@ -404,8 +433,8 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Run sync twice
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         // Verify workspace is still correct
         assert!(ws.join("PROMPT.md").exists());
@@ -429,7 +458,7 @@ mod tests {
         git_cmd(&team_sub, &["add", "-A"]).unwrap();
         git_cmd(&team_sub, &["commit", "-m", "upstream change"]).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         // The workspace ralph.yml should have the updated content
         assert_eq!(
@@ -453,12 +482,12 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Sync once — no changes expected
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         // Count commits before and after a second sync
         let log_before = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         let log_after = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
         assert_eq!(
@@ -482,7 +511,7 @@ mod tests {
         let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
         filetime::set_file_mtime(&source, old_time).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         assert_eq!(
             fs::read_to_string(ws.join("ralph.yml")).unwrap(),
@@ -497,7 +526,7 @@ mod tests {
         let (ws, _member, agent) = setup_syncable_workspace(tmp.path());
 
         // Sync — team/ submodule should end up on main (no member branches)
-        sync_workspace(&ws, "arch-01", &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, "arch-01", &agent)).unwrap();
 
         let team_sub = ws.join("team");
         let branch = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
@@ -555,7 +584,7 @@ mod tests {
         assert!(!ws.join(".claude/settings.json").exists());
 
         // assemble_agent_dir_submodule always copies settings.json unconditionally
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         assert!(
             ws.join(".claude/settings.json").exists(),
@@ -576,8 +605,8 @@ mod tests {
         // Count commits before and after sync (settings.json already up-to-date)
         let log_before = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         let log_after = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
         assert_eq!(
@@ -598,7 +627,7 @@ mod tests {
         let inbox_content = r#"{"ts":"2026-03-22T12:00:00Z","from":"brain","message":"test message"}"#;
         fs::write(ralph_dir.join("loop-inbox.jsonl"), inbox_content).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         let inbox_after = fs::read_to_string(ralph_dir.join("loop-inbox.jsonl")).unwrap();
         assert_eq!(
@@ -614,7 +643,10 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Verbose mode should complete without error
-        sync_workspace(&ws, &member, &agent, true, false, None, None, &[]).unwrap();
+        sync_workspace(&SyncWorkspaceParams {
+            verbose: true,
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
 
         // Workspace should still be valid
         assert!(ws.join("PROMPT.md").exists());
@@ -635,16 +667,11 @@ mod tests {
         )
         .unwrap();
 
-        sync_workspace(
-            &ws,
-            &member,
-            &agent,
-            false,
-            false,
-            Some(99),
-            Some("testorg/test-team"),
-            &[],
-        )
+        sync_workspace(&SyncWorkspaceParams {
+            project_number: Some(99),
+            github_repo: Some("testorg/test-team"),
+            ..default_sync_params(&ws, &member, &agent)
+        })
         .unwrap();
 
         // Verify CLAUDE.md contains injected context
@@ -684,10 +711,15 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Run sync twice with context params
-        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo"), &[]).unwrap();
+        let ctx_params = SyncWorkspaceParams {
+            project_number: Some(42),
+            github_repo: Some("org/repo"),
+            ..default_sync_params(&ws, &member, &agent)
+        };
+        sync_workspace(&ctx_params).unwrap();
         let claude_1 = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo"), &[]).unwrap();
+        sync_workspace(&ctx_params).unwrap();
         let claude_2 = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
 
         assert_eq!(
@@ -716,10 +748,10 @@ mod tests {
         let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
         let fork_url = fork.to_str().unwrap();
 
-        sync_workspace(
-            &ws, &member, &agent, false, false, None, None,
-            &[("new-project", fork_url)],
-        ).unwrap();
+        sync_workspace(&SyncWorkspaceParams {
+            projects: &[("new-project", fork_url)],
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
 
         let project_dir = ws.join("projects/new-project");
         assert!(
@@ -738,10 +770,10 @@ mod tests {
         let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
         let fork_url = fork.to_str().unwrap();
 
-        sync_workspace(
-            &ws, &member, &agent, false, false, None, None,
-            &[("new-project", fork_url)],
-        ).unwrap();
+        sync_workspace(&SyncWorkspaceParams {
+            projects: &[("new-project", fork_url)],
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
 
         let project_dir = ws.join("projects/new-project");
         assert!(
@@ -774,9 +806,7 @@ mod tests {
         let ws = workspace_base.join(member);
 
         // Sync with no new projects — existing should remain intact
-        sync_workspace(
-            &ws, member, &agent, false, false, None, None, &[],
-        ).unwrap();
+        sync_workspace(&default_sync_params(&ws, member, &agent)).unwrap();
 
         assert!(
             ws.join("projects/existing-proj").is_dir(),
@@ -794,14 +824,20 @@ mod tests {
         let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
         let fork_url = fork.to_str().unwrap();
 
-        let projects = &[("new-project", fork_url)];
+        let projects: &[(&str, &str)] = &[("new-project", fork_url)];
 
         // First sync provisions it
-        sync_workspace(&ws, &member, &agent, false, false, None, None, projects).unwrap();
+        sync_workspace(&SyncWorkspaceParams {
+            projects,
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
         assert!(ws.join("projects/new-project").is_dir());
 
         // Second sync should not error or duplicate
-        sync_workspace(&ws, &member, &agent, false, false, None, None, projects).unwrap();
+        sync_workspace(&SyncWorkspaceParams {
+            projects,
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
         assert!(
             ws.join("projects/new-project").is_dir(),
             "AC-04: project should still exist after idempotent re-sync"
@@ -814,10 +850,10 @@ mod tests {
         let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
         let fork_url = fork.to_str().unwrap();
 
-        let result = sync_workspace(
-            &ws, &member, &agent, false, false, None, None,
-            &[("new-project", fork_url)],
-        ).unwrap();
+        let result = sync_workspace(&SyncWorkspaceParams {
+            projects: &[("new-project", fork_url)],
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
 
         let provisioned = result.events.iter().any(|e| matches!(e, SyncEvent::ProjectProvisioned(name) if name == "new-project"));
         assert!(
@@ -832,10 +868,10 @@ mod tests {
         let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
         let fork_url = fork.to_str().unwrap();
 
-        let result = sync_workspace(
-            &ws, &member, &agent, false, false, None, None,
-            &[("good-project", fork_url), ("bad-project", "/nonexistent/repo")],
-        );
+        let result = sync_workspace(&SyncWorkspaceParams {
+            projects: &[("good-project", fork_url), ("bad-project", "/nonexistent/repo")],
+            ..default_sync_params(&ws, &member, &agent)
+        });
 
         // The function should not hard-fail — it should provision what it can
         assert!(
@@ -854,10 +890,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let (ws, member, agent, _fork) = setup_syncable_workspace_with_fork(tmp.path());
 
-        let result = sync_workspace(
-            &ws, &member, &agent, false, false, None, None,
-            &[("bad-project", "/nonexistent/repo")],
-        );
+        let result = sync_workspace(&SyncWorkspaceParams {
+            projects: &[("bad-project", "/nonexistent/repo")],
+            ..default_sync_params(&ws, &member, &agent)
+        });
 
         // Whether the function returns Ok or Err, the error message should be actionable
         match result {
@@ -903,7 +939,7 @@ mod tests {
         );
 
         // Sync should migrate to main
-        let result = sync_workspace(&ws, &member, &agent, false, false, None, None, &[]).unwrap();
+        let result = sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         // After migration, team submodule should be on main
         let branch_after = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
@@ -954,7 +990,7 @@ mod tests {
         );
 
         // Sync should migrate project submodule to main
-        sync_workspace(&ws, member, &agent, false, false, None, None, &[]).unwrap();
+        sync_workspace(&default_sync_params(&ws, member, &agent)).unwrap();
 
         let branch_after = git_cmd_output(&proj_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
         assert_eq!(
@@ -992,7 +1028,7 @@ mod tests {
         git_cmd(&team_sub, &["checkout", &member]).unwrap();
 
         // Sync should succeed (not error out) even with unmerged branch
-        let result = sync_workspace(&ws, &member, &agent, false, false, None, None, &[]);
+        let result = sync_workspace(&default_sync_params(&ws, &member, &agent));
         assert!(
             result.is_ok(),
             "AC-07: sync should not fail when member branch has unmerged commits; got: {:?}",
