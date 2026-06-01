@@ -1,15 +1,23 @@
 //! Rocket.Chat Operator Journey
 //!
 //! Exercises the full operator lifecycle with a Rocket.Chat bridge:
-//! init -> hire -> bridge start -> identity add -> room create -> sync -> health -> stop
+//! init -> hire -> bridge start -> identity add -> room create -> session start
+//! (verifies workspace + bridge config) -> health -> stop
+//!
+//! Workspace creation uses session-based flow: `bm start` creates a session
+//! workspace with bridge config surfaced, replacing the old `bm teams sync` step.
 //!
 //! Requires Podman to be available. The suite is skipped if Podman is not installed.
 
 use std::fs;
+use std::time::Duration;
 
 use libtest_mimic::Trial;
 
-use super::super::helpers::{cleanup_project_boards, find_free_port, E2eConfig, GithubSuite};
+use super::super::helpers::{
+    cleanup_project_boards, find_free_port, read_pid_from_state, E2eConfig, GithubSuite,
+    ProcessGuard,
+};
 use super::super::rocketchat::RcPodGuard;
 use super::super::telegram;
 use super::super::test_env::TestEnv;
@@ -259,7 +267,7 @@ fn room_create_fn(
     }
 }
 
-fn sync_bridge_fn(
+fn session_start_verify_bridge_config_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
@@ -268,24 +276,34 @@ fn sync_bridge_fn(
             .expect("rc_port not set")
             .to_string();
 
-        env.command("bm")
-            .args(["teams", "sync", "--bridge", "-t", TEAM_NAME])
+        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
+        let _ = fs::remove_file(ws.join("brain-prompt.md"));
+
+        let mut guard = ProcessGuard::new(env, TEAM_NAME);
+        let stdout = env
+            .command("bm")
+            .args(["start", "-t", TEAM_NAME])
             .env("RC_PORT", &port)
-            // Ensure credential is resolved via env var rather than keyring.
-            // The keyring may not be accessible when using the real D-Bus
-            // (needed for podman) instead of the isolated test D-Bus.
             .env("BM_BRIDGE_TOKEN_SUPERMAN_BOT_ALICE", "rc-e2e-token")
             .run();
-
-        // Verify workspace was created and ralph.yml has RObot.rocketchat config
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
         assert!(
-            ws.join(".botminter.workspace").exists(),
-            "workspace should have marker file"
+            stdout.contains("Started 1 member"),
+            "bm start should create session and start member, got: {}",
+            stdout
+        );
+
+        if let Some(pid) = read_pid_from_state(&env.home) {
+            guard.set_pid(pid);
+        }
+
+        // Verify session workspace was created with bridge config
+        assert!(
+            ws.exists(),
+            "session workspace should exist after bm start"
         );
 
         let ralph_yml_path = ws.join("ralph.yml");
-        assert!(ralph_yml_path.exists(), "ralph.yml should exist");
+        assert!(ralph_yml_path.exists(), "ralph.yml should exist in session workspace");
 
         let ralph_contents = fs::read_to_string(&ralph_yml_path).unwrap();
         let ralph_doc: serde_yml::Value = serde_yml::from_str(&ralph_contents).unwrap();
@@ -293,32 +311,42 @@ fn sync_bridge_fn(
         assert_eq!(
             ralph_doc["RObot"]["enabled"].as_bool(),
             Some(true),
-            "RObot.enabled should be true"
+            "RObot.enabled should be true in session workspace"
         );
         assert!(
             ralph_doc["RObot"]["rocketchat"]["bot_user_id"]
                 .as_str()
                 .is_some(),
-            "RObot.rocketchat.bot_user_id should be set"
+            "RObot.rocketchat.bot_user_id should be set in session workspace"
         );
         assert!(
             ralph_doc["RObot"]["rocketchat"]["room_id"]
                 .as_str()
                 .is_some(),
-            "RObot.rocketchat.room_id should be set"
+            "RObot.rocketchat.room_id should be set in session workspace"
         );
         assert!(
             ralph_doc["RObot"]["rocketchat"]["server_url"]
                 .as_str()
                 .is_some(),
-            "RObot.rocketchat.server_url should be set"
+            "RObot.rocketchat.server_url should be set in session workspace"
         );
 
         // Verify NO auth_token in ralph.yml (secrets stay as env vars)
         assert!(
             !ralph_contents.contains("auth_token"),
-            "ralph.yml must NOT contain auth_token"
+            "ralph.yml must NOT contain auth_token in session workspace"
         );
+
+        // Stop member — this journey tests bridge lifecycle, not member lifecycle
+        let _ = env
+            .command("bm")
+            .args(["stop", "--force", "-t", TEAM_NAME])
+            .output();
+        if let Some(pid) = guard.pid {
+            super::super::helpers::wait_for_exit(pid, Duration::from_secs(5));
+        }
+        std::mem::forget(guard);
     }
 }
 
@@ -424,7 +452,10 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         )
         .case("04_identity_add", identity_add_fn(gh_token.clone()))
         .case("05_room_create", room_create_fn(gh_token.clone()))
-        .case("06_sync_bridge", sync_bridge_fn(gh_token.clone()))
+        .case(
+            "06_session_start_verify_bridge_config",
+            session_start_verify_bridge_config_fn(gh_token.clone()),
+        )
         .case("07_bridge_health", bridge_health_fn(gh_token.clone()))
         .case("08_bridge_stop", bridge_stop_fn(gh_token.clone()))
         // ── Cleanup ──────────────────────────────────────────────────

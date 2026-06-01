@@ -3865,3 +3865,41 @@ fn daemon_console_api_e2e_with_fixtures() {
         }
     }
 }
+
+// ── E2E migration guard ──────────────────────────────────────────────
+
+#[test]
+fn e2e_no_teams_sync_references() {
+    let e2e_scenarios = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/e2e/scenarios");
+    let mut violations = Vec::new();
+
+    for entry in fs::read_dir(&e2e_scenarios).expect("e2e/scenarios dir should exist") {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().map_or(true, |e| e != "rs") {
+            continue;
+        }
+        let content = fs::read_to_string(&path).unwrap();
+        let filename = path.file_name().unwrap().to_string_lossy().to_string();
+
+        for (line_num, line) in content.lines().enumerate() {
+            // Skip doc comments — they describe the old flow for historical context
+            let trimmed = line.trim();
+            if trimmed.starts_with("//!") || trimmed.starts_with("///") {
+                continue;
+            }
+            // Match `teams sync` in code (args arrays, comments referencing the command)
+            if line.contains("teams") && line.contains("sync")
+                && !line.contains("projects")
+            {
+                violations.push(format!("{}:{}: {}", filename, line_num + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "E2E scenario code should not reference `teams sync` (session-based flow replaces it):\n{}",
+        violations.join("\n")
+    );
+}

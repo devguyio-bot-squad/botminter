@@ -1,7 +1,10 @@
 //! Telegram Operator Journey
 //!
 //! Exercises the Telegram (external) bridge flow as a lighter scenario:
-//! init -> hire -> identity add -> sync -> start -> verify env vars -> stop -> cleanup
+//! init -> hire -> identity add -> start (session-based) -> verify env vars -> stop -> cleanup
+//!
+//! Workspace creation uses session-based flow: `bm start` creates a session
+//! workspace, replacing the old `bm teams sync` step.
 //!
 //! No daemon tests, no per-member start/stop, no idempotency second pass.
 //! Just the Telegram-specific bridge lifecycle.
@@ -144,22 +147,6 @@ fn bridge_identity_add_fn(
     }
 }
 
-fn sync_bridge_and_repos_fn(
-    _gh_token: String,
-) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
-    move |env| {
-        let stdout = env
-            .command("bm")
-            .args(["teams", "sync", "--bridge", "--repos", "-t", TEAM_NAME])
-            .run();
-        assert!(!stdout.contains("No bridge configured"));
-
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
-        assert!(ws.join(".botminter.workspace").exists());
-        assert!(ws.join("ralph.yml").exists());
-    }
-}
-
 fn start_and_verify_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
@@ -283,12 +270,8 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
             "03_bridge_identity_add",
             bridge_identity_add_fn(gh_token.clone()),
         )
-        .case(
-            "04_sync_bridge_and_repos",
-            sync_bridge_and_repos_fn(gh_token.clone()),
-        )
-        .case("05_start_and_verify", start_and_verify_fn(gh_token.clone()))
-        .case("06_stop", stop_fn())
+        .case("04_start_and_verify", start_and_verify_fn(gh_token.clone()))
+        .case("05_stop", stop_fn())
         // ── Cleanup ──────────────────────────────────────────────────
         .case("cleanup", {
             let gh_org_c = gh_org.clone();

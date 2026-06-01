@@ -9,6 +9,7 @@ use crate::config::{BotminterConfig, TeamEntry};
 use crate::formation::{self, CredentialDomain};
 use crate::git::app_auth;
 use crate::git::manifest_flow::credential_keys;
+use crate::profile;
 use crate::state::{self, MemberRuntime};
 use crate::workspace;
 
@@ -122,15 +123,26 @@ pub fn start_local_members(
             state.members.remove(&state_key);
         }
 
-        // Find workspace
+        // Find workspace — create on-demand if missing (replaces old bm teams sync requirement)
         let ws = match workspace::find_workspace(&team_ws_base, member_dir_name) {
             Some(ws) => ws,
             None => {
-                result.errors.push(MemberFailed {
-                    name: member_dir_name.clone(),
-                    error: "no workspace found. Start a session with `bm start` to create one automatically.".to_string(),
-                });
-                continue;
+                match create_workspace_on_demand(
+                    team,
+                    team_repo,
+                    &team_ws_base,
+                    member_dir_name,
+                    &bridge_creds,
+                ) {
+                    Ok(ws) => ws,
+                    Err(e) => {
+                        result.errors.push(MemberFailed {
+                            name: member_dir_name.clone(),
+                            error: format!("failed to create workspace — {:#}", e),
+                        });
+                        continue;
+                    }
+                }
             }
         };
 
@@ -265,6 +277,86 @@ pub fn start_local_members(
 // ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
+
+/// Creates a workspace on-demand when `bm start` is called without prior `bm teams sync`.
+///
+/// Loads the profile manifest, resolves the coding agent, and uses the existing
+/// workspace creation infrastructure to provision a full workspace with team/
+/// submodule, config files, agent dir, and settings.json. Also injects RObot
+/// config into ralph.yml if a bridge is present.
+fn create_workspace_on_demand(
+    team: &TeamEntry,
+    team_repo: &Path,
+    team_ws_base: &Path,
+    member_dir_name: &str,
+    bridge_creds: &BridgeCredentials,
+) -> Result<PathBuf> {
+    let manifest = profile::read_manifest(&team.profile)?;
+    let coding_agent = profile::resolve_coding_agent(team, &manifest)?;
+    let project_refs: Vec<(&str, &str)> = manifest
+        .projects
+        .iter()
+        .map(|p| (p.name.as_str(), p.fork_url.as_str()))
+        .collect();
+
+    let ws_params = workspace::WorkspaceRepoParams {
+        team_repo_path: team_repo,
+        workspace_base: team_ws_base,
+        member_dir_name,
+        team_name: &team.name,
+        projects: &project_refs,
+        github_repo: if team.github_repo.is_empty() {
+            None
+        } else {
+            Some(&team.github_repo)
+        },
+        project_number: team.project_number,
+        push: false,
+        coding_agent,
+        remote_ops: None,
+        team_submodule_url: None,
+    };
+    workspace::create_workspace_repo(&ws_params)?;
+
+    let ws = team_ws_base.join(member_dir_name);
+
+    // Inject RObot config if bridge is present
+    let ralph_yml = ws.join("ralph.yml");
+    if ralph_yml.exists() {
+        let has_cred = if let Some(ref store) = bridge_creds.credential_store {
+            bridge::resolve_credential_from_store(member_dir_name, store)?.is_some()
+        } else {
+            false
+        };
+
+        let bridge_config = if has_cred {
+            let bot_user_id = (bridge_creds.user_id_by_member)(member_dir_name).unwrap_or_default();
+            let room_id = (bridge_creds.room_id_by_member)(member_dir_name).unwrap_or_default();
+            let server_url = bridge_creds
+                .service_url
+                .as_deref()
+                .unwrap_or_default()
+                .to_string();
+            Some(workspace::RobotBridgeConfig {
+                bot_user_id,
+                room_id,
+                server_url,
+                operator_id: bridge_creds.operator_user_id.clone(),
+            })
+        } else {
+            None
+        };
+
+        workspace::inject_robot_config(
+            &ralph_yml,
+            has_cred,
+            bridge_creds.bridge_type_name.as_deref(),
+            bridge_config.as_ref(),
+        )?;
+    }
+
+    Ok(ws)
+}
 
 /// Auto-start the bridge if configured and available.
 pub fn auto_start_bridge(
