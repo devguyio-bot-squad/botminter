@@ -169,41 +169,41 @@ pass "H14" "Restored brain-prompt.md and cleaned up state"
 
 echo "  H.4: Sync Edge Cases..."
 
-# H15: Modified brain-prompt.md restored on re-sync
+# H15: Modified brain-prompt.md restored on re-start
 echo "JUNK CONTENT — this should be overwritten" > "$ALICE_WS/brain-prompt.md"
-bm teams sync -v 2>&1 >/dev/null
+bm start 2>&1 >/dev/null
 CONTENT=$(cat "$ALICE_WS/brain-prompt.md" 2>/dev/null)
 if [ "$CONTENT" != "JUNK CONTENT — this should be overwritten" ] && echo "$CONTENT" | grep -q "Identity"; then
-    pass "H15" "Modified brain-prompt.md restored on re-sync"
+    pass "H15" "Modified brain-prompt.md restored on re-start"
 else
-    fail "H15" "Re-sync restore" "brain-prompt.md not restored from template"
+    fail "H15" "Re-start restore" "brain-prompt.md not restored from template"
 fi
 
-# H16: Deleted brain-prompt.md restored on re-sync
+# H16: Deleted brain-prompt.md restored on re-start
 rm -f "$ALICE_WS/brain-prompt.md"
-bm teams sync -v 2>&1 >/dev/null
+bm start 2>&1 >/dev/null
 if [ -f "$ALICE_WS/brain-prompt.md" ] && [ -s "$ALICE_WS/brain-prompt.md" ]; then
-    pass "H16" "Deleted brain-prompt.md restored on re-sync"
+    pass "H16" "Deleted brain-prompt.md restored on re-start"
 else
-    fail "H16" "Re-sync recreate" "brain-prompt.md not recreated"
+    fail "H16" "Re-start recreate" "brain-prompt.md not recreated"
 fi
 
-# H17: Content idempotent across multiple syncs
+# H17: Content idempotent across multiple starts
 HASH1=$(md5sum "$ALICE_WS/brain-prompt.md" 2>/dev/null | cut -d' ' -f1)
-bm teams sync -v 2>&1 >/dev/null
+bm start 2>&1 >/dev/null
 HASH2=$(md5sum "$ALICE_WS/brain-prompt.md" 2>/dev/null | cut -d' ' -f1)
 if [ "$HASH1" = "$HASH2" ]; then
-    pass "H17" "brain-prompt.md content idempotent across syncs (hash match)"
+    pass "H17" "brain-prompt.md content idempotent across starts (hash match)"
 else
     fail "H17" "Idempotency" "hash changed: $HASH1 -> $HASH2"
 fi
 
-# H18: Verbose sync shows brain prompt surfacing
-OUT=$(bm teams sync -v 2>&1)
+# H18: Verbose start shows brain prompt surfacing
+OUT=$(bm start 2>&1)
 if echo "$OUT" | grep -qi "brain\|BrainPrompt"; then
-    pass "H18" "Verbose sync mentions brain prompt surfacing"
+    pass "H18" "Verbose start mentions brain prompt surfacing"
 else
-    note "H18" "Verbose output" "no brain-related output in sync -v"
+    note "H18" "Verbose output" "no brain-related output in bm start"
 fi
 
 # ── H.5: End-to-End Brain Autonomy Validation ─────────────────
@@ -231,7 +231,7 @@ if [ "$HTTP" = "200" ]; then
     BRIDGE_OK=true
 else
     # Try to bring it up
-    bm teams sync --bridge -v 2>&1 >/dev/null
+    bm start 2>&1 >/dev/null
     HTTP=$(curl -sf -o /dev/null -w "%{http_code}" "$MATRIX_URL/_matrix/client/versions" 2>/dev/null || echo "000")
     if [ "$HTTP" = "200" ]; then
         pass "H19" "Tuwunel bridge started (was down, recovered)"
@@ -667,7 +667,7 @@ echo "    Pre-recovery brain message count: $PRE_RECOVERY_BRAIN_COUNT"
 
 # H38: Restart brain members (recovery scenario)
 # Refresh bridge credentials to ensure tokens are valid after stop
-bm teams sync --bridge 2>&1 >/dev/null || true
+bm start 2>&1 >/dev/null || true
 rm -f "$STATE_FILE"
 # Clean ALL ACP/Ralph/Claude session state — both workspace-local and global caches
 for ws in "$TEAM_DIR"/superman-*/; do
@@ -867,7 +867,7 @@ fi
 
 # H47: Start brain for task execution test
 # Refresh bridge credentials to ensure tokens are valid after stop cycle
-bm teams sync --bridge 2>&1 >/dev/null || true
+bm start 2>&1 >/dev/null || true
 rm -f "$STATE_FILE"
 # Clean ALL ACP/Ralph/Claude session state — both workspace-local and global caches
 for ws in "$TEAM_DIR"/superman-*/; do

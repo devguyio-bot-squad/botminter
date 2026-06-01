@@ -17,9 +17,9 @@ MATRIX_URL="http://127.0.0.1:${TUWUNEL_PORT:-8008}"
 # ── C.1: First provisioning ──
 
 echo "  C.1: First bridge provisioning..."
-OUT=$(bm teams sync --bridge -v 2>&1)
+OUT=$(bm start 2>&1)
 EC=$?
-if [ $EC -eq 0 ]; then pass "C1" "First sync --bridge"; else fail "C1" "First sync --bridge" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
+if [ $EC -eq 0 ]; then pass "C1" "First bridge provisioning via bm start"; else fail "C1" "First bridge provisioning" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
 
 # C2: Container running
 CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{.Status}}' 2>&1)
@@ -70,14 +70,14 @@ if [ -n "$ROOM_ID" ]; then pass "C8" "Room ${TEAM}-general exists ($ROOM_ID)"; e
 echo "  C.2: Bridge idempotency..."
 ALICE_TOKEN_BEFORE=$KR_ALICE
 
-OUT=$(bm teams sync --bridge -v 2>&1)
+OUT=$(bm start 2>&1)
 EC=$?
 if [ $EC -eq 0 ] && echo "$OUT" | grep -q "already provisioned\|AlreadyProvisioned"; then
-    pass "C9" "Sync --bridge again (idempotent)"
+    pass "C9" "bm start again (idempotent)"
 elif [ $EC -eq 0 ]; then
-    pass "C9" "Sync --bridge again (no error)"
+    pass "C9" "bm start again (no error)"
 else
-    fail "C9" "Sync --bridge again" "exit $EC"
+    fail "C9" "bm start again" "exit $EC"
 fi
 
 # C10: Container still running
@@ -107,9 +107,9 @@ echo "  C.3: Recovery from stopped container..."
 podman stop "$CONTAINER" 2>/dev/null
 pass "C13" "Stopped container"
 
-OUT=$(bm teams sync --bridge -v 2>&1)
+OUT=$(bm start 2>&1)
 EC=$?
-if [ $EC -eq 0 ]; then pass "C14" "Sync --bridge recovers stopped container"; else fail "C14" "Recovery" "exit $EC"; fi
+if [ $EC -eq 0 ]; then pass "C14" "bm start recovers stopped container"; else fail "C14" "Recovery" "exit $EC"; fi
 
 CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{.Status}}' 2>&1)
 if echo "$CSTATUS" | grep -q "Up"; then pass "C15" "Container running again"; else fail "C15" "Container" "status=$CSTATUS"; fi
@@ -123,9 +123,9 @@ echo "  C.4: Recovery from removed container..."
 podman stop "$CONTAINER" 2>/dev/null; podman rm "$CONTAINER" 2>/dev/null
 pass "C17" "Force-removed container"
 
-OUT=$(bm teams sync --bridge -v 2>&1)
+OUT=$(bm start 2>&1)
 EC=$?
-if [ $EC -eq 0 ]; then pass "C18" "Sync --bridge recovers removed container"; else fail "C18" "Recovery" "exit $EC"; fi
+if [ $EC -eq 0 ]; then pass "C18" "bm start recovers removed container"; else fail "C18" "Recovery" "exit $EC"; fi
 
 CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{.Status}}' 2>&1)
 if echo "$CSTATUS" | grep -q "Up"; then pass "C19" "Container running after re-create"; else fail "C19" "Container" "status=$CSTATUS"; fi
@@ -144,11 +144,11 @@ podman stop "$CONTAINER" 2>/dev/null; podman rm "$CONTAINER" 2>/dev/null
 podman volume rm "bm-tuwunel-${TEAM}-data" 2>/dev/null
 pass "C21" "Removed container + volume"
 
-OUT=$(bm teams sync --bridge -v 2>&1)
+OUT=$(bm start 2>&1)
 EC=$?
 # Show sync output for volume-loss recovery diagnostics (verify recipe, re-provisioning)
 echo "    [C22 sync output] $(echo "$OUT" | grep -i 'verify\|re-provision\|onboard\|clearing\|stale' || echo '(no verify/re-provision messages)')"
-if [ $EC -eq 0 ]; then pass "C22" "Sync --bridge recovers from volume loss"; else fail "C22" "Recovery" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
+if [ $EC -eq 0 ]; then pass "C22" "bm start recovers from volume loss"; else fail "C22" "Recovery" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
 
 CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{.Status}}' 2>&1)
 if echo "$CSTATUS" | grep -q "Up"; then pass "C23" "Container running after volume re-create"; else fail "C23" "Container" "status=$CSTATUS"; fi
@@ -216,7 +216,7 @@ else
     fi
 fi
 
-# C28: Hire pre-existing user and sync to trigger onboarding (M_USER_IN_USE path)
+# C28: Hire pre-existing user and start to trigger onboarding (M_USER_IN_USE path)
 # The user already exists on Matrix (from C27), so the onboard recipe
 # will hit M_USER_IN_USE and recover via stored password or admin room.
 if [ -n "${PRE_USER_ID:-}" ]; then
@@ -226,16 +226,16 @@ if [ -n "${PRE_USER_ID:-}" ]; then
             '. + {($user): $pass}' "$PWFILE" > "${PWFILE}.tmp"
         mv "${PWFILE}.tmp" "$PWFILE"
     fi
-    # Hire pre-existing as a member so sync will provision them
+    # Hire pre-existing as a member so bm start will provision them
     bm_hire superman --name pre-existing 2>&1 >/dev/null || true
 fi
-OUT=$(bm teams sync --bridge -v 2>&1)
+OUT=$(bm start 2>&1)
 EC=$?
-if [ $EC -eq 0 ]; then pass "C28" "Sync handles pre-existing user"; else fail "C28" "Pre-existing sync" "exit $EC"; fi
+if [ $EC -eq 0 ]; then pass "C28" "bm start handles pre-existing user"; else fail "C28" "Pre-existing start" "exit $EC"; fi
 
 # C29: Container still running
 CSTATUS=$(podman ps --filter "name=$CONTAINER" --format '{{.Status}}' 2>&1)
-if echo "$CSTATUS" | grep -q "Up"; then pass "C29" "Container stable after pre-existing user sync"; else fail "C29" "Container" "status=$CSTATUS"; fi
+if echo "$CSTATUS" | grep -q "Up"; then pass "C29" "Container stable after pre-existing user start"; else fail "C29" "Container" "status=$CSTATUS"; fi
 
 # C30: Bridge state updated
 ID_COUNT3=$(jq '.identities | length' "$BSTATE" 2>/dev/null || echo "0")
@@ -246,9 +246,9 @@ else
 fi
 
 # C31: Idempotency after pre-existing user
-OUT=$(bm teams sync --bridge -v 2>&1)
+OUT=$(bm start 2>&1)
 EC=$?
-if [ $EC -eq 0 ]; then pass "C31" "Sync idempotent after pre-existing user"; else fail "C31" "Idempotent sync" "exit $EC"; fi
+if [ $EC -eq 0 ]; then pass "C31" "bm start idempotent after pre-existing user"; else fail "C31" "Idempotent start" "exit $EC"; fi
 
 # C32: Final state consistency
 STATUS3=$(jq -r '.status' "$BSTATE" 2>/dev/null)

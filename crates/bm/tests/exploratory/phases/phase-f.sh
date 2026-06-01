@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Phase F: Error Handling
-# Tests graceful degradation without just, CLI display commands.
+# Tests graceful degradation without just in PATH, CLI display commands.
 # Does NOT use keyring directly.
 set -uo pipefail
 source "$LIB"
@@ -10,7 +10,7 @@ ensure_keyring
 header "Phase F: Error Handling"
 
 # F1: Without just
-OUT=$(PATH=/usr/bin:/bin bm teams sync --bridge -v 2>&1)
+OUT=$(PATH=/usr/bin:/bin bm start 2>&1)
 # Should not crash — either skips or errors gracefully
 if echo "$OUT" | grep -qi "just\|skip\|not found"; then
     pass "F1" "Graceful handling when just not in PATH"

@@ -66,7 +66,7 @@ Foundation setup for subsequent phases.
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| C1 | First sync --bridge | `bm teams sync --bridge -v` | Container created, admin registered, alice+bob onboarded, room created |
+| C1 | First bridge provisioning | `bm start` | Container created, admin registered, alice+bob onboarded, room created |
 | C2 | Verify container running | `podman ps --filter name=bm-tuwunel-exploratory-test` | Status "Up" |
 | C3 | Verify Matrix server healthy | `curl -sf http://127.0.0.1:8008/_matrix/client/versions` | HTTP 200, version list |
 | C4 | Verify bridge state file | `jq '{status, identities: (.identities\|keys), rooms}' bridge-state.json` | status=running, 3 identities (bmadmin, alice, bob), 1 room |
@@ -79,11 +79,11 @@ Foundation setup for subsequent phases.
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| C9 | Sync --bridge again (no changes) | `bm teams sync --bridge -v` | AlreadyProvisioned for all, no errors |
+| C9 | bm start again (no changes) | `bm start` | AlreadyProvisioned for all, no errors |
 | C10 | Verify no duplicate identities | `jq '.identities\|length' bridge-state.json` | Still 3 |
 | C11 | Verify no duplicate rooms | `jq '.rooms\|length' bridge-state.json` | Still 1 |
 | C12 | Verify keyring credentials unchanged | Lookup alice token, compare to C6 | Same token |
-| C13 | Third sync --bridge | `bm teams sync --bridge -v` | Still idempotent |
+| C13 | Third bm start | `bm start` | Still idempotent |
 
 ### C.3: Bridge Recovery — Container Stopped
 
@@ -92,7 +92,7 @@ Foundation setup for subsequent phases.
 | C14 | Stop container externally | `podman stop bm-tuwunel-exploratory-test` | Container stopped |
 | C15 | Verify bridge state still says "running" | `jq '.status' bridge-state.json` | "running" (stale state) |
 | C16 | Matrix server unreachable | `curl http://127.0.0.1:8008/_matrix/client/versions` | Connection refused |
-| C17 | Sync --bridge recovers | `bm teams sync --bridge -v` | Bridge auto-restarts or re-provisions |
+| C17 | bm start recovers | `bm start` | Bridge auto-restarts or re-provisions |
 | C18 | Verify container running again | `podman ps` | "Up" |
 | C19 | Verify Matrix server healthy | `curl` versions endpoint | HTTP 200 |
 | C20 | Verify identities intact | `jq '.identities\|length' bridge-state.json` | 3 |
@@ -102,7 +102,7 @@ Foundation setup for subsequent phases.
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
 | C21 | Force-remove container | `podman rm -f bm-tuwunel-exploratory-test` | Container gone |
-| C22 | Sync --bridge recreates from scratch | `bm teams sync --bridge -v` | New container, admin re-registered, members re-onboarded |
+| C22 | bm start recreates from scratch | `bm start` | New container, admin re-registered, members re-onboarded |
 | C23 | Verify container running | `podman ps` | New container "Up" |
 | C24 | Verify all identities re-provisioned | `jq '.identities\|keys' bridge-state.json` | All 3 present |
 | C25 | Verify room re-created or recovered | `jq '.rooms' bridge-state.json` | Room present |
@@ -114,7 +114,7 @@ Foundation setup for subsequent phases.
 |---|----------|--------|----------|
 | C27 | Remove container + volume | `podman rm -f ... && podman volume rm ...` | All state gone |
 | C28 | Remove bridge-state.json | `rm bridge-state.json` | — |
-| C29 | Sync --bridge from scratch | `bm teams sync --bridge -v` | Complete re-creation works |
+| C29 | bm start from scratch | `bm start` | Complete re-creation works |
 | C30 | Verify everything functional | Container up, Matrix healthy, all identities, room exists | Full recovery |
 
 ### C.6: Onboard Edge Cases
@@ -122,12 +122,12 @@ Foundation setup for subsequent phases.
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
 | C31 | Pre-register user via Matrix API | `curl` register endpoint for "pre-existing" user | User created outside bm |
-| C32 | Hire + sync onboards pre-existing user | `bm hire superman --name pre-existing && bm teams sync --bridge -v` | M_USER_IN_USE handled, password reset via admin API |
+| C32 | Hire + start onboards pre-existing user | `bm hire superman --name pre-existing && bm start` | M_USER_IN_USE handled, password reset via admin API |
 | C33 | Verify pre-existing user has valid credentials | `secret-tool lookup` + Matrix login | Login succeeds |
 
-## Phase D: Workspace Sync Idempotency (Local Mode)
+## Phase D: Workspace Provisioning Idempotency (Local Mode)
 
-Note: workspaces were already created in C1 (sync --bridge also creates workspaces).
+Note: workspaces were already created in C1 (`bm start` also creates workspaces).
 
 ### D.1: Verify Initial Workspace State
 
@@ -140,20 +140,20 @@ Note: workspaces were already created in C1 (sync --bridge also creates workspac
 | D5 | Git repo clean | `git -C workspace status --porcelain` | Empty (clean tree) |
 | D6 | Git has initial commit | `git -C workspace log --oneline -1` | "Initial workspace setup" |
 
-### D.2: Workspace Sync Idempotency
+### D.2: Start Idempotency
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| D7 | Sync again (no changes) | `bm teams sync -v` | Workspaces synced, no errors |
+| D7 | bm start again (no changes) | `bm start` | Workspaces provisioned, no errors |
 | D8 | Context files still present | `ls` | All files intact |
-| D9 | Sync third time | `bm teams sync -v` | Still clean |
+| D9 | Third bm start | `bm start` | Still clean |
 
 ### D.3: Stale Workspace Recovery
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
 | D10 | Remove .botminter.workspace marker | `rm` marker from alice workspace | — |
-| D11 | Sync recovers stale workspace | `bm teams sync -v` | Workspace dir cleaned + recreated, marker restored |
+| D11 | bm start recovers stale workspace | `bm start` | Workspace dir cleaned + recreated, marker restored |
 | D12 | All context files restored | `ls` | ralph.yml, CLAUDE.md, PROMPT.md, marker all present |
 | D13 | Team submodule intact | `ls workspace/team/` | Content visible |
 
@@ -162,9 +162,9 @@ Note: workspaces were already created in C1 (sync --bridge also creates workspac
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
 | D14 | Delete CLAUDE.md from workspace | `rm CLAUDE.md` from bob workspace | — |
-| D15 | Sync restores CLAUDE.md | `bm teams sync -v` | CLAUDE.md restored (sync re-assembles context) |
+| D15 | bm start restores CLAUDE.md | `bm start` | CLAUDE.md restored (start re-assembles context) |
 | D16 | Delete ralph.yml from workspace | `rm ralph.yml` | — |
-| D17 | Sync restores ralph.yml | `bm teams sync -v` | ralph.yml restored |
+| D17 | bm start restores ralph.yml | `bm start` | ralph.yml restored |
 
 ### D.5: Junk Directory Cleanup
 
@@ -172,7 +172,7 @@ Note: workspaces were already created in C1 (sync --bridge also creates workspac
 |---|----------|--------|----------|
 | D18 | Create dir at member path with junk, no marker | `mkdir + echo junk` at future member path | — |
 | D19 | Hire new member (carol) | `bm hire superman --name carol` | Member dir created in team repo |
-| D20 | Sync cleans junk + creates proper workspace | `bm teams sync -v` | Junk gone, proper workspace with all context files |
+| D20 | bm start cleans junk + creates proper workspace | `bm start` | Junk gone, proper workspace with all context files |
 
 ### D.6: Settings.json & Inbox
 
@@ -184,30 +184,73 @@ Note: workspaces were already created in C1 (sync --bridge also creates workspac
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| D21 | Settings.json surfaced after sync | `cat <workspace>/.claude/settings.json` | Valid JSON with PostToolUse hook referencing `bm-agent claude hook post-tool-use` |
+| D21 | Settings.json surfaced after start | `cat <workspace>/.claude/settings.json` | Valid JSON with PostToolUse hook referencing `bm-agent claude hook post-tool-use` |
 | D22 | Inbox write/peek/read lifecycle | `bm-agent inbox write "test message"` then `bm-agent inbox peek` then `bm-agent inbox read --format json` then `bm-agent inbox peek` | Message visible after write, JSON output on read, empty after consume |
 | D23 | Hook graceful degradation (in workspace) | `bm-agent claude hook post-tool-use` in workspace with no pending messages | Exit 0 with no output |
 | D23b | Hook graceful degradation (outside workspace) | `bm-agent claude hook post-tool-use` in non-workspace dir | Exit 0 with no output |
-| D24 | Re-sync preserves inbox messages | Write message, `bm teams sync -v`, `bm-agent inbox peek` | Message still present after sync |
+| D24 | Re-start preserves inbox messages | Write message, `bm start`, `bm-agent inbox peek` | Message still present after start |
 
-## Phase E: Full Sync (`--bridge` flag)
+## Phase E: Full Provisioning (`bm start`)
 
-Note: `-a` includes `--repos` which requires GitHub workspace repos per member.
-For local-only teams (no per-member GitHub repos), use `--bridge` instead.
+`bm start` handles bridge provisioning and workspace creation automatically.
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| E1 | Full sync with bridge + workspace | `bm teams sync --bridge -v` | Bridge + workspace all succeed |
-| E2 | Full sync again (idempotent) | `bm teams sync --bridge -v` | No errors, everything up to date |
-| E3 | Hire fourth member, full sync | Hire dave, `bm teams sync --bridge -v` | New workspace, dave onboarded, others untouched |
+| E1 | Full start with bridge + workspace | `bm start` | Bridge + workspace all succeed |
+| E2 | bm start again (idempotent) | `bm start` | No errors, everything up to date |
+| E3 | Hire fourth member, start | Hire dave, `bm start` | New workspace, dave onboarded, others untouched |
 | E4 | Verify all 4 members have workspaces | `ls` workzone | 4 workspace dirs, all with context files |
 | E5 | Verify all 4 in bridge state | `jq '.identities\|keys' bridge-state.json` | 5 identities (admin + 4 members) |
+
+## Phase S: Session Model
+
+Session lifecycle tests exercising the session model that replaces explicit `bm teams sync`.
+With the session model, `bm start` creates workspaces on demand and provisions infrastructure
+automatically — no separate sync step required.
+
+**Prerequisites:** Phases B-E must run first (team init + hire + bridge + workspace).
+
+### S.1: Session Create & Verify
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| S1 | Start member creates active session | `bm start superman-alice`, then `bm status --json` | Active session registered for alice |
+
+### S.2: Concurrent Sessions
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| S2 | Start second member while first running | `bm start superman-bob` while alice active | Both alice and bob show Active sessions in `bm status --json` |
+
+### S.3: Kill Agent Recovery
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| S3 | Kill agent process mid-work | `kill` alice PID from status, wait 3s, check status | Session transitions to Failed state |
+
+### S.4: Graceful Stop
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| S4 | Graceful stop transitions session | `bm stop superman-bob` | Session state becomes Completed or Stopped |
+
+### S.5: Session GC
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| S5 | GC limits retained sessions | Create + stop 3 sessions, check `bm status --json` | ≤3 retained sessions per member |
+
+### S.6: Daemon Restart Recovery
+
+| # | Scenario | Method | Expected |
+|---|----------|--------|----------|
+| S6 | Daemon kill → restart → stale sessions marked Failed | Kill daemon PID, `bm start superman-bob` | Alice's stale session → Failed, bob's new session → Active |
 
 ## Phase F: Error Handling & Edge Cases
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| F1 | Sync --bridge without `just` in PATH | `PATH=/usr/bin bm teams sync --bridge` | BridgeAutoStartSkipped, graceful message |
+| F1 | bm start without `just` in PATH | `PATH=/usr/bin bm start` | Graceful handling, no crash |
 | F2 | bm status shows bridge info | `bm status -v` | Bridge status, member count, container info |
 | F3 | bm members list | `bm members list` | All hired members shown |
 | F4 | bm teams show | `bm teams show` | Team details with bridge, members, projects |
@@ -234,7 +277,7 @@ End-to-end tests for the brain-mode feature. Tests simulate real user journeys:
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| H1 | Brain prompt exists after sync | Check `brain-prompt.md` in alice workspace | File exists, non-empty |
+| H1 | Brain prompt exists after start | Check `brain-prompt.md` in alice workspace | File exists, non-empty |
 | H2 | No unrendered template vars | `grep '{{' brain-prompt.md` | Zero matches — all 5 vars rendered |
 | H3 | Contains rendered member name | `grep -q 'alice' brain-prompt.md` | Member name present in rendered output |
 | H4 | Contains rendered team name | `grep -q 'exploratory-test' brain-prompt.md` | Team name present |
@@ -263,10 +306,10 @@ End-to-end tests for the brain-mode feature. Tests simulate real user journeys:
 
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
-| H15 | Modified brain-prompt.md restored | Overwrite with junk, re-sync | Original content restored from template |
-| H16 | Deleted brain-prompt.md restored | Delete file, re-sync | File recreated from template |
-| H17 | Content idempotent across syncs | Sync twice, diff results | Identical content after both syncs |
-| H18 | Verbose sync shows BrainPromptSurfaced | Run `bm teams sync -v` | Output contains brain prompt surfacing message |
+| H15 | Modified brain-prompt.md restored | Overwrite with junk, re-start | Original content restored from template |
+| H16 | Deleted brain-prompt.md restored | Delete file, re-start | File recreated from template |
+| H17 | Content idempotent across starts | Start twice, diff results | Identical content after both starts |
+| H18 | Verbose start shows BrainPromptSurfaced | Run `bm start` | Output contains brain prompt surfacing message |
 
 ### H.5: End-to-End Brain Autonomy Validation
 

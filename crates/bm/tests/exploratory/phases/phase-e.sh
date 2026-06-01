@@ -1,29 +1,26 @@
 #!/usr/bin/env bash
-# Phase E: Full Sync (-a flag)
-# Tests combined bridge + workspace sync, idempotency, new member addition.
+# Phase E: Full Provisioning (bm start)
+# Tests combined bridge + workspace provisioning, idempotency, new member addition.
 set -uo pipefail
 source "$LIB"
 ensure_gh_token
 ensure_keyring
 
-header "Phase E: Full Sync (--bridge flag)"
+header "Phase E: Full Provisioning (bm start)"
 
-# Note: -a includes --repos which requires GitHub workspace repos per member.
-# For local-only teams, use --bridge (bridge + workspace, no git push).
-
-OUT=$(bm teams sync --bridge -v 2>&1)
+OUT=$(bm start 2>&1)
 EC=$?
-if [ $EC -eq 0 ]; then pass "E1" "Full sync --bridge -v"; else fail "E1" "Full sync" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
+if [ $EC -eq 0 ]; then pass "E1" "Full bm start"; else fail "E1" "Full start" "exit $EC: $(echo "$OUT" | tail -5)"; echo "$OUT"; fi
 
-OUT=$(bm teams sync --bridge -v 2>&1)
+OUT=$(bm start 2>&1)
 EC=$?
-if [ $EC -eq 0 ]; then pass "E2" "Full sync again (idempotent)"; else fail "E2" "Idempotent sync" "exit $EC"; fi
+if [ $EC -eq 0 ]; then pass "E2" "bm start again (idempotent)"; else fail "E2" "Idempotent start" "exit $EC"; fi
 
 bm_hire superman --name dave 2>&1
-OUT=$(bm teams sync --bridge -v 2>&1)
+OUT=$(bm start 2>&1)
 EC=$?
 if [ $EC -eq 0 ] && [ -f "$TEAM_DIR/superman-dave/.botminter.workspace" ]; then
-    pass "E3" "Hire dave + sync creates new workspace"
+    pass "E3" "Hire dave + bm start creates new workspace"
 else
     fail "E3" "Dave workspace" "exit $EC or missing marker"
 fi

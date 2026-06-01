@@ -3903,3 +3903,37 @@ fn e2e_no_teams_sync_references() {
         violations.join("\n")
     );
 }
+
+#[test]
+fn exploratory_no_teams_sync_references() {
+    let phases_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/exploratory/phases");
+    let mut violations = Vec::new();
+
+    for entry in fs::read_dir(&phases_dir).expect("exploratory/phases dir should exist") {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        if path.extension().map_or(true, |e| e != "sh") {
+            continue;
+        }
+        let content = fs::read_to_string(&path).unwrap();
+        let filename = path.file_name().unwrap().to_string_lossy().to_string();
+
+        for (line_num, line) in content.lines().enumerate() {
+            let trimmed = line.trim();
+            // Skip comments — they may describe the old flow for context
+            if trimmed.starts_with('#') {
+                continue;
+            }
+            if line.contains("teams") && line.contains("sync") && !line.contains("projects") {
+                violations.push(format!("{}:{}: {}", filename, line_num + 1, trimmed));
+            }
+        }
+    }
+
+    assert!(
+        violations.is_empty(),
+        "Exploratory test phase scripts should not reference `teams sync` \
+         (session model replaces it):\n{}",
+        violations.join("\n")
+    );
+}

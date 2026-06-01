@@ -99,7 +99,7 @@ INITIAL_BRAIN_COUNT=$(echo "$INITIAL_HIST" | jq '[.chunk[] | select(.type == "m.
 echo "  Initial brain message count: $INITIAL_BRAIN_COUNT"
 
 # Start brain
-bm teams sync --bridge 2>&1 >/dev/null || true
+bm start 2>&1 >/dev/null || true
 START_OUT=$(bm start superman-alice 2>&1 || true)
 echo "  Start output: $(echo "$START_OUT" | tail -2 | tr '\n' ' ')"
 
@@ -195,7 +195,7 @@ done
 rm -rf "$HOME/.cache/claude-cli-nodejs" "$HOME/.local/state/claude" "$HOME/.claude" 2>/dev/null || true
 
 # Refresh bridge credentials
-bm teams sync --bridge 2>&1 >/dev/null || true
+bm start 2>&1 >/dev/null || true
 
 # Start brain
 START2_OUT=$(bm start superman-alice 2>&1 || true)

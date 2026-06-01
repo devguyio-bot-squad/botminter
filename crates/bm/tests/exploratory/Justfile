@@ -280,6 +280,8 @@ phase-g: (run-phase "phase-g.sh")
 
 phase-h: ensure-keyring (run-phase "phase-h.sh" "1200")
 
+phase-s: ensure-keyring (run-phase "phase-s.sh" "600")
+
 # Isolated ACP diagnostic test (requires team to exist — run after phase-e)
 phase-acp-isolated: ensure-keyring (run-phase "phase-acp-isolated.sh" "600")
 
@@ -287,7 +289,7 @@ phase-acp-isolated: ensure-keyring (run-phase "phase-acp-isolated.sh" "600")
 
 # Run all phases (B through H)
 # Starts and ends with clean to ensure a known-good state.
-all: clean deploy preflight init-report phase-b phase-c phase-d phase-e phase-f phase-h phase-g fetch-report clean
+all: clean deploy preflight init-report phase-b phase-c phase-d phase-e phase-f phase-s phase-h phase-g fetch-report clean
 
 # Run only bridge + workspace phases (skip init, assume team exists)
 bridge-and-workspace: ensure-keyring phase-c phase-d phase-e

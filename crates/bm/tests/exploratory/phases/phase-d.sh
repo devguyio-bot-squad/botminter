@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Phase D: Workspace Sync Idempotency
-# Tests initial workspace state, sync idempotency, stale/missing file recovery,
+# Phase D: Workspace Provisioning Idempotency
+# Tests initial workspace state, start idempotency, stale/missing file recovery,
 # junk cleanup, settings.json, and inbox lifecycle.
 set -uo pipefail
 source "$LIB"
 ensure_gh_token
 ensure_keyring
 
-header "Phase D: Workspace Sync Idempotency"
+header "Phase D: Workspace Provisioning Idempotency"
 
 ALICE_WS="$TEAM_DIR/superman-alice"
 BOB_WS="$TEAM_DIR/superman-bob"
 
-# ── D.1: Verify initial state (workspaces created by phase C) ──
+# ── D.1: Verify initial state (workspaces created by phase C via bm start) ──
 
 check_ws() {
     local WS="$1"
@@ -36,16 +36,16 @@ if [ -z "$GIT_STATUS" ]; then pass "D5" "Git repo clean"; else note "D5" "Git st
 GIT_LOG=$(git -C "$ALICE_WS" log --oneline -1 2>/dev/null)
 if echo "$GIT_LOG" | grep -q "Initial workspace setup"; then pass "D6" "Git has initial commit"; else note "D6" "Git log" "$GIT_LOG"; fi
 
-# ── D.2: Sync idempotency ──
+# ── D.2: Start idempotency ──
 
-echo "  D.2: Sync idempotency..."
-OUT=$(bm teams sync -v 2>&1)
-if [ $? -eq 0 ]; then pass "D7" "Sync again (no changes)"; else fail "D7" "Sync" "exit $?"; fi
+echo "  D.2: Start idempotency..."
+OUT=$(bm start 2>&1)
+if [ $? -eq 0 ]; then pass "D7" "bm start again (no changes)"; else fail "D7" "bm start" "exit $?"; fi
 
-if [ "$(check_ws "$ALICE_WS")" = "true" ]; then pass "D8" "Context files still present after re-sync"; else fail "D8" "Context files" "missing after re-sync"; fi
+if [ "$(check_ws "$ALICE_WS")" = "true" ]; then pass "D8" "Context files still present after re-start"; else fail "D8" "Context files" "missing after re-start"; fi
 
-OUT=$(bm teams sync -v 2>&1)
-if [ $? -eq 0 ]; then pass "D9" "Third sync still clean"; else fail "D9" "Third sync" "exit $?"; fi
+OUT=$(bm start 2>&1)
+if [ $? -eq 0 ]; then pass "D9" "Third bm start still clean"; else fail "D9" "Third start" "exit $?"; fi
 
 # ── D.3: Stale workspace recovery ──
 
@@ -53,8 +53,8 @@ echo "  D.3: Stale workspace recovery..."
 rm -f "$ALICE_WS/.botminter.workspace"
 pass "D10" "Removed .botminter.workspace marker"
 
-OUT=$(bm teams sync -v 2>&1)
-if [ $? -eq 0 ]; then pass "D11" "Sync recovers stale workspace"; else fail "D11" "Recovery" "exit $?: $(echo "$OUT" | tail -3)"; fi
+OUT=$(bm start 2>&1)
+if [ $? -eq 0 ]; then pass "D11" "bm start recovers stale workspace"; else fail "D11" "Recovery" "exit $?: $(echo "$OUT" | tail -3)"; fi
 
 if [ "$(check_ws "$ALICE_WS")" = "true" ]; then
     pass "D12" "All context files restored after recovery"
@@ -70,21 +70,21 @@ echo "  D.4: Missing context file recovery..."
 rm -f "$BOB_WS/CLAUDE.md"
 pass "D14" "Deleted CLAUDE.md from bob workspace"
 
-OUT=$(bm teams sync -v 2>&1)
+OUT=$(bm start 2>&1)
 if [ $? -eq 0 ] && [ -f "$BOB_WS/CLAUDE.md" ]; then
-    pass "D15" "Sync restores CLAUDE.md"
+    pass "D15" "bm start restores CLAUDE.md"
 else
-    fail "D15" "Restore CLAUDE.md" "file still missing or sync failed"
+    fail "D15" "Restore CLAUDE.md" "file still missing or bm start failed"
 fi
 
 rm -f "$BOB_WS/ralph.yml"
 pass "D16" "Deleted ralph.yml from bob workspace"
 
-OUT=$(bm teams sync -v 2>&1)
+OUT=$(bm start 2>&1)
 if [ $? -eq 0 ] && [ -f "$BOB_WS/ralph.yml" ]; then
-    pass "D17" "Sync restores ralph.yml"
+    pass "D17" "bm start restores ralph.yml"
 else
-    fail "D17" "Restore ralph.yml" "file still missing or sync failed"
+    fail "D17" "Restore ralph.yml" "file still missing or bm start failed"
 fi
 
 # ── D.5: Junk directory cleanup ──
@@ -98,7 +98,7 @@ pass "D18" "Created junk dir at future carol workspace path"
 bm_hire superman --name carol 2>&1
 pass "D19" "Hired carol"
 
-OUT=$(bm teams sync -v 2>&1)
+OUT=$(bm start 2>&1)
 EC=$?
 if [ $EC -eq 0 ] && [ ! -f "$CAROL_WS/junk.txt" ] && [ -f "$CAROL_WS/.botminter.workspace" ]; then
     pass "D20" "Junk cleaned, proper workspace created for carol"
@@ -112,7 +112,7 @@ fi
 
 echo "  D.6: Settings.json & Inbox..."
 
-# D21: Settings.json surfaced after sync
+# D21: Settings.json surfaced after bm start
 if [ -f "$ALICE_WS/.claude/settings.json" ]; then
     HOOK_CONTENT=$(cat "$ALICE_WS/.claude/settings.json")
     if echo "$HOOK_CONTENT" | grep -q "bm-agent claude hook post-tool-use"; then
@@ -169,20 +169,20 @@ else
     fail "D23b" "Hook outside workspace" "exit $HOOK_EC2: $HOOK_OUT2"
 fi
 
-# D24: Re-sync preserves inbox messages
+# D24: Re-start preserves inbox messages
 bm_agent inbox write "survive sync" --from brain 2>&1
-# Navigate to project root for sync, then back
+# Navigate to project root for bm start, then back
 ORIG_DIR=$(pwd)
 cd "$CARGO_ROOT"
-OUT=$(bm teams sync -v 2>&1)
+OUT=$(bm start 2>&1)
 cd "$ALICE_WS"
 PEEK_SYNC=$(bm_agent inbox peek 2>&1)
 if echo "$PEEK_SYNC" | grep -q "survive sync"; then
-    pass "D24" "Re-sync preserves inbox messages"
+    pass "D24" "Re-start preserves inbox messages"
     # Clean up
     bm_agent inbox read > /dev/null 2>&1
 else
-    fail "D24" "Inbox after sync" "message lost: $PEEK_SYNC"
+    fail "D24" "Inbox after start" "message lost: $PEEK_SYNC"
 fi
 
 echo "Phase D complete."
