@@ -22,8 +22,7 @@ bm teams sync --repos
 2. Clones locally into `workzone/<team>/<member>/`
 3. Adds the team repo as `team/` submodule
 4. Adds each assigned project as `projects/<project>/` submodule
-5. Checks out member branches in all submodules
-6. Copies context files (CLAUDE.md, PROMPT.md, ralph.yml) from `team/members/<member>/`
+5. Copies context files (CLAUDE.md, PROMPT.md, ralph.yml) from `team/members/<member>/`
 7. Assembles `.claude/agents/` with symlinks into `team/` submodule paths
 8. Writes `.botminter.workspace` marker and `.gitignore`
 9. Commits and pushes

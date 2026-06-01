@@ -99,6 +99,9 @@ fn display_sync_event(event: &TeamSyncEvent) {
             }
         }
         TeamSyncEvent::WorkspaceCreateFailed { name, error } => eprintln!("Error: {}: {}", name, error),
+        TeamSyncEvent::WorkspaceSyncFailed { name, error } => {
+            eprintln!("\u{26a0} Failed to sync workspace '{}': {}", name, error);
+        }
         TeamSyncEvent::RobotInjected { member, enabled } => println!("  RObot.enabled = {} for {}", enabled, member),
         TeamSyncEvent::BrainPromptSurfaced { member } => println!("  Brain prompt surfaced for {}", member),
     }
@@ -113,8 +116,7 @@ fn display_workspace_event(e: &workspace::SyncEvent) {
         workspace::SyncEvent::ChangesCommitted => println!("  Committed workspace changes"),
         workspace::SyncEvent::PushedToRemote => println!("  Pushed to remote"),
         workspace::SyncEvent::NoChanges => println!("  No changes to commit"),
-        workspace::SyncEvent::BranchAlreadyOnIt(b) => println!("    Branch: {} (already on it)", b),
-        workspace::SyncEvent::BranchCheckedOut(b) => println!("    Branch: {} (checked out)", b),
-        workspace::SyncEvent::BranchCreated(b) => println!("    Branch: {} (created)", b),
+        workspace::SyncEvent::BranchMigrated(b) => println!("  Migrated from branch '{}' to main", b),
+        workspace::SyncEvent::ProjectProvisioned(p) => println!("  Provisioned project: {}", p),
     }
 }

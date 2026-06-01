@@ -51,7 +51,7 @@ The workspace repo uses git submodules to reference shared repos:
 | Team repo | `team/` | The team's GitHub repo (control plane) |
 | Project fork | `projects/<project>/` | A project fork on GitHub |
 
-Each submodule checks out a **member branch** (e.g., `engineer-01`). This gives each agent its own branch to work on without conflicting with other members.
+All submodules stay on `main`. Each agent works on its own fork to avoid conflicting with other members.
 
 ### Team repo submodule (`team/`)
 
@@ -100,9 +100,7 @@ Run `bm teams sync` to create or update workspaces:
 1. Create a GitHub repo: `org/<team>-<member>`
 2. Clone locally
 3. Add team repo as `team/` submodule
-4. Checkout member branch in team submodule
-5. For each assigned project: add as `projects/<project>/` submodule
-6. Checkout member branch in each project submodule
+4. For each assigned project: add as `projects/<project>/` submodule
 7. Copy context files from `team/members/<member>/` to workspace root
 8. Copy `.claude/settings.json` from `team/coding-agent/settings.json` (if present)
 9. Assemble `.claude/agents/` with symlinks into `team/` submodule paths
@@ -112,8 +110,7 @@ Run `bm teams sync` to create or update workspaces:
 **Existing workspace:**
 
 1. Update submodules to latest (`git submodule update --remote`)
-2. Checkout member branch in each submodule
-3. Re-copy context files if team submodule versions are newer
+2. Re-copy context files if team submodule versions are newer
 4. Re-assemble `.claude/agents/` symlinks
 5. Commit changes (if any) and push
 

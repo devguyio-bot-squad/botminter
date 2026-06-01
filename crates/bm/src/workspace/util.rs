@@ -129,23 +129,23 @@ fn create_symlink(target: &Path, link_path: &Path) -> Result<()> {
     })
 }
 
-/// Copies `src` to `dst` only if `src` exists and is newer than `dst`.
+/// Copies `src` to `dst` only if `src` exists and content differs from `dst`.
 #[cfg(test)]
-fn copy_if_newer(src: &Path, dst: &Path) -> Result<()> {
-    copy_if_newer_verbose(src, dst)?;
+fn copy_if_changed(src: &Path, dst: &Path) -> Result<()> {
+    copy_if_changed_verbose(src, dst)?;
     Ok(())
 }
 
-/// Copies `src` to `dst` only if `src` exists and is newer than `dst`.
+/// Copies `src` to `dst` only if `src` exists and content differs from `dst`.
 /// Returns `true` if a copy was made, `false` if skipped.
-pub(super) fn copy_if_newer_verbose(src: &Path, dst: &Path) -> Result<bool> {
+pub(super) fn copy_if_changed_verbose(src: &Path, dst: &Path) -> Result<bool> {
     if !src.exists() {
         return Ok(false);
     }
     let should_copy = if dst.exists() {
-        let src_mod = fs::metadata(src)?.modified()?;
-        let dst_mod = fs::metadata(dst)?.modified()?;
-        src_mod > dst_mod
+        let src_len = fs::metadata(src)?.len();
+        let dst_len = fs::metadata(dst)?.len();
+        src_len != dst_len || fs::read(src)? != fs::read(dst)?
     } else {
         true
     };
@@ -424,63 +424,58 @@ mod tests {
         );
     }
 
-    // ── copy_if_newer ───────────────────────────────────────────────
+    // ── copy_if_changed ──────────────────────────────────────────────
 
     #[test]
-    fn copy_if_newer_skips_when_dest_newer() {
+    fn copy_if_changed_skips_when_content_identical() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src.txt");
         let dst = tmp.path().join("dst.txt");
-        fs::write(&src, "old source").unwrap();
-        fs::write(&dst, "newer dest").unwrap();
+        fs::write(&src, "same content").unwrap();
+        fs::write(&dst, "same content").unwrap();
 
-        // Make source older than dest
+        // Make source older — mtime-based logic would also skip, but we're
+        // testing that content identity is the reason for the skip.
+        let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
+        filetime::set_file_mtime(&src, old_time).unwrap();
+
+        let copied = copy_if_changed_verbose(&src, &dst).unwrap();
+        assert!(!copied, "Should skip when content is identical");
+    }
+
+    #[test]
+    fn copy_if_changed_copies_when_content_differs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.txt");
+        let dst = tmp.path().join("dst.txt");
+        fs::write(&src, "new content").unwrap();
+        fs::write(&dst, "old content").unwrap();
+
+        // Make source OLDER than dest — this is the critical mtime bug scenario.
+        // Content-based logic must copy; mtime-based logic would skip.
         let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
         filetime::set_file_mtime(&src, old_time).unwrap();
         let new_time = filetime::FileTime::from_unix_time(2_000_000, 0);
         filetime::set_file_mtime(&dst, new_time).unwrap();
 
-        copy_if_newer(&src, &dst).unwrap();
-
+        let copied = copy_if_changed_verbose(&src, &dst).unwrap();
+        assert!(copied, "Should copy when content differs, even if source is older");
         assert_eq!(
             fs::read_to_string(&dst).unwrap(),
-            "newer dest",
-            "Destination should be unchanged when it is newer"
+            "new content",
+            "Destination should have source content after copy"
         );
     }
 
     #[test]
-    fn copy_if_newer_copies_when_source_newer() {
-        let tmp = tempfile::tempdir().unwrap();
-        let src = tmp.path().join("src.txt");
-        let dst = tmp.path().join("dst.txt");
-        fs::write(&src, "newer source").unwrap();
-        fs::write(&dst, "old dest").unwrap();
-
-        // Make source newer than dest
-        let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
-        filetime::set_file_mtime(&dst, old_time).unwrap();
-        let new_time = filetime::FileTime::from_unix_time(2_000_000, 0);
-        filetime::set_file_mtime(&src, new_time).unwrap();
-
-        copy_if_newer(&src, &dst).unwrap();
-
-        assert_eq!(
-            fs::read_to_string(&dst).unwrap(),
-            "newer source",
-            "Destination should be overwritten when source is newer"
-        );
-    }
-
-    #[test]
-    fn copy_if_newer_copies_when_dest_missing() {
+    fn copy_if_changed_copies_when_dest_missing() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src.txt");
         let dst = tmp.path().join("dst.txt");
         fs::write(&src, "content").unwrap();
 
         assert!(!dst.exists());
-        copy_if_newer(&src, &dst).unwrap();
+        copy_if_changed(&src, &dst).unwrap();
 
         assert_eq!(
             fs::read_to_string(&dst).unwrap(),
@@ -490,19 +485,31 @@ mod tests {
     }
 
     #[test]
-    fn copy_if_newer_skips_when_source_missing() {
+    fn copy_if_changed_skips_when_source_missing() {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("nonexistent.txt");
         let dst = tmp.path().join("dst.txt");
         fs::write(&dst, "preserved").unwrap();
 
-        copy_if_newer(&src, &dst).unwrap();
+        copy_if_changed(&src, &dst).unwrap();
 
         assert_eq!(
             fs::read_to_string(&dst).unwrap(),
             "preserved",
             "Should be a no-op when source doesn't exist"
         );
+    }
+
+    #[test]
+    fn copy_if_changed_skips_identical_empty_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let src = tmp.path().join("src.txt");
+        let dst = tmp.path().join("dst.txt");
+        fs::write(&src, "").unwrap();
+        fs::write(&dst, "").unwrap();
+
+        let copied = copy_if_changed_verbose(&src, &dst).unwrap();
+        assert!(!copied, "Should skip when both files are empty");
     }
 
     // ── workspace_git_branch ──────────────────────────────────────

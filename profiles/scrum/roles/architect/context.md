@@ -34,8 +34,8 @@ project-repo-architect/              # Project repo clone (CWD)
     knowledge/, invariants/             # Team-level
     members/{{member_dir}}/                   # Member config
     projects/<project>/                 # Project-specific
-  PROMPT.md → team/members/{{member_dir}}/PROMPT.md
-  context.md → team/members/{{member_dir}}/context.md
+  PROMPT.md                      # Copy from team/members/{{member_dir}}/
+  context.md                     # Copy from team/members/{{member_dir}}/
   ralph.yml                             # Copy
 ```
 

@@ -5,7 +5,7 @@ use anyhow::{Context, Result};
 
 use crate::profile::CodingAgentDef;
 use super::repo::assemble_agent_dir_submodule;
-use super::util::{copy_if_newer_verbose, git_cmd, git_cmd_output};
+use super::util::{copy_if_changed_verbose, git_cmd, git_cmd_output, git_submodule_add};
 
 /// Events emitted during workspace sync for the caller to display.
 #[derive(Debug)]
@@ -17,9 +17,8 @@ pub enum SyncEvent {
     ChangesCommitted,
     PushedToRemote,
     NoChanges,
-    BranchAlreadyOnIt(String),
-    BranchCheckedOut(String),
-    BranchCreated(String),
+    BranchMigrated(String),
+    ProjectProvisioned(String),
 }
 
 /// Result of a workspace sync operation.
@@ -71,24 +70,37 @@ pub(super) fn write_workspace_marker(ws_root: &Path, member_dir_name: &str) -> R
         .context("Failed to write .botminter.workspace marker")
 }
 
+/// All parameters needed for `sync_workspace`.
+pub struct SyncWorkspaceParams<'a> {
+    pub ws_root: &'a Path,
+    pub member_dir_name: &'a str,
+    pub coding_agent: &'a CodingAgentDef,
+    pub verbose: bool,
+    pub push: bool,
+    pub project_number: Option<u64>,
+    pub github_repo: Option<&'a str>,
+    pub projects: &'a [(&'a str, &'a str)],
+}
+
 /// Syncs an existing workspace by updating submodules, re-copying context files,
 /// re-assembling agent directory, and committing+pushing any changes.
 ///
 /// Uses the `team/` submodule model. Updates submodules to latest remote content,
-/// checks out member branches, re-copies context files when newer, and rebuilds
-/// agent dir symlinks idempotently.
+/// migrates legacy member branches to main, re-copies context files when newer,
+/// and rebuilds agent dir symlinks idempotently.
 ///
 /// Returns a `SyncResult` with events describing what happened. The caller
 /// decides whether and how to display these events (e.g., only in verbose mode).
-pub fn sync_workspace(
-    ws_root: &Path,
-    member_dir_name: &str,
-    coding_agent: &CodingAgentDef,
-    verbose: bool,
-    push: bool,
-    project_number: Option<u64>,
-    github_repo: Option<&str>,
-) -> Result<SyncResult> {
+pub fn sync_workspace(params: &SyncWorkspaceParams) -> Result<SyncResult> {
+    let ws_root = params.ws_root;
+    let member_dir_name = params.member_dir_name;
+    let coding_agent = params.coding_agent;
+    let verbose = params.verbose;
+    let push = params.push;
+    let project_number = params.project_number;
+    let github_repo = params.github_repo;
+    let projects = params.projects;
+
     let mut result = SyncResult::default();
     let team_dir = ws_root.join("team");
 
@@ -98,13 +110,15 @@ pub fn sync_workspace(
             result.events.push(SyncEvent::UpdatingSubmodule("team/".to_string()));
         }
         // Fetch and update to latest remote tracking branch
-        git_cmd(ws_root, &[
+        if let Err(e) = git_cmd(ws_root, &[
             "-c", "protocol.file.allow=always",
             "submodule", "update", "--remote", "--merge", "team",
-        ]).ok();
+        ]) {
+            eprintln!("Warning: failed to update team submodule: {:#}", e);
+        }
 
-        // Checkout member branch (avoid detached HEAD)
-        checkout_member_branch(&team_dir, member_dir_name, verbose, &mut result)?;
+        // Migrate from member branch to main if needed
+        migrate_to_main(&team_dir, &mut result)?;
     }
 
     // Update project submodules
@@ -118,15 +132,48 @@ pub fn sync_workspace(
                     if verbose {
                         result.events.push(SyncEvent::UpdatingSubmodule(project_path.clone()));
                     }
-                    git_cmd(ws_root, &[
+                    if let Err(e) = git_cmd(ws_root, &[
                         "-c", "protocol.file.allow=always",
                         "submodule", "update", "--remote", "--merge", &project_path,
-                    ]).ok();
+                    ]) {
+                        eprintln!("Warning: failed to update project submodule '{}': {:#}", project_name, e);
+                    }
 
-                    // Checkout member branch in project submodule
-                    checkout_member_branch(&entry.path(), member_dir_name, verbose, &mut result)?;
+                    // Migrate from member branch to main if needed
+                    migrate_to_main(&entry.path(), &mut result)?;
                 }
             }
+        }
+    }
+
+    // Provision new project submodules from manifest
+    if !projects.is_empty() {
+        fs::create_dir_all(&projects_dir)
+            .context("Failed to create projects directory")?;
+
+        let mut provision_errors: Vec<String> = Vec::new();
+        for &(project_name, fork_url) in projects {
+            let project_path = projects_dir.join(project_name);
+            if project_path.is_dir() {
+                continue;
+            }
+            let submodule_path = format!("projects/{}", project_name);
+            match git_submodule_add(ws_root, fork_url, &submodule_path) {
+                Ok(()) => {
+                    result.events.push(SyncEvent::ProjectProvisioned(project_name.to_string()));
+                }
+                Err(e) => {
+                    let msg = format!(
+                        "Failed to provision project '{}' from {}: {:#}",
+                        project_name, fork_url, e
+                    );
+                    eprintln!("{}", msg);
+                    provision_errors.push(msg);
+                }
+            }
+        }
+        if !provision_errors.is_empty() && provision_errors.len() == projects.len() {
+            anyhow::bail!("All project provisioning failed:\n{}", provision_errors.join("\n"));
         }
     }
 
@@ -143,7 +190,7 @@ pub fn sync_workspace(
     ];
 
     for (src, dst, name) in &files_to_sync {
-        let copied = copy_if_newer_verbose(src, dst)?;
+        let copied = copy_if_changed_verbose(src, dst)?;
         if verbose {
             if copied {
                 result.events.push(SyncEvent::FileCopied(name.to_string()));
@@ -160,7 +207,7 @@ pub fn sync_workspace(
     let settings_dst = ws_root
         .join(&coding_agent.agent_dir)
         .join("settings.local.json");
-    let settings_copied = copy_if_newer_verbose(&settings_src, &settings_dst)?;
+    let settings_copied = copy_if_changed_verbose(&settings_src, &settings_dst)?;
     if verbose && settings_src.exists() {
         if settings_copied {
             result.events.push(SyncEvent::FileCopied("settings.local.json".to_string()));
@@ -170,7 +217,7 @@ pub fn sync_workspace(
     }
 
     // NOTE: settings.json (team-level) is copied unconditionally by
-    // assemble_agent_dir_submodule below — no need to copy_if_newer here.
+    // assemble_agent_dir_submodule below — no need to copy_if_changed here.
 
     // Discover project names from projects/ submodules
     let project_names: Vec<String> = if projects_dir.is_dir() {
@@ -189,7 +236,7 @@ pub fn sync_workspace(
     };
     let project_name_refs: Vec<&str> = project_names.iter().map(|s| s.as_str()).collect();
 
-    // Inject workspace context (unconditional — decoupled from copy_if_newer)
+    // Inject workspace context (unconditional — decoupled from copy_if_changed)
     super::context::inject_workspace_context(
         ws_root,
         member_dir_name,
@@ -240,44 +287,41 @@ pub fn sync_workspace(
     Ok(result)
 }
 
-/// Checks out the member branch in a submodule, creating it if needed.
-/// Avoids leaving the submodule in detached HEAD state.
-fn checkout_member_branch(sub_dir: &Path, member_dir_name: &str, verbose: bool, result: &mut SyncResult) -> Result<()> {
-    // Check current branch
+/// Migrates a submodule from any non-main branch to main.
+/// For legacy workspaces that used per-member branches.
+fn migrate_to_main(sub_dir: &Path, result: &mut SyncResult) -> Result<()> {
     let current = git_cmd_output(sub_dir, &["rev-parse", "--abbrev-ref", "HEAD"])
         .unwrap_or_default();
     let current = current.trim();
 
-    if current == member_dir_name {
-        if verbose {
-            result.events.push(SyncEvent::BranchAlreadyOnIt(member_dir_name.to_string()));
-        }
+    if current == "main" {
         return Ok(());
     }
 
-    // Try checkout existing branch first
-    if git_cmd(sub_dir, &["checkout", member_dir_name]).is_ok() {
-        if verbose {
-            result.events.push(SyncEvent::BranchCheckedOut(member_dir_name.to_string()));
-        }
+    let old_branch = if current != "HEAD" {
+        Some(current.to_string())
+    } else {
+        None
+    };
+
+    if git_cmd(sub_dir, &["checkout", "main"]).is_err()
+        && git_cmd(sub_dir, &["checkout", "-b", "main", "origin/main"]).is_err()
+    {
+        eprintln!("Warning: could not checkout main in {}", sub_dir.display());
         return Ok(());
     }
 
-    // Checkout failed — only create if the branch doesn't exist yet.
-    // If it exists, the failure was due to dirty working tree.
-    let branch_exists = git_cmd(sub_dir, &["rev-parse", "--verify", member_dir_name]).is_ok();
-    if branch_exists {
-        anyhow::bail!(
-            "Cannot switch to branch '{}': working tree has uncommitted changes. \
-             Commit or stash changes in the submodule first.",
-            member_dir_name
-        );
+    if let Some(old_branch) = old_branch {
+        result.events.push(SyncEvent::BranchMigrated(old_branch.clone()));
+        if git_cmd(sub_dir, &["branch", "-d", &old_branch]).is_err() {
+            eprintln!(
+                "Warning: branch '{}' has unmerged commits in {} — preserved",
+                old_branch,
+                sub_dir.display()
+            );
+        }
     }
 
-    git_cmd(sub_dir, &["checkout", "-b", member_dir_name])?;
-    if verbose {
-        result.events.push(SyncEvent::BranchCreated(member_dir_name.to_string()));
-    }
     Ok(())
 }
 
@@ -303,6 +347,23 @@ mod tests {
         (ws, member.to_string(), agent)
     }
 
+    fn default_sync_params<'a>(
+        ws_root: &'a Path,
+        member_dir_name: &'a str,
+        coding_agent: &'a CodingAgentDef,
+    ) -> SyncWorkspaceParams<'a> {
+        SyncWorkspaceParams {
+            ws_root,
+            member_dir_name,
+            coding_agent,
+            verbose: false,
+            push: false,
+            project_number: None,
+            github_repo: None,
+            projects: &[],
+        }
+    }
+
     #[test]
     fn sync_recopies_changed_ralph_yml() {
         let tmp = tempfile::tempdir().unwrap();
@@ -314,27 +375,18 @@ mod tests {
             "v: 1"
         );
 
-        // Modify ralph.yml in team/ submodule (simulating upstream change)
+        // Modify ralph.yml in team/ submodule (simulating upstream change).
+        // No mtime manipulation — content-based copy_if_changed should detect
+        // the difference regardless of filesystem timestamps.
         let source = ws.join("team/members").join(&member).join("ralph.yml");
         fs::write(&source, "updated: true").unwrap();
 
-        // Ensure source is newer
-        let now = filetime::FileTime::from_unix_time(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64
-                + 2,
-            0,
-        );
-        filetime::set_file_mtime(&source, now).unwrap();
-
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         assert_eq!(
             fs::read_to_string(ws.join("ralph.yml")).unwrap(),
             "updated: true",
-            "Sync should re-copy the updated ralph.yml"
+            "Sync should re-copy the updated ralph.yml based on content difference"
         );
     }
 
@@ -357,7 +409,7 @@ mod tests {
         fs::create_dir_all(&member_agents).unwrap();
         fs::write(member_agents.join("new-agent.md"), "# New Agent").unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         let new_count = fs::read_dir(&agents_dir)
             .unwrap()
@@ -381,8 +433,8 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Run sync twice
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         // Verify workspace is still correct
         assert!(ws.join("PROMPT.md").exists());
@@ -398,31 +450,21 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Modify a context file in the team submodule and commit it
-        // (simulating an upstream change that arrives via submodule update)
+        // (simulating an upstream change that arrives via submodule update).
+        // No mtime manipulation — content-based comparison handles this.
         let team_sub = ws.join("team");
         let source = team_sub.join("members").join(&member).join("ralph.yml");
         fs::write(&source, "updated: true").unwrap();
         git_cmd(&team_sub, &["add", "-A"]).unwrap();
         git_cmd(&team_sub, &["commit", "-m", "upstream change"]).unwrap();
 
-        // Ensure source is newer than workspace copy
-        let now = filetime::FileTime::from_unix_time(
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs() as i64
-                + 2,
-            0,
-        );
-        filetime::set_file_mtime(&source, now).unwrap();
-
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         // The workspace ralph.yml should have the updated content
         assert_eq!(
             fs::read_to_string(ws.join("ralph.yml")).unwrap(),
             "updated: true",
-            "Sync should re-copy the updated ralph.yml"
+            "Sync should re-copy the updated ralph.yml based on content difference"
         );
 
         // Working tree should be clean after sync (changes committed)
@@ -440,12 +482,12 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Sync once — no changes expected
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         // Count commits before and after a second sync
         let log_before = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         let log_after = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
         assert_eq!(
@@ -456,23 +498,42 @@ mod tests {
     }
 
     #[test]
-    fn sync_member_branch_in_team_submodule() {
+    fn sync_picks_up_content_change_despite_older_mtime() {
         let tmp = tempfile::tempdir().unwrap();
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
-        // After initial create, team/ submodule should be on member branch
+        // Modify ralph.yml in team/ submodule (simulating upstream content change)
+        let source = ws.join("team/members").join(&member).join("ralph.yml");
+        fs::write(&source, "changed-by-submodule-update").unwrap();
+
+        // Set source mtime OLDER than dest — simulating git submodule checkout
+        // resetting timestamps to an older value (the core bug scenario).
+        let old_time = filetime::FileTime::from_unix_time(1_000_000, 0);
+        filetime::set_file_mtime(&source, old_time).unwrap();
+
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
+
+        assert_eq!(
+            fs::read_to_string(ws.join("ralph.yml")).unwrap(),
+            "changed-by-submodule-update",
+            "AC-03: sync should detect content change despite source having older mtime"
+        );
+    }
+
+    #[test]
+    fn sync_team_submodule_on_main() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, _member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Sync — team/ submodule should end up on main (no member branches)
+        sync_workspace(&default_sync_params(&ws, "arch-01", &agent)).unwrap();
+
         let team_sub = ws.join("team");
-        let branch = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
-        assert_eq!(branch.trim(), member, "team/ should be on member branch");
-
-        // Sync and verify branch is still correct (not detached HEAD)
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
-
         let branch = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
         assert_eq!(
             branch.trim(),
-            member,
-            "team/ should remain on member branch after sync (not detached HEAD)"
+            "main",
+            "AC-01: team/ submodule should be on main after sync, not a member branch"
         );
     }
 
@@ -523,7 +584,7 @@ mod tests {
         assert!(!ws.join(".claude/settings.json").exists());
 
         // assemble_agent_dir_submodule always copies settings.json unconditionally
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         assert!(
             ws.join(".claude/settings.json").exists(),
@@ -544,8 +605,8 @@ mod tests {
         // Count commits before and after sync (settings.json already up-to-date)
         let log_before = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         let log_after = git_cmd_output(&ws, &["rev-list", "--count", "HEAD"]).unwrap();
         assert_eq!(
@@ -566,7 +627,7 @@ mod tests {
         let inbox_content = r#"{"ts":"2026-03-22T12:00:00Z","from":"brain","message":"test message"}"#;
         fs::write(ralph_dir.join("loop-inbox.jsonl"), inbox_content).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, None, None).unwrap();
+        sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
 
         let inbox_after = fs::read_to_string(ralph_dir.join("loop-inbox.jsonl")).unwrap();
         assert_eq!(
@@ -582,7 +643,10 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Verbose mode should complete without error
-        sync_workspace(&ws, &member, &agent, true, false, None, None).unwrap();
+        sync_workspace(&SyncWorkspaceParams {
+            verbose: true,
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
 
         // Workspace should still be valid
         assert!(ws.join("PROMPT.md").exists());
@@ -603,15 +667,11 @@ mod tests {
         )
         .unwrap();
 
-        sync_workspace(
-            &ws,
-            &member,
-            &agent,
-            false,
-            false,
-            Some(99),
-            Some("testorg/test-team"),
-        )
+        sync_workspace(&SyncWorkspaceParams {
+            project_number: Some(99),
+            github_repo: Some("testorg/test-team"),
+            ..default_sync_params(&ws, &member, &agent)
+        })
         .unwrap();
 
         // Verify CLAUDE.md contains injected context
@@ -651,10 +711,15 @@ mod tests {
         let (ws, member, agent) = setup_syncable_workspace(tmp.path());
 
         // Run sync twice with context params
-        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo")).unwrap();
+        let ctx_params = SyncWorkspaceParams {
+            project_number: Some(42),
+            github_repo: Some("org/repo"),
+            ..default_sync_params(&ws, &member, &agent)
+        };
+        sync_workspace(&ctx_params).unwrap();
         let claude_1 = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
 
-        sync_workspace(&ws, &member, &agent, false, false, Some(42), Some("org/repo")).unwrap();
+        sync_workspace(&ctx_params).unwrap();
         let claude_2 = fs::read_to_string(ws.join("CLAUDE.md")).unwrap();
 
         assert_eq!(
@@ -666,6 +731,322 @@ mod tests {
             claude_2.matches("<!-- BM:WORKSPACE_CONTEXT -->").count(),
             1,
             "Should have exactly one start marker after multiple syncs"
+        );
+    }
+
+    // ── New-project provisioning tests (Issue #33) ──────────────────
+
+    fn setup_syncable_workspace_with_fork(tmp: &Path) -> (PathBuf, String, CodingAgentDef, PathBuf) {
+        let (ws, member, agent) = setup_syncable_workspace(tmp);
+        let fork = crate::workspace::repo::tests::setup_fork_repo(tmp, "new-project-fork");
+        (ws, member, agent, fork)
+    }
+
+    #[test]
+    fn sync_provisions_new_project_submodule() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
+        let fork_url = fork.to_str().unwrap();
+
+        sync_workspace(&SyncWorkspaceParams {
+            projects: &[("new-project", fork_url)],
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
+
+        let project_dir = ws.join("projects/new-project");
+        assert!(
+            project_dir.is_dir(),
+            "AC-01: new project should be provisioned as submodule at projects/new-project/"
+        );
+        assert!(
+            project_dir.join("README.md").exists(),
+            "AC-01: provisioned project should contain fork content"
+        );
+    }
+
+    #[test]
+    fn sync_provisions_project_on_main() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
+        let fork_url = fork.to_str().unwrap();
+
+        sync_workspace(&SyncWorkspaceParams {
+            projects: &[("new-project", fork_url)],
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
+
+        let project_dir = ws.join("projects/new-project");
+        assert!(
+            project_dir.is_dir(),
+            "project must exist before checking branch"
+        );
+        let branch = git_cmd_output(&project_dir, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch.trim(), "main",
+            "AC-01: provisioned project submodule should be on main, not a member branch"
+        );
+    }
+
+    #[test]
+    fn sync_existing_projects_unaffected_by_empty_manifest() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fork = crate::workspace::repo::tests::setup_fork_repo(tmp.path(), "existing-proj");
+        let fork_url_str = fork.to_str().unwrap().to_string();
+        let member = "arch-01";
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+        let agent = claude_code_agent();
+        let projects = [("existing-proj", fork_url_str.as_str())];
+        let params = test_ws_params(
+            &team_repo, &workspace_base, member,
+            &projects, &agent,
+        );
+        create_workspace_repo(&params).unwrap();
+        let ws = workspace_base.join(member);
+
+        // Sync with no new projects — existing should remain intact
+        sync_workspace(&default_sync_params(&ws, member, &agent)).unwrap();
+
+        assert!(
+            ws.join("projects/existing-proj").is_dir(),
+            "AC-03: existing project submodule should not be affected"
+        );
+        assert!(
+            ws.join("projects/existing-proj/README.md").exists(),
+            "AC-03: existing project content should be intact"
+        );
+    }
+
+    #[test]
+    fn sync_project_provisioning_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
+        let fork_url = fork.to_str().unwrap();
+
+        let projects: &[(&str, &str)] = &[("new-project", fork_url)];
+
+        // First sync provisions it
+        sync_workspace(&SyncWorkspaceParams {
+            projects,
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
+        assert!(ws.join("projects/new-project").is_dir());
+
+        // Second sync should not error or duplicate
+        sync_workspace(&SyncWorkspaceParams {
+            projects,
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
+        assert!(
+            ws.join("projects/new-project").is_dir(),
+            "AC-04: project should still exist after idempotent re-sync"
+        );
+    }
+
+    #[test]
+    fn sync_emits_project_provisioned_event() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
+        let fork_url = fork.to_str().unwrap();
+
+        let result = sync_workspace(&SyncWorkspaceParams {
+            projects: &[("new-project", fork_url)],
+            ..default_sync_params(&ws, &member, &agent)
+        }).unwrap();
+
+        let provisioned = result.events.iter().any(|e| matches!(e, SyncEvent::ProjectProvisioned(name) if name == "new-project"));
+        assert!(
+            provisioned,
+            "AC-06: SyncResult events should contain ProjectProvisioned for new-project"
+        );
+    }
+
+    #[test]
+    fn sync_partial_failure_first_project_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, fork) = setup_syncable_workspace_with_fork(tmp.path());
+        let fork_url = fork.to_str().unwrap();
+
+        let result = sync_workspace(&SyncWorkspaceParams {
+            projects: &[("good-project", fork_url), ("bad-project", "/nonexistent/repo")],
+            ..default_sync_params(&ws, &member, &agent)
+        });
+
+        // The function should not hard-fail — it should provision what it can
+        assert!(
+            result.is_ok(),
+            "AC-07: sync should not hard-fail when one project fails; got: {:?}",
+            result.err()
+        );
+        assert!(
+            ws.join("projects/good-project").is_dir(),
+            "AC-07: first project should be provisioned even when second fails"
+        );
+    }
+
+    #[test]
+    fn sync_provisioning_error_includes_project_name_and_url() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent, _fork) = setup_syncable_workspace_with_fork(tmp.path());
+
+        let result = sync_workspace(&SyncWorkspaceParams {
+            projects: &[("bad-project", "/nonexistent/repo")],
+            ..default_sync_params(&ws, &member, &agent)
+        });
+
+        // Whether the function returns Ok or Err, the error message should be actionable
+        match result {
+            Ok(r) => {
+                // If Ok, check events for error info
+                let has_error_info = format!("{:?}", r.events);
+                assert!(
+                    has_error_info.contains("bad-project") || has_error_info.contains("/nonexistent/repo"),
+                    "AC-08: error info should include project name or URL in events; got: {}",
+                    has_error_info
+                );
+            }
+            Err(e) => {
+                let msg = format!("{:#}", e);
+                assert!(
+                    msg.contains("bad-project"),
+                    "AC-08: error should include project name 'bad-project'; got: {}",
+                    msg
+                );
+                assert!(
+                    msg.contains("/nonexistent/repo"),
+                    "AC-08: error should include fork URL '/nonexistent/repo'; got: {}",
+                    msg
+                );
+            }
+        }
+    }
+
+    // ── Member branch migration tests (Issue #13) ─────────────────
+
+    #[test]
+    fn sync_migrates_member_branch_to_main() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Simulate a legacy workspace that has a member branch
+        let team_sub = ws.join("team");
+        git_cmd(&team_sub, &["checkout", "-b", &member]).unwrap();
+        let branch_before = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch_before.trim(), &member,
+            "precondition: team/ should start on member branch"
+        );
+
+        // Sync should migrate to main
+        let result = sync_workspace(&default_sync_params(&ws, &member, &agent)).unwrap();
+
+        // After migration, team submodule should be on main
+        let branch_after = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch_after.trim(), "main",
+            "AC-07: team/ should be migrated to main after sync"
+        );
+
+        // Old member branch should be deleted
+        let branch_list = git_cmd_output(&team_sub, &["branch", "--list", &member]).unwrap();
+        assert!(
+            branch_list.trim().is_empty(),
+            "AC-07: old member branch '{}' should be deleted after migration",
+            member
+        );
+
+        // BranchMigrated event should be emitted (unconditionally — visible without -v)
+        let migrated = result.events.iter().any(|e| matches!(e, SyncEvent::BranchMigrated(name) if name == &member));
+        assert!(
+            migrated,
+            "AC-07: SyncResult events should contain BranchMigrated for '{}'",
+            member
+        );
+    }
+
+    #[test]
+    fn sync_migrates_project_submodule_branch_to_main() {
+        let tmp = tempfile::tempdir().unwrap();
+        let fork = crate::workspace::repo::tests::setup_fork_repo(tmp.path(), "migr-proj");
+        let fork_url_str = fork.to_str().unwrap().to_string();
+        let member = "arch-01";
+        let team_repo = setup_team_repo_for_ws(tmp.path());
+        let workspace_base = tmp.path().join("workzone");
+        fs::create_dir_all(&workspace_base).unwrap();
+        let agent = claude_code_agent();
+        let projects = [("migr-proj", fork_url_str.as_str())];
+        let params = test_ws_params(&team_repo, &workspace_base, member, &projects, &agent);
+        create_workspace_repo(&params).unwrap();
+        let ws = workspace_base.join(member);
+
+        // Simulate a legacy workspace with member branch in project submodule
+        let proj_sub = ws.join("projects/migr-proj");
+        git_cmd(&proj_sub, &["checkout", "-b", member]).unwrap();
+        let branch_before = git_cmd_output(&proj_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch_before.trim(), member,
+            "precondition: project submodule should start on member branch"
+        );
+
+        // Sync should migrate project submodule to main
+        sync_workspace(&default_sync_params(&ws, member, &agent)).unwrap();
+
+        let branch_after = git_cmd_output(&proj_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch_after.trim(), "main",
+            "AC-07: project submodule should be migrated to main after sync"
+        );
+
+        // Old member branch should be deleted
+        let branch_list = git_cmd_output(&proj_sub, &["branch", "--list", member]).unwrap();
+        assert!(
+            branch_list.trim().is_empty(),
+            "AC-07: old member branch should be deleted from project submodule"
+        );
+    }
+
+    #[test]
+    fn sync_migration_logs_warning_on_unmerged_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, member, agent) = setup_syncable_workspace(tmp.path());
+
+        // Simulate a legacy workspace with member branch, then create divergent commits
+        let team_sub = ws.join("team");
+        git_cmd(&team_sub, &["checkout", "-b", &member]).unwrap();
+        fs::write(team_sub.join("divergent.txt"), "unmerged work").unwrap();
+        git_cmd(&team_sub, &["add", "divergent.txt"]).unwrap();
+        git_cmd(&team_sub, &["commit", "-m", "divergent commit on member branch"]).unwrap();
+
+        // Switch to main and make a different commit so branches diverge
+        git_cmd(&team_sub, &["checkout", "main"]).unwrap();
+        fs::write(team_sub.join("main-only.txt"), "main work").unwrap();
+        git_cmd(&team_sub, &["add", "main-only.txt"]).unwrap();
+        git_cmd(&team_sub, &["commit", "-m", "main diverges"]).unwrap();
+
+        // Switch back to member branch so sync finds it
+        git_cmd(&team_sub, &["checkout", &member]).unwrap();
+
+        // Sync should succeed (not error out) even with unmerged branch
+        let result = sync_workspace(&default_sync_params(&ws, &member, &agent));
+        assert!(
+            result.is_ok(),
+            "AC-07: sync should not fail when member branch has unmerged commits; got: {:?}",
+            result.err()
+        );
+
+        // The member branch should be preserved (not deleted) since it has unmerged work
+        let branch_list = git_cmd_output(&team_sub, &["branch", "--list", &member]).unwrap();
+        assert!(
+            !branch_list.trim().is_empty(),
+            "AC-07: member branch with unmerged commits should be preserved (not forcefully deleted)"
+        );
+
+        // Submodule should still be on main after migration attempt
+        let branch_after = git_cmd_output(&team_sub, &["rev-parse", "--abbrev-ref", "HEAD"]).unwrap();
+        assert_eq!(
+            branch_after.trim(), "main",
+            "AC-07: team submodule should be on main even when old branch can't be deleted"
         );
     }
 }

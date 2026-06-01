@@ -65,7 +65,7 @@ fn generate_context_section(
 ///
 /// Uses marker-delimited injection (`<!-- BM:WORKSPACE_CONTEXT -->`) for
 /// idempotent updates. Runs unconditionally on every sync — decoupled from
-/// the `copy_if_newer` timestamp check on the context file.
+/// the `copy_if_changed` content check on the context file.
 ///
 /// Reads member name and role from `team/members/<member>/botminter.yml`.
 /// Gracefully handles missing optional fields and missing files.
