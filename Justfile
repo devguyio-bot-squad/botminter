@@ -12,6 +12,11 @@ default:
 build: console-build
     cargo build -p bm --features console
 
+# Build and install bm + bm-agent binaries into ~/.cargo/bin/ (release mode)
+install: console-build
+    cargo install --path crates/bm --features console
+    @echo "Installed: ~/.cargo/bin/bm and ~/.cargo/bin/bm-agent"
+
 # Run unit tests only (includes console feature for embedded asset tests)
 unit:
     cargo test -p bm --features console
