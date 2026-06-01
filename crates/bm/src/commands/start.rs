@@ -88,12 +88,12 @@ pub fn run(
     let mut sessions_created = 0usize;
     if let Ok(client) = DaemonClient::connect(&team.name) {
         for m in &result.launched {
-            if client.start_session(&m.name, "loop").is_ok() {
+            if client.start_session(&m.name, "loop", Some(m.pid)).is_ok() {
                 sessions_created += 1;
             }
         }
         for m in &result.skipped {
-            if client.start_session(&m.name, "loop").is_ok() {
+            if client.start_session(&m.name, "loop", None).is_ok() {
                 sessions_created += 1;
             }
         }

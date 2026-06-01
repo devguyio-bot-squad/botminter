@@ -72,6 +72,6 @@ pub fn run(
 /// Returns the session ID on success, None if the daemon is not running.
 fn try_start_daemon_session(team_name: &str, member: &str) -> Option<String> {
     let client = DaemonClient::connect(team_name).ok()?;
-    let resp = client.start_session(member, "interactive").ok()?;
+    let resp = client.start_session(member, "interactive", None).ok()?;
     resp.session.map(|s| s.session_id)
 }

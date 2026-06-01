@@ -14,7 +14,8 @@ use std::time::Duration;
 use libtest_mimic::Trial;
 
 use super::super::helpers::{
-    force_kill, is_alive, read_pid_from_state, wait_for_exit, E2eConfig, GithubSuite, ProcessGuard,
+    find_free_port, force_kill, is_alive, read_pid_from_state, wait_for_exit, E2eConfig,
+    GithubSuite, ProcessGuard,
 };
 use super::super::test_env::TestEnv;
 
@@ -530,12 +531,15 @@ fn session_daemon_restart_recovery_fn(
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let mut guard = ProcessGuard::new(env, TEAM_NAME);
+        let port = find_free_port();
+        let port_str = port.to_string();
 
         // Start daemon in poll mode
         let daemon_output = env
             .command("bm")
             .args([
-                "daemon", "start", "--mode", "poll", "--interval", "60", "-t", TEAM_NAME,
+                "daemon", "start", "--mode", "poll", "--port", &port_str, "--interval", "60", "-t",
+                TEAM_NAME,
             ])
             .output();
         assert!(
@@ -574,7 +578,8 @@ fn session_daemon_restart_recovery_fn(
         let restart_output = env
             .command("bm")
             .args([
-                "daemon", "start", "--mode", "poll", "--interval", "60", "-t", TEAM_NAME,
+                "daemon", "start", "--mode", "poll", "--port", &port_str, "--interval", "60", "-t",
+                TEAM_NAME,
             ])
             .output();
         assert!(
@@ -626,6 +631,24 @@ fn session_failed_interactive_retention_fn(
                 .args(["stop", "--force", "-t", TEAM_NAME])
                 .output();
             std::thread::sleep(Duration::from_secs(1));
+        }
+
+        // Ensure a daemon is running so the interactive session is tracked.
+        // Previous scenarios may have stopped the daemon.
+        let port = find_free_port();
+        let port_str = port.to_string();
+        let daemon_out = env
+            .command("bm")
+            .args([
+                "daemon", "start", "--mode", "poll", "--port", &port_str, "--interval", "60", "-t",
+                TEAM_NAME,
+            ])
+            .output();
+        if !daemon_out.status.success() {
+            let stderr = String::from_utf8_lossy(&daemon_out.stderr);
+            if !stderr.contains("already running") {
+                panic!("Failed to start daemon for retention test: {}", stderr);
+            }
         }
 
         // Clean stale artifacts

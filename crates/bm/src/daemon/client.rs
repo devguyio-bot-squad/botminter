@@ -158,11 +158,17 @@ impl DaemonClient {
     }
 
     /// POST /api/sessions/start — create and register a new session for `member`.
-    pub fn start_session(&self, member: &str, session_type: &str) -> Result<StartSessionResponse> {
+    pub fn start_session(
+        &self,
+        member: &str,
+        session_type: &str,
+        agent_pid: Option<u32>,
+    ) -> Result<StartSessionResponse> {
         let url = format!("{}/api/sessions/start", self.base_url);
         let req = StartSessionRequest {
             member: member.to_string(),
             session_type: session_type.to_string(),
+            agent_pid,
         };
         let resp = self
             .client
@@ -650,6 +656,7 @@ mod tests {
         let req = StartSessionRequest {
             member: "alice".to_string(),
             session_type: "interactive".to_string(),
+            agent_pid: None,
         };
         let json = serde_json::to_string(&req).unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
@@ -869,7 +876,7 @@ mod tests {
             base_url: session_server_base_url(),
             client: reqwest::blocking::Client::new(),
         };
-        let result = client.start_session("alice", "interactive");
+        let result = client.start_session("alice", "interactive", None);
         let resp = result.unwrap();
         assert!(resp.ok, "start_session must return ok=true on success");
         assert!(

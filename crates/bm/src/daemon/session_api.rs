@@ -29,6 +29,8 @@ pub struct StartSessionRequest {
     pub member: String,
     /// "loop", "brain", or "interactive"
     pub session_type: String,
+    #[serde(default)]
+    pub agent_pid: Option<u32>,
 }
 
 // ── Response types ───────────────────────────────────────────────────────────
@@ -249,10 +251,16 @@ pub(super) async fn start_session_handler(
 
     let manager = Arc::clone(&state.session_manager);
     let member = req.member.clone();
+    let agent_pid = req.agent_pid;
 
     let result = tokio::task::spawn_blocking(move || {
         let mut m = manager.lock().unwrap();
-        m.create_session(&member, session_type)
+        let record = m.create_session(&member, session_type)?;
+        if let Some(pid) = agent_pid {
+            m.registry.set_agent_pid(&record.session_id, pid)?;
+            m.registry.save()?;
+        }
+        Ok::<_, anyhow::Error>(record)
     })
     .await;
 

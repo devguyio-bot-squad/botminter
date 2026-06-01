@@ -99,6 +99,15 @@ impl SessionRegistry {
         Ok(())
     }
 
+    pub fn set_agent_pid(&mut self, id: &SessionId, pid: u32) -> Result<()> {
+        let record = self
+            .sessions
+            .get_mut(id)
+            .ok_or_else(|| anyhow!("Session {} not found", id))?;
+        record.agent_pid = Some(pid);
+        Ok(())
+    }
+
     /// Remove a session record from the registry.
     pub fn remove(&mut self, id: &SessionId) -> Result<()> {
         self.sessions

@@ -966,12 +966,16 @@ fn daemon_start_poll_fn(
             .unwrap();
         }
 
+        let daemon_port = find_free_port();
+        let daemon_port_str = daemon_port.to_string();
         let mut cmd = env.command("bm");
         cmd.args([
             "daemon",
             "start",
             "--mode",
             "poll",
+            "--port",
+            &daemon_port_str,
             "--interval",
             "2",
             "-t",
@@ -1076,10 +1080,12 @@ fn daemon_start_webhook_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
+        let port = find_free_port();
+        let port_str = port.to_string();
         let out = env
             .command("bm")
             .args([
-                "daemon", "start", "--mode", "webhook", "--port", "19500", "-t", TEAM_NAME,
+                "daemon", "start", "--mode", "webhook", "--port", &port_str, "-t", TEAM_NAME,
             ])
             .run();
         assert!(out.contains("Daemon started"));
@@ -1123,12 +1129,16 @@ fn daemon_sigkill_escalation_fn(
             .run();
 
         let _guard = DaemonGuard::new(env, TEAM_NAME);
+        let daemon_port = find_free_port();
+        let daemon_port_str = daemon_port.to_string();
         let mut cmd = env.command("bm");
         cmd.args([
             "daemon",
             "start",
             "--mode",
             "poll",
+            "--port",
+            &daemon_port_str,
             "--interval",
             "2",
             "-t",
@@ -1190,13 +1200,15 @@ fn daemon_stale_pid_fn(
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let _guard = DaemonGuard::new(env, TEAM_NAME);
+        let port = find_free_port();
+        let port_str = port.to_string();
         let pid_dir = env.home.join(".botminter");
         fs::create_dir_all(&pid_dir).unwrap();
         fs::write(pid_dir.join(format!("daemon-{}.pid", TEAM_NAME)), "99999").unwrap();
 
         let out = env
             .command("bm")
-            .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
+            .args(["daemon", "start", "--mode", "poll", "--port", &port_str, "-t", TEAM_NAME])
             .run();
         assert!(
             out.contains("Daemon started"),
@@ -1215,13 +1227,15 @@ fn daemon_already_running_fn(
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let _guard = DaemonGuard::new(env, TEAM_NAME);
+        let port = find_free_port();
+        let port_str = port.to_string();
         env.command("bm")
-            .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
+            .args(["daemon", "start", "--mode", "poll", "--port", &port_str, "-t", TEAM_NAME])
             .run();
 
         let output = env
             .command("bm")
-            .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
+            .args(["daemon", "start", "--mode", "poll", "--port", &port_str, "-t", TEAM_NAME])
             .output();
         assert!(!output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1233,8 +1247,10 @@ fn daemon_crashed_detection_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
+        let port = find_free_port();
+        let port_str = port.to_string();
         env.command("bm")
-            .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
+            .args(["daemon", "start", "--mode", "poll", "--port", &port_str, "-t", TEAM_NAME])
             .run();
 
         let pid_file = env
