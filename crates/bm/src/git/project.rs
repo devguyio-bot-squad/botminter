@@ -56,6 +56,7 @@ pub fn add_project(team_repo: &Path, url: &str, github_repo: &str) -> Result<Str
     )?;
     let commit_msg = format!("feat: add project {}", name);
     run_git(team_repo, &["commit", "-m", &commit_msg])?;
+    run_git(team_repo, &["push"])?;
 
     Ok(name)
 }

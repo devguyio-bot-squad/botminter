@@ -93,6 +93,13 @@ fn setup_team(tmp: &Path, team_name: &str, profile_name: &str) -> PathBuf {
     git(&team_repo, &["add", "-A"]);
     git(&team_repo, &["commit", "-m", "feat: init team repo"]);
 
+    // Set up a bare remote so `git push` works (mirrors real GitHub origin)
+    let bare_remote = team_dir.join("team.git");
+    fs::create_dir_all(&bare_remote).unwrap();
+    git(&bare_remote, &["init", "--bare"]);
+    git(&team_repo, &["remote", "add", "origin", bare_remote.to_str().unwrap()]);
+    git(&team_repo, &["push", "-u", "origin", "main"]);
+
     // Save config
     let config = BotminterConfig {
         workzone: workzone.clone(),
