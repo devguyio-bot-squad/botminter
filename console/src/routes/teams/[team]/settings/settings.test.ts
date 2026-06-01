@@ -105,7 +105,7 @@ describe('Settings Page', () => {
 		render(SettingsPage);
 
 		await waitFor(() => {
-			expect(screen.getByText('Sync to workspaces')).toBeInTheDocument();
+			expect(screen.getByText('Sync team')).toBeInTheDocument();
 		});
 	});
 
@@ -130,10 +130,10 @@ describe('Settings Page', () => {
 		render(SettingsPage);
 
 		await waitFor(() => {
-			expect(screen.getByText('Sync to workspaces')).toBeInTheDocument();
+			expect(screen.getByText('Sync team')).toBeInTheDocument();
 		});
 
-		const syncButton = screen.getByText('Sync to workspaces');
+		const syncButton = screen.getByText('Sync team');
 		syncButton.click();
 
 		await waitFor(() => {
@@ -145,10 +145,10 @@ describe('Settings Page', () => {
 		render(SettingsPage);
 
 		await waitFor(() => {
-			expect(screen.getByText('Sync to workspaces')).toBeInTheDocument();
+			expect(screen.getByText('Sync team')).toBeInTheDocument();
 		});
 
-		screen.getByText('Sync to workspaces').click();
+		screen.getByText('Sync team').click();
 
 		await waitFor(() => {
 			expect(screen.getByText('Sync complete: 0 created, 2 updated, 0 failures')).toBeInTheDocument();
@@ -160,10 +160,10 @@ describe('Settings Page', () => {
 		render(SettingsPage);
 
 		await waitFor(() => {
-			expect(screen.getByText('Sync to workspaces')).toBeInTheDocument();
+			expect(screen.getByText('Sync team')).toBeInTheDocument();
 		});
 
-		screen.getByText('Sync to workspaces').click();
+		screen.getByText('Sync team').click();
 
 		await waitFor(() => {
 			expect(screen.getByText('Network error')).toBeInTheDocument();

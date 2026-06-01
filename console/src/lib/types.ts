@@ -136,3 +136,16 @@ export interface SyncResponse {
 export interface ApiError {
 	error: string;
 }
+
+export type SessionState = 'Creating' | 'Active' | 'Finalizing' | 'Completed' | 'Failed' | 'Killed' | 'Retained';
+
+export type SessionType = 'interactive' | 'loop' | 'brain';
+
+export interface SessionSummary {
+	session_id: string;
+	member: string;
+	session_type: SessionType;
+	state: SessionState;
+	created_at: string;
+	elapsed_seconds: number;
+}

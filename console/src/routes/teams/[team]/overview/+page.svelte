@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
-	import type { TeamOverview, ProcessData } from '$lib/types.js';
+	import type { TeamOverview, ProcessData, SessionSummary } from '$lib/types.js';
 	import { api } from '$lib/api.js';
 	import { roleColor } from '$lib/role-colors.js';
 
 	const team = $derived($page.params.team ?? '');
 	let overview = $state<TeamOverview | null>(null);
+	let sessions = $state<SessionSummary[]>([]);
 	let error = $state<string | null>(null);
 	let loading = $state(true);
 
@@ -15,11 +16,13 @@
 
 	onMount(async () => {
 		try {
-			const [overviewData, processData] = await Promise.all([
+			const [overviewData, processData, sessionsData] = await Promise.all([
 				api.fetchOverview(team),
-				api.fetchProcess(team).catch(() => null)
+				api.fetchProcess(team).catch(() => null),
+				api.fetchSessions(team).catch(() => [] as SessionSummary[])
 			]);
 			overview = overviewData;
+			sessions = sessionsData;
 
 			// Group status prefixes by role
 			if (processData) {
@@ -256,6 +259,16 @@
 						</div>
 					{/if}
 				</div>
+			</div>
+		</div>
+
+		<!-- Sessions -->
+		<div class="bg-surface-raised border border-surface-border rounded-lg">
+			<div class="px-5 py-3 border-b border-surface-border">
+				<h2 class="text-sm font-medium text-gray-600">Sessions</h2>
+			</div>
+			<div class="p-5">
+				<span class="text-xs text-gray-500">{sessions.filter(s => s.state === 'Active').length} active</span>
 			</div>
 		</div>
 

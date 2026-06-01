@@ -53,6 +53,7 @@ vi.mock('$lib/api.js', () => ({
 			views: [],
 			markdown: ''
 		}),
+		fetchSessions: vi.fn().mockResolvedValue([]),
 		fetchTeams: vi.fn().mockResolvedValue([])
 	}
 }));
