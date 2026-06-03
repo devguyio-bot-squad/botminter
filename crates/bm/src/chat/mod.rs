@@ -1023,12 +1023,13 @@ mod tests {
         assert_eq!(session.ws_path, ws);
     }
 
-    // inject_app_credentials tests
-    // NOTE: These tests manipulate process-global env vars and MUST run
-    // with --test-threads=1.
+    // inject_app_credentials tests — serialized via mutex because they
+    // manipulate process-global env vars (GH_TOKEN, GITHUB_TOKEN, GH_CONFIG_DIR).
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn inject_app_credentials_sets_gh_config_dir_when_hosts_yml_present() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
@@ -1052,6 +1053,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_removes_conflicting_tokens() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
@@ -1079,6 +1081,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_noop_when_no_config_dir() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
 
         std::env::set_var("GH_TOKEN", "preserved");
@@ -1109,6 +1112,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_noop_when_hosts_yml_missing() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();

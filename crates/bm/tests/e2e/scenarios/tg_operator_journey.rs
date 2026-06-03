@@ -1,7 +1,7 @@
 //! Telegram Operator Journey
 //!
 //! Exercises the Telegram (external) bridge flow as a lighter scenario:
-//! init -> hire -> identity add -> sync -> start -> verify env vars -> stop -> cleanup
+//! init -> hire -> identity add -> provision workspace -> start -> verify env vars -> stop -> cleanup
 //!
 //! No daemon tests, no per-member start/stop, no idempotency second pass.
 //! Just the Telegram-specific bridge lifecycle.
@@ -12,6 +12,9 @@ use std::fs;
 use std::time::Duration;
 
 use libtest_mimic::Trial;
+
+use bm::workspace;
+use bm::profile::CodingAgentDef;
 
 use super::super::helpers::{
     cleanup_project_boards, read_pid_from_state,
@@ -103,16 +106,64 @@ fn bridge_identity_add_fn(
     }
 }
 
-fn sync_bridge_and_repos_fn(
+fn provision_workspace_fn(
     _gh_token: String,
 ) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let stdout = env.command("bm")
-            .args(["teams", "sync", "--bridge", "--repos", "-t", TEAM_NAME])
-            .run();
-        assert!(!stdout.contains("No bridge configured"));
+        let team_dir = env.home.join("workspaces").join(TEAM_NAME);
+        let team_repo = team_dir.join("team");
 
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
+        let coding_agent = CodingAgentDef {
+            name: "claude-code".to_string(),
+            display_name: "Claude Code".to_string(),
+            context_file: "CLAUDE.md".to_string(),
+            agent_dir: ".claude".to_string(),
+            binary: "claude".to_string(),
+            system_prompt_flag: Some("--append-system-prompt-file".to_string()),
+            skip_permissions_flag: Some("--dangerously-skip-permissions".to_string()),
+        };
+
+        let manifest_path = team_repo.join("botminter.yml");
+        let projects: Vec<(String, String)> = if manifest_path.exists() {
+            let contents = fs::read_to_string(&manifest_path).unwrap();
+            let manifest: serde_yml::Value = serde_yml::from_str(&contents).unwrap();
+            manifest["projects"]
+                .as_sequence()
+                .map(|ps| {
+                    ps.iter()
+                        .filter_map(|p| {
+                            let name = p["name"].as_str()?;
+                            let url = p["fork_url"].as_str()?;
+                            Some((name.to_string(), url.to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let project_refs: Vec<(&str, &str)> = projects
+            .iter()
+            .map(|(n, u)| (n.as_str(), u.as_str()))
+            .collect();
+
+        let params = workspace::WorkspaceRepoParams {
+            team_repo_path: &team_repo,
+            workspace_base: &team_dir,
+            member_dir_name: MEMBER_DIR,
+            team_name: TEAM_NAME,
+            projects: &project_refs,
+            github_repo: None,
+            project_number: None,
+            push: false,
+            coding_agent: &coding_agent,
+            remote_ops: None,
+            team_submodule_url: None,
+        };
+
+        workspace::create_workspace_repo(&params).unwrap();
+
+        let ws = team_dir.join(MEMBER_DIR);
         assert!(ws.join(".botminter.workspace").exists());
         assert!(ws.join("ralph.yml").exists());
     }
@@ -217,7 +268,7 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("01_init_with_tg_bridge", init_with_tg_bridge_fn(gh_org.clone(), gh_token.clone()))
         .case("02_hire_member", hire_member_fn(gh_token.clone(), app_id.clone(), app_client_id.clone(), app_installation_id.clone(), app_private_key_file.clone()))
         .case("03_bridge_identity_add", bridge_identity_add_fn(gh_token.clone()))
-        .case("04_sync_bridge_and_repos", sync_bridge_and_repos_fn(gh_token.clone()))
+        .case("04_provision_workspace", provision_workspace_fn(gh_token.clone()))
         .case("05_start_and_verify", start_and_verify_fn(gh_token.clone()))
         .case("06_stop", stop_fn())
         // ── Cleanup ──────────────────────────────────────────────────
