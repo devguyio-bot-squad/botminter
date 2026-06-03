@@ -4,6 +4,7 @@ use std::time::Duration;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
+use super::cleanup::cleanup_session;
 use super::registry::SessionRegistry;
 use super::types::{SessionId, SessionState, SessionType};
 
@@ -133,6 +134,86 @@ pub fn recover_stale_sessions<P: ProcessChecker>(
     }
 
     recovered
+}
+
+/// Check if a process with the given PID is alive using OS-level probing.
+pub fn is_pid_alive(pid: u32) -> bool {
+    let Ok(pid_i32) = i32::try_from(pid) else {
+        return false;
+    };
+    if pid_i32 <= 0 {
+        return false;
+    }
+    // SAFETY: pid_i32 is validated > 0 and within i32 range, so kill() targets a single process.
+    // Signal 0 checks existence without delivering a signal.
+    unsafe { libc::kill(pid_i32 as libc::pid_t, 0) == 0 }
+}
+
+/// Concrete ProcessChecker that uses OS-level PID probing.
+pub struct LiveProcessChecker;
+
+impl ProcessChecker for LiveProcessChecker {
+    fn is_pid_alive(&self, pid: u32) -> bool {
+        is_pid_alive(pid)
+    }
+}
+
+/// Concrete DiskUsageProvider that measures actual filesystem usage.
+pub struct FsDiskUsage;
+
+impl DiskUsageProvider for FsDiskUsage {
+    fn workspace_disk_usage(&self, path: &Path) -> Result<u64> {
+        fn dir_size(path: &Path) -> u64 {
+            let mut total = 0;
+            if let Ok(entries) = std::fs::read_dir(path) {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        total += dir_size(&p);
+                    } else if let Ok(meta) = entry.metadata() {
+                        total += meta.len();
+                    }
+                }
+            }
+            total
+        }
+        Ok(dir_size(path))
+    }
+}
+
+/// Run one GC cycle: evaluate retention policy, enforce disk budget, clean up expired sessions.
+pub fn run_cycle<D: DiskUsageProvider>(
+    registry: &mut SessionRegistry,
+    policy: &RetentionPolicy,
+    disk_provider: &D,
+) -> Vec<SessionId> {
+    let retained: Vec<RetainedSessionInfo> = registry
+        .list()
+        .into_iter()
+        .filter(|r| r.current_state == SessionState::Retained)
+        .map(|r| RetainedSessionInfo {
+            session_id: r.session_id.clone(),
+            session_type: r.session_type.clone(),
+            retained_at: r.state_transitioned_at,
+            workspace_path: r.workspace_path.clone(),
+            was_failure: false,
+        })
+        .collect();
+
+    let mut to_clean = policy.expired_sessions(&retained);
+    for id in policy.over_budget_sessions(&retained, disk_provider) {
+        if !to_clean.contains(&id) {
+            to_clean.push(id);
+        }
+    }
+
+    let mut cleaned = Vec::new();
+    for id in &to_clean {
+        if cleanup_session(registry, id).is_ok() {
+            cleaned.push(id.clone());
+        }
+    }
+    cleaned
 }
 
 #[cfg(test)]
@@ -456,6 +537,123 @@ mod tests {
             duration,
             Duration::from_secs(24 * 3600),
             "loop session must use 24h retention duration"
+        );
+    }
+
+    // --- CT-89-05: Daemon Startup Wiring — Recovery + Retention ---
+
+    #[test]
+    fn is_pid_alive_returns_false_for_nonexistent_pid() {
+        assert!(
+            !is_pid_alive(u32::MAX),
+            "is_pid_alive must return false for a PID that does not exist"
+        );
+    }
+
+    #[test]
+    fn daemon_startup_recovery_marks_dead_pid_sessions_failed() {
+        let mut registry = new_registry();
+        let id = register_with_pid(&mut registry, SessionState::Active, u32::MAX);
+
+        let checker = LiveProcessChecker;
+        let recovered = recover_stale_sessions(&mut registry, &checker);
+
+        assert!(
+            recovered.contains(&id),
+            "startup recovery with LiveProcessChecker must recover Active session with dead PID"
+        );
+        assert_eq!(
+            registry.get(&id).unwrap().current_state,
+            SessionState::Failed,
+            "Active session with dead PID must be transitioned to Failed after startup recovery"
+        );
+    }
+
+    #[test]
+    fn run_cycle_removes_expired_retained_sessions() {
+        let mut registry = new_registry();
+        let record = SessionRecord {
+            session_id: SessionId::new(),
+            member_name: "test".to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Creating,
+            created_at: Utc::now(),
+            state_transitioned_at: Utc::now(),
+            agent_pid: None,
+            workspace_path: Some(PathBuf::from("/tmp/workspace")),
+        };
+        let id = record.session_id.clone();
+        registry.register(record).unwrap();
+        registry.update_state(&id, SessionState::Active).unwrap();
+        registry
+            .update_state(&id, SessionState::Completed)
+            .unwrap();
+        registry
+            .update_state(&id, SessionState::Retained)
+            .unwrap();
+
+        let policy = RetentionPolicy {
+            loop_brain_duration: Duration::ZERO,
+            ..RetentionPolicy::default()
+        };
+        let disk = FakeDiskUsage {
+            sizes: HashMap::new(),
+        };
+
+        let cleaned = run_cycle(&mut registry, &policy, &disk);
+
+        assert!(
+            !cleaned.is_empty(),
+            "run_cycle must return IDs of expired retained sessions"
+        );
+        assert!(
+            registry.get(&id).is_none(),
+            "expired retained session must be removed from registry after run_cycle"
+        );
+    }
+
+    #[test]
+    fn run_cycle_enforces_disk_budget() {
+        let mut registry = new_registry();
+        let ws = PathBuf::from("/tmp/big-workspace");
+        let record = SessionRecord {
+            session_id: SessionId::new(),
+            member_name: "test".to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Creating,
+            created_at: Utc::now(),
+            state_transitioned_at: Utc::now(),
+            agent_pid: None,
+            workspace_path: Some(ws.clone()),
+        };
+        let id = record.session_id.clone();
+        registry.register(record).unwrap();
+        registry.update_state(&id, SessionState::Active).unwrap();
+        registry
+            .update_state(&id, SessionState::Completed)
+            .unwrap();
+        registry
+            .update_state(&id, SessionState::Retained)
+            .unwrap();
+
+        let policy = RetentionPolicy {
+            loop_brain_duration: Duration::from_secs(999_999),
+            disk_budget_bytes: Some(1_000_000_000),
+            ..RetentionPolicy::default()
+        };
+        let mut sizes = HashMap::new();
+        sizes.insert(ws, 5_000_000_000);
+        let disk = FakeDiskUsage { sizes };
+
+        let cleaned = run_cycle(&mut registry, &policy, &disk);
+
+        assert!(
+            !cleaned.is_empty(),
+            "run_cycle must evict sessions when disk budget is exceeded"
+        );
+        assert!(
+            registry.get(&id).is_none(),
+            "over-budget session must be removed from registry after run_cycle"
         );
     }
 }
