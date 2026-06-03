@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn concurrent_count_counts_active_sessions_for_member() {
-        let records = vec![
+        let records = [
             make_record_with_state("alice", SessionType::Loop, SessionState::Active),
             make_record_with_state("alice", SessionType::Brain, SessionState::Active),
             make_record_with_state("alice", SessionType::Interactive, SessionState::Active),
@@ -115,7 +115,7 @@ mod tests {
 
     #[test]
     fn concurrent_count_ignores_other_members() {
-        let records = vec![
+        let records = [
             make_record_with_state("alice", SessionType::Loop, SessionState::Active),
             make_record_with_state("alice", SessionType::Brain, SessionState::Active),
             make_record_with_state("bob", SessionType::Loop, SessionState::Active),
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn concurrent_count_ignores_non_active_sessions() {
-        let records = vec![
+        let records = [
             make_record_with_state("alice", SessionType::Loop, SessionState::Active),
             make_record_with_state("alice", SessionType::Brain, SessionState::Completed),
             make_record_with_state("alice", SessionType::Interactive, SessionState::Failed),
@@ -152,7 +152,7 @@ mod tests {
 
     #[test]
     fn history_returns_terminal_sessions() {
-        let records = vec![
+        let records = [
             make_record_with_state("alice", SessionType::Loop, SessionState::Active),
             make_record_with_state("alice", SessionType::Brain, SessionState::Completed),
             make_record_with_state("bob", SessionType::Loop, SessionState::Failed),
@@ -168,7 +168,7 @@ mod tests {
 
     #[test]
     fn history_excludes_active_sessions() {
-        let records = vec![
+        let records = [
             make_record_with_state("alice", SessionType::Loop, SessionState::Active),
             make_record_with_state("bob", SessionType::Brain, SessionState::Creating),
         ];
@@ -182,7 +182,7 @@ mod tests {
 
     #[test]
     fn history_entry_shows_normal_exit_for_completed() {
-        let records = vec![make_record_with_state(
+        let records = [make_record_with_state(
             "alice",
             SessionType::Loop,
             SessionState::Completed,
@@ -199,7 +199,7 @@ mod tests {
 
     #[test]
     fn history_entry_shows_abnormal_exit_for_failed() {
-        let records = vec![make_record_with_state(
+        let records = [make_record_with_state(
             "alice",
             SessionType::Loop,
             SessionState::Failed,
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn history_filter_by_member() {
-        let records = vec![
+        let records = [
             make_record_with_state("alice", SessionType::Loop, SessionState::Completed),
             make_record_with_state("bob", SessionType::Brain, SessionState::Completed),
         ];

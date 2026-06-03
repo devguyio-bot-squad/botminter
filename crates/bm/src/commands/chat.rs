@@ -34,5 +34,6 @@ pub fn run(
         return Ok(());
     }
 
-    chat::launch_session(&session, team, &team_repo, member, None, autonomous)
+    let exit_code = chat::launch_session(&session, team, &team_repo, member, None, autonomous)?;
+    std::process::exit(exit_code);
 }

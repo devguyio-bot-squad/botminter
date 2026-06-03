@@ -264,8 +264,8 @@ mod tests {
         use crate::formation;
         use anyhow::Result;
 
-        let _: fn(&std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32> =
-            formation::launch_ralph;
+        type LaunchRalphFn = fn(&std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32>;
+        let _: LaunchRalphFn = formation::launch_ralph;
     }
 
     #[test]

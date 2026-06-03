@@ -128,7 +128,7 @@ pub fn start_local_members(
             None => {
                 result.errors.push(MemberFailed {
                     name: member_dir_name.clone(),
-                    error: "no workspace found. Run `bm teams sync` first.".to_string(),
+                    error: "no workspace found.".to_string(),
                 });
                 continue;
             }
@@ -248,7 +248,7 @@ pub fn start_local_members(
             result.errors.push(MemberFailed {
                 name: member_dir_name.clone(),
                 error: "has bridge credentials but RObot is disabled in ralph.yml. \
-                        Run 'bm teams sync' to update."
+                        Re-provision the workspace to update RObot configuration."
                     .to_string(),
             });
         }

@@ -258,7 +258,7 @@ bm credentials export -o team-creds.yml
 
 # New machine:
 bm init --credentials-file team-creds.yml
-bm teams sync -a
+bm start
 ```
 
 ### `bm members list`
@@ -330,7 +330,7 @@ bm chat <member> [-t <team>] [--hat <hat>] [--render-system-prompt]
     - `bm chat <member> --hat executor` — hat-specific mode: agent is in character as that hat
     - `bm chat <member> --render-system-prompt` — prints the generated system prompt to stdout and exits (for debugging/inspection). Works with `--hat` too.
 - In normal mode: writes the meta-prompt to a temp file and launches the coding agent via `formation.exec_in()` (v2 teams) or direct process exec (v1 teams)
-- Requires a workspace created by `bm teams sync`
+- Creates an ephemeral session workspace automatically
 
 ### `bm meetings`
 
@@ -527,31 +527,9 @@ bm teams show [<name>] [-t <team>]
 - Lists hired members with their roles
 - Lists configured projects with their fork URLs
 
-### `bm teams sync`
+### `bm teams sync` (removed)
 
-Provision and reconcile workspaces.
-
-```bash
-bm teams sync [--repos] [--bridge] [--all|-a] [-v] [-t <team>]
-```
-
-| Parameter | Required | Description |
-|-----------|----------|-------------|
-| `--repos` | No | Push team repo to GitHub before syncing; also creates workspace repos on GitHub for new members |
-| `--bridge` | No | Provision bridge identities and rooms on the bridge |
-| `--all` / `-a` | No | Equivalent to `--repos --bridge` (all remote operations) |
-| `-v` | No | Show detailed sync status per workspace (submodule updates, file copy decisions, branch state) |
-| `-t <team>` | No | Team to operate on |
-
-**Behavior:**
-
-- Performs schema version guard
-- Optionally pushes team repo (`git push`)
-- Discovers hired members and configured projects
-- For each member: creates or syncs a workspace repo
-- New workspace: creates a git repo with `team/` submodule (and `projects/<name>/` submodules), copies context files, assembles agent dir, writes `.gitignore` and `.botminter.workspace` marker
-- Existing workspace: updates submodules to latest, checks out member branches, re-copies context files when newer, re-assembles agent dir symlinks, commits and pushes changes
-- Reports summary: "Synced N workspaces (M created, K updated)"
+This command has been removed. Sessions automatically contain the latest committed state — no manual synchronization is needed. Use `bm start` to create sessions and `bm minty` to migrate existing permanent workspaces to the session model.
 
 ## Process lifecycle
 
@@ -1126,7 +1104,7 @@ just clippy   # cargo clippy -p bm -- -D warnings
 ## Related topics
 
 - [Getting Started](../getting-started/index.md) — first-use walkthrough
-- [Workspace Model](../concepts/workspace-model.md) — how `bm teams sync` structures workspaces
+- [Workspace Model](../concepts/workspace-model.md) — session workspace layout and lifecycle
 - [Generate a Team Repo](../how-to/generate-team-repo.md) — detailed `bm init` guide
 - [Configuration Files](configuration.md) — daemon config, formation config, and credential fields
 - [Manage Knowledge](../how-to/manage-knowledge.md) — adding and organizing knowledge files

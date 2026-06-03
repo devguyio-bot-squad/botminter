@@ -250,15 +250,16 @@ fn build_session_output(
 ) -> String {
     let sessions = fetch_sessions(team_name);
     let rows = sessions.as_ref().map(|infos| {
-        let mut rows: Vec<_> = infos.iter().map(session_info_to_display_row).collect();
-        for row in &mut rows {
-            let count = infos
-                .iter()
-                .filter(|s| s.member_name == row.member && s.current_state == "Active")
-                .count();
-            row.concurrent_count = count.to_string();
-        }
-        rows
+        infos
+            .iter()
+            .map(|info| {
+                let mut row = session_info_to_display_row(info);
+                if let Some(count) = info.concurrent_count {
+                    row.concurrent_count = count.to_string();
+                }
+                row
+            })
+            .collect::<Vec<_>>()
     });
     if json {
         let value = render_status_json(rows.as_deref());
@@ -317,6 +318,7 @@ mod tests {
             current_state: "Active".to_string(),
             started_at: "2026-06-03T10:00:00+00:00".to_string(),
             state_transitioned_at: None,
+            concurrent_count: None,
         }
     }
 
@@ -373,6 +375,7 @@ mod tests {
             current_state: "Active".to_string(),
             started_at: "2026-06-03T10:30:00+00:00".to_string(),
             state_transitioned_at: None,
+            concurrent_count: None,
         };
         let row = session_info_to_display_row(&info);
         assert_eq!(row.start_time, "2026-06-03 10:30:00");
@@ -549,6 +552,7 @@ mod tests {
             current_state: "Active".to_string(),
             started_at: two_hours_ago.clone(),
             state_transitioned_at: Some(two_hours_ago),
+            concurrent_count: None,
         };
         let row = session_info_to_display_row(&info);
         assert!(
@@ -570,6 +574,7 @@ mod tests {
                     current_state: "Active".to_string(),
                     started_at: started.clone(),
                     state_transitioned_at: Some(started.clone()),
+                    concurrent_count: Some(2),
                 },
                 SessionInfo {
                     session_id: "session-b".to_string(),
@@ -578,6 +583,7 @@ mod tests {
                     current_state: "Active".to_string(),
                     started_at: started.clone(),
                     state_transitioned_at: Some(started.clone()),
+                    concurrent_count: Some(2),
                 },
             ])
         });

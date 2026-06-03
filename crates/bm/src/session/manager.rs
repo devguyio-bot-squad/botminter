@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use super::dirty_state::{self, RepoDirtyState};
+use super::finalization::deactivation::{self, FinalizationOutcome};
 use crate::workspace::{push_with_rebase_retry, DEFAULT_MAX_RETRIES};
 use super::registry::SessionRegistry;
 use super::types::{SessionId, SessionRecord, SessionState, SessionType};
@@ -99,8 +100,9 @@ impl<W: WorkspaceOps> SessionManager<W> {
             .collect()
     }
 
-    /// Deactivate a session: inspect dirty state, transition to Completed/Failed,
-    /// and release all work-item locks held by the session.
+    /// Deactivate a session: inspect dirty state, attempt finalization for
+    /// committable files, transition to Finalizing or Completed, and release
+    /// all work-item locks held by the session.
     pub fn deactivate_session(&mut self, session_id: &SessionId) -> Result<DeactivateResult> {
         let record = self
             .registry
@@ -119,8 +121,17 @@ impl<W: WorkspaceOps> SessionManager<W> {
 
         let dirty_state = push_and_refresh_dirty(&workspace_path, &dirty_state);
 
+        let finalization =
+            deactivation::finalize_session(session_id, &workspace_path, &dirty_state);
+
+        let target_state = if matches!(finalization.outcome, FinalizationOutcome::Completed) {
+            SessionState::Finalizing
+        } else {
+            SessionState::Completed
+        };
+
         self.registry
-            .update_state(session_id, SessionState::Completed)?;
+            .update_state(session_id, target_state)?;
 
         self.work_item_lock.release_all(session_id);
 

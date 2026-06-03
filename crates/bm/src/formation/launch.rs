@@ -187,7 +187,7 @@ pub fn is_brain_member(workspace: &std::path::Path) -> bool {
 /// Checks if a member has a credential but RObot.enabled is false in ralph.yml.
 ///
 /// Returns `true` if there is a mismatch (credential present but RObot disabled),
-/// meaning the user should run `bm teams sync` to update.
+/// meaning the workspace needs to be re-provisioned to update RObot configuration.
 pub fn check_robot_enabled_mismatch(
     ralph_yml_path: &std::path::Path,
     has_credential: bool,
@@ -232,9 +232,8 @@ mod tests {
         // The real test is that `bm start` resolves credentials per-member
         // via resolve_credential_from_store() in the member loop.
 
-        // Verify launch_ralph compiles with bridge-type-aware parameters + gh_config_dir
-        let _: fn(&std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32> =
-            launch_ralph;
+        type LaunchRalphFn = fn(&std::path::Path, Option<&str>, Option<&str>, Option<&str>, Option<&std::path::Path>) -> Result<u32>;
+        let _: LaunchRalphFn = launch_ralph;
     }
 
     #[test]

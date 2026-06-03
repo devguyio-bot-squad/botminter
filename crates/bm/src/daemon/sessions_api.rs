@@ -1,14 +1,17 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::session::cleanup;
+use crate::session::history::{self, ExitStatus};
 use crate::session::registry::SessionRegistry;
+use crate::session::retention;
+use crate::session::stop::{self, StopMode, StopOptions};
 use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
 use crate::session::work_item_lock::WorkItemLock;
 
@@ -31,6 +34,19 @@ impl SessionsApiState {
                 work_item_lock: WorkItemLock::new(),
             })),
         }
+    }
+
+    pub fn recover_stale_sessions(&self) -> Vec<SessionId> {
+        let mut inner = self.inner.lock().unwrap();
+        let checker = retention::LiveProcessChecker;
+        retention::recover_stale_sessions(&mut inner.registry, &checker)
+    }
+
+    pub fn run_retention_cycle(&self) -> Vec<SessionId> {
+        let mut inner = self.inner.lock().unwrap();
+        let policy = retention::RetentionPolicy::default();
+        let disk_usage = retention::FsDiskUsage;
+        retention::run_cycle(&mut inner.registry, &policy, &disk_usage)
     }
 }
 
@@ -64,6 +80,8 @@ pub struct SessionInfo {
     pub started_at: String,
     #[serde(default)]
     pub state_transitioned_at: Option<String>,
+    #[serde(default)]
+    pub concurrent_count: Option<u32>,
 }
 
 /// Response for `GET /api/sessions`.
@@ -80,9 +98,50 @@ pub struct SessionDetailResponse {
     pub error: Option<String>,
 }
 
+/// Optional request body for `POST /api/sessions/:id/stop`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StopSessionRequest {
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Query parameters for `GET /api/sessions/history`.
+#[derive(Debug, Deserialize)]
+pub struct SessionHistoryQueryParams {
+    pub member: Option<String>,
+    pub since: Option<String>,
+}
+
 /// Response for `POST /api/sessions/:id/stop`.
 #[derive(Debug, Serialize, Deserialize)]
 pub struct StopSessionResponse {
+    pub ok: bool,
+    pub error: Option<String>,
+}
+
+/// Request body for `POST /api/sessions/stop`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StopBulkRequest {
+    pub mode: String,
+    pub member: Option<String>,
+    #[serde(default)]
+    pub force: bool,
+}
+
+/// Response for `POST /api/sessions/stop`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct StopBulkResponse {
+    pub ok: bool,
+    pub deactivated: usize,
+    pub killed: usize,
+    pub skipped_interactive: usize,
+    pub errors: Vec<String>,
+    pub error: Option<String>,
+}
+
+/// Response for `POST /api/sessions/:id/finalize`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct RetriggerResponse {
     pub ok: bool,
     pub error: Option<String>,
 }
@@ -162,6 +221,7 @@ fn record_to_info(r: &SessionRecord) -> SessionInfo {
         current_state: r.current_state.to_string(),
         started_at: r.created_at.to_rfc3339(),
         state_transitioned_at: Some(r.state_transitioned_at.to_rfc3339()),
+        concurrent_count: None,
     }
 }
 
@@ -170,20 +230,30 @@ fn record_to_info(r: &SessionRecord) -> SessionInfo {
 /// GET /api/sessions/history — lists terminal sessions as history.
 pub async fn list_session_history_handler(
     State(state): State<SessionsApiState>,
+    Query(params): Query<SessionHistoryQueryParams>,
 ) -> (StatusCode, Json<SessionHistoryResponse>) {
     let inner = state.inner.lock().unwrap();
-    let sessions = inner
-        .registry
-        .list()
+    let refs = inner.registry.list();
+
+    let since = params.since.as_deref().and_then(|s| {
+        chrono::DateTime::parse_from_rfc3339(s)
+            .ok()
+            .map(|dt| dt.with_timezone(&chrono::Utc))
+    });
+    let query = history::SessionHistoryQuery {
+        member: params.member,
+        since,
+    };
+
+    let sessions = history::query_history(&refs, &query)
         .into_iter()
-        .filter(|r| r.current_state.is_terminal())
-        .map(|r| SessionHistoryInfo {
-            session_id: r.session_id.to_string(),
-            member_name: r.member_name.clone(),
-            session_type: r.session_type.to_string(),
-            start_time: r.created_at.to_rfc3339(),
-            end_time: r.state_transitioned_at.to_rfc3339(),
-            exit_normal: r.current_state == SessionState::Completed,
+        .map(|e| SessionHistoryInfo {
+            session_id: e.session_id,
+            member_name: e.member,
+            session_type: e.session_type,
+            start_time: e.start_time.to_rfc3339(),
+            end_time: e.end_time.to_rfc3339(),
+            exit_normal: e.exit_status == ExitStatus::Normal,
         })
         .collect();
 
@@ -239,6 +309,9 @@ pub async fn start_session_handler(
     };
 
     if let Err(e) = inner.registry.register(record) {
+        if let Some(ref work_item_id) = req.work_item_id {
+            inner.work_item_lock.release(work_item_id, &session_id);
+        }
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(StartSessionResponse {
@@ -253,6 +326,9 @@ pub async fn start_session_handler(
         .registry
         .update_state(&session_id, SessionState::Active)
     {
+        if let Some(ref work_item_id) = req.work_item_id {
+            inner.work_item_lock.release(work_item_id, &session_id);
+        }
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(StartSessionResponse {
@@ -278,20 +354,28 @@ pub async fn list_sessions_handler(
     State(state): State<SessionsApiState>,
 ) -> (StatusCode, Json<SessionListResponse>) {
     let inner = state.inner.lock().unwrap();
-    let sessions = inner
-        .registry
-        .list()
+    let refs = inner.registry.list();
+    let sessions = refs
         .iter()
-        .map(|r| record_to_info(r))
+        .map(|r| {
+            let count = history::compute_concurrent_count(&refs, &r.member_name);
+            let mut info = record_to_info(r);
+            info.concurrent_count = Some(count);
+            info
+        })
         .collect();
 
     (StatusCode::OK, Json(SessionListResponse { sessions }))
 }
 
-/// POST /api/sessions/:id/stop — deactivates a session.
+/// POST /api/sessions/:id/stop — stops a specific session via the stop module.
+///
+/// Accepts an optional JSON body with `{ "force": true }` to force-kill
+/// instead of graceful deactivation.
 pub async fn stop_session_handler(
     State(state): State<SessionsApiState>,
     Path(session_id_str): Path<String>,
+    body: Option<Json<StopSessionRequest>>,
 ) -> (StatusCode, Json<StopSessionResponse>) {
     let mut inner = state.inner.lock().unwrap();
     let session_id = SessionId::from_raw(&session_id_str);
@@ -306,15 +390,20 @@ pub async fn stop_session_handler(
         );
     }
 
-    if let Err(e) = inner
-        .registry
-        .update_state(&session_id, SessionState::Completed)
-    {
+    let force = body.is_some_and(|b| b.force);
+    let options = StopOptions {
+        mode: StopMode::SpecificSession(session_id.clone()),
+        force,
+    };
+
+    let summary = stop::stop_sessions(&mut inner.registry, &options);
+
+    if !summary.errors.is_empty() {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(StopSessionResponse {
                 ok: false,
-                error: Some(e.to_string()),
+                error: Some(summary.errors.join("; ")),
             }),
         );
     }
@@ -328,6 +417,108 @@ pub async fn stop_session_handler(
             error: None,
         }),
     )
+}
+
+/// POST /api/sessions/stop — bulk stop by member or autonomous mode.
+pub async fn stop_bulk_handler(
+    State(state): State<SessionsApiState>,
+    Json(req): Json<StopBulkRequest>,
+) -> (StatusCode, Json<StopBulkResponse>) {
+    let mut inner = state.inner.lock().unwrap();
+
+    let mode = match req.mode.as_str() {
+        "member" => match req.member {
+            Some(name) => StopMode::AllForMember(name),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(StopBulkResponse {
+                        ok: false,
+                        deactivated: 0,
+                        killed: 0,
+                        skipped_interactive: 0,
+                        errors: vec![],
+                        error: Some("member mode requires a 'member' field".to_string()),
+                    }),
+                )
+            }
+        },
+        "autonomous" => StopMode::AutonomousOnly,
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(StopBulkResponse {
+                    ok: false,
+                    deactivated: 0,
+                    killed: 0,
+                    skipped_interactive: 0,
+                    errors: vec![],
+                    error: Some(format!("unknown mode: {other}")),
+                }),
+            )
+        }
+    };
+
+    let options = StopOptions {
+        mode,
+        force: req.force,
+    };
+    let summary = stop::stop_sessions(&mut inner.registry, &options);
+
+    let stopped_ids: Vec<SessionId> = inner
+        .registry
+        .list()
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.current_state,
+                SessionState::Finalizing | SessionState::Killed
+            )
+        })
+        .map(|r| r.session_id.clone())
+        .collect();
+
+    for id in &stopped_ids {
+        inner.work_item_lock.release_all(id);
+    }
+
+    (
+        StatusCode::OK,
+        Json(StopBulkResponse {
+            ok: true,
+            deactivated: summary.deactivated,
+            killed: summary.killed,
+            skipped_interactive: summary.skipped_interactive,
+            errors: summary.errors,
+            error: None,
+        }),
+    )
+}
+
+/// POST /api/sessions/:id/finalize — re-trigger finalization on a retained session.
+pub async fn retrigger_finalization_handler(
+    State(state): State<SessionsApiState>,
+    Path(session_id_str): Path<String>,
+) -> (StatusCode, Json<RetriggerResponse>) {
+    let mut inner = state.inner.lock().unwrap();
+    let session_id = SessionId::from_raw(&session_id_str);
+
+    match stop::retrigger_session_finalization(&mut inner.registry, &session_id) {
+        Ok(_) => (
+            StatusCode::OK,
+            Json(RetriggerResponse {
+                ok: true,
+                error: None,
+            }),
+        ),
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(RetriggerResponse {
+                ok: false,
+                error: Some(e.to_string()),
+            }),
+        ),
+    }
 }
 
 /// GET /api/sessions/:id — returns full session details.
@@ -363,10 +554,15 @@ pub async fn inspect_session_handler(
     State(state): State<SessionsApiState>,
     Path(session_id_str): Path<String>,
 ) -> (StatusCode, Json<InspectSessionResponse>) {
-    let inner = state.inner.lock().unwrap();
     let session_id = SessionId::from_raw(&session_id_str);
 
-    match inner.registry.get(&session_id) {
+    // Clone data out of the Mutex before doing blocking I/O (git commands).
+    let record_snapshot = {
+        let inner = state.inner.lock().unwrap();
+        inner.registry.get(&session_id).cloned()
+    };
+
+    match record_snapshot {
         Some(record) => {
             let finalization_results = record
                 .finalization_result
@@ -531,10 +727,15 @@ pub fn sessions_router(state: SessionsApiState) -> Router {
             "/api/sessions/cleanup",
             post(bulk_cleanup_handler),
         )
+        .route("/api/sessions/stop", post(stop_bulk_handler))
         .route("/api/sessions", get(list_sessions_handler))
         .route(
             "/api/sessions/{id}/inspect",
             get(inspect_session_handler),
+        )
+        .route(
+            "/api/sessions/{id}/finalize",
+            post(retrigger_finalization_handler),
         )
         .route("/api/sessions/{id}/stop", post(stop_session_handler))
         .route("/api/sessions/{id}", get(session_detail_handler).delete(cleanup_session_handler))
@@ -550,8 +751,9 @@ mod tests {
     use axum::http::Request;
     use tower::ServiceExt;
 
-    fn test_state() -> SessionsApiState {
-        let state = SessionsApiState::new(PathBuf::from("/tmp/bm-test-sessions-api.json"));
+    fn test_state() -> (SessionsApiState, tempfile::TempDir) {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
         {
             let mut inner = state.inner.lock().unwrap();
             let session_id = SessionId::from_raw("test-session-id");
@@ -573,18 +775,19 @@ mod tests {
                 .update_state(&session_id, SessionState::Active)
                 .unwrap();
         }
-        state
+        (state, tmp)
     }
 
-    fn test_router() -> Router {
-        sessions_router(test_state())
+    fn test_router() -> (Router, tempfile::TempDir) {
+        let (state, tmp) = test_state();
+        (sessions_router(state), tmp)
     }
 
     // AC-1: Session Status Display — list endpoint returns session metadata
 
     #[tokio::test]
     async fn post_sessions_start_creates_session_and_returns_id() {
-        let app = test_router();
+        let (app, _tmp) = test_router();
         let body = serde_json::json!({
             "member_name": "alice",
             "session_type": "Interactive"
@@ -611,7 +814,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_sessions_lists_active_sessions() {
-        let app = test_router();
+        let (app, _tmp) = test_router();
         let request = Request::builder()
             .uri("/api/sessions")
             .body(Body::empty())
@@ -632,7 +835,7 @@ mod tests {
 
     #[tokio::test]
     async fn post_sessions_stop_deactivates_session() {
-        let app = test_router();
+        let (app, _tmp) = test_router();
         let request = Request::builder()
             .method("POST")
             .uri("/api/sessions/test-session-id/stop")
@@ -651,7 +854,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_session_detail_returns_full_info() {
-        let app = test_router();
+        let (app, _tmp) = test_router();
         let request = Request::builder()
             .uri("/api/sessions/test-session-id")
             .body(Body::empty())
@@ -672,7 +875,8 @@ mod tests {
 
     #[tokio::test]
     async fn history_handler_returns_terminal_sessions() {
-        let state = SessionsApiState::new(PathBuf::from("/tmp/bm-test-history-api.json"));
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
 
         {
             let mut inner = state.inner.lock().unwrap();
@@ -790,7 +994,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_session_detail_not_found() {
-        let app = test_router();
+        let (app, _tmp) = test_router();
         let request = Request::builder()
             .uri("/api/sessions/nonexistent-id")
             .body(Body::empty())
@@ -809,7 +1013,8 @@ mod tests {
 
     #[tokio::test]
     async fn inspect_handler_returns_session_metadata() {
-        let state = SessionsApiState::new(PathBuf::from("/tmp/bm-test-inspect-api.json"));
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
 
         {
             let mut inner = state.inner.lock().unwrap();
@@ -875,7 +1080,8 @@ mod tests {
             FinalizationResult as TypesFinalizationResult,
         };
 
-        let state = SessionsApiState::new(PathBuf::from("/tmp/bm-test-inspect-fin-api.json"));
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
 
         {
             let mut inner = state.inner.lock().unwrap();
@@ -949,7 +1155,8 @@ mod tests {
 
     #[tokio::test]
     async fn cleanup_handler_removes_session() {
-        let state = SessionsApiState::new(PathBuf::from("/tmp/bm-test-cleanup-api.json"));
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
 
         {
             let mut inner = state.inner.lock().unwrap();
@@ -1005,7 +1212,8 @@ mod tests {
 
     #[tokio::test]
     async fn bulk_cleanup_handler_cleans_retained_sessions() {
-        let state = SessionsApiState::new(PathBuf::from("/tmp/bm-test-bulk-cleanup-api.json"));
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
 
         {
             let mut inner = state.inner.lock().unwrap();
@@ -1069,6 +1277,355 @@ mod tests {
             json.reports.len(),
             2,
             "bulk cleanup must include 2 per-session reports"
+        );
+    }
+
+    // --- CT-88-03: Graceful stop transitions to Finalizing ---
+
+    #[tokio::test]
+    async fn graceful_stop_transitions_to_finalizing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let session_id = SessionId::from_raw("stop-finalize-test");
+            let record = SessionRecord {
+                session_id: session_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Interactive,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: None,
+            };
+            inner.registry.register(record).unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Active)
+                .unwrap();
+        }
+
+        let app = sessions_router(state.clone());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/stop-finalize-test/stop")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let inner = state.inner.lock().unwrap();
+        let session_id = SessionId::from_raw("stop-finalize-test");
+        let record = inner.registry.get(&session_id).unwrap();
+        assert_eq!(
+            record.current_state,
+            SessionState::Finalizing,
+            "graceful stop must transition to Finalizing (awaiting finalization)"
+        );
+    }
+
+    // --- CT-88-03: Force stop transitions to Killed ---
+
+    #[tokio::test]
+    async fn force_stop_transitions_to_killed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let session_id = SessionId::from_raw("force-stop-test");
+            let record = SessionRecord {
+                session_id: session_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: None,
+            };
+            inner.registry.register(record).unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Active)
+                .unwrap();
+        }
+
+        let app = sessions_router(state.clone());
+        let body = serde_json::json!({ "force": true });
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/force-stop-test/stop")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let inner = state.inner.lock().unwrap();
+        let session_id = SessionId::from_raw("force-stop-test");
+        let record = inner.registry.get(&session_id).unwrap();
+        assert_eq!(
+            record.current_state,
+            SessionState::Killed,
+            "force stop must transition to Killed"
+        );
+    }
+
+    // --- CT-88-03: Bulk stop by member ---
+
+    #[tokio::test]
+    async fn bulk_stop_member_deactivates_all_member_sessions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+
+            for name in &["member-s1", "member-s2"] {
+                let session_id = SessionId::from_raw(*name);
+                let record = SessionRecord {
+                    session_id: session_id.clone(),
+                    member_name: "alice".to_string(),
+                    session_type: SessionType::Loop,
+                    current_state: SessionState::Creating,
+                    created_at: now,
+                    state_transitioned_at: now,
+                    agent_pid: None,
+                    workspace_path: None,
+                    finalization_result: None,
+                };
+                inner.registry.register(record).unwrap();
+                inner
+                    .registry
+                    .update_state(&session_id, SessionState::Active)
+                    .unwrap();
+            }
+        }
+
+        let app = sessions_router(state.clone());
+        let body = serde_json::json!({
+            "mode": "member",
+            "member": "alice"
+        });
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/stop")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: StopBulkResponse = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(json.ok);
+        assert_eq!(
+            json.deactivated, 2,
+            "bulk member stop must deactivate all member sessions"
+        );
+    }
+
+    // --- CT-88-03: Bulk autonomous stop skips interactive ---
+
+    #[tokio::test]
+    async fn bulk_autonomous_stop_skips_interactive() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+
+            let loop_id = SessionId::from_raw("auto-loop");
+            let loop_record = SessionRecord {
+                session_id: loop_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: None,
+            };
+            inner.registry.register(loop_record).unwrap();
+            inner
+                .registry
+                .update_state(&loop_id, SessionState::Active)
+                .unwrap();
+
+            let interactive_id = SessionId::from_raw("auto-interactive");
+            let interactive_record = SessionRecord {
+                session_id: interactive_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Interactive,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: None,
+            };
+            inner.registry.register(interactive_record).unwrap();
+            inner
+                .registry
+                .update_state(&interactive_id, SessionState::Active)
+                .unwrap();
+        }
+
+        let app = sessions_router(state.clone());
+        let body = serde_json::json!({ "mode": "autonomous" });
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/stop")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: StopBulkResponse = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(json.ok);
+        assert_eq!(json.deactivated, 1, "only the loop session should be deactivated");
+        assert_eq!(
+            json.skipped_interactive, 1,
+            "interactive session must be reported as skipped"
+        );
+
+        let inner = state.inner.lock().unwrap();
+        let interactive_id = SessionId::from_raw("auto-interactive");
+        let record = inner.registry.get(&interactive_id).unwrap();
+        assert_eq!(
+            record.current_state,
+            SessionState::Active,
+            "interactive session must remain Active"
+        );
+    }
+
+    // --- CT-88-03: Retrigger finalization endpoint ---
+
+    #[tokio::test]
+    async fn retrigger_finalization_transitions_retained_to_finalizing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let session_id = SessionId::from_raw("retrigger-test");
+            let record = SessionRecord {
+                session_id: session_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: None,
+            };
+            inner.registry.register(record).unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Active)
+                .unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Killed)
+                .unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Retained)
+                .unwrap();
+        }
+
+        let app = sessions_router(state.clone());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/retrigger-test/finalize")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: RetriggerResponse = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(json.ok, "retrigger must succeed on Retained session");
+
+        let inner = state.inner.lock().unwrap();
+        let session_id = SessionId::from_raw("retrigger-test");
+        let record = inner.registry.get(&session_id).unwrap();
+        assert_eq!(
+            record.current_state,
+            SessionState::Finalizing,
+            "retrigger must transition Retained → Finalizing"
+        );
+    }
+
+    // --- CT-87-03: Cleanup rejects Active sessions ---
+
+    #[tokio::test]
+    async fn cleanup_handler_rejects_active_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let session_id = SessionId::from_raw("active-cleanup-test");
+            let record = SessionRecord {
+                session_id: session_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Interactive,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: None,
+            };
+            inner.registry.register(record).unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Active)
+                .unwrap();
+        }
+
+        let app = sessions_router(state);
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/api/sessions/active-cleanup-test")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::NOT_FOUND,
+            "cleanup of an Active session must be rejected"
         );
     }
 

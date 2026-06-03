@@ -66,6 +66,7 @@ impl SessionRegistry {
             return Err(anyhow!("Session {} already exists in registry", id));
         }
         self.sessions.insert(id, record);
+        self.save()?;
         Ok(())
     }
 
@@ -96,6 +97,7 @@ impl SessionRegistry {
 
         record.current_state = new_state;
         record.state_transitioned_at = chrono::Utc::now();
+        self.save()?;
         Ok(())
     }
 
@@ -104,6 +106,7 @@ impl SessionRegistry {
         self.sessions
             .remove(id)
             .ok_or_else(|| anyhow!("Session {} not found", id))?;
+        self.save()?;
         Ok(())
     }
 }
@@ -322,6 +325,53 @@ mod tests {
         assert_eq!(
             count2, 5,
             "second concurrent read returned {count2}, expected 5"
+        );
+    }
+
+    // AC-4 (extended): Mutations auto-persist — no explicit save() required
+    #[test]
+    fn mutations_auto_persist_without_explicit_save() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("registry.json");
+
+        let id;
+        {
+            let mut reg = SessionRegistry::new(path.clone());
+            let record = make_record("auto-save", SessionType::Interactive);
+            id = record.session_id.clone();
+            reg.register(record).unwrap();
+            reg.update_state(&id, SessionState::Active).unwrap();
+            // No explicit save() — mutations must auto-persist
+        }
+
+        let reg2 = SessionRegistry::load(path).unwrap();
+        let reloaded = reg2
+            .get(&id)
+            .expect("session must survive reload without explicit save()");
+        assert_eq!(reloaded.current_state, SessionState::Active);
+        assert_eq!(reloaded.member_name, "auto-save");
+    }
+
+    // AC-4 (extended): remove() auto-persists — removed session stays gone after reload
+    #[test]
+    fn remove_auto_persists_across_reload() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("registry.json");
+
+        let id;
+        {
+            let mut reg = SessionRegistry::new(path.clone());
+            let record = make_record("removable", SessionType::Loop);
+            id = record.session_id.clone();
+            reg.register(record).unwrap();
+            reg.update_state(&id, SessionState::Active).unwrap();
+            reg.remove(&id).unwrap();
+        }
+
+        let reg2 = SessionRegistry::load(path).unwrap();
+        assert!(
+            reg2.get(&id).is_none(),
+            "removed session must stay gone after reload"
         );
     }
 

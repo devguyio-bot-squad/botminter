@@ -19,6 +19,7 @@ pub struct SessionInspection {
 }
 
 /// Report of a single session cleanup operation.
+#[derive(Debug)]
 pub struct CleanupReport {
     pub session_id: SessionId,
     pub workspace_removed: bool,
@@ -69,11 +70,38 @@ pub fn compute_git_state(workspace_path: &std::path::Path) -> Option<GitState> {
             })
             .unwrap_or_default();
 
+        let has_remote = std::process::Command::new("git")
+            .args(["remote"])
+            .current_dir(&path)
+            .output()
+            .ok()
+            .map(|o| !String::from_utf8_lossy(&o.stdout).trim().is_empty())
+            .unwrap_or(false);
+
+        let unpushed_branches = if has_remote {
+            std::process::Command::new("git")
+                .args(["log", "--branches", "--not", "--remotes", "--oneline"])
+                .current_dir(&path)
+                .output()
+                .ok()
+                .filter(|o| o.status.success())
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .lines()
+                        .filter(|l| !l.is_empty())
+                        .map(|l| l.to_string())
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            vec![]
+        };
+
         repos.push(RepoGitState {
             repo_name,
             current_branch,
             uncommitted_files,
-            unpushed_branches: vec![],
+            unpushed_branches,
         });
     }
 
@@ -111,6 +139,7 @@ pub fn inspect_session(
 }
 
 /// Clean up a single retained session: remove workspace directory and remove from registry.
+/// Only sessions in terminal or Retained states can be cleaned up.
 pub fn cleanup_session(
     registry: &mut SessionRegistry,
     session_id: &SessionId,
@@ -119,6 +148,21 @@ pub fn cleanup_session(
         .get(session_id)
         .ok_or_else(|| anyhow::anyhow!("Session {} not found", session_id))?
         .clone();
+
+    match record.current_state {
+        SessionState::Completed
+        | SessionState::Failed
+        | SessionState::Killed
+        | SessionState::Retained => {}
+        ref state => {
+            anyhow::bail!(
+                "Session {} is in state {} and cannot be cleaned up. \
+                 Only Completed, Failed, Killed, or Retained sessions can be cleaned up.",
+                session_id,
+                state
+            );
+        }
+    }
 
     let workspace_removed = record
         .workspace_path
@@ -309,6 +353,59 @@ mod tests {
         assert!(
             result.is_err(),
             "cleaning up a nonexistent session must return an error"
+        );
+    }
+
+    #[test]
+    fn cleanup_active_session_rejected() {
+        let mut registry = new_registry();
+        let record = make_retained_record("alice", SessionType::Loop);
+        let id = record.session_id.clone();
+        registry.register(record).unwrap();
+        registry.update_state(&id, SessionState::Active).unwrap();
+
+        let result = cleanup_session(&mut registry, &id);
+
+        assert!(
+            result.is_err(),
+            "cleaning up an Active session must be rejected"
+        );
+        let msg = result.unwrap_err().to_string();
+        assert!(
+            msg.contains("Active") && msg.contains("cannot be cleaned up"),
+            "error must describe the state guard violation, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn cleanup_creating_session_rejected() {
+        let mut registry = new_registry();
+        let record = make_retained_record("bob", SessionType::Interactive);
+        let id = record.session_id.clone();
+        registry.register(record).unwrap();
+
+        let result = cleanup_session(&mut registry, &id);
+
+        assert!(
+            result.is_err(),
+            "cleaning up a Creating session must be rejected"
+        );
+    }
+
+    #[test]
+    fn cleanup_completed_session_allowed() {
+        let mut registry = new_registry();
+        let record = make_retained_record("carol", SessionType::Brain);
+        let id = record.session_id.clone();
+        registry.register(record).unwrap();
+        registry.update_state(&id, SessionState::Active).unwrap();
+        registry.update_state(&id, SessionState::Completed).unwrap();
+
+        let result = cleanup_session(&mut registry, &id);
+
+        assert!(
+            result.is_ok(),
+            "cleaning up a Completed session must be allowed"
         );
     }
 

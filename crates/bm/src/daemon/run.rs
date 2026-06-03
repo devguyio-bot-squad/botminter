@@ -20,6 +20,7 @@ use super::event::{
 };
 use super::log::daemon_log;
 use super::process::handle_member_launch;
+use super::sessions_api::{SessionsApiState, sessions_router};
 use crate::config as app_config;
 use crate::formation::AppCredentialsCached;
 use crate::web::state::WebState;
@@ -130,6 +131,42 @@ async fn run_daemon_async(
         ])
         .allow_headers([axum::http::header::CONTENT_TYPE]);
 
+    let sessions_state = SessionsApiState::new(paths.sessions_registry());
+
+    // Startup recovery: mark Active/Finalizing sessions with dead PIDs as Failed
+    let recovered = sessions_state.recover_stale_sessions();
+    if !recovered.is_empty() {
+        daemon_log(
+            &paths,
+            "INFO",
+            &format!("Recovery: {} stale sessions marked Failed", recovered.len()),
+        );
+    }
+
+    // Retention GC: periodically clean up expired/over-budget retained sessions
+    {
+        let gc_state = sessions_state.clone();
+        let gc_paths = Arc::clone(&paths);
+        let gc_shutdown = Arc::clone(&shutdown);
+        tokio::spawn(async move {
+            let scan_interval = crate::session::retention::RetentionPolicy::default().scan_interval;
+            loop {
+                tokio::time::sleep(scan_interval).await;
+                if gc_shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+                let cleaned = gc_state.run_retention_cycle();
+                if !cleaned.is_empty() {
+                    daemon_log(
+                        &gc_paths,
+                        "INFO",
+                        &format!("GC: cleaned {} expired sessions", cleaned.len()),
+                    );
+                }
+            }
+        });
+    }
+
     let app = Router::new()
         .route("/webhook", post(webhook_handler))
         .route("/health", get(health_handler))
@@ -141,6 +178,8 @@ async fn run_daemon_async(
         // Loop management API
         .route("/api/loops/start", post(api::start_loop_handler))
         .with_state(state.clone())
+        // Session management API
+        .merge(sessions_router(sessions_state))
         .merge(web_router(web_state))
         .layer(cors);
 

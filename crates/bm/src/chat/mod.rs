@@ -340,7 +340,10 @@ fn refresh_token_from_keyring(ws_path: &Path, team_name: &str, member_name: &str
 }
 
 /// Launches a chat session by writing the meta-prompt to a temp file,
-/// resolving the coding agent, and exec-ing through the formation.
+/// resolving the coding agent, and spawning it as a child process.
+///
+/// Returns the agent's exit code. The caller is responsible for
+/// propagating it (e.g., via `std::process::exit`).
 ///
 /// If `initial_prompt` is provided, it is passed as a positional argument
 /// to the coding agent binary (e.g., `claude "/pdd my idea"`), triggering
@@ -352,7 +355,7 @@ pub fn launch_session(
     member_name: &str,
     initial_prompt: Option<&str>,
     autonomous: bool,
-) -> Result<()> {
+) -> Result<i32> {
     let manifest = crate::profile::read_team_repo_manifest(team_repo)?;
     let coding_agent = crate::profile::resolve_coding_agent(team, &manifest)?;
 
@@ -378,38 +381,28 @@ pub fn launch_session(
         )
     })?;
 
-    let mut args: Vec<&str> = vec![prompt_flag, tmp_path_str];
+    let mut args: Vec<String> = vec![
+        prompt_flag.to_string(),
+        tmp_path_str.to_string(),
+    ];
     if autonomous {
         if let Some(flag) = coding_agent.skip_permissions_flag.as_deref() {
-            args.push(flag);
+            args.push(flag.to_string());
         }
     }
-    let prompt_string;
     if let Some(prompt) = initial_prompt {
-        prompt_string = prompt.to_string();
-        args.push(&prompt_string);
+        args.push(prompt.to_string());
     }
 
-    // TODO: uses create_local_formation() regardless of resolved type — breaks for Lima/K8s (ADR-0008)
-    let resolved_formation = crate::formation::resolve_formation(team_repo, None)?;
+    let spawn_config = spawn::SpawnConfig {
+        agent_binary: coding_agent.binary.clone(),
+        agent_args: args,
+        working_dir: session.ws_path.clone(),
+        env_vars: vec![],
+    };
 
-    if resolved_formation.is_some() {
-        let local_formation = crate::formation::create_local_formation(&team.name)?;
-        let mut cmd_parts: Vec<&str> = vec![&coding_agent.binary];
-        cmd_parts.extend(&args);
-        local_formation.exec_in(&session.ws_path, &cmd_parts)?;
-    } else {
-        use std::os::unix::process::CommandExt;
-        let mut cmd = std::process::Command::new(&coding_agent.binary);
-        cmd.current_dir(&session.ws_path);
-        for a in &args {
-            cmd.arg(a);
-        }
-        let err = cmd.exec();
-        bail!("Failed to launch {}: {}", coding_agent.binary, err);
-    }
-
-    Ok(())
+    let result = spawn::spawn_and_wait(&spawn_config)?;
+    Ok(result.exit_code)
 }
 
 /// Resolves a member name from a role. Scans the team repo's `members/`
@@ -1023,12 +1016,13 @@ mod tests {
         assert_eq!(session.ws_path, ws);
     }
 
-    // inject_app_credentials tests
-    // NOTE: These tests manipulate process-global env vars and MUST run
-    // with --test-threads=1.
+    // inject_app_credentials tests — serialized via mutex because they
+    // manipulate process-global env vars (GH_TOKEN, GITHUB_TOKEN, GH_CONFIG_DIR).
+    static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     #[test]
     fn inject_app_credentials_sets_gh_config_dir_when_hosts_yml_present() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
@@ -1052,6 +1046,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_removes_conflicting_tokens() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
@@ -1079,6 +1074,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_noop_when_no_config_dir() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
 
         std::env::set_var("GH_TOKEN", "preserved");
@@ -1109,6 +1105,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_noop_when_hosts_yml_missing() {
+        let _lock = ENV_MUTEX.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();

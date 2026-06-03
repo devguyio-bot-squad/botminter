@@ -441,6 +441,87 @@ impl<R: RepoSource> WorkspaceHydrator<R> {
     }
 }
 
+// ── Production WorkspaceOps ────────────────────────────────────────────────────
+
+/// Configuration for constructing a [`HydrationWorkspaceOps`].
+#[derive(Debug, Clone)]
+pub struct HydrationWorkspaceConfig {
+    pub clones_dir: PathBuf,
+    pub sessions_base: PathBuf,
+    pub team_repo_path: PathBuf,
+    pub credential_base: PathBuf,
+    pub freshness_threshold: Duration,
+    pub repo_urls: Vec<(String, String)>,
+    pub team_repo_url: String,
+    pub team_repo_branch: String,
+    pub project_number: Option<u64>,
+    pub skill_dirs: Vec<PathBuf>,
+}
+
+/// Production implementation of [`crate::session::manager::WorkspaceOps`]
+/// that delegates to the hydration pipeline for workspace creation and
+/// to [`crate::session::dirty_state`] for workspace inspection.
+pub struct HydrationWorkspaceOps {
+    hydrator: WorkspaceHydrator<GitWorktreeSource>,
+    repo_urls: Vec<(String, String)>,
+    team_repo_url: String,
+    team_repo_branch: String,
+    project_number: Option<u64>,
+    skill_dirs: Vec<PathBuf>,
+}
+
+impl HydrationWorkspaceOps {
+    pub fn new(config: HydrationWorkspaceConfig) -> Self {
+        let source = GitWorktreeSource::new(config.clones_dir, config.freshness_threshold);
+        let assembler = ConfigAssembler::new(config.team_repo_path, String::new());
+        let relay = CredentialRelay::new(config.credential_base);
+        let hydrator = WorkspaceHydrator::new(source, assembler, relay, config.sessions_base);
+
+        Self {
+            hydrator,
+            repo_urls: config.repo_urls,
+            team_repo_url: config.team_repo_url,
+            team_repo_branch: config.team_repo_branch,
+            project_number: config.project_number,
+            skill_dirs: config.skill_dirs,
+        }
+    }
+
+    pub fn teardown(&self, session_id: &SessionId, member: &str) -> Result<()> {
+        self.hydrator.teardown(session_id, member)
+    }
+}
+
+impl crate::session::manager::WorkspaceOps for HydrationWorkspaceOps {
+    fn hydrate_workspace(&self, session_id: &SessionId, member: &str) -> Result<PathBuf> {
+        let config = AssemblyConfig {
+            session_id: session_id.clone(),
+            member_name: member.to_string(),
+            team_repo_url: self.team_repo_url.clone(),
+            team_repo_branch: self.team_repo_branch.clone(),
+            project_number: self.project_number,
+            skill_dirs: self.skill_dirs.clone(),
+            credential_base: self.hydrator.credential_relay.credentials_base.clone(),
+        };
+
+        let refs: Vec<(&str, &str)> = self
+            .repo_urls
+            .iter()
+            .map(|(url, name)| (url.as_str(), name.as_str()))
+            .collect();
+
+        let result = self.hydrator.hydrate(session_id, member, &refs, config)?;
+        Ok(result.workspace_path)
+    }
+
+    fn inspect_dirty_state(
+        &self,
+        workspace_path: &Path,
+    ) -> Result<Vec<crate::session::dirty_state::RepoDirtyState>> {
+        crate::session::dirty_state::inspect_dirty_state(workspace_path)
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]

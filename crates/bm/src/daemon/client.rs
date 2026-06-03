@@ -9,8 +9,9 @@ use super::api::{
 };
 use super::sessions_api::{
     BulkCleanupRequest, BulkCleanupResponse, CleanupSessionResponse, InspectSessionResponse,
-    SessionDetailResponse, SessionHistoryResponse, SessionListResponse, StartSessionRequest,
-    StartSessionResponse, StopSessionResponse,
+    RetriggerResponse, SessionDetailResponse, SessionHistoryResponse, SessionListResponse,
+    StartSessionRequest, StartSessionResponse, StopBulkRequest, StopBulkResponse,
+    StopSessionRequest, StopSessionResponse,
 };
 use super::config::{DaemonConfig, DaemonPaths};
 use crate::state;
@@ -177,12 +178,16 @@ impl DaemonClient {
             .context("Failed to parse list sessions response")
     }
 
-    /// POST /api/sessions/{id}/stop — stop an active session.
-    pub fn stop_session(&self, session_id: &str) -> Result<StopSessionResponse> {
+    /// POST /api/sessions/{id}/stop — stop a specific session.
+    pub fn stop_session(&self, session_id: &str, force: bool) -> Result<StopSessionResponse> {
         let url = format!("{}/api/sessions/{}/stop", self.base_url, session_id);
-        let resp = self
-            .client
-            .post(&url)
+        let mut req = self.client.post(&url);
+
+        if force {
+            req = req.json(&StopSessionRequest { force });
+        }
+
+        let resp = req
             .send()
             .with_context(|| format!("Failed to connect to daemon at {}", url))?;
 
@@ -194,6 +199,49 @@ impl DaemonClient {
 
         resp.json::<StopSessionResponse>()
             .context("Failed to parse stop session response")
+    }
+
+    /// POST /api/sessions/stop — bulk stop by member or autonomous mode.
+    pub fn stop_sessions_bulk(&self, req: &StopBulkRequest) -> Result<StopBulkResponse> {
+        let url = format!("{}/api/sessions/stop", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .json(req)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for bulk stop: {}", status, body);
+        }
+
+        resp.json::<StopBulkResponse>()
+            .context("Failed to parse bulk stop response")
+    }
+
+    /// POST /api/sessions/{id}/finalize — retrigger finalization on a retained session.
+    pub fn retrigger_finalization(&self, session_id: &str) -> Result<RetriggerResponse> {
+        let url = format!("{}/api/sessions/{}/finalize", self.base_url, session_id);
+        let resp = self
+            .client
+            .post(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!(
+                "Daemon returned {} for retrigger finalization: {}",
+                status,
+                body
+            );
+        }
+
+        resp.json::<RetriggerResponse>()
+            .context("Failed to parse retrigger response")
     }
 
     /// GET /api/sessions/{id} — get session details.
