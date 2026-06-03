@@ -4,12 +4,13 @@ use comfy_table::{
 };
 
 use crate::config;
+use crate::daemon::DaemonClient;
 use crate::daemon::sessions_api::SessionInfo;
 use crate::session::display::SessionDisplayRow;
 use crate::state::{self, MemberStatus};
 
-/// Handles `bm status [-t team] [-v]`.
-pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
+/// Handles `bm status [-t team] [-v] [--json]`.
+pub fn run(team_flag: Option<&str>, verbose: bool, json: bool) -> Result<()> {
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
 
@@ -107,6 +108,16 @@ pub fn run(team_flag: Option<&str>, verbose: bool) -> Result<()> {
         }
     }
 
+    // Sessions
+    let session_output = build_session_output(&team.name, json, |team_name| {
+        DaemonClient::connect(team_name)
+            .and_then(|c: DaemonClient| c.list_sessions())
+            .ok()
+            .map(|r| r.sessions)
+    });
+    println!();
+    println!("{session_output}");
+
     // Verbose
     if let Some(v) = &info.verbose {
         for ws in &v.workspaces {
@@ -151,7 +162,7 @@ fn session_info_to_display_row(info: &SessionInfo) -> SessionDisplayRow {
 fn render_sessions_section(sessions: Option<&[SessionDisplayRow]>) -> String {
     match sessions {
         None => "Sessions: none (daemon not running)".to_string(),
-        Some(rows) if rows.is_empty() => "Sessions: none".to_string(),
+        Some([]) => "Sessions: none".to_string(),
         Some(rows) => {
             let mut table = Table::new();
             table
@@ -170,6 +181,23 @@ fn render_sessions_section(sessions: Option<&[SessionDisplayRow]>) -> String {
 fn render_status_json(sessions: Option<&[SessionDisplayRow]>) -> serde_json::Value {
     let sessions_slice = sessions.unwrap_or(&[]);
     serde_json::json!({ "sessions": sessions_slice })
+}
+
+fn build_session_output(
+    team_name: &str,
+    json: bool,
+    fetch_sessions: impl FnOnce(&str) -> Option<Vec<SessionInfo>>,
+) -> String {
+    let sessions = fetch_sessions(team_name);
+    let rows = sessions
+        .as_ref()
+        .map(|infos| infos.iter().map(session_info_to_display_row).collect::<Vec<_>>());
+    if json {
+        let value = render_status_json(rows.as_deref());
+        serde_json::to_string_pretty(&value).unwrap()
+    } else {
+        render_sessions_section(rows.as_deref())
+    }
 }
 
 /// Formats an ISO 8601 timestamp for display, stripping sub-seconds.
@@ -363,6 +391,77 @@ mod tests {
         assert!(
             !output.contains("daemon not running"),
             "empty sessions must NOT mention daemon offline, got:\n{output}"
+        );
+    }
+
+    // ── CT-05 fix: wiring tests — session display must be called from run() ──
+
+    fn mock_fetch_active(_team: &str) -> Option<Vec<SessionInfo>> {
+        Some(vec![sample_session_info()])
+    }
+
+    fn mock_fetch_offline(_team: &str) -> Option<Vec<SessionInfo>> {
+        None
+    }
+
+    #[test]
+    fn build_session_output_text_shows_session_data() {
+        let output = build_session_output("test-team", false, mock_fetch_active);
+        assert!(
+            output.contains("a1b2c3d4"),
+            "text output must contain truncated session ID, got:\n{output}"
+        );
+        assert!(
+            output.contains("alice"),
+            "text output must contain member name, got:\n{output}"
+        );
+        assert!(
+            output.contains("Interactive"),
+            "text output must contain session type, got:\n{output}"
+        );
+        assert!(
+            output.contains("Active"),
+            "text output must contain session state, got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn build_session_output_json_produces_valid_json() {
+        let output = build_session_output("test-team", true, mock_fetch_active);
+        let json: serde_json::Value = serde_json::from_str(&output)
+            .expect("json mode must produce valid JSON");
+        assert!(
+            json["sessions"].is_array(),
+            "JSON must have sessions array, got: {json}"
+        );
+        assert_eq!(
+            json["sessions"].as_array().unwrap().len(),
+            1,
+            "JSON sessions array must contain one entry"
+        );
+    }
+
+    #[test]
+    fn build_session_output_offline_text_graceful() {
+        let output = build_session_output("test-team", false, mock_fetch_offline);
+        assert!(
+            output.contains("daemon not running"),
+            "offline text must mention daemon not running, got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn build_session_output_offline_json_graceful() {
+        let output = build_session_output("test-team", true, mock_fetch_offline);
+        let json: serde_json::Value = serde_json::from_str(&output)
+            .expect("json mode must produce valid JSON even when daemon offline");
+        assert!(
+            json["sessions"].is_array(),
+            "JSON must have sessions array even when offline"
+        );
+        assert!(
+            json["sessions"].as_array().unwrap().is_empty(),
+            "sessions must be empty when daemon offline"
         );
     }
 }
