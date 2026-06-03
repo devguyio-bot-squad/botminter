@@ -6,7 +6,7 @@ use chrono::{DateTime, Utc};
 
 use super::cleanup::cleanup_session;
 use super::registry::SessionRegistry;
-use super::types::{SessionId, SessionState, SessionType};
+use super::types::{FinalizationExitStatus, SessionId, SessionState, SessionType};
 
 pub struct RetentionPolicy {
     pub loop_brain_duration: Duration,
@@ -137,16 +137,9 @@ pub fn recover_stale_sessions<P: ProcessChecker>(
 }
 
 /// Check if a process with the given PID is alive using OS-level probing.
+/// Delegates to `state::is_alive` which includes zombie detection via `/proc`.
 pub fn is_pid_alive(pid: u32) -> bool {
-    let Ok(pid_i32) = i32::try_from(pid) else {
-        return false;
-    };
-    if pid_i32 <= 0 {
-        return false;
-    }
-    // SAFETY: pid_i32 is validated > 0 and within i32 range, so kill() targets a single process.
-    // Signal 0 checks existence without delivering a signal.
-    unsafe { libc::kill(pid_i32 as libc::pid_t, 0) == 0 }
+    crate::state::is_alive(pid)
 }
 
 /// Concrete ProcessChecker that uses OS-level PID probing.
@@ -196,7 +189,10 @@ pub fn run_cycle<D: DiskUsageProvider>(
             session_type: r.session_type.clone(),
             retained_at: r.state_transitioned_at,
             workspace_path: r.workspace_path.clone(),
-            was_failure: false,
+            was_failure: r
+                .finalization_result
+                .as_ref()
+                .is_some_and(|f| matches!(f.exit_status, FinalizationExitStatus::Failed)),
         })
         .collect();
 
@@ -255,6 +251,7 @@ mod tests {
             state_transitioned_at: Utc::now(),
             agent_pid: Some(pid),
             workspace_path: Some(PathBuf::from("/tmp/workspace")),
+            finalization_result: None,
         };
         let id = record.session_id.clone();
         registry.register(record).unwrap();
@@ -581,6 +578,7 @@ mod tests {
             state_transitioned_at: Utc::now(),
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/workspace")),
+            finalization_result: None,
         };
         let id = record.session_id.clone();
         registry.register(record).unwrap();
@@ -625,6 +623,7 @@ mod tests {
             state_transitioned_at: Utc::now(),
             agent_pid: None,
             workspace_path: Some(ws.clone()),
+            finalization_result: None,
         };
         let id = record.session_id.clone();
         registry.register(record).unwrap();

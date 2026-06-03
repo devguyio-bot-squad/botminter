@@ -8,8 +8,9 @@ use super::api::{
     StartMembersRequest, StartMembersResponse, StopMembersRequest, StopMembersResponse,
 };
 use super::sessions_api::{
-    SessionDetailResponse, SessionListResponse, StartSessionRequest, StartSessionResponse,
-    StopSessionResponse,
+    BulkCleanupRequest, BulkCleanupResponse, CleanupSessionResponse, InspectSessionResponse,
+    SessionDetailResponse, SessionHistoryResponse, SessionListResponse, StartSessionRequest,
+    StartSessionResponse, StopSessionResponse,
 };
 use super::config::{DaemonConfig, DaemonPaths};
 use crate::state;
@@ -212,6 +213,83 @@ impl DaemonClient {
 
         resp.json::<SessionDetailResponse>()
             .context("Failed to parse session detail response")
+    }
+
+    /// GET /api/sessions/{id}/inspect — inspect a session with finalization and git state.
+    pub fn inspect_session(&self, session_id: &str) -> Result<InspectSessionResponse> {
+        let url = format!("{}/api/sessions/{}/inspect", self.base_url, session_id);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for inspect session: {}", status, body);
+        }
+
+        resp.json::<InspectSessionResponse>()
+            .context("Failed to parse inspect session response")
+    }
+
+    /// DELETE /api/sessions/{id} — clean up a single retained session.
+    pub fn cleanup_session(&self, session_id: &str) -> Result<CleanupSessionResponse> {
+        let url = format!("{}/api/sessions/{}", self.base_url, session_id);
+        let resp = self
+            .client
+            .delete(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for cleanup session: {}", status, body);
+        }
+
+        resp.json::<CleanupSessionResponse>()
+            .context("Failed to parse cleanup session response")
+    }
+
+    /// POST /api/sessions/cleanup — bulk cleanup of retained sessions.
+    pub fn bulk_cleanup_sessions(&self, req: &BulkCleanupRequest) -> Result<BulkCleanupResponse> {
+        let url = format!("{}/api/sessions/cleanup", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .json(req)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for bulk cleanup: {}", status, body);
+        }
+
+        resp.json::<BulkCleanupResponse>()
+            .context("Failed to parse bulk cleanup response")
+    }
+
+    /// GET /api/sessions/history — list session history.
+    pub fn list_session_history(&self) -> Result<SessionHistoryResponse> {
+        let url = format!("{}/api/sessions/history", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for session history: {}", status, body);
+        }
+
+        resp.json::<SessionHistoryResponse>()
+            .context("Failed to parse session history response")
     }
 
     /// GET /api/health — daemon health check.
@@ -555,5 +633,82 @@ mod tests {
             err_msg.contains("not found") || err_msg.contains("not running") || err_msg.contains("Daemon"),
             "error must indicate daemon is not running, got: {err_msg}"
         );
+    }
+
+    // ── CT-89-06: Inspect/Cleanup Client Serde ──────────────────────
+
+    #[test]
+    fn inspect_response_deserializes_for_client() {
+        let json = serde_json::json!({
+            "ok": true,
+            "session_id": "abc123",
+            "member_name": "alice",
+            "session_type": "Loop",
+            "current_state": "Retained",
+            "workspace_path": "/tmp/ws",
+            "finalization_results": {
+                "exit_status": "Completed",
+                "committed_repos": [{"repo_name": "botminter", "branch": "main"}],
+                "pushed_branches": ["main"],
+                "recovery_branches": [],
+                "github_issue_urls": []
+            },
+            "git_state": {
+                "repos": [{"repo_name": "botminter", "current_branch": "main", "uncommitted_files": [], "unpushed_branches": []}]
+            },
+            "error": null
+        });
+        let resp: InspectSessionResponse = serde_json::from_value(json).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.session_id, Some("abc123".to_string()));
+        assert_eq!(resp.member_name, Some("alice".to_string()));
+        assert!(resp.finalization_results.is_some());
+        assert!(resp.git_state.is_some());
+    }
+
+    #[test]
+    fn cleanup_response_deserializes_for_client() {
+        let json = serde_json::json!({
+            "ok": true,
+            "session_id": "abc123",
+            "workspace_removed": true,
+            "registry_removed": true,
+            "error": null
+        });
+        let resp: CleanupSessionResponse = serde_json::from_value(json).unwrap();
+        assert!(resp.ok);
+        assert!(resp.workspace_removed);
+        assert!(resp.registry_removed);
+    }
+
+    #[test]
+    fn bulk_cleanup_request_serializes_for_client() {
+        let req = BulkCleanupRequest {
+            filter: "all".to_string(),
+            value: None,
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["filter"], "all");
+    }
+
+    #[test]
+    fn bulk_cleanup_response_deserializes_for_client() {
+        let json = serde_json::json!({
+            "ok": true,
+            "cleaned": 3,
+            "reports": [
+                {"session_id": "s1", "workspace_removed": true, "registry_removed": true},
+                {"session_id": "s2", "workspace_removed": false, "registry_removed": true},
+                {"session_id": "s3", "workspace_removed": true, "registry_removed": true}
+            ],
+            "error": null
+        });
+        let resp: BulkCleanupResponse = serde_json::from_value(json).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.cleaned, 3);
+        assert_eq!(resp.reports.len(), 3);
+        assert!(resp.reports[0].workspace_removed);
+        assert!(!resp.reports[1].workspace_removed);
     }
 }

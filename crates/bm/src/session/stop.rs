@@ -124,6 +124,7 @@ mod tests {
             state_transitioned_at: now,
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws")),
+            finalization_result: None,
         };
         registry.register(record).unwrap();
         registry

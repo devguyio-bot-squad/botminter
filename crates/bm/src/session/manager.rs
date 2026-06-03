@@ -79,6 +79,7 @@ impl<W: WorkspaceOps> SessionManager<W> {
             state_transitioned_at: now,
             agent_pid: None,
             workspace_path: Some(workspace_path),
+            finalization_result: None,
         };
 
         self.registry.register(record)?;
@@ -274,6 +275,7 @@ mod tests {
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws")),
+            finalization_result: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
@@ -312,6 +314,7 @@ mod tests {
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws")),
+            finalization_result: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
@@ -341,6 +344,7 @@ mod tests {
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: None,
+            finalization_result: None,
         };
         mgr.registry.register(active).unwrap();
         mgr.registry
@@ -358,6 +362,7 @@ mod tests {
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: None,
+            finalization_result: None,
         };
         mgr.registry.register(completed).unwrap();
         mgr.registry
@@ -378,6 +383,7 @@ mod tests {
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: None,
+            finalization_result: None,
         };
         mgr.registry.register(failed).unwrap();
         mgr.registry
@@ -398,6 +404,7 @@ mod tests {
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: None,
+            finalization_result: None,
         };
         mgr.registry.register(killed).unwrap();
         mgr.registry
@@ -418,6 +425,7 @@ mod tests {
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: None,
+            finalization_result: None,
         };
         mgr.registry.register(finalizing).unwrap();
         mgr.registry
@@ -438,6 +446,7 @@ mod tests {
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: None,
+            finalization_result: None,
         };
         mgr.registry.register(retained).unwrap();
         mgr.registry
@@ -487,6 +496,7 @@ mod tests {
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws")),
+            finalization_result: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
@@ -631,6 +641,7 @@ exit 1
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: Some(mgr.workspace_ops.workspace_path.clone()),
+            finalization_result: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
