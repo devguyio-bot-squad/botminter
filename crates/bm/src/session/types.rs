@@ -96,6 +96,7 @@ impl SessionState {
                 | (SessionState::Completed, SessionState::Retained)
                 | (SessionState::Failed, SessionState::Retained)
                 | (SessionState::Killed, SessionState::Retained)
+                | (SessionState::Retained, SessionState::Finalizing)
         )
     }
 }
@@ -194,11 +195,10 @@ mod tests {
     }
 
     #[test]
-    fn retained_cannot_transition_to_any_state() {
+    fn retained_cannot_transition_to_most_states() {
         let invalid_targets = [
             SessionState::Creating,
             SessionState::Active,
-            SessionState::Finalizing,
             SessionState::Completed,
             SessionState::Failed,
             SessionState::Killed,
@@ -225,6 +225,7 @@ mod tests {
             (SessionState::Completed, SessionState::Retained),
             (SessionState::Failed, SessionState::Retained),
             (SessionState::Killed, SessionState::Retained),
+            (SessionState::Retained, SessionState::Finalizing),
         ];
         for (from, to) in &valid {
             assert!(
