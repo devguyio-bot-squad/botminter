@@ -5,6 +5,7 @@ pub mod finalization;
 pub mod history;
 pub mod manager;
 pub mod registry;
+pub mod retention;
 pub mod stop;
 pub mod types;
 pub mod work_item_lock;
