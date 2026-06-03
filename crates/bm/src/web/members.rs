@@ -480,7 +480,7 @@ mod tests {
 
         // Parsed hats — should have multiple hats with triggers/publishes
         let hats = detail["hats"].as_array().unwrap();
-        assert!(hats.len() > 0, "Alice should have hats");
+        assert!(!hats.is_empty(), "Alice should have hats");
 
         // Count hats dynamically from ralph.yml on disk
         let ralph_content =
