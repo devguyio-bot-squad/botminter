@@ -7,6 +7,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
+use crate::session::cleanup;
 use crate::session::registry::SessionRegistry;
 use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
 use crate::session::work_item_lock::WorkItemLock;
@@ -101,6 +102,54 @@ pub struct SessionHistoryResponse {
     pub sessions: Vec<SessionHistoryInfo>,
 }
 
+/// Response for `GET /api/sessions/:id/inspect`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct InspectSessionResponse {
+    pub ok: bool,
+    pub session_id: Option<String>,
+    pub member_name: Option<String>,
+    pub session_type: Option<String>,
+    pub current_state: Option<String>,
+    pub workspace_path: Option<String>,
+    pub finalization_results: Option<serde_json::Value>,
+    pub git_state: Option<serde_json::Value>,
+    pub error: Option<String>,
+}
+
+/// Response for `DELETE /api/sessions/:id`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CleanupSessionResponse {
+    pub ok: bool,
+    pub session_id: Option<String>,
+    pub workspace_removed: bool,
+    pub registry_removed: bool,
+    pub error: Option<String>,
+}
+
+/// Request body for `POST /api/sessions/cleanup`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BulkCleanupRequest {
+    pub filter: String,
+    pub value: Option<String>,
+}
+
+/// Per-session report in bulk cleanup response.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct CleanupReportInfo {
+    pub session_id: String,
+    pub workspace_removed: bool,
+    pub registry_removed: bool,
+}
+
+/// Response for `POST /api/sessions/cleanup`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct BulkCleanupResponse {
+    pub ok: bool,
+    pub cleaned: u32,
+    pub reports: Vec<CleanupReportInfo>,
+    pub error: Option<String>,
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 fn record_to_info(r: &SessionRecord) -> SessionInfo {
@@ -183,6 +232,7 @@ pub async fn start_session_handler(
         state_transitioned_at: now,
         agent_pid: None,
         workspace_path: None,
+        finalization_result: None,
     };
 
     if let Err(e) = inner.registry.register(record) {
@@ -305,6 +355,167 @@ pub async fn session_detail_handler(
     }
 }
 
+/// GET /api/sessions/:id/inspect — returns detailed inspection with finalization and git state.
+pub async fn inspect_session_handler(
+    State(state): State<SessionsApiState>,
+    Path(session_id_str): Path<String>,
+) -> (StatusCode, Json<InspectSessionResponse>) {
+    let inner = state.inner.lock().unwrap();
+    let session_id = SessionId::from_raw(&session_id_str);
+
+    match inner.registry.get(&session_id) {
+        Some(record) => {
+            let finalization_results = record
+                .finalization_result
+                .as_ref()
+                .and_then(|f| serde_json::to_value(f).ok());
+
+            let git_state = record
+                .workspace_path
+                .as_ref()
+                .and_then(|p| cleanup::compute_git_state(p))
+                .and_then(|g| serde_json::to_value(g).ok());
+
+            (
+                StatusCode::OK,
+                Json(InspectSessionResponse {
+                    ok: true,
+                    session_id: Some(session_id_str),
+                    member_name: Some(record.member_name.clone()),
+                    session_type: Some(record.session_type.to_string()),
+                    current_state: Some(record.current_state.to_string()),
+                    workspace_path: record
+                        .workspace_path
+                        .as_ref()
+                        .map(|p| p.display().to_string()),
+                    finalization_results,
+                    git_state,
+                    error: None,
+                }),
+            )
+        }
+        None => {
+            let error = format!("Session {session_id_str} not found");
+            (
+                StatusCode::NOT_FOUND,
+                Json(InspectSessionResponse {
+                    ok: false,
+                    session_id: Some(session_id_str),
+                    member_name: None,
+                    session_type: None,
+                    current_state: None,
+                    workspace_path: None,
+                    finalization_results: None,
+                    git_state: None,
+                    error: Some(error),
+                }),
+            )
+        }
+    }
+}
+
+/// DELETE /api/sessions/:id — cleans up a single retained session.
+pub async fn cleanup_session_handler(
+    State(state): State<SessionsApiState>,
+    Path(session_id_str): Path<String>,
+) -> (StatusCode, Json<CleanupSessionResponse>) {
+    let mut inner = state.inner.lock().unwrap();
+    let session_id = SessionId::from_raw(&session_id_str);
+
+    match cleanup::cleanup_session(&mut inner.registry, &session_id) {
+        Ok(report) => (
+            StatusCode::OK,
+            Json(CleanupSessionResponse {
+                ok: true,
+                session_id: Some(session_id_str),
+                workspace_removed: report.workspace_removed,
+                registry_removed: report.registry_removed,
+                error: None,
+            }),
+        ),
+        Err(e) => (
+            StatusCode::NOT_FOUND,
+            Json(CleanupSessionResponse {
+                ok: false,
+                session_id: Some(session_id_str),
+                workspace_removed: false,
+                registry_removed: false,
+                error: Some(e.to_string()),
+            }),
+        ),
+    }
+}
+
+/// POST /api/sessions/cleanup — bulk cleanup of retained sessions.
+pub async fn bulk_cleanup_handler(
+    State(state): State<SessionsApiState>,
+    Json(req): Json<BulkCleanupRequest>,
+) -> (StatusCode, Json<BulkCleanupResponse>) {
+    let mut inner = state.inner.lock().unwrap();
+
+    let filter = match req.filter.as_str() {
+        "all" => cleanup::CleanupFilter::AllRetained,
+        "member" => match req.value {
+            Some(name) => cleanup::CleanupFilter::ByMember(name),
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(BulkCleanupResponse {
+                        ok: false,
+                        cleaned: 0,
+                        reports: vec![],
+                        error: Some("member filter requires a value".to_string()),
+                    }),
+                )
+            }
+        },
+        other => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(BulkCleanupResponse {
+                    ok: false,
+                    cleaned: 0,
+                    reports: vec![],
+                    error: Some(format!("unknown filter: {other}")),
+                }),
+            )
+        }
+    };
+
+    match cleanup::bulk_cleanup(&mut inner.registry, filter) {
+        Ok(reports) => {
+            let cleaned = reports.len() as u32;
+            let report_infos = reports
+                .into_iter()
+                .map(|r| CleanupReportInfo {
+                    session_id: r.session_id.to_string(),
+                    workspace_removed: r.workspace_removed,
+                    registry_removed: r.registry_removed,
+                })
+                .collect();
+
+            (
+                StatusCode::OK,
+                Json(BulkCleanupResponse {
+                    ok: true,
+                    cleaned,
+                    reports: report_infos,
+                    error: None,
+                }),
+            )
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(BulkCleanupResponse {
+                ok: false,
+                cleaned: 0,
+                reports: vec![],
+                error: Some(e.to_string()),
+            }),
+        ),
+    }
+}
+
 /// Build the sessions API router fragment (merged into the daemon router in green phase).
 pub fn sessions_router(state: SessionsApiState) -> Router {
     Router::new()
@@ -313,9 +524,17 @@ pub fn sessions_router(state: SessionsApiState) -> Router {
             "/api/sessions/history",
             get(list_session_history_handler),
         )
+        .route(
+            "/api/sessions/cleanup",
+            post(bulk_cleanup_handler),
+        )
         .route("/api/sessions", get(list_sessions_handler))
+        .route(
+            "/api/sessions/{id}/inspect",
+            get(inspect_session_handler),
+        )
         .route("/api/sessions/{id}/stop", post(stop_session_handler))
-        .route("/api/sessions/{id}", get(session_detail_handler))
+        .route("/api/sessions/{id}", get(session_detail_handler).delete(cleanup_session_handler))
         .with_state(state)
 }
 
@@ -343,6 +562,7 @@ mod tests {
                 state_transitioned_at: now,
                 agent_pid: None,
                 workspace_path: Some(PathBuf::from("/tmp/ws")),
+                finalization_result: None,
             };
             inner.registry.register(record).unwrap();
             inner
@@ -466,6 +686,7 @@ mod tests {
                 state_transitioned_at: now,
                 agent_pid: None,
                 workspace_path: None,
+                finalization_result: None,
             };
             inner.registry.register(active).unwrap();
             inner
@@ -484,6 +705,7 @@ mod tests {
                 state_transitioned_at: now,
                 agent_pid: None,
                 workspace_path: None,
+                finalization_result: None,
             };
             inner.registry.register(completed).unwrap();
             inner
@@ -506,6 +728,7 @@ mod tests {
                 state_transitioned_at: now,
                 agent_pid: None,
                 workspace_path: None,
+                finalization_result: None,
             };
             inner.registry.register(failed).unwrap();
             inner
@@ -576,6 +799,273 @@ mod tests {
             response.status(),
             StatusCode::NOT_FOUND,
             "unknown session ID must return 404"
+        );
+    }
+
+    // --- CT-89-06: AC-18 Fix — Inspect Endpoint ---
+
+    #[tokio::test]
+    async fn inspect_handler_returns_session_metadata() {
+        let state = SessionsApiState::new(PathBuf::from("/tmp/bm-test-inspect-api.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let session_id = SessionId::from_raw("inspect-test-session");
+            let record = SessionRecord {
+                session_id: session_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: Some(PathBuf::from("/tmp/ws")),
+                finalization_result: None,
+            };
+            inner.registry.register(record).unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Active)
+                .unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Completed)
+                .unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Retained)
+                .unwrap();
+        }
+
+        let app = sessions_router(state);
+        let request = Request::builder()
+            .uri("/api/sessions/inspect-test-session/inspect")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: InspectSessionResponse = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(json.ok, "inspect response must be ok");
+        assert_eq!(
+            json.member_name,
+            Some("alice".to_string()),
+            "inspect response must include member_name from the session record"
+        );
+        assert_eq!(
+            json.current_state,
+            Some("Retained".to_string()),
+            "inspect response must include current_state from the session record"
+        );
+    }
+
+    #[tokio::test]
+    async fn inspect_handler_returns_finalization_when_present() {
+        use crate::session::types::{
+            CommittedRepo, FinalizationExitStatus,
+            FinalizationResult as TypesFinalizationResult,
+        };
+
+        let state = SessionsApiState::new(PathBuf::from("/tmp/bm-test-inspect-fin-api.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let session_id = SessionId::from_raw("finalization-session");
+            let record = SessionRecord {
+                session_id: session_id.clone(),
+                member_name: "bob".to_string(),
+                session_type: SessionType::Interactive,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: Some(TypesFinalizationResult {
+                    exit_status: FinalizationExitStatus::CompletedDegraded,
+                    committed_repos: vec![CommittedRepo {
+                        repo_name: "myproject".to_string(),
+                        branch: "main".to_string(),
+                    }],
+                    pushed_branches: vec!["main".to_string()],
+                    recovery_branches: vec!["recovery/abc/main".to_string()],
+                    github_issue_urls: vec![],
+                }),
+            };
+            inner.registry.register(record).unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Active)
+                .unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Completed)
+                .unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Retained)
+                .unwrap();
+        }
+
+        let app = sessions_router(state);
+        let request = Request::builder()
+            .uri("/api/sessions/finalization-session/inspect")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: InspectSessionResponse = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(
+            json.finalization_results.is_some(),
+            "inspect must include finalization_results when the session has finalization data"
+        );
+        let fin = json.finalization_results.unwrap();
+        assert_eq!(
+            fin["exit_status"], "CompletedDegraded",
+            "finalization exit_status must match the record"
+        );
+        assert!(
+            fin["committed_repos"].is_array(),
+            "finalization committed_repos must be an array"
+        );
+    }
+
+    // --- CT-89-06: Cleanup Endpoint ---
+
+    #[tokio::test]
+    async fn cleanup_handler_removes_session() {
+        let state = SessionsApiState::new(PathBuf::from("/tmp/bm-test-cleanup-api.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let session_id = SessionId::from_raw("cleanup-target");
+            let record = SessionRecord {
+                session_id: session_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: None,
+            };
+            inner.registry.register(record).unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Active)
+                .unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Completed)
+                .unwrap();
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Retained)
+                .unwrap();
+        }
+
+        let app = sessions_router(state);
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/api/sessions/cleanup-target")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: CleanupSessionResponse = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(json.ok, "cleanup response must be ok");
+        assert!(
+            json.registry_removed,
+            "cleanup must report registry_removed: true after removing the session"
+        );
+    }
+
+    #[tokio::test]
+    async fn bulk_cleanup_handler_cleans_retained_sessions() {
+        let state = SessionsApiState::new(PathBuf::from("/tmp/bm-test-bulk-cleanup-api.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+
+            for name in &["s1", "s2"] {
+                let session_id = SessionId::from_raw(*name);
+                let record = SessionRecord {
+                    session_id: session_id.clone(),
+                    member_name: "alice".to_string(),
+                    session_type: SessionType::Loop,
+                    current_state: SessionState::Creating,
+                    created_at: now,
+                    state_transitioned_at: now,
+                    agent_pid: None,
+                    workspace_path: None,
+                    finalization_result: None,
+                };
+                inner.registry.register(record).unwrap();
+                inner
+                    .registry
+                    .update_state(&session_id, SessionState::Active)
+                    .unwrap();
+                inner
+                    .registry
+                    .update_state(&session_id, SessionState::Completed)
+                    .unwrap();
+                inner
+                    .registry
+                    .update_state(&session_id, SessionState::Retained)
+                    .unwrap();
+            }
+        }
+
+        let app = sessions_router(state);
+        let body = serde_json::json!({
+            "filter": "all",
+            "value": null
+        });
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/cleanup")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: BulkCleanupResponse = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(json.ok, "bulk cleanup response must be ok");
+        assert_eq!(
+            json.cleaned, 2,
+            "bulk cleanup must report 2 sessions cleaned"
+        );
+        assert_eq!(
+            json.reports.len(),
+            2,
+            "bulk cleanup must include 2 per-session reports"
         );
     }
 }

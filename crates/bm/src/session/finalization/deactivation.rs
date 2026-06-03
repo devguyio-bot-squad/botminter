@@ -263,6 +263,7 @@ mod tests {
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws1")),
+            finalization_result: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
@@ -299,6 +300,7 @@ mod tests {
             state_transitioned_at: chrono::Utc::now(),
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws1")),
+            finalization_result: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry

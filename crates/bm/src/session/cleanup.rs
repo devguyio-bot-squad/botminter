@@ -3,10 +3,8 @@ use std::path::PathBuf;
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 
-use super::dirty_state::RepoDirtyState;
-use super::finalization::deactivation::FinalizationResult;
 use super::registry::SessionRegistry;
-use super::types::{SessionId, SessionState, SessionType};
+use super::types::{FinalizationResult, GitState, RepoGitState, SessionId, SessionState, SessionType};
 
 /// Structured summary of a retained session for operator inspection.
 pub struct SessionInspection {
@@ -17,7 +15,7 @@ pub struct SessionInspection {
     pub workspace_path: Option<PathBuf>,
     pub created_at: DateTime<Utc>,
     pub finalization_result: Option<FinalizationResult>,
-    pub git_state: Vec<RepoDirtyState>,
+    pub git_state: Option<GitState>,
 }
 
 /// Report of a single session cleanup operation.
@@ -34,6 +32,58 @@ pub enum CleanupFilter {
     OlderThan(Duration),
 }
 
+/// Compute the git state of all repos within a session workspace.
+pub fn compute_git_state(workspace_path: &std::path::Path) -> Option<GitState> {
+    let projects_dir = workspace_path.join("projects");
+    let entries = std::fs::read_dir(&projects_dir).ok()?;
+
+    let mut repos = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if !path.is_dir() || !path.join(".git").exists() {
+            continue;
+        }
+
+        let repo_name = entry.file_name().to_string_lossy().to_string();
+
+        let current_branch = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(&path)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+        let uncommitted_files = std::process::Command::new("git")
+            .args(["status", "--porcelain"])
+            .current_dir(&path)
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| {
+                String::from_utf8_lossy(&o.stdout)
+                    .lines()
+                    .filter(|l| !l.is_empty())
+                    .map(|l| l.to_string())
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        repos.push(RepoGitState {
+            repo_name,
+            current_branch,
+            uncommitted_files,
+            unpushed_branches: vec![],
+        });
+    }
+
+    if repos.is_empty() {
+        None
+    } else {
+        Some(GitState { repos })
+    }
+}
+
 /// Inspect a retained session, returning a structured summary.
 pub fn inspect_session(
     registry: &SessionRegistry,
@@ -43,6 +93,11 @@ pub fn inspect_session(
         .get(session_id)
         .ok_or_else(|| anyhow::anyhow!("Session {} not found", session_id))?;
 
+    let git_state = record
+        .workspace_path
+        .as_ref()
+        .and_then(|p| compute_git_state(p));
+
     Ok(SessionInspection {
         session_id: record.session_id.clone(),
         member_name: record.member_name.clone(),
@@ -50,8 +105,8 @@ pub fn inspect_session(
         current_state: record.current_state.clone(),
         workspace_path: record.workspace_path.clone(),
         created_at: record.created_at,
-        finalization_result: None,
-        git_state: vec![],
+        finalization_result: record.finalization_result.clone(),
+        git_state,
     })
 }
 
@@ -120,6 +175,7 @@ mod tests {
             state_transitioned_at: Utc::now(),
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/workspace-test")),
+            finalization_result: None,
         }
     }
 
@@ -360,6 +416,109 @@ mod tests {
         assert!(
             registry.get(&id2).is_none(),
             "second session must be removed after cleanup"
+        );
+    }
+
+    // --- CT-89-06: AC-18 Fix — FinalizationResult + SessionInspection ---
+
+    #[test]
+    fn inspect_session_populates_finalization_from_record() {
+        use crate::session::types::{
+            CommittedRepo, FinalizationExitStatus, FinalizationResult as TypesFinalizationResult,
+        };
+
+        let mut registry = new_registry();
+        let mut record = make_retained_record("alice", SessionType::Loop);
+        record.finalization_result = Some(TypesFinalizationResult {
+            exit_status: FinalizationExitStatus::Completed,
+            committed_repos: vec![CommittedRepo {
+                repo_name: "botminter".to_string(),
+                branch: "feature/story-88".to_string(),
+            }],
+            pushed_branches: vec!["feature/story-88".to_string()],
+            recovery_branches: vec![],
+            github_issue_urls: vec![],
+        });
+        let id = register_retained(&mut registry, record);
+
+        let inspection = inspect_session(&registry, &id).unwrap();
+
+        assert!(
+            inspection.finalization_result.is_some(),
+            "inspect_session must copy finalization_result from SessionRecord, got None"
+        );
+        let fin = inspection.finalization_result.unwrap();
+        assert_eq!(
+            fin.exit_status,
+            FinalizationExitStatus::Completed,
+            "finalization exit_status must match the record"
+        );
+        assert_eq!(
+            fin.committed_repos.len(),
+            1,
+            "finalization committed_repos must be copied from record"
+        );
+    }
+
+    #[test]
+    fn inspect_session_computes_git_state_for_workspace_with_repo() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        let projects = ws.join("projects");
+        let repo = projects.join("myrepo");
+        std::fs::create_dir_all(&repo).unwrap();
+
+        std::process::Command::new("git")
+            .args(["init", "-b", "main"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.email", "test@test.com"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "user.name", "Test"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["config", "commit.gpgsign", "false"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        std::fs::write(repo.join("README.md"), "hello").unwrap();
+        std::process::Command::new("git")
+            .args(["add", "."])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        std::process::Command::new("git")
+            .args(["commit", "-m", "init"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+
+        let mut registry = new_registry();
+        let mut record = make_retained_record("bob", SessionType::Interactive);
+        record.workspace_path = Some(ws.clone());
+        let id = register_retained(&mut registry, record);
+
+        let inspection = inspect_session(&registry, &id).unwrap();
+
+        assert!(
+            inspection.git_state.is_some(),
+            "inspect_session must compute git_state for a workspace with repos, got None"
+        );
+        let state = inspection.git_state.unwrap();
+        assert!(
+            !state.repos.is_empty(),
+            "git_state must contain at least one repo entry"
+        );
+        assert_eq!(
+            state.repos[0].repo_name, "myrepo",
+            "git_state repo entry must have the correct name"
         );
     }
 }

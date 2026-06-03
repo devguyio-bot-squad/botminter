@@ -123,6 +123,73 @@ impl std::fmt::Display for SessionState {
     }
 }
 
+/// Exit status of the finalization process for a session.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FinalizationExitStatus {
+    Completed,
+    CompletedDegraded,
+    Failed,
+    Skipped,
+}
+
+/// A repo that was committed during finalization.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CommittedRepo {
+    pub repo_name: String,
+    pub branch: String,
+}
+
+/// Serializable record of a session's finalization outcome.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FinalizationResult {
+    pub exit_status: FinalizationExitStatus,
+    pub committed_repos: Vec<CommittedRepo>,
+    pub pushed_branches: Vec<String>,
+    pub recovery_branches: Vec<String>,
+    pub github_issue_urls: Vec<String>,
+}
+
+/// Git state of a single repo within a workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RepoGitState {
+    pub repo_name: String,
+    pub current_branch: Option<String>,
+    pub uncommitted_files: Vec<String>,
+    pub unpushed_branches: Vec<String>,
+}
+
+/// Aggregate git state across all repos in a session workspace.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitState {
+    pub repos: Vec<RepoGitState>,
+}
+
+/// Pre-formatted row for session display in CLI output.
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionDisplayRow {
+    pub session_id: String,
+    pub member: String,
+    pub session_type: String,
+    pub state: String,
+    pub start_time: String,
+    pub elapsed_time: String,
+    pub concurrent_count: String,
+}
+
+impl SessionDisplayRow {
+    pub fn fields(&self) -> [&str; 7] {
+        [
+            &self.session_id,
+            &self.member,
+            &self.session_type,
+            &self.state,
+            &self.start_time,
+            &self.elapsed_time,
+            &self.concurrent_count,
+        ]
+    }
+}
+
 /// A persistent record of a tracked session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRecord {
@@ -134,6 +201,8 @@ pub struct SessionRecord {
     pub state_transitioned_at: DateTime<Utc>,
     pub agent_pid: Option<u32>,
     pub workspace_path: Option<PathBuf>,
+    #[serde(default)]
+    pub finalization_result: Option<FinalizationResult>,
 }
 
 #[cfg(test)]
@@ -150,6 +219,7 @@ mod tests {
             state_transitioned_at: Utc::now(),
             agent_pid: None,
             workspace_path: None,
+            finalization_result: None,
         }
     }
 

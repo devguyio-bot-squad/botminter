@@ -6,7 +6,7 @@ use comfy_table::{
 use crate::config;
 use crate::daemon::DaemonClient;
 use crate::daemon::sessions_api::SessionInfo;
-use crate::session::display::SessionDisplayRow;
+use crate::session::types::SessionDisplayRow;
 use crate::state::{self, MemberStatus};
 
 /// Handles `bm status [-t team] [-v] [--json]`.
