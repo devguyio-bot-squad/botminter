@@ -18,6 +18,10 @@ impl SessionId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    pub fn from_raw(s: impl Into<String>) -> Self {
+        Self(s.into())
+    }
 }
 
 impl Default for SessionId {
@@ -38,6 +42,30 @@ pub enum SessionType {
     Interactive,
     Loop,
     Brain,
+}
+
+impl std::fmt::Display for SessionType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            SessionType::Interactive => "Interactive",
+            SessionType::Loop => "Loop",
+            SessionType::Brain => "Brain",
+        };
+        write!(f, "{s}")
+    }
+}
+
+impl std::str::FromStr for SessionType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Interactive" => Ok(SessionType::Interactive),
+            "Loop" => Ok(SessionType::Loop),
+            "Brain" => Ok(SessionType::Brain),
+            _ => Err(anyhow::anyhow!("Unknown session type: {s}")),
+        }
+    }
 }
 
 /// Session lifecycle states per the state machine in the design doc.

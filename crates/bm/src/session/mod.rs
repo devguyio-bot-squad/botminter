@@ -1,5 +1,8 @@
+pub mod dirty_state;
+pub mod manager;
 pub mod registry;
 pub mod types;
+pub mod work_item_lock;
 
 pub use types::{SessionId, SessionRecord, SessionState, SessionType};
 
