@@ -164,32 +164,6 @@ pub struct GitState {
     pub repos: Vec<RepoGitState>,
 }
 
-/// Pre-formatted row for session display in CLI output.
-#[derive(Debug, Clone, Serialize)]
-pub struct SessionDisplayRow {
-    pub session_id: String,
-    pub member: String,
-    pub session_type: String,
-    pub state: String,
-    pub start_time: String,
-    pub elapsed_time: String,
-    pub concurrent_count: String,
-}
-
-impl SessionDisplayRow {
-    pub fn fields(&self) -> [&str; 7] {
-        [
-            &self.session_id,
-            &self.member,
-            &self.session_type,
-            &self.state,
-            &self.start_time,
-            &self.elapsed_time,
-            &self.concurrent_count,
-        ]
-    }
-}
-
 /// A persistent record of a tracked session.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SessionRecord {
