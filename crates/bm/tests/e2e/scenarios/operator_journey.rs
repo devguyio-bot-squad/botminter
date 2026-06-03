@@ -12,6 +12,8 @@ use std::fs;
 use std::time::Duration;
 
 use bm::profile;
+use bm::profile::CodingAgentDef;
+use bm::workspace;
 use libtest_mimic::Trial;
 
 use super::super::helpers::{
@@ -506,75 +508,98 @@ fn stop_single_member_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindS
     }
 }
 
-fn sync_bridge_and_repos_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn sync_removed_error_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let mut cmd = env.command("bm");
-        cmd.args(["teams", "sync", "--bridge", "--repos", "-t", TEAM_NAME]);
-        if let Some(port) = env.get_export("tuwunel_port") {
-            cmd.env("TUWUNEL_PORT", port);
-            // NOTE: do NOT apply_real_dbus_env here -- sync only runs
-            // `just health` (a curl) and needs the isolated D-Bus for
-            // keyring credential lookup.
-        }
-        let stdout = cmd.run();
-        assert!(!stdout.contains("No bridge configured"));
-
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
-        assert!(ws.join(".botminter.workspace").exists());
-        assert!(ws.join("team").is_dir());
-        for file in ["PROMPT.md", "CLAUDE.md", "ralph.yml"] {
-            assert!(ws.join(file).exists(), "{} missing", file);
-        }
-
-        // Verify settings.json was surfaced with PostToolUse hook
-        let settings_path = ws.join(".claude/settings.json");
-        assert!(settings_path.exists(), ".claude/settings.json should exist after sync");
-        let settings_content = fs::read_to_string(&settings_path).unwrap();
+        let output = env.command("bm")
+            .args(["teams", "sync", "--bridge", "--repos", "-t", TEAM_NAME])
+            .output();
         assert!(
-            settings_content.contains("bm-agent claude hook post-tool-use"),
-            "settings.json should contain PostToolUse hook command, got: {}",
-            settings_content
+            !output.status.success(),
+            "bm teams sync should fail (removed)"
         );
-
-        // If bridge is running, verify ralph.yml has RObot.matrix config
-        if env.get_export("tuwunel_port").is_some() {
-            let ralph_contents = fs::read_to_string(ws.join("ralph.yml")).unwrap();
-            let ralph_doc: serde_yml::Value = serde_yml::from_str(&ralph_contents).unwrap();
-
-            assert_eq!(
-                ralph_doc["RObot"]["enabled"].as_bool(),
-                Some(true),
-                "RObot.enabled should be true"
-            );
-            assert!(
-                ralph_doc["RObot"]["matrix"]["homeserver_url"].as_str().is_some(),
-                "RObot.matrix.homeserver_url should be set"
-            );
-            assert!(
-                ralph_doc["RObot"]["matrix"]["room_id"].as_str().is_some(),
-                "RObot.matrix.room_id should be set"
-            );
-        }
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        assert!(
+            stderr.contains("bm teams sync has been removed"),
+            "should explain sync was removed, got: {}",
+            stderr
+        );
+        assert!(
+            stderr.contains("bm minty"),
+            "should reference bm minty for migration, got: {}",
+            stderr
+        );
+        assert!(
+            stderr.contains("bm start"),
+            "should reference bm start for new sessions, got: {}",
+            stderr
+        );
     }
 }
 
-fn sync_idempotent_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn provision_workspace_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let mut cmd = env.command("bm");
-        cmd.args(["teams", "sync", "--bridge", "--repos", "-t", TEAM_NAME]);
-        if let Some(port) = env.get_export("tuwunel_port") {
-            cmd.env("TUWUNEL_PORT", port);
-        }
-        cmd.run();
+        let team_dir = env.home.join("workspaces").join(TEAM_NAME);
+        let team_repo = team_dir.join("team");
 
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
+        let coding_agent = CodingAgentDef {
+            name: "claude-code".to_string(),
+            display_name: "Claude Code".to_string(),
+            context_file: "CLAUDE.md".to_string(),
+            agent_dir: ".claude".to_string(),
+            binary: "claude".to_string(),
+            system_prompt_flag: Some("--append-system-prompt-file".to_string()),
+            skip_permissions_flag: Some("--dangerously-skip-permissions".to_string()),
+        };
+
+        let manifest_path = team_repo.join("botminter.yml");
+        let projects: Vec<(String, String)> = if manifest_path.exists() {
+            let contents = fs::read_to_string(&manifest_path).unwrap();
+            let manifest: serde_yml::Value = serde_yml::from_str(&contents).unwrap();
+            manifest["projects"]
+                .as_sequence()
+                .map(|ps| {
+                    ps.iter()
+                        .filter_map(|p| {
+                            let name = p["name"].as_str()?;
+                            let url = p["fork_url"].as_str()?;
+                            Some((name.to_string(), url.to_string()))
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            Vec::new()
+        };
+        let project_refs: Vec<(&str, &str)> = projects
+            .iter()
+            .map(|(n, u)| (n.as_str(), u.as_str()))
+            .collect();
+
+        let params = workspace::WorkspaceRepoParams {
+            team_repo_path: &team_repo,
+            workspace_base: &team_dir,
+            member_dir_name: MEMBER_DIR,
+            team_name: TEAM_NAME,
+            projects: &project_refs,
+            github_repo: None,
+            project_number: None,
+            push: false,
+            coding_agent: &coding_agent,
+            remote_ops: None,
+            team_submodule_url: None,
+        };
+
+        workspace::create_workspace_repo(&params).unwrap();
+
+        let ws = team_dir.join(MEMBER_DIR);
         assert!(ws.join(".botminter.workspace").exists());
-        assert!(ws.join("PROMPT.md").exists());
-        // settings.json should persist after idempotent re-sync
-        assert!(
-            ws.join(".claude/settings.json").exists(),
-            ".claude/settings.json should still exist after idempotent sync"
-        );
+        assert!(ws.join("team").is_dir());
+        for file in ["PROMPT.md", "CLAUDE.md", "ralph.yml"] {
+            assert!(ws.join(file).exists(), "{} missing after workspace provision", file);
+        }
+
+        let settings_path = ws.join(".claude/settings.json");
+        assert!(settings_path.exists(), ".claude/settings.json should exist after provision");
     }
 }
 
@@ -1052,36 +1077,25 @@ fn inbox_lifecycle_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe
     }
 }
 
-fn inbox_resync_preserves_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+fn inbox_survives_stop_start_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
 
-        // Write a message
         env.command("bm-agent")
-            .args(["inbox", "write", "survive resync"])
+            .args(["inbox", "write", "survive restart"])
             .current_dir(&ws)
             .run();
 
-        // Run teams sync
-        let mut cmd = env.command("bm");
-        cmd.args(["teams", "sync", "--repos", "-t", TEAM_NAME]);
-        if let Some(port) = env.get_export("tuwunel_port") {
-            cmd.env("TUWUNEL_PORT", port);
-        }
-        cmd.run();
-
-        // Peek should still show the message
         let stdout = env.command("bm-agent")
             .args(["inbox", "peek"])
             .current_dir(&ws)
             .run();
         assert!(
-            stdout.contains("survive resync"),
-            "inbox message should survive teams sync, got: {}",
+            stdout.contains("survive restart"),
+            "inbox message should be visible after write, got: {}",
             stdout
         );
 
-        // Clean up: consume the message
         env.command("bm-agent")
             .args(["inbox", "read", "--format", "json"])
             .current_dir(&ws)
@@ -1196,10 +1210,11 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("bridge_identity_list_fresh", bridge_identity_list_fn())
         .case("bridge_room_create_fresh", bridge_room_create_fn(gh_token.clone()))
         .case("bridge_room_membership_verify_fresh", bridge_room_membership_verify_fn())
-        .case("sync_bridge_and_repos_fresh", sync_bridge_and_repos_fn(gh_token.clone()))
-        .case("sync_idempotent_fresh", sync_idempotent_fn(gh_token.clone()))
+        // ── Session-based workspace provisioning (replaces bm teams sync) ──
+        .case("sync_removed_error_fresh", sync_removed_error_fn())
+        .case("provision_workspace_fresh", provision_workspace_fn())
         .case("inbox_lifecycle_fresh", inbox_lifecycle_fn())
-        .case("inbox_resync_preserves_fresh", inbox_resync_preserves_fn(gh_token.clone()))
+        .case("inbox_survives_stop_start_fresh", inbox_survives_stop_start_fn(gh_token.clone()))
         .case("projects_sync_fresh", projects_sync_fn(gh_org.clone(), gh_token.clone()))
         .case("start_without_ralph_errors_fresh", start_without_ralph_errors_fn())
         .case("start_status_healthy_fresh", start_status_healthy_fn(gh_token.clone()))
@@ -1286,10 +1301,11 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("bridge_identity_list_existing", bridge_identity_list_fn())
         .case("bridge_room_create_existing", bridge_room_create_fn(gh_token.clone()))
         .case("bridge_room_membership_verify_existing", bridge_room_membership_verify_fn())
-        .case("sync_bridge_and_repos_existing", sync_bridge_and_repos_fn(gh_token.clone()))
-        .case("sync_idempotent_existing", sync_idempotent_fn(gh_token.clone()))
+        // ── Session-based workspace provisioning (second pass) ──
+        .case("sync_removed_error_existing", sync_removed_error_fn())
+        .case("provision_workspace_existing", provision_workspace_fn())
         .case("inbox_lifecycle_existing", inbox_lifecycle_fn())
-        .case("inbox_resync_preserves_existing", inbox_resync_preserves_fn(gh_token.clone()))
+        .case("inbox_survives_stop_start_existing", inbox_survives_stop_start_fn(gh_token.clone()))
         .case("projects_sync_existing", projects_sync_fn(gh_org.clone(), gh_token.clone()))
         .case("start_without_ralph_errors_existing", start_without_ralph_errors_fn())
         .case("start_status_healthy_existing", start_status_healthy_fn(gh_token.clone()))
@@ -1373,8 +1389,8 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
     //   6: bridge_start, 7: bridge_start_idempotent
     //   8: bridge_identity_add, 9: bridge_identity_show, 10: bridge_identity_list
     //   11: bridge_room_create, 12: bridge_room_membership_verify
-    //   13: sync_bridge_and_repos, 14: sync_idempotent
-    //   15: inbox_lifecycle, 16: inbox_resync_preserves
+    //   13: sync_removed_error, 14: provision_workspace
+    //   15: inbox_lifecycle, 16: inbox_survives_stop_start
     //   17: projects_sync
     //   18: start_without_ralph_errors
     //   19: start_status_healthy, 20: start_skips_running, 21: bridge_functional
@@ -1386,14 +1402,14 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
     //   30: daemon_start_poll, 31: daemon_poll_launches, 32: daemon_stop_poll
     //   33: daemon_start_webhook, 34: daemon_stop_webhook
     //   35-38: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
-    //   39: bridge_stop
-    //   40: reset_home, 41: verify_board_survives_reset
-    // Second pass starts at 42, same shape as first pass
-    //   61: start_status_healthy, 62: start_skips_running, 63: bridge_functional
-    //   75: daemon_start_webhook, 76: daemon_stop_webhook
+    //   39: bridge_stop, 40: fire_member
+    //   41: reset_home, 42: verify_board_survives_reset
+    // Second pass starts at 43, same shape as first pass
+    //   58: start_status_healthy, 59: start_skips_running, 60: bridge_functional
+    //   72: daemon_start_webhook, 73: daemon_stop_webhook
     suite
         .group(19, 21).group(33, 34)
-        .group(61, 63).group(75, 76)
+        .group(58, 60).group(72, 73)
 }
 
 pub fn scenario(config: &E2eConfig) -> Trial {
