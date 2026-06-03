@@ -1,6 +1,8 @@
 use std::path::Path;
 use std::process::Command;
 
+use anyhow::Result;
+
 use crate::session::types::SessionId;
 
 pub fn build_finalization_command(
@@ -25,6 +27,16 @@ pub fn build_finalization_command(
     .env("BM_SESSION_ID", session_id.as_str())
     .env_remove("CLAUDECODE");
     cmd
+}
+
+pub fn retrigger_finalization(
+    workspace_path: &Path,
+    session_id: &SessionId,
+) -> Result<()> {
+    build_finalization_command(workspace_path, session_id)
+        .spawn()
+        .map(drop)
+        .map_err(Into::into)
 }
 
 #[cfg(test)]
@@ -87,6 +99,33 @@ mod tests {
         assert!(
             file.is_some(),
             "finalization.md must exist at profiles/{}", path
+        );
+    }
+
+    #[test]
+    fn retrigger_finalization_is_not_a_stub() {
+        let workspace = PathBuf::from("/nonexistent/workspace-retrigger-test");
+        let session_id = SessionId::from_raw("sess-retrigger-stub-check");
+
+        let result = retrigger_finalization(&workspace, &session_id);
+
+        assert!(
+            result.is_err(),
+            "retrigger_finalization with non-existent workspace must fail — a stub returning Ok is not a real implementation"
+        );
+    }
+
+    #[test]
+    fn retrigger_finalization_uses_workspace_as_cwd() {
+        let workspace = PathBuf::from("/tmp/workspace-retrigger");
+        let session_id = SessionId::from_raw("sess-retrigger-cwd");
+
+        let cmd = build_finalization_command(&workspace, &session_id);
+
+        assert_eq!(
+            cmd.get_current_dir(),
+            Some(workspace.as_path()),
+            "finalization command must set current_dir to workspace_path for retrigger"
         );
     }
 }
