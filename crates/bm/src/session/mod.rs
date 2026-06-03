@@ -3,6 +3,7 @@ pub mod display;
 pub mod finalization;
 pub mod manager;
 pub mod registry;
+pub mod stop;
 pub mod types;
 pub mod work_item_lock;
 
