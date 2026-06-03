@@ -12,7 +12,7 @@ pub struct SessionDisplayRow {
 }
 
 impl SessionDisplayRow {
-    fn fields(&self) -> [&str; 5] {
+    pub fn fields(&self) -> [&str; 5] {
         [&self.session_id, &self.member, &self.session_type, &self.state, &self.start_time]
     }
 }
