@@ -352,8 +352,10 @@ pub(super) fn git_cmd_output(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+pub(crate) const DEFAULT_MAX_RETRIES: u32 = 3;
+
 /// Pushes the current branch with automatic fetch+rebase retry on non-fast-forward rejection.
-pub(super) fn push_with_rebase_retry(dir: &Path, branch: &str, max_retries: u32) -> Result<()> {
+pub(crate) fn push_with_rebase_retry(dir: &Path, branch: &str, max_retries: u32) -> Result<()> {
     for attempt in 0..=max_retries {
         let output = Command::new("git")
             .args(["push", "origin", branch])
