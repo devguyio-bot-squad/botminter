@@ -62,6 +62,8 @@ pub struct SessionInfo {
     pub session_type: String,
     pub current_state: String,
     pub started_at: String,
+    #[serde(default)]
+    pub state_transitioned_at: Option<String>,
 }
 
 /// Response for `GET /api/sessions`.
@@ -159,6 +161,7 @@ fn record_to_info(r: &SessionRecord) -> SessionInfo {
         session_type: r.session_type.to_string(),
         current_state: r.current_state.to_string(),
         started_at: r.created_at.to_rfc3339(),
+        state_transitioned_at: Some(r.state_transitioned_at.to_rfc3339()),
     }
 }
 
@@ -1066,6 +1069,29 @@ mod tests {
             json.reports.len(),
             2,
             "bulk cleanup must include 2 per-session reports"
+        );
+    }
+
+    // --- CT-89-01 QE re-entry: AC-10 fix ---
+
+    #[test]
+    fn record_to_info_includes_state_transitioned_at() {
+        let now = chrono::Utc::now();
+        let record = SessionRecord {
+            session_id: SessionId::from_raw("abc123"),
+            member_name: "alice".to_string(),
+            session_type: SessionType::Interactive,
+            current_state: SessionState::Active,
+            created_at: now - chrono::Duration::hours(2),
+            state_transitioned_at: now,
+            agent_pid: None,
+            workspace_path: None,
+            finalization_result: None,
+        };
+        let info = record_to_info(&record);
+        assert!(
+            info.state_transitioned_at.is_some(),
+            "SessionInfo must include state_transitioned_at from SessionRecord"
         );
     }
 }

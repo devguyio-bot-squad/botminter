@@ -149,14 +149,38 @@ fn truncate_session_id(id: &str) -> String {
     }
 }
 
+fn format_elapsed(timestamp: &str) -> String {
+    let Ok(dt) = chrono::DateTime::parse_from_rfc3339(timestamp) else {
+        return String::new();
+    };
+    let elapsed = chrono::Utc::now().signed_duration_since(dt);
+    if elapsed.num_seconds() < 0 {
+        return String::new();
+    }
+    let total_hours = elapsed.num_hours();
+    let minutes = (elapsed.num_minutes() % 60) as u64;
+    if total_hours >= 24 {
+        let days = total_hours / 24;
+        let hours = (total_hours % 24) as u64;
+        format!("{days}d {hours}h")
+    } else {
+        format!("{total_hours}h {minutes}m")
+    }
+}
+
 fn session_info_to_display_row(info: &SessionInfo) -> SessionDisplayRow {
+    let elapsed_time = info
+        .state_transitioned_at
+        .as_deref()
+        .map(format_elapsed)
+        .unwrap_or_default();
     SessionDisplayRow {
         session_id: truncate_session_id(&info.session_id),
         member: info.member_name.clone(),
         session_type: info.session_type.clone(),
         state: info.current_state.clone(),
         start_time: format_timestamp(&info.started_at),
-        elapsed_time: String::new(),
+        elapsed_time,
         concurrent_count: "0".to_string(),
     }
 }
@@ -199,9 +223,17 @@ fn build_session_output(
     fetch_sessions: impl FnOnce(&str) -> Option<Vec<SessionInfo>>,
 ) -> String {
     let sessions = fetch_sessions(team_name);
-    let rows = sessions
-        .as_ref()
-        .map(|infos| infos.iter().map(session_info_to_display_row).collect::<Vec<_>>());
+    let rows = sessions.as_ref().map(|infos| {
+        let mut rows: Vec<_> = infos.iter().map(session_info_to_display_row).collect();
+        for row in &mut rows {
+            let count = infos
+                .iter()
+                .filter(|s| s.member_name == row.member && s.current_state == "Active")
+                .count();
+            row.concurrent_count = count.to_string();
+        }
+        rows
+    });
     if json {
         let value = render_status_json(rows.as_deref());
         serde_json::to_string_pretty(&value).unwrap()
@@ -258,6 +290,7 @@ mod tests {
             session_type: "Interactive".to_string(),
             current_state: "Active".to_string(),
             started_at: "2026-06-03T10:00:00+00:00".to_string(),
+            state_transitioned_at: None,
         }
     }
 
@@ -313,6 +346,7 @@ mod tests {
             session_type: "Loop".to_string(),
             current_state: "Active".to_string(),
             started_at: "2026-06-03T10:30:00+00:00".to_string(),
+            state_transitioned_at: None,
         };
         let row = session_info_to_display_row(&info);
         assert_eq!(row.start_time, "2026-06-03 10:30:00");
@@ -475,5 +509,63 @@ mod tests {
             json["sessions"].as_array().unwrap().is_empty(),
             "sessions must be empty when daemon offline"
         );
+    }
+
+    // --- CT-89-01 QE re-entry: AC-10 fix ---
+
+    #[test]
+    fn session_info_to_display_row_computes_elapsed_time() {
+        let two_hours_ago = (chrono::Utc::now() - chrono::Duration::hours(2)).to_rfc3339();
+        let info = SessionInfo {
+            session_id: "abc12345".to_string(),
+            member_name: "alice".to_string(),
+            session_type: "Interactive".to_string(),
+            current_state: "Active".to_string(),
+            started_at: two_hours_ago.clone(),
+            state_transitioned_at: Some(two_hours_ago),
+        };
+        let row = session_info_to_display_row(&info);
+        assert!(
+            !row.elapsed_time.is_empty(),
+            "elapsed_time must not be empty for active session with state_transitioned_at set"
+        );
+    }
+
+    #[test]
+    fn build_session_output_shows_correct_concurrent_count() {
+        let now = chrono::Utc::now().to_rfc3339();
+        let started = now.clone();
+        let output = build_session_output("test", true, |_| {
+            Some(vec![
+                SessionInfo {
+                    session_id: "session-a".to_string(),
+                    member_name: "alice".to_string(),
+                    session_type: "Loop".to_string(),
+                    current_state: "Active".to_string(),
+                    started_at: started.clone(),
+                    state_transitioned_at: Some(started.clone()),
+                },
+                SessionInfo {
+                    session_id: "session-b".to_string(),
+                    member_name: "alice".to_string(),
+                    session_type: "Brain".to_string(),
+                    current_state: "Active".to_string(),
+                    started_at: started.clone(),
+                    state_transitioned_at: Some(started.clone()),
+                },
+            ])
+        });
+        let json: serde_json::Value =
+            serde_json::from_str(&output).expect("JSON output must be valid");
+        let sessions = json["sessions"].as_array().unwrap();
+        assert_eq!(sessions.len(), 2, "must have 2 sessions");
+        for s in sessions {
+            assert_eq!(
+                s["concurrent_count"].as_str().unwrap(),
+                "2",
+                "concurrent_count must be 2 for alice with 2 active sessions, got: {}",
+                s["concurrent_count"]
+            );
+        }
     }
 }
