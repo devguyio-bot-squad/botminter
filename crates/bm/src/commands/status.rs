@@ -3,11 +3,37 @@ use comfy_table::{
     ContentArrangement, modifiers::UTF8_ROUND_CORNERS, presets::UTF8_FULL_CONDENSED, Table,
 };
 
+use serde::Serialize;
+
 use crate::config;
 use crate::daemon::DaemonClient;
 use crate::daemon::sessions_api::SessionInfo;
-use crate::session::types::SessionDisplayRow;
 use crate::state::{self, MemberStatus};
+
+#[derive(Debug, Clone, Serialize)]
+struct SessionDisplayRow {
+    session_id: String,
+    member: String,
+    session_type: String,
+    state: String,
+    start_time: String,
+    elapsed_time: String,
+    concurrent_count: String,
+}
+
+impl SessionDisplayRow {
+    fn fields(&self) -> [&str; 7] {
+        [
+            &self.session_id,
+            &self.member,
+            &self.session_type,
+            &self.state,
+            &self.start_time,
+            &self.elapsed_time,
+            &self.concurrent_count,
+        ]
+    }
+}
 
 /// Handles `bm status [-t team] [-v] [--json]`.
 pub fn run(team_flag: Option<&str>, verbose: bool, json: bool) -> Result<()> {
