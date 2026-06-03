@@ -1,5 +1,6 @@
 pub mod dirty_state;
 pub mod display;
+pub mod finalization;
 pub mod manager;
 pub mod registry;
 pub mod types;
