@@ -1,6 +1,7 @@
 use serde::Serialize;
 
 use super::dirty_state::RepoDirtyState;
+use super::history::SessionHistoryEntry;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct SessionDisplayRow {
@@ -9,20 +10,45 @@ pub struct SessionDisplayRow {
     pub session_type: String,
     pub state: String,
     pub start_time: String,
+    pub elapsed_time: String,
+    pub concurrent_count: String,
 }
 
 impl SessionDisplayRow {
-    pub fn fields(&self) -> [&str; 5] {
-        [&self.session_id, &self.member, &self.session_type, &self.state, &self.start_time]
+    pub fn fields(&self) -> [&str; 7] {
+        [
+            &self.session_id,
+            &self.member,
+            &self.session_type,
+            &self.state,
+            &self.start_time,
+            &self.elapsed_time,
+            &self.concurrent_count,
+        ]
     }
 }
 
-pub fn format_sessions_table(sessions: &[SessionDisplayRow]) -> String {
-    let headers = ["SESSION ID", "MEMBER", "TYPE", "STATE", "START TIME"];
+pub fn format_elapsed(seconds: i64) -> String {
+    if seconds < 60 {
+        return "<1m".to_string();
+    }
+    let minutes = seconds / 60;
+    let hours = minutes / 60;
+    let days = hours / 24;
 
+    if hours == 0 {
+        format!("{}m", minutes)
+    } else if days == 0 {
+        format!("{}h {}m", hours, minutes % 60)
+    } else {
+        format!("{}d {}h", days, hours % 24)
+    }
+}
+
+fn format_aligned_table(headers: &[&str], rows: &[Vec<String>]) -> String {
     let widths: Vec<usize> = (0..headers.len())
         .map(|i| {
-            let data_max = sessions.iter().map(|s| s.fields()[i].len()).max().unwrap_or(0);
+            let data_max = rows.iter().map(|r| r[i].len()).max().unwrap_or(0);
             headers[i].len().max(data_max)
         })
         .collect();
@@ -41,18 +67,56 @@ pub fn format_sessions_table(sessions: &[SessionDisplayRow]) -> String {
     out.push_str(&sep.join("  "));
     out.push('\n');
 
-    for s in sessions {
-        let row: Vec<String> = s
-            .fields()
+    for row in rows {
+        let line: Vec<String> = row
             .iter()
             .enumerate()
             .map(|(i, f)| format!("{:<width$}", f, width = widths[i]))
             .collect();
-        out.push_str(&row.join("  "));
+        out.push_str(&line.join("  "));
         out.push('\n');
     }
 
     out
+}
+
+pub fn format_history_table(entries: &[SessionHistoryEntry]) -> String {
+    let headers = ["SESSION ID", "MEMBER", "TYPE", "START", "END", "EXIT"];
+    let rows: Vec<Vec<String>> = entries
+        .iter()
+        .map(|e| {
+            vec![
+                e.session_id.clone(),
+                e.member.clone(),
+                e.session_type.clone(),
+                e.start_time.to_rfc3339(),
+                e.end_time.to_rfc3339(),
+                e.exit_status.to_string(),
+            ]
+        })
+        .collect();
+    format_aligned_table(&headers, &rows)
+}
+
+pub fn format_history_json(entries: &[SessionHistoryEntry]) -> String {
+    serde_json::to_string_pretty(entries).unwrap_or_else(|_| "[]".to_string())
+}
+
+pub fn format_sessions_table(sessions: &[SessionDisplayRow]) -> String {
+    let headers = [
+        "SESSION ID",
+        "MEMBER",
+        "TYPE",
+        "STATE",
+        "START TIME",
+        "ELAPSED",
+        "CONCURRENT",
+    ];
+    let rows: Vec<Vec<String>> = sessions
+        .iter()
+        .map(|s| s.fields().iter().map(|f| f.to_string()).collect())
+        .collect();
+    format_aligned_table(&headers, &rows)
 }
 
 pub fn format_sessions_json(sessions: &[SessionDisplayRow]) -> String {
@@ -88,6 +152,7 @@ pub fn format_deactivation_summary(dirty_repos: &[RepoDirtyState]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::history::ExitStatus;
 
     fn sample_sessions() -> Vec<SessionDisplayRow> {
         vec![
@@ -97,6 +162,8 @@ mod tests {
                 session_type: "Interactive".to_string(),
                 state: "Active".to_string(),
                 start_time: "2026-06-03T10:00:00Z".to_string(),
+                elapsed_time: String::new(),
+                concurrent_count: "0".to_string(),
             },
             SessionDisplayRow {
                 session_id: "e5f6g7h8".to_string(),
@@ -104,6 +171,8 @@ mod tests {
                 session_type: "Loop".to_string(),
                 state: "Active".to_string(),
                 start_time: "2026-06-03T10:05:00Z".to_string(),
+                elapsed_time: String::new(),
+                concurrent_count: "0".to_string(),
             },
         ]
     }
@@ -250,6 +319,74 @@ mod tests {
         assert!(
             summary.contains("clean") || summary.is_empty() || !summary.contains("uncommitted"),
             "all-clean summary must indicate no dirty state, got:\n{summary}"
+        );
+    }
+
+    // CT-89-01: format_elapsed — human-readable durations
+
+    #[test]
+    fn elapsed_under_one_hour_shows_minutes() {
+        let result = format_elapsed(45 * 60);
+        assert_eq!(result, "45m", "45 minutes should display as '45m'");
+    }
+
+    #[test]
+    fn elapsed_under_24h_shows_hours_and_minutes() {
+        let result = format_elapsed(2 * 3600 + 15 * 60);
+        assert_eq!(
+            result, "2h 15m",
+            "2 hours 15 minutes should display as '2h 15m'"
+        );
+    }
+
+    #[test]
+    fn elapsed_over_24h_shows_days_and_hours() {
+        let result = format_elapsed(27 * 3600);
+        assert_eq!(result, "1d 3h", "27 hours should display as '1d 3h'");
+    }
+
+    #[test]
+    fn elapsed_zero_shows_less_than_minute() {
+        let result = format_elapsed(0);
+        assert_eq!(result, "<1m", "0 seconds should display as '<1m'");
+    }
+
+    // CT-89-01: History display
+
+    fn sample_history_entry() -> SessionHistoryEntry {
+        use chrono::Utc;
+        SessionHistoryEntry {
+            session_id: "a1b2c3d4".to_string(),
+            member: "alice".to_string(),
+            session_type: "Loop".to_string(),
+            start_time: Utc::now() - chrono::Duration::hours(2),
+            end_time: Utc::now(),
+            exit_status: ExitStatus::Normal,
+        }
+    }
+
+    #[test]
+    fn history_table_includes_required_columns() {
+        let entries = vec![sample_history_entry()];
+        let table = format_history_table(&entries);
+        for col in ["SESSION ID", "MEMBER", "TYPE", "START", "END", "EXIT"] {
+            assert!(
+                table.contains(col),
+                "history table must include '{col}' column header, got:\n{table}"
+            );
+        }
+    }
+
+    #[test]
+    fn history_json_includes_exit_status_field() {
+        let entries = vec![sample_history_entry()];
+        let json_str = format_history_json(&entries);
+        let parsed: Vec<serde_json::Value> =
+            serde_json::from_str(&json_str).expect("history JSON must be valid JSON array");
+        assert!(!parsed.is_empty(), "history JSON must contain entries");
+        assert!(
+            parsed[0]["exit_status"].is_string(),
+            "history entry must have exit_status field"
         );
     }
 }
