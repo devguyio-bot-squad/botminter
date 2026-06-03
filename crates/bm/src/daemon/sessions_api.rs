@@ -84,6 +84,23 @@ pub struct StopSessionResponse {
     pub error: Option<String>,
 }
 
+/// A single session's history entry for the history endpoint.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SessionHistoryInfo {
+    pub session_id: String,
+    pub member_name: String,
+    pub session_type: String,
+    pub start_time: String,
+    pub end_time: String,
+    pub exit_normal: bool,
+}
+
+/// Response for `GET /api/sessions/history`.
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SessionHistoryResponse {
+    pub sessions: Vec<SessionHistoryInfo>,
+}
+
 // ── Helpers ────────────────────────────────────────────────────────────
 
 fn record_to_info(r: &SessionRecord) -> SessionInfo {
@@ -97,6 +114,29 @@ fn record_to_info(r: &SessionRecord) -> SessionInfo {
 }
 
 // ── Handlers ────────────────────────────────────────────────────────────
+
+/// GET /api/sessions/history — lists terminal sessions as history.
+pub async fn list_session_history_handler(
+    State(state): State<SessionsApiState>,
+) -> (StatusCode, Json<SessionHistoryResponse>) {
+    let inner = state.inner.lock().unwrap();
+    let sessions = inner
+        .registry
+        .list()
+        .into_iter()
+        .filter(|r| r.current_state.is_terminal())
+        .map(|r| SessionHistoryInfo {
+            session_id: r.session_id.to_string(),
+            member_name: r.member_name.clone(),
+            session_type: r.session_type.to_string(),
+            start_time: r.created_at.to_rfc3339(),
+            end_time: r.state_transitioned_at.to_rfc3339(),
+            exit_normal: r.current_state == SessionState::Completed,
+        })
+        .collect();
+
+    (StatusCode::OK, Json(SessionHistoryResponse { sessions }))
+}
 
 /// POST /api/sessions/start — creates a new session.
 pub async fn start_session_handler(
@@ -269,6 +309,10 @@ pub async fn session_detail_handler(
 pub fn sessions_router(state: SessionsApiState) -> Router {
     Router::new()
         .route("/api/sessions/start", post(start_session_handler))
+        .route(
+            "/api/sessions/history",
+            get(list_session_history_handler),
+        )
         .route("/api/sessions", get(list_sessions_handler))
         .route("/api/sessions/{id}/stop", post(stop_session_handler))
         .route("/api/sessions/{id}", get(session_detail_handler))
@@ -400,6 +444,121 @@ mod tests {
         assert!(
             json["session"].is_object(),
             "response must include a session object"
+        );
+    }
+
+    #[tokio::test]
+    async fn history_handler_returns_terminal_sessions() {
+        let state = SessionsApiState::new(PathBuf::from("/tmp/bm-test-history-api.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+
+            // Active session — should NOT appear in history
+            let active_id = SessionId::from_raw("active-session");
+            let active = SessionRecord {
+                session_id: active_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Interactive,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+            };
+            inner.registry.register(active).unwrap();
+            inner
+                .registry
+                .update_state(&active_id, SessionState::Active)
+                .unwrap();
+
+            // Completed session — SHOULD appear with exit_normal: true
+            let completed_id = SessionId::from_raw("completed-session");
+            let completed = SessionRecord {
+                session_id: completed_id.clone(),
+                member_name: "bob".to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+            };
+            inner.registry.register(completed).unwrap();
+            inner
+                .registry
+                .update_state(&completed_id, SessionState::Active)
+                .unwrap();
+            inner
+                .registry
+                .update_state(&completed_id, SessionState::Completed)
+                .unwrap();
+
+            // Failed session — SHOULD appear with exit_normal: false
+            let failed_id = SessionId::from_raw("failed-session");
+            let failed = SessionRecord {
+                session_id: failed_id.clone(),
+                member_name: "carol".to_string(),
+                session_type: SessionType::Brain,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+            };
+            inner.registry.register(failed).unwrap();
+            inner
+                .registry
+                .update_state(&failed_id, SessionState::Active)
+                .unwrap();
+            inner
+                .registry
+                .update_state(&failed_id, SessionState::Failed)
+                .unwrap();
+        }
+
+        let app = sessions_router(state);
+        let request = Request::builder()
+            .uri("/api/sessions/history")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
+        let json: SessionHistoryResponse = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert_eq!(
+            json.sessions.len(),
+            2,
+            "should return only terminal sessions (Completed + Failed), not Active"
+        );
+
+        let completed = json
+            .sessions
+            .iter()
+            .find(|s| s.session_id == "completed-session");
+        assert!(
+            completed.is_some(),
+            "Completed session must be in history"
+        );
+        assert!(
+            completed.unwrap().exit_normal,
+            "Completed session must have exit_normal: true"
+        );
+
+        let failed = json
+            .sessions
+            .iter()
+            .find(|s| s.session_id == "failed-session");
+        assert!(failed.is_some(), "Failed session must be in history");
+        assert!(
+            !failed.unwrap().exit_normal,
+            "Failed session must have exit_normal: false"
         );
     }
 

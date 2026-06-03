@@ -40,12 +40,7 @@ pub fn query_history(
 ) -> Vec<SessionHistoryEntry> {
     records
         .iter()
-        .filter(|r| {
-            matches!(
-                r.current_state,
-                SessionState::Completed | SessionState::Failed | SessionState::Killed
-            )
-        })
+        .filter(|r| r.current_state.is_terminal())
         .filter(|r| {
             query
                 .member
