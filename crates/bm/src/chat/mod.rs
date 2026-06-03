@@ -1,5 +1,6 @@
 pub(crate) mod config;
 pub(crate) mod skills;
+pub mod spawn;
 
 use std::collections::BTreeMap;
 use std::io::Write;

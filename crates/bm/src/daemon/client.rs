@@ -7,6 +7,10 @@ use super::api::{
     HealthResponse, MembersStatusResponse, StartLoopRequest, StartLoopResponse,
     StartMembersRequest, StartMembersResponse, StopMembersRequest, StopMembersResponse,
 };
+use super::sessions_api::{
+    SessionDetailResponse, SessionListResponse, StartSessionRequest, StartSessionResponse,
+    StopSessionResponse,
+};
 use super::config::{DaemonConfig, DaemonPaths};
 use crate::state;
 
@@ -133,6 +137,83 @@ impl DaemonClient {
             .context("Failed to parse start loop response")
     }
 
+    /// POST /api/sessions/start — create a new ephemeral session.
+    pub fn start_session(&self, req: &StartSessionRequest) -> Result<StartSessionResponse> {
+        let url = format!("{}/api/sessions/start", self.base_url);
+        let resp = self
+            .client
+            .post(&url)
+            .json(req)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for start session: {}", status, body);
+        }
+
+        resp.json::<StartSessionResponse>()
+            .context("Failed to parse start session response")
+    }
+
+    /// GET /api/sessions — list active sessions.
+    pub fn list_sessions(&self) -> Result<SessionListResponse> {
+        let url = format!("{}/api/sessions", self.base_url);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for list sessions: {}", status, body);
+        }
+
+        resp.json::<SessionListResponse>()
+            .context("Failed to parse list sessions response")
+    }
+
+    /// POST /api/sessions/{id}/stop — stop an active session.
+    pub fn stop_session(&self, session_id: &str) -> Result<StopSessionResponse> {
+        let url = format!("{}/api/sessions/{}/stop", self.base_url, session_id);
+        let resp = self
+            .client
+            .post(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for stop session: {}", status, body);
+        }
+
+        resp.json::<StopSessionResponse>()
+            .context("Failed to parse stop session response")
+    }
+
+    /// GET /api/sessions/{id} — get session details.
+    pub fn get_session(&self, session_id: &str) -> Result<SessionDetailResponse> {
+        let url = format!("{}/api/sessions/{}", self.base_url, session_id);
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for get session: {}", status, body);
+        }
+
+        resp.json::<SessionDetailResponse>()
+            .context("Failed to parse session detail response")
+    }
+
     /// GET /api/health — daemon health check.
     pub fn health(&self) -> Result<HealthResponse> {
         let url = format!("{}/api/health", self.base_url);
@@ -171,9 +252,6 @@ fn load_daemon_config(paths: &DaemonPaths) -> Result<DaemonConfig> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::daemon::api::{
-        MemberLaunchedInfo, MemberSkippedInfo, MemberStatusInfo, MemberStoppedInfo,
-    };
 
     #[test]
     fn load_daemon_config_missing_file() {
@@ -399,5 +477,83 @@ mod tests {
         assert!(resp.loop_id.is_none());
         assert!(resp.pid.is_none());
         assert_eq!(resp.error, Some("no workspace found".to_string()));
+    }
+
+    // ── CT-04: Session Client Tests ──────────────────────────────────
+
+    // AC-1: bm start Creates Session — request/response serde
+
+    #[test]
+    fn session_start_request_serializes_for_client() {
+        let req = StartSessionRequest {
+            member_name: "alice".to_string(),
+            session_type: "Interactive".to_string(),
+            work_item_id: Some("ISSUE-42".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["member_name"], "alice");
+        assert_eq!(parsed["session_type"], "Interactive");
+        assert_eq!(parsed["work_item_id"], "ISSUE-42");
+    }
+
+    #[test]
+    fn session_start_response_deserializes_for_client() {
+        let json = serde_json::json!({
+            "ok": true,
+            "session_id": "a1b2c3d4",
+            "error": null
+        });
+        let resp: StartSessionResponse = serde_json::from_value(json).unwrap();
+        assert!(resp.ok);
+        assert_eq!(resp.session_id, Some("a1b2c3d4".to_string()));
+        assert!(resp.error.is_none());
+    }
+
+    // AC-5: bm stop — stop response serde
+
+    #[test]
+    fn session_stop_response_deserializes_for_client() {
+        let json = serde_json::json!({
+            "ok": true,
+            "error": null
+        });
+        let resp: StopSessionResponse = serde_json::from_value(json).unwrap();
+        assert!(resp.ok);
+        assert!(resp.error.is_none());
+    }
+
+    // AC-6: bm status — list sessions response serde
+
+    #[test]
+    fn session_list_response_deserializes_for_client() {
+        let json = serde_json::json!({
+            "sessions": [{
+                "session_id": "a1b2c3d4",
+                "member_name": "alice",
+                "session_type": "Interactive",
+                "current_state": "Active",
+                "started_at": "2026-06-03T10:00:00Z"
+            }]
+        });
+        let resp: SessionListResponse = serde_json::from_value(json).unwrap();
+        assert_eq!(resp.sessions.len(), 1);
+        assert_eq!(resp.sessions[0].session_id, "a1b2c3d4");
+        assert_eq!(resp.sessions[0].member_name, "alice");
+    }
+
+    // AC-8: Daemon Not Running Detection — clear error
+
+    #[test]
+    fn daemon_not_running_connect_fails_with_clear_error() {
+        let result = DaemonClient::connect("nonexistent-team-for-session-tests-xyz");
+        let err_msg = match result {
+            Err(e) => e.to_string(),
+            Ok(_) => panic!("connect must fail when daemon is not running"),
+        };
+        assert!(
+            err_msg.contains("not found") || err_msg.contains("not running") || err_msg.contains("Daemon"),
+            "error must indicate daemon is not running, got: {err_msg}"
+        );
     }
 }
