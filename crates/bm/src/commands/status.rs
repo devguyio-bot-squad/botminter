@@ -156,6 +156,8 @@ fn session_info_to_display_row(info: &SessionInfo) -> SessionDisplayRow {
         session_type: info.session_type.clone(),
         state: info.current_state.clone(),
         start_time: format_timestamp(&info.started_at),
+        elapsed_time: String::new(),
+        concurrent_count: "0".to_string(),
     }
 }
 
@@ -169,7 +171,15 @@ fn render_sessions_section(sessions: Option<&[SessionDisplayRow]>) -> String {
                 .load_preset(UTF8_FULL_CONDENSED)
                 .apply_modifier(UTF8_ROUND_CORNERS)
                 .set_content_arrangement(ContentArrangement::DynamicFullWidth)
-                .set_header(vec!["Session ID", "Member", "Type", "State", "Started"]);
+                .set_header(vec![
+            "Session ID",
+            "Member",
+            "Type",
+            "State",
+            "Started",
+            "Elapsed",
+            "Concurrent",
+        ]);
             for row in rows {
                 table.add_row(row.fields());
             }
@@ -258,6 +268,8 @@ mod tests {
             session_type: "Interactive".to_string(),
             state: "Active".to_string(),
             start_time: "2026-06-03 10:00:00".to_string(),
+            elapsed_time: String::new(),
+            concurrent_count: "0".to_string(),
         }
     }
 

@@ -1,6 +1,7 @@
 pub mod dirty_state;
 pub mod display;
 pub mod finalization;
+pub mod history;
 pub mod manager;
 pub mod registry;
 pub mod stop;
