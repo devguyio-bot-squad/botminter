@@ -206,6 +206,10 @@ pub enum Command {
         /// Show verbose Ralph runtime details
         #[arg(short, long)]
         verbose: bool,
+
+        /// Output in JSON format
+        #[arg(long)]
+        json: bool,
     },
 
     /// Team management commands
