@@ -88,6 +88,16 @@ impl<W: WorkspaceOps> SessionManager<W> {
         Ok(self.registry.get(&session_id).unwrap().clone())
     }
 
+    /// Return sessions in terminal states (Completed, Failed, Killed).
+    pub fn list_terminal(&self) -> Vec<SessionRecord> {
+        self.registry
+            .list()
+            .into_iter()
+            .filter(|r| r.current_state.is_terminal())
+            .cloned()
+            .collect()
+    }
+
     /// Deactivate a session: inspect dirty state, transition to Completed/Failed,
     /// and release all work-item locks held by the session.
     pub fn deactivate_session(&mut self, session_id: &SessionId) -> Result<DeactivateResult> {
@@ -313,6 +323,153 @@ mod tests {
         assert!(
             result.dirty_state.iter().any(|r| !r.is_clean()),
             "dirty workspace must be reported in deactivation result"
+        );
+    }
+
+    #[test]
+    fn list_terminal_returns_only_terminal_state_sessions() {
+        let mut mgr = make_manager(vec![]);
+
+        // Active session — NOT terminal
+        let active_id = SessionId::new();
+        let active = SessionRecord {
+            session_id: active_id.clone(),
+            member_name: "alice".to_string(),
+            session_type: SessionType::Interactive,
+            current_state: SessionState::Creating,
+            created_at: chrono::Utc::now(),
+            state_transitioned_at: chrono::Utc::now(),
+            agent_pid: None,
+            workspace_path: None,
+        };
+        mgr.registry.register(active).unwrap();
+        mgr.registry
+            .update_state(&active_id, SessionState::Active)
+            .unwrap();
+
+        // Completed session — terminal
+        let completed_id = SessionId::new();
+        let completed = SessionRecord {
+            session_id: completed_id.clone(),
+            member_name: "bob".to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Creating,
+            created_at: chrono::Utc::now(),
+            state_transitioned_at: chrono::Utc::now(),
+            agent_pid: None,
+            workspace_path: None,
+        };
+        mgr.registry.register(completed).unwrap();
+        mgr.registry
+            .update_state(&completed_id, SessionState::Active)
+            .unwrap();
+        mgr.registry
+            .update_state(&completed_id, SessionState::Completed)
+            .unwrap();
+
+        // Failed session — terminal
+        let failed_id = SessionId::new();
+        let failed = SessionRecord {
+            session_id: failed_id.clone(),
+            member_name: "carol".to_string(),
+            session_type: SessionType::Brain,
+            current_state: SessionState::Creating,
+            created_at: chrono::Utc::now(),
+            state_transitioned_at: chrono::Utc::now(),
+            agent_pid: None,
+            workspace_path: None,
+        };
+        mgr.registry.register(failed).unwrap();
+        mgr.registry
+            .update_state(&failed_id, SessionState::Active)
+            .unwrap();
+        mgr.registry
+            .update_state(&failed_id, SessionState::Failed)
+            .unwrap();
+
+        // Killed session — terminal
+        let killed_id = SessionId::new();
+        let killed = SessionRecord {
+            session_id: killed_id.clone(),
+            member_name: "dan".to_string(),
+            session_type: SessionType::Interactive,
+            current_state: SessionState::Creating,
+            created_at: chrono::Utc::now(),
+            state_transitioned_at: chrono::Utc::now(),
+            agent_pid: None,
+            workspace_path: None,
+        };
+        mgr.registry.register(killed).unwrap();
+        mgr.registry
+            .update_state(&killed_id, SessionState::Active)
+            .unwrap();
+        mgr.registry
+            .update_state(&killed_id, SessionState::Killed)
+            .unwrap();
+
+        // Finalizing session — NOT terminal
+        let finalizing_id = SessionId::new();
+        let finalizing = SessionRecord {
+            session_id: finalizing_id.clone(),
+            member_name: "eve".to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Creating,
+            created_at: chrono::Utc::now(),
+            state_transitioned_at: chrono::Utc::now(),
+            agent_pid: None,
+            workspace_path: None,
+        };
+        mgr.registry.register(finalizing).unwrap();
+        mgr.registry
+            .update_state(&finalizing_id, SessionState::Active)
+            .unwrap();
+        mgr.registry
+            .update_state(&finalizing_id, SessionState::Finalizing)
+            .unwrap();
+
+        // Retained session — NOT terminal
+        let retained_id = SessionId::new();
+        let retained = SessionRecord {
+            session_id: retained_id.clone(),
+            member_name: "frank".to_string(),
+            session_type: SessionType::Brain,
+            current_state: SessionState::Creating,
+            created_at: chrono::Utc::now(),
+            state_transitioned_at: chrono::Utc::now(),
+            agent_pid: None,
+            workspace_path: None,
+        };
+        mgr.registry.register(retained).unwrap();
+        mgr.registry
+            .update_state(&retained_id, SessionState::Active)
+            .unwrap();
+        mgr.registry
+            .update_state(&retained_id, SessionState::Completed)
+            .unwrap();
+        mgr.registry
+            .update_state(&retained_id, SessionState::Retained)
+            .unwrap();
+
+        let terminals = mgr.list_terminal();
+
+        assert_eq!(
+            terminals.len(),
+            3,
+            "should return exactly 3 terminal sessions (Completed, Failed, Killed)"
+        );
+
+        let ids: Vec<String> = terminals.iter().map(|r| r.session_id.to_string()).collect();
+        assert!(
+            ids.contains(&completed_id.to_string()),
+            "Completed session must be included"
+        );
+        assert!(
+            ids.contains(&failed_id.to_string()),
+            "Failed session must be included"
+        );
+        assert!(
+            ids.contains(&killed_id.to_string()),
+            "Killed session must be included"
         );
     }
 

@@ -81,6 +81,13 @@ pub enum SessionState {
 }
 
 impl SessionState {
+    pub fn is_terminal(&self) -> bool {
+        matches!(
+            self,
+            SessionState::Completed | SessionState::Failed | SessionState::Killed
+        )
+    }
+
     /// Returns true if transitioning from `self` to `next` is valid per the lifecycle state machine.
     pub fn can_transition_to(&self, next: &SessionState) -> bool {
         matches!(
