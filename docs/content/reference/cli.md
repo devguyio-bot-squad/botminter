@@ -553,11 +553,11 @@ bm up [<member>] [-t <team>] [--formation <name>]
 
 **Behavior:**
 
+- Creates an ephemeral session workspace for each member — a fresh git worktree hydrated from shared bare clones containing the latest committed state
 - For local bridges: auto-starts the bridge if not already running (skipped when starting a single member)
 - If bridge is already running, verifies health and skips restart
 - Checks for `ralph` binary prerequisite
 - Resolves per-member credentials from keyring or environment variables
-- Discovers member workspaces
 - Detects chat-first members (brain mode) via `brain-prompt.md` in workspace
 - For brain members: launches the brain multiplexer (`bm brain-run`) which runs an ACP session with event watcher and heartbeat
 - For standard members: launches `ralph run -p PROMPT.md` as background process
@@ -584,8 +584,8 @@ bm stop [<member>] [-t <team>] [-f|--force] [--bridge] [--all]
 
 **Behavior:**
 
-- Graceful mode (default): sends SIGTERM to brain members (multiplexer handles shutdown), runs `ralph loops stop` for standard members, polls for 60s
-- Force mode (`--force`): sends SIGTERM immediately to all members
+- Graceful mode (default): sends SIGTERM to brain members (multiplexer handles shutdown), runs `ralph loops stop` for standard members, polls for 60s; session finalization runs asynchronously after the agent exits
+- Force mode (`--force`): sends SIGTERM immediately; session transitions to **Killed** state and finalization is skipped — the workspace is retained for inspection
 - Cleans state.json entries
 - Suggests `bm stop -f` on graceful failure
 - When stopping a single member, bridge lifecycle is not affected
@@ -597,12 +597,13 @@ bm stop [<member>] [-t <team>] [-f|--force] [--bridge] [--all]
 Status dashboard.
 
 ```bash
-bm status [-t <team>] [-v]
+bm status [-t <team>] [-v] [--history]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `-v` | No | Show verbose workspace submodule status and Ralph runtime details |
+| `--history` | No | Show session history (terminal sessions) instead of live sessions |
 | `-t <team>` | No | Team to operate on |
 
 **Behavior:**
@@ -615,6 +616,64 @@ bm status [-t <team>] [-v]
 - Checks PID liveness via `kill(pid, 0)`
 - Auto-cleans crashed entries
 - Verbose mode shows per-member submodule status (up-to-date/behind/modified) and queries Ralph CLI commands per running member
+- `--history` mode shows terminal sessions (Completed, Failed, Killed, Retained) with session ID, member, type, start/end time, and exit status
+
+### `bm session`
+
+Session management commands (inspect and cleanup).
+
+```bash
+bm session inspect <session-id> [-t <team>]
+bm session cleanup [<session-id>] [--all] [--member <name>] [--older-than <duration>] [-t <team>]
+```
+
+#### `bm session inspect`
+
+Show full details for a specific session.
+
+```bash
+bm session inspect <session-id> [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<session-id>` | Yes | Session ID to inspect |
+| `-t <team>` | No | Team to operate on |
+
+**Behavior:**
+
+- Displays session ID, member, type, state, start time, end time, and workspace path
+- Shows finalization status for terminal sessions
+
+#### `bm session cleanup`
+
+Clean up retained sessions or re-trigger finalization.
+
+```bash
+bm session cleanup [<session-id>] [--all] [--member <name>] [--older-than <duration>] [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<session-id>` | No | Session ID to clean up (omit to use a filter flag) |
+| `--all` | No | Clean up all retained sessions |
+| `--member <name>` | No | Clean up all retained sessions for a specific member |
+| `--older-than <duration>` | No | Clean up sessions older than a duration (e.g. `48h`, `7d`, `30m`) |
+| `-t <team>` | No | Team to operate on |
+
+**Behavior:**
+
+- For sessions in **Retained** state: removes the workspace and marks the session cleaned
+- At least one of `<session-id>`, `--all`, `--member`, or `--older-than` must be specified
+- `--older-than` accepts duration strings: `30m`, `48h`, `7d`
+
+**Example:**
+
+```bash
+bm session inspect sess-abc123
+bm session cleanup --older-than 48h
+bm session cleanup --member engineer-01
+```
 
 ## Profile commands
 
