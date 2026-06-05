@@ -765,6 +765,16 @@ fn stop_clean_shutdown_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::Unwind
     }
 }
 
+/// Read the daemon's HTTP port from its config file.
+fn read_daemon_port(home: &PathBuf, team_name: &str) -> u16 {
+    let cfg_path = home.join(format!(".botminter/daemon-{}.json", team_name));
+    let raw = fs::read_to_string(&cfg_path)
+        .unwrap_or_else(|e| panic!("failed to read daemon config {}: {}", cfg_path.display(), e));
+    let cfg: serde_json::Value =
+        serde_json::from_str(&raw).expect("daemon config must be valid JSON");
+    cfg["port"].as_u64().expect("daemon config must contain port") as u16
+}
+
 fn stop_force_kills_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let mut guard = ProcessGuard::new(env, TEAM_NAME);
@@ -780,11 +790,105 @@ fn stop_force_kills_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std:
         let pid = super::super::helpers::wait_for_stub_pid(&ws, Duration::from_secs(10))
             .expect("stub-ralph should write PID file");
         guard.set_pid(pid);
+
+        // Make stub-ralph ignore SIGTERM so it stays alive through the graceful stop
+        // (Active → Finalizing) and only dies when SIGKILL arrives from force stop.
+        fs::write(ws.join(".ralph-stub-ignore-sigterm"), "").expect("write SIGTERM ignore file");
+
+        // Graceful stop: Active → Finalizing (SIGTERM sent, stub ignores it)
+        env.command("bm").args(["stop", "-t", TEAM_NAME]).run();
+
+        // Force stop: Finalizing → Retained (SIGKILL kills the stub)
         env.command("bm")
             .args(["stop", "--force", "-t", TEAM_NAME])
             .run();
         super::super::helpers::wait_for_exit(pid, Duration::from_secs(5));
         assert!(!is_alive(pid));
+
+        // Verify the session is Retained via daemon API.
+        // The session workspace dir name IS the session ID.
+        let session_id = ws.file_name().unwrap().to_string_lossy().to_string();
+        let daemon_port = read_daemon_port(&env.home, TEAM_NAME);
+        let detail_out = env.command("curl")
+            .args(["-s", &format!("http://127.0.0.1:{}/api/sessions/{}", daemon_port, session_id)])
+            .run();
+        let detail: serde_json::Value = serde_json::from_str(&detail_out)
+            .expect("daemon session detail must be valid JSON");
+        assert_eq!(
+            detail["session"]["current_state"].as_str(),
+            Some("Retained"),
+            "session must be Retained after force stop on a Finalizing session, got: {detail:?}"
+        );
+    }
+}
+
+fn retrigger_after_force_stop_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let mut guard = ProcessGuard::new(env, TEAM_NAME);
+        let mut cmd = env.command("bm");
+        cmd.args(["start", "-t", TEAM_NAME]);
+        if let Some(port) = env.get_export("tuwunel_port") {
+            cmd.env("TUWUNEL_PORT", port);
+        }
+        cmd.run();
+        let ws = super::super::helpers::wait_for_session_workspace(
+            &env.home, TEAM_NAME, MEMBER_DIR, Duration::from_secs(10),
+        ).expect("session workspace should appear after bm start");
+        let pid = super::super::helpers::wait_for_stub_pid(&ws, Duration::from_secs(10))
+            .expect("stub-ralph should write PID file");
+        guard.set_pid(pid);
+
+        // Stub ignores SIGTERM so the session progresses Active → Finalizing → Retained
+        // without the process dying on the first SIGTERM.
+        fs::write(ws.join(".ralph-stub-ignore-sigterm"), "").expect("write SIGTERM ignore file");
+
+        // Graceful stop → Finalizing; force stop → Retained.
+        env.command("bm").args(["stop", "-t", TEAM_NAME]).run();
+        env.command("bm").args(["stop", "--force", "-t", TEAM_NAME]).run();
+        super::super::helpers::wait_for_exit(pid, Duration::from_secs(5));
+        assert!(!is_alive(pid));
+
+        let session_id = ws.file_name().unwrap().to_string_lossy().to_string();
+        let daemon_port = read_daemon_port(&env.home, TEAM_NAME);
+        let base_url = format!("http://127.0.0.1:{}", daemon_port);
+
+        // Pre-condition: verify Retained state before calling retrigger.
+        let detail_out = env.command("curl")
+            .args(["-s", &format!("{}/api/sessions/{}", base_url, session_id)])
+            .run();
+        let detail: serde_json::Value = serde_json::from_str(&detail_out)
+            .expect("daemon session detail must be valid JSON");
+        assert_eq!(
+            detail["session"]["current_state"].as_str(),
+            Some("Retained"),
+            "pre-condition: session must be Retained before retrigger, got: {detail:?}"
+        );
+
+        // Call the retrigger API: POST /api/sessions/{id}/finalize
+        // The finalization subagent (claude) will fail in the test environment — that is OK.
+        // We only verify the HTTP call succeeds and the state transitions to Finalizing.
+        let retrigger_out = env.command("curl")
+            .args(["-s", "-X", "POST",
+                   &format!("{}/api/sessions/{}/finalize", base_url, session_id)])
+            .run();
+        let retrigger: serde_json::Value = serde_json::from_str(&retrigger_out)
+            .expect("retrigger response must be valid JSON");
+        assert!(
+            retrigger["ok"].as_bool().unwrap_or(false),
+            "retrigger API must return ok=true, got: {retrigger:?}"
+        );
+
+        // Verify the session transitioned to Finalizing.
+        let detail_out = env.command("curl")
+            .args(["-s", &format!("{}/api/sessions/{}", base_url, session_id)])
+            .run();
+        let detail: serde_json::Value = serde_json::from_str(&detail_out)
+            .expect("daemon session detail must be valid JSON");
+        assert_eq!(
+            detail["session"]["current_state"].as_str(),
+            Some("Finalizing"),
+            "session must be Finalizing after retrigger, got: {detail:?}"
+        );
     }
 }
 
@@ -905,7 +1009,7 @@ fn daemon_start_poll_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std
         env.export("pre_daemon_session_uuids", &pre_existing_uuids.join(","));
 
         let mut cmd = env.command("bm");
-        cmd.args(["daemon", "start", "--mode", "poll", "--interval", "2", "-t", TEAM_NAME]);
+        cmd.args(["daemon", "start", "--mode", "poll", "--port", "0", "--interval", "2", "-t", TEAM_NAME]);
         if let Some(port) = env.get_export("tuwunel_port") {
             cmd.env("TUWUNEL_PORT", port);
         }
@@ -1037,7 +1141,7 @@ fn daemon_sigkill_escalation_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Se
 
         let _guard = DaemonGuard::new(env, TEAM_NAME);
         let mut cmd = env.command("bm");
-        cmd.args(["daemon", "start", "--mode", "poll", "--interval", "2", "-t", TEAM_NAME]);
+        cmd.args(["daemon", "start", "--mode", "poll", "--port", "0", "--interval", "2", "-t", TEAM_NAME]);
         if let Some(port) = env.get_export("tuwunel_port") {
             cmd.env("TUWUNEL_PORT", port);
         }
@@ -1089,7 +1193,7 @@ fn daemon_stale_pid_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std:
         fs::write(pid_dir.join(format!("daemon-{}.pid", TEAM_NAME)), "99999").unwrap();
 
         let out = env.command("bm")
-            .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
+            .args(["daemon", "start", "--mode", "poll", "--port", "0", "-t", TEAM_NAME])
             .run();
         assert!(out.contains("Daemon started"), "Should start despite stale PID: {}", out);
 
@@ -1103,11 +1207,11 @@ fn daemon_already_running_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send 
     move |env| {
         let _guard = DaemonGuard::new(env, TEAM_NAME);
         env.command("bm")
-            .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
+            .args(["daemon", "start", "--mode", "poll", "--port", "0", "-t", TEAM_NAME])
             .run();
 
         let output = env.command("bm")
-            .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
+            .args(["daemon", "start", "--mode", "poll", "--port", "0", "-t", TEAM_NAME])
             .output();
         assert!(!output.status.success());
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -1118,7 +1222,7 @@ fn daemon_already_running_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send 
 fn daemon_crashed_detection_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         env.command("bm")
-            .args(["daemon", "start", "--mode", "poll", "-t", TEAM_NAME])
+            .args(["daemon", "start", "--mode", "poll", "--port", "0", "-t", TEAM_NAME])
             .run();
 
         let pid_file = env.home.join(format!(".botminter/daemon-{}.pid", TEAM_NAME));
@@ -1373,6 +1477,7 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("start_single_member_fresh", start_single_member_fn(gh_token.clone()))
         .case("stop_single_member_fresh", stop_single_member_fn())
         .case("stop_force_kills_fresh", stop_force_kills_fn(gh_token.clone()))
+        .case("retrigger_after_force_stop_fresh", retrigger_after_force_stop_fn(gh_token.clone()))
         .case("status_detects_crashed_fresh", status_detects_crashed_fn(gh_token.clone()))
         .case("members_list_fresh", members_list_fn())
         .case("teams_list_fresh", teams_list_fn())
@@ -1464,6 +1569,7 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("start_single_member_existing", start_single_member_fn(gh_token.clone()))
         .case("stop_single_member_existing", stop_single_member_fn())
         .case("stop_force_kills_existing", stop_force_kills_fn(gh_token.clone()))
+        .case("retrigger_after_force_stop_existing", retrigger_after_force_stop_fn(gh_token.clone()))
         .case("status_detects_crashed_existing", status_detects_crashed_fn(gh_token.clone()))
         .case("members_list_existing", members_list_fn())
         .case("teams_list_existing", teams_list_fn())
@@ -1534,31 +1640,31 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
     // First pass case indices (0-indexed):
     //   0: init
     //   1: env_create, 2: attach_local_formation
-    //   3: hire, 4: projects_add, 5: teams_show
-    //   6: bridge_start, 7: bridge_start_idempotent
-    //   8: bridge_identity_add, 9: bridge_identity_show, 10: bridge_identity_list
-    //   11: bridge_room_create, 12: bridge_room_membership_verify
-    //   13: sync_removed_error, 14: provision_workspace
-    //   15: inbox_lifecycle, 16: inbox_survives_stop_start
-    //   17: projects_sync
-    //   18: start_without_ralph_errors
-    //   19: start_status_healthy, 20: start_skips_running, 21: bridge_functional
-    //   22: stop_clean_shutdown
-    //   23: start_single_member, 24: stop_single_member
-    //   25: stop_force_kills, 26: status_detects_crashed
-    //   27: members_list, 28: teams_list
-    //   29: daemon_cleanup
-    //   30: daemon_start_poll, 31: daemon_poll_launches, 32: daemon_stop_poll
-    //   33: daemon_start_webhook, 34: daemon_stop_webhook
-    //   35-38: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
-    //   39: bridge_stop, 40: fire_member
-    //   41: reset_home, 42: verify_board_survives_reset
-    // Second pass starts at 43, same shape as first pass
-    //   58: start_status_healthy, 59: start_skips_running, 60: bridge_functional
-    //   72: daemon_start_webhook, 73: daemon_stop_webhook
+    //   3: hire, 4: projects_add, 5: push_team_repo, 6: teams_show
+    //   7: bridge_start, 8: bridge_start_idempotent
+    //   9: bridge_identity_add, 10: bridge_identity_show, 11: bridge_identity_list
+    //   12: bridge_room_create, 13: bridge_room_membership_verify
+    //   14: sync_removed_error, 15: provision_workspace
+    //   16: inbox_lifecycle, 17: inbox_survives_stop_start
+    //   18: projects_sync
+    //   19: start_without_ralph_errors
+    //   20: start_status_healthy, 21: start_skips_running, 22: bridge_functional
+    //   23: stop_clean_shutdown
+    //   24: start_single_member, 25: stop_single_member
+    //   26: stop_force_kills, 27: retrigger_after_force_stop, 28: status_detects_crashed
+    //   29: members_list, 30: teams_list
+    //   31: daemon_cleanup
+    //   32: daemon_start_poll, 33: daemon_poll_launches, 34: daemon_stop_poll
+    //   35: daemon_start_webhook, 36: daemon_stop_webhook
+    //   37-40: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
+    //   41: bridge_stop, 42: fire_member
+    //   43: reset_home, 44: verify_board_survives_reset
+    // Second pass starts at 45, same shape as first pass
+    //   65: start_status_healthy, 66: start_skips_running, 67: bridge_functional
+    //   80: daemon_start_webhook, 81: daemon_stop_webhook
     suite
-        .group(19, 21).group(33, 34)
-        .group(58, 60).group(72, 73)
+        .group(20, 22).group(35, 36)
+        .group(65, 67).group(80, 81)
 }
 
 pub fn scenario(config: &E2eConfig) -> Trial {
