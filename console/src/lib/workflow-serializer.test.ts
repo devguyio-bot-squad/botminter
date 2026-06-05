@@ -1,17 +1,13 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 
 /**
- * CT-05 Red Phase: Serializer unit tests.
+ * Serializer unit tests.
  *
- * These tests verify the serializeWorkflow function that converts
- * a WorkflowGraph back to a ralph.yml string, preserving non-workflow
- * sections, key order, and block scalar style for instructions.
- *
- * All tests MUST fail in the red phase -- workflow-serializer.ts
- * does not exist yet.
+ * Verifies that serializeWorkflow converts a WorkflowGraph back to a
+ * ralph.yml string, preserving non-workflow sections, key order, and
+ * block scalar style for instructions.
  */
 
-// Import will fail until workflow-serializer.ts is created
 import { serializeWorkflow } from './workflow-serializer.js';
 import { parseRalphYaml } from './workflow-parser.js';
 import type { WorkflowGraph, WorkflowNode, WorkflowEdge } from './workflow-types.js';

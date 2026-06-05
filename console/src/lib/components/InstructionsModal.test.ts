@@ -51,7 +51,6 @@ vi.mock('@codemirror/search', () => ({
 	highlightSelectionMatches: vi.fn().mockReturnValue([])
 }));
 
-// Import the component under test — this will fail until the component is created
 import InstructionsModal from './InstructionsModal.svelte';
 
 describe('InstructionsModal component', () => {

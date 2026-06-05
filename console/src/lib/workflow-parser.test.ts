@@ -1,16 +1,12 @@
 import { describe, it, expect } from 'vitest';
 
 /**
- * CT-02 Red Phase: Parser unit tests.
+ * Parser unit tests.
  *
- * These tests verify the parseRalphYaml function that extracts
- * WorkflowNode[], WorkflowEdge[], and guardrails from a ralph.yml string.
- *
- * All tests MUST fail in the red phase — the implementation files
- * (workflow-types.ts, workflow-parser.ts) do not exist yet.
+ * Verifies that parseRalphYaml extracts WorkflowNode[], WorkflowEdge[],
+ * and guardrails from a ralph.yml string.
  */
 
-// Import will fail until workflow-parser.ts is created
 import { parseRalphYaml } from './workflow-parser.js';
 import type { WorkflowGraph } from './workflow-types.js';
 

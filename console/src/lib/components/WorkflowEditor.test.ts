@@ -43,15 +43,30 @@ vi.mock('@xyflow/svelte', () => {
 	};
 });
 
-// Import the component under test — this will fail until the component is created
 import WorkflowEditor from './WorkflowEditor.svelte';
 
-describe('WorkflowEditor component', () => {
-	beforeEach(() => {
-		lastSvelteFlowProps = {};
-	});
+// --- Shared YAML Fixtures ---
 
-	const sampleRalphYml = `hats:
+/** Two-hat YAML used across CT-02, CT-03, CT-04 describe blocks. */
+const twoHatYml = `hats:
+  po_gate:
+    name: PO Gate
+    description: Gates human review
+    triggers:
+      - po.triage
+    publishes:
+      - po.gate.approved
+  lead_plan-create:
+    name: Plan Creator
+    description: Creates planning artifacts
+    triggers:
+      - po.gate.approved
+    publishes:
+      - lead.plan_review
+`;
+
+/** Sample YAML with extra publishes — used in CT-01 / AC tests. */
+const sampleRalphYml = `hats:
   po_gate:
     name: PO Gate
     description: Gates human review
@@ -68,6 +83,11 @@ describe('WorkflowEditor component', () => {
     publishes:
       - lead.plan_review
 `;
+
+describe('WorkflowEditor component', () => {
+	beforeEach(() => {
+		lastSvelteFlowProps = {};
+	});
 
 	describe('AC1: Tab Renders — Canvas is displayed', () => {
 		it('renders the Svelte Flow canvas container', async () => {
@@ -199,23 +219,6 @@ describe('WorkflowEditor component', () => {
 	// --- CT-02: Graph rendering tests ---
 
 	describe('CT-02: Graph rendering with parsed data', () => {
-		const twoHatYml = `hats:
-  po_gate:
-    name: PO Gate
-    description: Gates human review
-    triggers:
-      - po.triage
-    publishes:
-      - po.gate.approved
-  lead_plan-create:
-    name: Plan Creator
-    description: Creates planning artifacts
-    triggers:
-      - po.gate.approved
-    publishes:
-      - lead.plan_review
-`;
-
 		it('renders 2 nodes on the canvas when ralph.yml has 2 hats', async () => {
 			render(WorkflowEditor, {
 				props: { ralph_yml: twoHatYml }
@@ -409,23 +412,6 @@ describe('WorkflowEditor component', () => {
 	// --- CT-04: Edge Creation Integration Tests ---
 
 	describe('CT-04: Edge creation via drag-to-connect', () => {
-		const twoHatYml = `hats:
-  po_gate:
-    name: PO Gate
-    description: Gates human review
-    triggers:
-      - po.triage
-    publishes:
-      - po.gate.approved
-  lead_plan-create:
-    name: Plan Creator
-    description: Creates planning artifacts
-    triggers:
-      - po.gate.approved
-    publishes:
-      - lead.plan_review
-`;
-
 		it('drag-to-connect triggers event picker display', async () => {
 			const { container } = render(WorkflowEditor, {
 				props: { ralph_yml: twoHatYml }
@@ -524,23 +510,6 @@ describe('WorkflowEditor component', () => {
 	// --- CT-04: Node Deletion Tests ---
 
 	describe('CT-04: Node deletion', () => {
-		const twoHatYml = `hats:
-  po_gate:
-    name: PO Gate
-    description: Gates human review
-    triggers:
-      - po.triage
-    publishes:
-      - po.gate.approved
-  lead_plan-create:
-    name: Plan Creator
-    description: Creates planning artifacts
-    triggers:
-      - po.gate.approved
-    publishes:
-      - lead.plan_review
-`;
-
 		it('delete key on selected node removes node and all its edges', async () => {
 			render(WorkflowEditor, {
 				props: { ralph_yml: twoHatYml }
@@ -659,23 +628,6 @@ describe('WorkflowEditor component', () => {
 	// --- CT-03: Side panel interaction tests ---
 
 	describe('CT-03: Side panel interactions', () => {
-		const twoHatYml = `hats:
-  po_gate:
-    name: PO Gate
-    description: Gates human review
-    triggers:
-      - po.triage
-    publishes:
-      - po.gate.approved
-  lead_plan-create:
-    name: Plan Creator
-    description: Creates planning artifacts
-    triggers:
-      - po.gate.approved
-    publishes:
-      - lead.plan_review
-`;
-
 		it('single-click on a node opens the side panel', async () => {
 			const { container } = render(WorkflowEditor, {
 				props: { ralph_yml: twoHatYml }

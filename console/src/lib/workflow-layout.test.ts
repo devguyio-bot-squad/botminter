@@ -1,15 +1,12 @@
 import { describe, it, expect } from 'vitest';
 
 /**
- * CT-02 Red Phase: Layout unit tests.
+ * Layout unit tests.
  *
- * These tests verify the layoutGraph function that assigns x/y positions
- * to workflow nodes using dagre for left-to-right directed graph layout.
- *
- * All tests MUST fail in the red phase — workflow-layout.ts does not exist yet.
+ * Verifies that layoutGraph assigns x/y positions to workflow nodes
+ * using dagre for left-to-right directed graph layout.
  */
 
-// Import will fail until workflow-layout.ts is created
 import { layoutGraph } from './workflow-layout.js';
 import type { WorkflowNode, WorkflowEdge } from './workflow-types.js';
 

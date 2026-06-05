@@ -2,16 +2,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 
 /**
- * CT-05 Red Phase: GuardrailsPanel unit tests.
+ * GuardrailsPanel unit tests.
  *
  * Tests verify the guardrails panel renders editable textareas,
  * supports adding/removing guardrails, and updates text on input.
- *
- * All tests MUST fail in the red phase -- GuardrailsPanel.svelte
- * does not exist yet.
  */
 
-// Import will fail until GuardrailsPanel.svelte is created
 import GuardrailsPanel from './GuardrailsPanel.svelte';
 
 describe('GuardrailsPanel component', () => {

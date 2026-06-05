@@ -29,12 +29,15 @@ export function serializeWorkflow(graph: WorkflowGraph): string {
 	}
 	output.hats = hatsSection;
 
-	// Update core.guardrails
-	if (graph.guardrails.length > 0 || (output.core && typeof output.core === 'object')) {
-		if (!output.core || typeof output.core !== 'object') {
-			output.core = {};
-		}
-		(output.core as Record<string, unknown>).guardrails = [...graph.guardrails];
+	// Update core.guardrails — ensure the core section exists when guardrails
+	// are present or were present in the original YAML.
+	const hasExistingCore = output.core != null && typeof output.core === 'object';
+	if (graph.guardrails.length > 0 || hasExistingCore) {
+		const core = hasExistingCore
+			? (output.core as Record<string, unknown>)
+			: {};
+		core.guardrails = [...graph.guardrails];
+		output.core = core;
 	}
 
 	// Serialize with sortKeys: false, lineWidth: -1, noRefs: true
@@ -90,7 +93,7 @@ function postProcessInstructions(
 ): string {
 	let result = yamlStr;
 
-	for (const [_hatId, hatEntry] of Object.entries(hats)) {
+	for (const [, hatEntry] of Object.entries(hats)) {
 		const instructions = hatEntry.instructions;
 		if (typeof instructions !== 'string' || !instructions.includes('\n')) {
 			continue;

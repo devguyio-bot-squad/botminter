@@ -6,7 +6,6 @@ vi.mock('marked', () => ({
 	marked: vi.fn().mockImplementation((md: string) => `<p>${md}</p>`)
 }));
 
-// Import the component under test — this will fail until the component is created
 import HatDetailPanel from './HatDetailPanel.svelte';
 
 describe('HatDetailPanel component', () => {

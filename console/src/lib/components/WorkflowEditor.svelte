@@ -10,6 +10,7 @@
 	import EventPicker from './EventPicker.svelte';
 	import GuardrailsPanel from './GuardrailsPanel.svelte';
 
+	/** Mutable projection of WorkflowNode for the side panel. */
 	interface SelectedHatData {
 		id: string;
 		name: string;
@@ -88,7 +89,7 @@
 		selectedNodeId = node.id;
 	}
 
-	function handlePaneClick(_args: { event: MouseEvent }) {
+	function handlePaneClick(_: { event: MouseEvent }) {
 		selectedNodeId = null;
 	}
 
@@ -145,7 +146,6 @@
 		};
 
 		graphNodes = [...graphNodes, newNode];
-		graphEdges = [...graphEdges]; // preserve identity
 		hasHats = true;
 
 		// Sync flow nodes/edges
@@ -321,9 +321,15 @@
 			graphRawYaml = graph.rawYaml;
 
 			if (graph.nodes.length === 0) {
-				clearGraph();
-				graphGuardrails = [...graph.guardrails];
-				graphRawYaml = graph.rawYaml;
+				// Preserve parsed guardrails and rawYaml but reset
+				// everything else to the empty-canvas state.
+				hasHats = false;
+				graphNodes = [];
+				graphEdges = [];
+				nodes = [];
+				edges = [];
+				selectedNodeId = null;
+				pendingConnection = null;
 				return;
 			}
 
