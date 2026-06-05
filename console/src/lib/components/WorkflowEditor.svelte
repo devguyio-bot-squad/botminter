@@ -3,7 +3,7 @@
 	import { beforeNavigate } from '$app/navigation';
 	import { parseRalphYaml } from '$lib/workflow-parser.js';
 	import { layoutGraph } from '$lib/workflow-layout.js';
-	import { deleteNode as graphDeleteNode } from '$lib/workflow-graph-ops.js';
+	import { deleteNode as graphDeleteNode, deleteEdge as graphDeleteEdge } from '$lib/workflow-graph-ops.js';
 	import { serializeWorkflow } from '$lib/workflow-serializer.js';
 	import type { WorkflowNode, WorkflowEdge, WorkflowGraph, HatNodeData } from '$lib/workflow-types.js';
 	import HatNode from './HatNode.svelte';
@@ -35,6 +35,7 @@
 	let hasHats = $state(false);
 
 	let selectedNodeId = $state<string | null>(null);
+	let selectedEdgeId = $state<string | null>(null);
 	let showInstructionsModal = $state(false);
 
 	/** Internal graph state for graph operations (WorkflowNode/WorkflowEdge). */
@@ -87,10 +88,17 @@
 
 	function handleNodeClick({ node }: { node: { id: string }; event: MouseEvent | TouchEvent }) {
 		selectedNodeId = node.id;
+		selectedEdgeId = null;
+	}
+
+	function handleEdgeClick({ edge }: { edge: { id: string }; event?: MouseEvent }) {
+		selectedEdgeId = edge.id;
+		selectedNodeId = null;
 	}
 
 	function handlePaneClick(_: { event: MouseEvent }) {
 		selectedNodeId = null;
+		selectedEdgeId = null;
 	}
 
 	function handleNameChange(newName: string) {
@@ -211,20 +219,29 @@
 		return targetNode ? [...targetNode.triggers] : [];
 	}
 
-	/** Handle Delete/Backspace key to delete the selected node. */
+	/** Handle Delete/Backspace key to delete the selected node or edge. */
 	function handleKeyDown(e: KeyboardEvent) {
-		if ((e.key === 'Delete' || e.key === 'Backspace') && selectedNodeId) {
-			const result = graphDeleteNode(graphNodes, graphEdges, selectedNodeId);
-			graphNodes = [...result.nodes];
-			graphEdges = [...result.edges];
-			selectedNodeId = null;
+		if (e.key === 'Delete' || e.key === 'Backspace') {
+			if (selectedNodeId) {
+				const result = graphDeleteNode(graphNodes, graphEdges, selectedNodeId);
+				graphNodes = [...result.nodes];
+				graphEdges = [...result.edges];
+				selectedNodeId = null;
 
-			if (graphNodes.length === 0) {
-				hasHats = false;
+				if (graphNodes.length === 0) {
+					hasHats = false;
+				}
+
+				syncFlowState();
+				markDirty();
+			} else if (selectedEdgeId) {
+				const result = graphDeleteEdge(graphNodes, graphEdges, selectedEdgeId);
+				graphNodes = [...result.nodes];
+				graphEdges = [...result.edges];
+				selectedEdgeId = null;
+				syncFlowState();
+				markDirty();
 			}
-
-			syncFlowState();
-			markDirty();
 		}
 	}
 
@@ -305,6 +322,7 @@
 		nodes = [];
 		edges = [];
 		selectedNodeId = null;
+		selectedEdgeId = null;
 		pendingConnection = null;
 	}
 
@@ -448,6 +466,7 @@
 					{nodeTypes}
 					fitView
 					onnodeclick={handleNodeClick}
+					onedgeclick={handleEdgeClick}
 					onpaneclick={handlePaneClick}
 					onconnect={handleConnect}
 				>
