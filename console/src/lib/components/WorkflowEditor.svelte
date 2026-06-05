@@ -3,10 +3,12 @@
 	import { parseRalphYaml } from '$lib/workflow-parser.js';
 	import { layoutGraph } from '$lib/workflow-layout.js';
 	import { deleteNode as graphDeleteNode } from '$lib/workflow-graph-ops.js';
-	import type { WorkflowNode, WorkflowEdge } from '$lib/workflow-types.js';
+	import { serializeWorkflow } from '$lib/workflow-serializer.js';
+	import type { WorkflowNode, WorkflowEdge, WorkflowGraph } from '$lib/workflow-types.js';
 	import HatDetailPanel from './HatDetailPanel.svelte';
 	import InstructionsModal from './InstructionsModal.svelte';
 	import EventPicker from './EventPicker.svelte';
+	import GuardrailsPanel from './GuardrailsPanel.svelte';
 
 	interface SelectedHatData {
 		id: string;
@@ -19,9 +21,11 @@
 
 	interface Props {
 		ralph_yml: string | null;
+		team?: string;
+		ralphYmlPath?: string;
 	}
 
-	let { ralph_yml }: Props = $props();
+	let { ralph_yml, team, ralphYmlPath }: Props = $props();
 
 	let flowModule = $state<typeof import('@xyflow/svelte') | null>(null);
 	let nodes = $state.raw<import('@xyflow/svelte').Node[]>([]);
@@ -36,8 +40,19 @@
 	let graphNodes = $state<WorkflowNode[]>([]);
 	let graphEdges = $state<WorkflowEdge[]>([]);
 
+	/** Guardrails state. */
+	let graphGuardrails = $state<string[]>([]);
+
+	/** Raw YAML object for serialization round-trip. */
+	let graphRawYaml = $state<Readonly<Record<string, unknown>>>({});
+
 	/** Pending connection for EventPicker. */
 	let pendingConnection = $state<{ source: string; target: string } | null>(null);
+
+	/** Unsaved changes tracking. */
+	let hasUnsavedChanges = $state(false);
+	let saving = $state(false);
+	let saveMessage = $state<string | null>(null);
 
 	/** Returns the workflow node data for the selected node, or null. */
 	function getSelectedNodeData(): SelectedHatData | null {
@@ -55,12 +70,18 @@
 		};
 	}
 
+	/** Mark the editor as having unsaved changes. */
+	function markDirty() {
+		hasUnsavedChanges = true;
+	}
+
 	/** Update a single field on the selected node's data. */
 	function updateSelectedNodeData(field: string, value: unknown) {
 		if (!selectedNodeId) return;
 		nodes = nodes.map((n) =>
 			n.id === selectedNodeId ? { ...n, data: { ...n.data, [field]: value } } : n
 		);
+		markDirty();
 	}
 
 	function handleNodeClick({ node }: { node: { id: string }; event: MouseEvent | TouchEvent }) {
@@ -129,6 +150,7 @@
 
 		// Sync flow nodes/edges
 		syncFlowState();
+		markDirty();
 	}
 
 	/** Handle connection event from SvelteFlow (drag-to-connect). */
@@ -163,6 +185,7 @@
 
 		pendingConnection = null;
 		syncFlowState();
+		markDirty();
 	}
 
 	/** Called when the user cancels the EventPicker. */
@@ -201,6 +224,45 @@
 			}
 
 			syncFlowState();
+			markDirty();
+		}
+	}
+
+	/** Handle guardrails changes from the GuardrailsPanel. */
+	function handleGuardrailsChange(newGuardrails: string[]) {
+		graphGuardrails = newGuardrails;
+		markDirty();
+	}
+
+	/** Build the current WorkflowGraph from internal state. */
+	function buildCurrentGraph(): WorkflowGraph {
+		return {
+			nodes: graphNodes,
+			edges: graphEdges,
+			guardrails: graphGuardrails,
+			rawYaml: graphRawYaml
+		};
+	}
+
+	/** Save the current workflow to the API. */
+	async function handleSave() {
+		if (saving || !team || !ralphYmlPath) return;
+
+		saving = true;
+		saveMessage = null;
+
+		try {
+			const graph = buildCurrentGraph();
+			const yamlContent = serializeWorkflow(graph);
+			const apiModule = await import('$lib/api.js');
+			await apiModule.api.saveFile(team, ralphYmlPath, yamlContent);
+			hasUnsavedChanges = false;
+			saveMessage = 'Saved';
+			setTimeout(() => { saveMessage = null; }, 4000);
+		} catch (e) {
+			saveMessage = e instanceof Error ? e.message : 'Save failed';
+		} finally {
+			saving = false;
 		}
 	}
 
@@ -238,6 +300,8 @@
 		hasHats = false;
 		graphNodes = [];
 		graphEdges = [];
+		graphGuardrails = [];
+		graphRawYaml = {};
 		nodes = [];
 		edges = [];
 		selectedNodeId = null;
@@ -253,8 +317,13 @@
 
 		try {
 			const graph = parseRalphYaml(raw);
+			graphGuardrails = [...graph.guardrails];
+			graphRawYaml = graph.rawYaml;
+
 			if (graph.nodes.length === 0) {
 				clearGraph();
+				graphGuardrails = [...graph.guardrails];
+				graphRawYaml = graph.rawYaml;
 				return;
 			}
 
@@ -274,6 +343,13 @@
 		buildGraph(ralph_yml);
 	});
 
+	/** beforeunload handler to warn on unsaved changes. */
+	function handleBeforeUnload(e: BeforeUnloadEvent) {
+		if (hasUnsavedChanges) {
+			e.preventDefault();
+		}
+	}
+
 	onMount(async () => {
 		try {
 			const [mod] = await Promise.all([
@@ -286,10 +362,12 @@
 		}
 
 		document.addEventListener('keydown', handleKeyDown);
+		window.addEventListener('beforeunload', handleBeforeUnload);
 	});
 
 	onDestroy(() => {
 		document.removeEventListener('keydown', handleKeyDown);
+		window.removeEventListener('beforeunload', handleBeforeUnload);
 	});
 
 	let selected = $derived(getSelectedNodeData());
@@ -301,6 +379,24 @@
 		<button type="button" class="add-hat-btn" aria-label="Add Hat" onclick={handleAddHat}>
 			+ New Hat
 		</button>
+		<div class="toolbar-spacer"></div>
+		{#if hasUnsavedChanges}
+			<span class="unsaved-indicator" data-testid="unsaved-indicator">unsaved</span>
+		{/if}
+		{#if saveMessage}
+			<span class="save-message">{saveMessage}</span>
+		{/if}
+		{#if team && ralphYmlPath}
+			<button
+				type="button"
+				class="save-btn"
+				aria-label="Save ralph.yml"
+				onclick={handleSave}
+				disabled={saving}
+			>
+				{saving ? 'Saving...' : 'Save'}
+			</button>
+		{/if}
 	</div>
 
 	<!-- Main content area: canvas + optional side panel -->
@@ -360,6 +456,12 @@
 		{/if}
 	</div>
 
+	<!-- Guardrails panel (CT-05) -->
+	<GuardrailsPanel
+		guardrails={graphGuardrails}
+		onGuardrailsChange={handleGuardrailsChange}
+	/>
+
 	<!-- Instructions modal (CT-03) -->
 	{#if showInstructionsModal && selected}
 		<InstructionsModal
@@ -398,6 +500,45 @@
 
 	.add-hat-btn:hover {
 		background-color: rgba(96, 165, 250, 0.2);
+	}
+
+	.toolbar-spacer {
+		flex: 1;
+	}
+
+	.unsaved-indicator {
+		font-size: 0.625rem;
+		padding: 0.125rem 0.375rem;
+		border-radius: 0.25rem;
+		background-color: rgba(245, 158, 11, 0.1);
+		color: rgb(245, 158, 11);
+		border: 1px solid rgba(245, 158, 11, 0.2);
+		margin-right: 0.5rem;
+	}
+
+	.save-message {
+		font-size: 0.75rem;
+		color: #22c55e;
+		margin-right: 0.5rem;
+	}
+
+	.save-btn {
+		padding: 0.375rem 0.75rem;
+		font-size: 0.8125rem;
+		border-radius: 0.375rem;
+		background-color: rgba(34, 197, 94, 0.1);
+		color: rgb(34, 197, 94);
+		border: 1px solid rgba(34, 197, 94, 0.2);
+		cursor: pointer;
+	}
+
+	.save-btn:hover {
+		background-color: rgba(34, 197, 94, 0.2);
+	}
+
+	.save-btn:disabled {
+		opacity: 0.5;
+		cursor: not-allowed;
 	}
 
 	.workflow-main {
