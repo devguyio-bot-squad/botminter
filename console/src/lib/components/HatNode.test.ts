@@ -142,7 +142,7 @@ describe('HatNode custom node component', () => {
 			expect(sourceHandle).not.toBeNull();
 		});
 
-		it('has exactly two handles (one source, one target)', () => {
+		it('has four handles (two source, two target — primary + return)', () => {
 			const { container } = render(HatNode, {
 				props: {
 					data: {
@@ -156,11 +156,11 @@ describe('HatNode custom node component', () => {
 			});
 
 			const handles = container.querySelectorAll('[data-handle-type]');
-			expect(handles.length).toBe(2);
+			expect(handles.length).toBe(4);
 
 			const types = Array.from(handles).map((h) => h.getAttribute('data-handle-type'));
-			expect(types).toContain('source');
-			expect(types).toContain('target');
+			expect(types.filter((t) => t === 'source').length).toBe(2);
+			expect(types.filter((t) => t === 'target').length).toBe(2);
 		});
 	});
 });

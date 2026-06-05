@@ -322,12 +322,27 @@
 	}
 
 	function toFlowEdges(wfEdges: readonly WorkflowEdge[]): import('@xyflow/svelte').Edge[] {
-		return wfEdges.map((e) => ({
-			id: e.id,
-			source: e.source,
-			target: e.target,
-			label: e.event
-		}));
+		const pairKeys = new Set<string>();
+		for (const e of wfEdges) {
+			if (wfEdges.some((o) => o.source === e.target && o.target === e.source)) {
+				pairKeys.add(`${e.source}->${e.target}`);
+			}
+		}
+
+		return wfEdges.map((e) => {
+			const isBidi = pairKeys.has(`${e.source}->${e.target}`);
+			const isReturn = isBidi && e.source > e.target;
+			return {
+				id: e.id,
+				source: e.source,
+				target: e.target,
+				label: e.event,
+				type: 'smoothstep',
+				markerEnd: { type: flowModule!.MarkerType.ArrowClosed },
+				sourceHandle: isReturn ? 'source-bottom' : 'source-right',
+				targetHandle: isReturn ? 'target-bottom' : 'target-left'
+			};
+		});
 	}
 
 	function clearGraph() {
@@ -491,12 +506,15 @@
 					<Background variant={BackgroundVariant.Dots} />
 				</SvelteFlow>
 				{#if pendingConnection}
-					<EventPicker
-						existingTriggers={getDestinationTriggers()}
-						allTriggers={getAllTriggers()}
-						onSelect={handleEventSelect}
-						onCancel={handleEventCancel}
-					/>
+					<!-- svelte-ignore a11y_no_static_element_interactions -->
+					<div class="event-picker-overlay" onmousedown={(e) => { if (e.target === e.currentTarget) handleEventCancel(); }}>
+						<EventPicker
+							existingTriggers={getDestinationTriggers()}
+							allTriggers={getAllTriggers()}
+							onSelect={handleEventSelect}
+							onCancel={handleEventCancel}
+						/>
+					</div>
 				{/if}
 			{:else if !hasHats}
 				<div class="empty-state">
@@ -632,5 +650,15 @@
 
 	.error-state {
 		color: #f87171;
+	}
+
+	.event-picker-overlay {
+		position: absolute;
+		inset: 0;
+		z-index: 10;
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		background: rgba(0, 0, 0, 0.3);
 	}
 </style>

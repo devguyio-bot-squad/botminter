@@ -36,6 +36,7 @@ vi.mock('@xyflow/svelte', () => {
 	const Background = vi.fn();
 	const BackgroundVariant = { Dots: 'dots', Lines: 'lines', Cross: 'cross' };
 	const Position = { Top: 'top', Bottom: 'bottom', Left: 'left', Right: 'right' };
+	const MarkerType = { Arrow: 'arrow', ArrowClosed: 'arrowclosed' };
 
 	// Handle renders a div with data-testid based on type and position.
 	// Svelte 5 passes a comment node as the anchor — insert before it in the parent.
@@ -63,6 +64,7 @@ vi.mock('@xyflow/svelte', () => {
 		Background,
 		BackgroundVariant,
 		Position,
+		MarkerType,
 		Handle,
 		useSvelteFlow,
 		default: SvelteFlow

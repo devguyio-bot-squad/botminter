@@ -10,9 +10,11 @@
 </script>
 
 <div class="hat-node">
-	<Handle type="target" position={Position.Left} />
+	<Handle type="target" position={Position.Left} id="target-left" />
+	<Handle type="source" position={Position.Right} id="source-right" />
+	<Handle type="target" position={Position.Bottom} id="target-bottom" class="return-handle" />
+	<Handle type="source" position={Position.Bottom} id="source-bottom" class="return-handle" />
 	<span class="hat-name">{data.name}</span>
-	<Handle type="source" position={Position.Right} />
 </div>
 
 <style>
@@ -28,5 +30,12 @@
 
 	.hat-name {
 		user-select: none;
+	}
+
+	.hat-node :global(.return-handle) {
+		opacity: 0;
+		pointer-events: none;
+		width: 1px;
+		height: 1px;
 	}
 </style>
