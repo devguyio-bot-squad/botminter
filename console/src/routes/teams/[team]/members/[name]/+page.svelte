@@ -213,7 +213,7 @@
 
 		<!-- Workflow Tab -->
 		{:else if activeTab === 'workflow'}
-			<WorkflowEditor ralph_yml={member.ralph_yml} />
+			<WorkflowEditor ralph_yml={member.ralph_yml} team={team} ralphYmlPath={"members/" + name + "/ralph.yml"} />
 
 		<!-- Hats Tab -->
 		{:else if activeTab === 'hats'}

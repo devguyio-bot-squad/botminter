@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { onMount, onDestroy } from 'svelte';
+	import { onMount, onDestroy, tick } from 'svelte';
+	import { beforeNavigate } from '$app/navigation';
 	import { parseRalphYaml } from '$lib/workflow-parser.js';
 	import { layoutGraph } from '$lib/workflow-layout.js';
 	import { deleteNode as graphDeleteNode } from '$lib/workflow-graph-ops.js';
@@ -348,6 +349,19 @@
 		buildGraph(ralph_yml);
 	});
 
+	/** Refit the canvas when the side panel opens or closes. */
+	$effect(() => {
+		// Track selectedNodeId to detect panel toggle
+		const _panelOpen = selectedNodeId;
+		void _panelOpen;
+		// Wait for DOM update, then notify SvelteFlow of the layout change
+		tick().then(() => {
+			if (typeof window !== 'undefined') {
+				window.dispatchEvent(new Event('resize'));
+			}
+		});
+	});
+
 	/** beforeunload handler to warn on unsaved changes. */
 	function handleBeforeUnload(e: BeforeUnloadEvent) {
 		if (hasUnsavedChanges) {
@@ -376,6 +390,15 @@
 	});
 
 	let selected = $derived(getSelectedNodeData());
+
+	/** SvelteKit in-app navigation guard for unsaved changes. */
+	beforeNavigate((navigation) => {
+		if (hasUnsavedChanges) {
+			if (!confirm('You have unsaved changes. Leave anyway?')) {
+				navigation.cancel();
+			}
+		}
+	});
 </script>
 
 <div class="workflow-editor">

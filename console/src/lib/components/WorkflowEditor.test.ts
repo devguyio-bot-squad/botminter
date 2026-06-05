@@ -16,6 +16,15 @@ const { mockFitView, mockZoomIn, mockZoomOut } = vi.hoisted(() => ({
  */
 let lastSvelteFlowProps: Record<string, unknown> = {};
 
+// Mock $app/navigation (beforeNavigate used by WorkflowEditor for in-app navigation guard)
+const { mockBeforeNavigate } = vi.hoisted(() => ({
+	mockBeforeNavigate: vi.fn()
+}));
+vi.mock('$app/navigation', () => ({
+	beforeNavigate: mockBeforeNavigate,
+	goto: vi.fn()
+}));
+
 vi.mock('@xyflow/svelte', () => {
 	// SvelteFlow renders a container div with data-testid
 	// Svelte 5 calls component constructors as (anchor, props) — capture arg 1

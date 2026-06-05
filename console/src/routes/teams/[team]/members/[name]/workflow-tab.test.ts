@@ -53,6 +53,15 @@ const MockEditorView = vi.fn().mockImplementation(({ parent }: { parent: HTMLEle
 });
 (MockEditorView as unknown as Record<string, unknown>).theme = vi.fn().mockReturnValue([]);
 
+// Mock $app/navigation (beforeNavigate used by WorkflowEditor)
+const { mockBeforeNavigate } = vi.hoisted(() => ({
+	mockBeforeNavigate: vi.fn()
+}));
+vi.mock('$app/navigation', () => ({
+	beforeNavigate: mockBeforeNavigate,
+	goto: vi.fn()
+}));
+
 vi.mock('@codemirror/view', () => ({
 	EditorView: MockEditorView,
 	keymap: { of: vi.fn().mockReturnValue([]) },
@@ -188,6 +197,23 @@ describe('Member Detail Page — Workflow Tab', () => {
 		await waitFor(() => {
 			const addHatButton = screen.getByRole('button', { name: /add hat/i });
 			expect(addHatButton).toBeInTheDocument();
+		});
+	});
+
+	it('renders Save button when team and ralphYmlPath are passed to WorkflowEditor', async () => {
+		render(MemberDetailPage);
+
+		await waitFor(() => {
+			expect(screen.getByText('Workflow')).toBeInTheDocument();
+		});
+
+		await fireEvent.click(screen.getByText('Workflow'));
+
+		await waitFor(() => {
+			// The page passes team and ralphYmlPath props to WorkflowEditor,
+			// which gates the Save button on {#if team && ralphYmlPath}
+			const saveButton = screen.getByRole('button', { name: /save/i });
+			expect(saveButton).toBeInTheDocument();
 		});
 	});
 
