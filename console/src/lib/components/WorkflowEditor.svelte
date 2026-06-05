@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
-	import * as yaml from 'js-yaml';
+	import { parseRalphYaml } from '$lib/workflow-parser.js';
+	import { layoutGraph } from '$lib/workflow-layout.js';
 
 	interface Props {
 		ralph_yml: string | null;
@@ -11,25 +12,72 @@
 	let flowModule = $state<typeof import('@xyflow/svelte') | null>(null);
 	let nodes = $state.raw<import('@xyflow/svelte').Node[]>([]);
 	let edges = $state.raw<import('@xyflow/svelte').Edge[]>([]);
+	let parseError = $state<string | null>(null);
+	let hasHats = $state(false);
 
-	/** Check whether the raw ralph_yml string contains at least one hat definition. */
-	function yamlContainsHats(raw: string | null): boolean {
-		if (!raw) return false;
+	function buildGraph(raw: string | null) {
+		parseError = null;
+		if (!raw) {
+			hasHats = false;
+			nodes = [];
+			edges = [];
+			return;
+		}
+
 		try {
-			const parsed = yaml.load(raw) as Record<string, unknown> | null;
-			if (parsed === null || typeof parsed !== 'object') return false;
-			if (!('hats' in parsed) || parsed.hats === null || typeof parsed.hats !== 'object') return false;
-			return Object.keys(parsed.hats as object).length > 0;
-		} catch {
-			return false;
+			const graph = parseRalphYaml(raw);
+			if (graph.nodes.length === 0) {
+				hasHats = false;
+				nodes = [];
+				edges = [];
+				return;
+			}
+
+			hasHats = true;
+			const positioned = layoutGraph(graph.nodes, graph.edges);
+
+			nodes = positioned.map((n) => ({
+				id: n.id,
+				type: 'hatNode',
+				position: n.position,
+				data: {
+					name: n.name,
+					description: n.description,
+					triggers: n.triggers,
+					publishes: n.publishes,
+					instructions: n.instructions
+				}
+			}));
+
+			edges = graph.edges.map((e) => ({
+				id: e.id,
+				source: e.source,
+				target: e.target,
+				label: e.event
+			}));
+		} catch (err: unknown) {
+			parseError = err instanceof Error ? err.message : 'Failed to parse YAML';
+			hasHats = false;
+			nodes = [];
+			edges = [];
 		}
 	}
 
-	let hasHats = $derived(yamlContainsHats(ralph_yml));
+	// Build graph whenever ralph_yml changes
+	$effect(() => {
+		buildGraph(ralph_yml);
+	});
 
 	onMount(async () => {
-		await import('@xyflow/svelte/dist/style.css');
-		flowModule = await import('@xyflow/svelte');
+		try {
+			const [mod] = await Promise.all([
+				import('@xyflow/svelte'),
+				import('@xyflow/svelte/dist/style.css').catch(() => {})
+			]);
+			flowModule = mod;
+		} catch {
+			// Module import may fail in SSR environments
+		}
 	});
 </script>
 
@@ -43,7 +91,11 @@
 
 	<!-- Canvas -->
 	<div class="workflow-canvas" data-testid="workflow-canvas">
-		{#if hasHats && flowModule}
+		{#if parseError}
+			<div class="error-state">
+				<p>Parse error: {parseError}</p>
+			</div>
+		{:else if hasHats && flowModule}
 			{@const SvelteFlow = flowModule.SvelteFlow}
 			{@const Controls = flowModule.Controls}
 			{@const MiniMap = flowModule.MiniMap}

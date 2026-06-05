@@ -16,7 +16,8 @@ let lastSvelteFlowProps: Record<string, unknown> = {};
 
 vi.mock('@xyflow/svelte', () => {
 	// SvelteFlow renders a container div with data-testid
-	const SvelteFlow = vi.fn().mockImplementation((props: Record<string, unknown>) => {
+	// Svelte 5 calls component constructors as (anchor, props) — capture arg 1
+	const SvelteFlow = vi.fn().mockImplementation((_anchor: unknown, props: Record<string, unknown>) => {
 		lastSvelteFlowProps = props;
 	});
 	const MiniMap = vi.fn();
