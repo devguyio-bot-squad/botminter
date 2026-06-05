@@ -4,9 +4,11 @@ import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 // --- Mock @xyflow/svelte (SVG/Canvas APIs unavailable in jsdom) ---
 // Follows the same pattern used for CodeMirror mocks in member-detail.test.ts
 
-const mockFitView = vi.fn();
-const mockZoomIn = vi.fn();
-const mockZoomOut = vi.fn();
+const { mockFitView, mockZoomIn, mockZoomOut } = vi.hoisted(() => ({
+	mockFitView: vi.fn(),
+	mockZoomIn: vi.fn(),
+	mockZoomOut: vi.fn()
+}));
 
 /**
  * Capture the most recent props passed to the SvelteFlow mock.
@@ -25,6 +27,20 @@ vi.mock('@xyflow/svelte', () => {
 	const Background = vi.fn();
 	const BackgroundVariant = { Dots: 'dots', Lines: 'lines', Cross: 'cross' };
 	const Position = { Top: 'top', Bottom: 'bottom', Left: 'left', Right: 'right' };
+
+	// Handle renders a div with data-testid based on type and position.
+	// Svelte 5 passes a comment node as the anchor — insert before it in the parent.
+	const Handle = vi.fn().mockImplementation((_anchor: unknown, props: Record<string, unknown>) => {
+		const el = document.createElement('div');
+		el.setAttribute('data-testid', `handle-${props.type}-${props.position}`);
+		el.setAttribute('data-handle-type', String(props.type));
+		el.setAttribute('data-handle-position', String(props.position));
+		const anchor = _anchor as Node;
+		if (anchor && anchor.parentNode) {
+			anchor.parentNode.insertBefore(el, anchor);
+		}
+	});
+
 	const useSvelteFlow = vi.fn().mockReturnValue({
 		fitView: mockFitView,
 		zoomIn: mockZoomIn,
@@ -38,6 +54,7 @@ vi.mock('@xyflow/svelte', () => {
 		Background,
 		BackgroundVariant,
 		Position,
+		Handle,
 		useSvelteFlow,
 		default: SvelteFlow
 	};

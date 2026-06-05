@@ -97,6 +97,20 @@ vi.mock('@xyflow/svelte', () => {
 	const Background = vi.fn();
 	const BackgroundVariant = { Dots: 'dots', Lines: 'lines', Cross: 'cross' };
 	const Position = { Top: 'top', Bottom: 'bottom', Left: 'left', Right: 'right' };
+
+	// Handle renders a div with data-testid based on type and position.
+	// Svelte 5 passes a comment node as the anchor — insert before it in the parent.
+	const Handle = vi.fn().mockImplementation((_anchor: unknown, props: Record<string, unknown>) => {
+		const el = document.createElement('div');
+		el.setAttribute('data-testid', `handle-${props.type}-${props.position}`);
+		el.setAttribute('data-handle-type', String(props.type));
+		el.setAttribute('data-handle-position', String(props.position));
+		const anchor = _anchor as Node;
+		if (anchor && anchor.parentNode) {
+			anchor.parentNode.insertBefore(el, anchor);
+		}
+	});
+
 	const useSvelteFlow = vi.fn().mockReturnValue({
 		fitView: vi.fn(),
 		zoomIn: vi.fn(),
@@ -110,6 +124,7 @@ vi.mock('@xyflow/svelte', () => {
 		Background,
 		BackgroundVariant,
 		Position,
+		Handle,
 		useSvelteFlow,
 		default: SvelteFlow
 	};

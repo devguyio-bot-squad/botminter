@@ -1,6 +1,38 @@
-<!-- Stub: HatNode custom node component — implementation pending (CT-06 green phase) -->
 <script lang="ts">
-	// Intentionally empty — green phase will implement this
+	import { Handle, Position } from '@xyflow/svelte';
+
+	interface HatData {
+		name: string;
+		description?: string;
+		triggers?: string[];
+		publishes?: string[];
+	}
+
+	interface Props {
+		data: HatData;
+	}
+
+	let { data }: Props = $props();
 </script>
 
-<div></div>
+<div class="hat-node">
+	<Handle type="target" position={Position.Left} />
+	<span class="hat-name">{data.name}</span>
+	<Handle type="source" position={Position.Right} />
+</div>
+
+<style>
+	.hat-node {
+		padding: 0.5rem 0.75rem;
+		border-radius: 0.375rem;
+		border: 1px solid var(--color-surface-border, #e5e7eb);
+		background: var(--color-surface-raised, #fff);
+		font-size: 0.8125rem;
+		min-width: 80px;
+		text-align: center;
+	}
+
+	.hat-name {
+		user-select: none;
+	}
+</style>

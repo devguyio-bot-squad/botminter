@@ -5,10 +5,14 @@
 	import { deleteNode as graphDeleteNode } from '$lib/workflow-graph-ops.js';
 	import { serializeWorkflow } from '$lib/workflow-serializer.js';
 	import type { WorkflowNode, WorkflowEdge, WorkflowGraph } from '$lib/workflow-types.js';
+	import HatNode from './HatNode.svelte';
 	import HatDetailPanel from './HatDetailPanel.svelte';
 	import InstructionsModal from './InstructionsModal.svelte';
 	import EventPicker from './EventPicker.svelte';
 	import GuardrailsPanel from './GuardrailsPanel.svelte';
+
+	/** Custom node types — defined outside reactive scope to avoid SvelteFlow re-initialization. */
+	const nodeTypes = { hatNode: HatNode } as const;
 
 	/** Mutable projection of WorkflowNode for the side panel. */
 	interface SelectedHatData {
@@ -423,6 +427,7 @@
 				<SvelteFlow
 					{nodes}
 					{edges}
+					{nodeTypes}
 					fitView
 					onnodeclick={handleNodeClick}
 					onpaneclick={handlePaneClick}
