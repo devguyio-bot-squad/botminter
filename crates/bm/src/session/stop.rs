@@ -1,5 +1,6 @@
 use anyhow::Result;
 
+use crate::session::finalization::deactivation;
 use crate::session::registry::SessionRegistry;
 use crate::session::types::{SessionId, SessionState, SessionType};
 
@@ -76,12 +77,22 @@ pub fn stop_sessions(
 
         if options.force {
             match current_state {
-                SessionState::Active | SessionState::Finalizing => {
+                SessionState::Active => {
                     if let Some(pid) = agent_pid {
                         #[cfg(unix)]
                         send_signal(*pid, true);
                     }
                     if registry.update_state(id, SessionState::Killed).is_ok() {
+                        summary.killed += 1;
+                    }
+                }
+                SessionState::Finalizing => {
+                    if let Some(pid) = agent_pid {
+                        #[cfg(unix)]
+                        send_signal(*pid, true);
+                    }
+                    if registry.update_state(id, SessionState::Killed).is_ok() {
+                        let _ = registry.update_state(id, SessionState::Retained);
                         summary.killed += 1;
                     }
                 }
@@ -106,7 +117,13 @@ pub fn retrigger_session_finalization(
     registry: &mut SessionRegistry,
     session_id: &SessionId,
 ) -> Result<StopSummary> {
+    let workspace_path = registry
+        .get(session_id)
+        .and_then(|r| r.workspace_path.clone());
     registry.update_state(session_id, SessionState::Finalizing)?;
+    if let Some(ref wp) = workspace_path {
+        let _ = deactivation::retrigger_finalization(session_id, wp);
+    }
     Ok(StopSummary::default())
 }
 
@@ -461,8 +478,8 @@ mod tests {
         let state = &reg.get(&id).unwrap().current_state;
         assert_eq!(
             *state,
-            SessionState::Killed,
-            "force stop on Finalizing must transition to Killed, got {state}"
+            SessionState::Retained,
+            "force stop on Finalizing must transition to Retained (enabling retrigger), got {state}"
         );
     }
 
@@ -490,8 +507,8 @@ mod tests {
         );
         assert_eq!(
             *finalizing_state,
-            SessionState::Killed,
-            "Finalizing session must be Killed, got {finalizing_state}"
+            SessionState::Retained,
+            "Finalizing session must be Retained after force stop, got {finalizing_state}"
         );
         assert!(
             summary.killed >= 2,
@@ -530,6 +547,66 @@ mod tests {
             *state,
             SessionState::Finalizing,
             "retrigger must transition Retained → Finalizing, got {state}"
+        );
+    }
+
+    // ---
+    // AC-5 (bugfix): Force stop Finalizing → Killed → Retained (not terminal Killed)
+    // ---
+
+    #[test]
+    fn force_stop_finalizing_then_retrigger_is_possible() {
+        let mut reg = new_registry();
+        let id = register_finalizing(&mut reg, "alice", SessionType::Loop);
+        stop_sessions(
+            &mut reg,
+            &StopOptions {
+                mode: StopMode::AllForMember("alice".to_string()),
+                force: true,
+            },
+        );
+        // After force stop on Finalizing, session must be Retained (not terminal Killed)
+        let state = &reg.get(&id).unwrap().current_state;
+        assert_eq!(
+            *state,
+            SessionState::Retained,
+            "force stop on Finalizing must go to Retained for retrigger to be possible, got {state}"
+        );
+        // Verify retrigger is valid (Retained → Finalizing)
+        let retrigger_result = retrigger_session_finalization(&mut reg, &id);
+        assert!(
+            retrigger_result.is_ok(),
+            "retrigger must succeed after force stop: {:?}",
+            retrigger_result.err()
+        );
+        assert_eq!(
+            reg.get(&id).unwrap().current_state,
+            SessionState::Finalizing,
+            "retrigger must transition Retained → Finalizing"
+        );
+    }
+
+    #[test]
+    fn force_stop_finalizing_produces_retained_state_not_killed() {
+        let mut reg = new_registry();
+        let id = register_finalizing(&mut reg, "bob", SessionType::Loop);
+        let summary = stop_sessions(
+            &mut reg,
+            &StopOptions {
+                mode: StopMode::AllForMember("bob".to_string()),
+                force: true,
+            },
+        );
+        assert!(
+            summary.killed >= 1,
+            "force stop must report killed, got {}",
+            summary.killed
+        );
+        // State must be Retained, not Killed (Killed is terminal, Retained allows retrigger)
+        assert_eq!(
+            reg.get(&id).unwrap().current_state,
+            SessionState::Retained,
+            "force stop on Finalizing must result in Retained state (Killed is terminal, prevents retrigger)"
         );
     }
 }

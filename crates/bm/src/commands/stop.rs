@@ -99,9 +99,9 @@ pub fn run(
 
     // Stop daemon if --all is requested
     if stop_all {
-        match daemon::stop_daemon(&team.name) {
-            Ok(()) => eprintln!("Daemon stopped."),
-            Err(_) => {} // Daemon already stopped or not found — that's fine
+        // Daemon already stopped or not found — that's fine
+        if let Ok(()) = daemon::stop_daemon(&team.name) {
+            eprintln!("Daemon stopped.");
         }
     }
 
