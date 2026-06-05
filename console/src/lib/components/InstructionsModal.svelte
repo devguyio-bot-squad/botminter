@@ -1,6 +1,4 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
-
 	interface Props {
 		hatName: string;
 		instructions: string;
@@ -106,10 +104,18 @@
 <svelte:window onkeydown={handleKeydown} />
 
 <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-<div class="modal-overlay" data-testid="modal-overlay" role="dialog" aria-modal="true" onkeydown={handleKeydown}>
+<div
+	class="modal-overlay"
+	data-testid="modal-overlay"
+	role="dialog"
+	aria-modal="true"
+	aria-labelledby="instructions-modal-title"
+	tabindex="-1"
+	onkeydown={handleKeydown}
+>
 	<div class="modal-content">
 		<div class="modal-header">
-			<h2 class="modal-title">Instructions - {hatName}</h2>
+			<h2 id="instructions-modal-title" class="modal-title">Instructions - {hatName}</h2>
 			<button type="button" class="close-btn" aria-label="Close" onclick={onClose}>
 				&times;
 			</button>

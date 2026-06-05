@@ -324,12 +324,12 @@ describe('WorkflowEditor component', () => {
 
 			// Simulate node click via the onNodeClick callback passed to SvelteFlow
 			const onNodeClick = lastSvelteFlowProps.onnodeclick as
-				| ((event: { detail: { node: { id: string } } }) => void)
+				| ((args: { node: { id: string }; event: MouseEvent | TouchEvent }) => void)
 				| undefined;
 			expect(onNodeClick).toBeDefined();
 
 			// Trigger the node click
-			onNodeClick!({ detail: { node: { id: 'po_gate' } } });
+			onNodeClick!({ node: { id: 'po_gate' }, event: new MouseEvent('click') });
 
 			await waitFor(() => {
 				// Side panel should be visible after clicking a node
@@ -351,18 +351,18 @@ describe('WorkflowEditor component', () => {
 
 			// First, open the panel by clicking a node
 			const onNodeClick = lastSvelteFlowProps.onnodeclick as
-				| ((event: { detail: { node: { id: string } } }) => void)
+				| ((args: { node: { id: string }; event: MouseEvent | TouchEvent }) => void)
 				| undefined;
 			if (onNodeClick) {
-				onNodeClick({ detail: { node: { id: 'po_gate' } } });
+				onNodeClick({ node: { id: 'po_gate' }, event: new MouseEvent('click') });
 			}
 
 			// Then, click the canvas background (pane click) to deselect
 			const onPaneClick = lastSvelteFlowProps.onpaneclick as
-				| (() => void)
+				| ((args: { event: MouseEvent }) => void)
 				| undefined;
 			expect(onPaneClick).toBeDefined();
-			onPaneClick!();
+			onPaneClick!({ event: new MouseEvent('click') });
 
 			await waitFor(() => {
 				// Side panel should be hidden after clicking canvas background
@@ -384,10 +384,10 @@ describe('WorkflowEditor component', () => {
 
 			// Open side panel
 			const onNodeClick = lastSvelteFlowProps.onnodeclick as
-				| ((event: { detail: { node: { id: string } } }) => void)
+				| ((args: { node: { id: string }; event: MouseEvent | TouchEvent }) => void)
 				| undefined;
 			expect(onNodeClick).toBeDefined();
-			onNodeClick!({ detail: { node: { id: 'po_gate' } } });
+			onNodeClick!({ node: { id: 'po_gate' }, event: new MouseEvent('click') });
 
 			await waitFor(() => {
 				// The workflow editor should use a flex layout where canvas

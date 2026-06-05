@@ -32,8 +32,9 @@
 
 <div class="hat-detail-panel" data-testid="hat-detail-panel">
 	<div class="panel-section">
-		<label class="panel-label">Name</label>
+		<label class="panel-label" for="hat-name">Name</label>
 		<input
+			id="hat-name"
 			type="text"
 			class="panel-input"
 			value={name}
@@ -42,8 +43,9 @@
 	</div>
 
 	<div class="panel-section">
-		<label class="panel-label">Description</label>
+		<label class="panel-label" for="hat-description">Description</label>
 		<input
+			id="hat-description"
 			type="text"
 			class="panel-input"
 			value={description}
@@ -52,8 +54,8 @@
 	</div>
 
 	<div class="panel-section">
-		<label class="panel-label">Triggers</label>
-		<ul class="event-list">
+		<span class="panel-label">Triggers</span>
+		<ul class="event-list" aria-label="Triggers">
 			{#each triggers as trigger}
 				<li>{trigger}</li>
 			{/each}
@@ -61,8 +63,8 @@
 	</div>
 
 	<div class="panel-section">
-		<label class="panel-label">Publishes</label>
-		<ul class="event-list">
+		<span class="panel-label">Publishes</span>
+		<ul class="event-list" aria-label="Publishes">
 			{#each publishes as pub}
 				<li>{pub}</li>
 			{/each}
@@ -73,7 +75,7 @@
 
 	<div class="panel-section">
 		<div class="instructions-header">
-			<label class="panel-label">Instructions</label>
+			<span class="panel-label">Instructions</span>
 			<button type="button" class="edit-btn" onclick={onEditInstructions}>Edit</button>
 		</div>
 		<div class="instructions-content" data-testid="instructions-content">

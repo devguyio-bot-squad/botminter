@@ -1,10 +1,19 @@
 <script lang="ts">
-	import { onMount, tick } from 'svelte';
+	import { onMount } from 'svelte';
 	import { parseRalphYaml } from '$lib/workflow-parser.js';
 	import { layoutGraph } from '$lib/workflow-layout.js';
 	import type { WorkflowNode, WorkflowEdge } from '$lib/workflow-types.js';
 	import HatDetailPanel from './HatDetailPanel.svelte';
 	import InstructionsModal from './InstructionsModal.svelte';
+
+	interface SelectedHatData {
+		id: string;
+		name: string;
+		description: string;
+		triggers: string[];
+		publishes: string[];
+		instructions: string;
+	}
 
 	interface Props {
 		ralph_yml: string | null;
@@ -18,19 +27,11 @@
 	let parseError = $state<string | null>(null);
 	let hasHats = $state(false);
 
-	// --- CT-03: Node selection and side panel state ---
 	let selectedNodeId = $state<string | null>(null);
 	let showInstructionsModal = $state(false);
 
 	/** Returns the workflow node data for the selected node, or null. */
-	function getSelectedNodeData(): {
-		id: string;
-		name: string;
-		description: string;
-		triggers: string[];
-		publishes: string[];
-		instructions: string;
-	} | null {
+	function getSelectedNodeData(): SelectedHatData | null {
 		if (!selectedNodeId) return null;
 		const flowNode = nodes.find((n) => n.id === selectedNodeId);
 		if (!flowNode) return null;
@@ -45,30 +46,28 @@
 		};
 	}
 
-	function handleNodeClick(event: { detail: { node: { id: string } } }) {
-		selectedNodeId = event.detail.node.id;
+	/** Update a single field on the selected node's data. */
+	function updateSelectedNodeData(field: string, value: unknown) {
+		if (!selectedNodeId) return;
+		nodes = nodes.map((n) =>
+			n.id === selectedNodeId ? { ...n, data: { ...n.data, [field]: value } } : n
+		);
 	}
 
-	function handlePaneClick() {
+	function handleNodeClick({ node }: { node: { id: string }; event: MouseEvent | TouchEvent }) {
+		selectedNodeId = node.id;
+	}
+
+	function handlePaneClick(_args: { event: MouseEvent }) {
 		selectedNodeId = null;
 	}
 
 	function handleNameChange(newName: string) {
-		if (!selectedNodeId) return;
-		nodes = nodes.map((n) =>
-			n.id === selectedNodeId
-				? { ...n, data: { ...n.data, name: newName } }
-				: n
-		);
+		updateSelectedNodeData('name', newName);
 	}
 
 	function handleDescriptionChange(newDescription: string) {
-		if (!selectedNodeId) return;
-		nodes = nodes.map((n) =>
-			n.id === selectedNodeId
-				? { ...n, data: { ...n.data, description: newDescription } }
-				: n
-		);
+		updateSelectedNodeData('description', newDescription);
 	}
 
 	function handleEditInstructions() {
@@ -76,12 +75,7 @@
 	}
 
 	function handleSaveInstructions(content: string) {
-		if (!selectedNodeId) return;
-		nodes = nodes.map((n) =>
-			n.id === selectedNodeId
-				? { ...n, data: { ...n.data, instructions: content } }
-				: n
-		);
+		updateSelectedNodeData('instructions', content);
 		showInstructionsModal = false;
 	}
 
@@ -172,9 +166,10 @@
 	</div>
 
 	<!-- Main content area: canvas + optional side panel -->
+	<!-- inline style="display:flex" kept for jsdom test compatibility (scoped CSS not applied in unit tests) -->
 	<div class="workflow-main" style="display: flex;">
 		<!-- Canvas -->
-		<div class="workflow-canvas" data-testid="workflow-canvas" style="flex: 1;">
+		<div class="workflow-canvas" data-testid="workflow-canvas">
 			{#if parseError}
 				<div class="error-state">
 					<p>Parse error: {parseError}</p>
@@ -259,21 +254,31 @@
 	}
 
 	.workflow-main {
+		display: flex;
 		height: 65vh;
 		width: 100%;
 	}
 
 	.workflow-canvas {
+		flex: 1;
 		height: 100%;
 		position: relative;
 	}
 
-	.empty-state {
+	.empty-state,
+	.error-state {
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		height: 100%;
-		color: #6b7280;
 		font-size: 0.875rem;
+	}
+
+	.empty-state {
+		color: #6b7280;
+	}
+
+	.error-state {
+		color: #f87171;
 	}
 </style>
