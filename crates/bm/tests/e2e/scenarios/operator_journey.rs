@@ -918,6 +918,153 @@ fn status_detects_crashed_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send 
     }
 }
 
+fn status_shows_session_history_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        // Precondition: status_detects_crashed ran immediately before this case, creating at
+        // least one Failed (terminal) session. bm status --history must show it.
+        let stdout = env.command("bm")
+            .args(["status", "--history", "-t", TEAM_NAME])
+            .run();
+        assert!(
+            stdout.contains("normal") || stdout.contains("abnormal"),
+            "bm status --history should show terminal session history with exit status (AC-17), got: {stdout}"
+        );
+    }
+}
+
+fn session_inspect_and_cleanup_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        let mut guard = ProcessGuard::new(env, TEAM_NAME);
+
+        // Snapshot before bm start to identify the workspace created by THIS case.
+        let pre_existing: HashSet<PathBuf> =
+            super::super::helpers::list_session_workspaces(&env.home, TEAM_NAME, MEMBER_DIR)
+                .into_iter()
+                .collect();
+
+        let mut cmd = env.command("bm");
+        cmd.args(["start", "-t", TEAM_NAME]);
+        if let Some(port) = env.get_export("tuwunel_port") {
+            cmd.env("TUWUNEL_PORT", port);
+        }
+        cmd.run();
+
+        let ws = super::super::helpers::wait_for_new_session_workspace(
+            &env.home, TEAM_NAME, MEMBER_DIR, &pre_existing, Duration::from_secs(10),
+        ).expect("session workspace should appear after bm start");
+        let pid = super::super::helpers::wait_for_stub_pid(&ws, Duration::from_secs(10))
+            .expect("stub-ralph should write PID file");
+        guard.set_pid(pid);
+
+        // Make stub-ralph ignore SIGTERM so graceful stop advances Active → Finalizing
+        // and only the SIGKILL from force-stop kills it (→ Retained).
+        fs::write(ws.join(".ralph-stub-ignore-sigterm"), "").expect("write SIGTERM ignore file");
+
+        env.command("bm").args(["stop", "-t", TEAM_NAME]).run();
+        env.command("bm").args(["stop", "--force", "-t", TEAM_NAME]).run();
+        super::super::helpers::wait_for_exit(pid, Duration::from_secs(5));
+        assert!(!is_alive(pid));
+
+        let session_id = ws.file_name().unwrap().to_string_lossy().to_string();
+
+        // Inspect the Retained session — daemon API returns structured session info.
+        let inspect_out = env.command("bm")
+            .args(["session", "inspect", &session_id, "-t", TEAM_NAME])
+            .run();
+        assert!(
+            inspect_out.contains("Session ID:"),
+            "bm session inspect must show Session ID (AC-18), got: {inspect_out}"
+        );
+        assert!(
+            inspect_out.contains("Member:"),
+            "bm session inspect must show Member (AC-18), got: {inspect_out}"
+        );
+        assert!(
+            inspect_out.contains("State:"),
+            "bm session inspect must show State (AC-18), got: {inspect_out}"
+        );
+
+        // Clean up the Retained session — removes from registry and deletes workspace.
+        let cleanup_out = env.command("bm")
+            .args(["session", "cleanup", &session_id, "-t", TEAM_NAME])
+            .run();
+        assert!(
+            cleanup_out.contains("Cleaned session"),
+            "bm session cleanup must confirm removal (AC-18), got: {cleanup_out}"
+        );
+    }
+}
+
+fn daemon_restart_marks_stale_failed_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    move |env| {
+        // Snapshot before bm start to identify the workspace created by THIS case.
+        let pre_existing: HashSet<PathBuf> =
+            super::super::helpers::list_session_workspaces(&env.home, TEAM_NAME, MEMBER_DIR)
+                .into_iter()
+                .collect();
+
+        // Start a session (daemon auto-starts).
+        let mut cmd = env.command("bm");
+        cmd.args(["start", "-t", TEAM_NAME]);
+        if let Some(port) = env.get_export("tuwunel_port") {
+            cmd.env("TUWUNEL_PORT", port);
+        }
+        cmd.run();
+
+        let ws = super::super::helpers::wait_for_new_session_workspace(
+            &env.home, TEAM_NAME, MEMBER_DIR, &pre_existing, Duration::from_secs(10),
+        ).expect("session workspace should appear after bm start");
+        let stub_pid = super::super::helpers::wait_for_stub_pid(&ws, Duration::from_secs(10))
+            .expect("stub-ralph should write PID file");
+
+        // Kill stub-ralph so the session's agent_pid becomes dead in the registry.
+        // Simulates the session process dying before or at the same time as the daemon crash.
+        force_kill(stub_pid);
+        super::super::helpers::wait_for_exit(stub_pid, Duration::from_secs(5));
+        assert!(!is_alive(stub_pid));
+
+        // Crash the daemon (simulates OOM kill, power failure, etc.)
+        let pid_file = env.home.join(format!(".botminter/daemon-{}.pid", TEAM_NAME));
+        let cfg_file = env.home.join(format!(".botminter/daemon-{}.json", TEAM_NAME));
+        let daemon_pid: u32 = fs::read_to_string(&pid_file).unwrap().trim().parse().unwrap();
+        force_kill(daemon_pid);
+        super::super::helpers::wait_for_exit(daemon_pid, Duration::from_secs(5));
+        assert!(!is_alive(daemon_pid));
+
+        // Remove stale daemon files. Without this, bm daemon start sees the old config
+        // file (which exists from the dead daemon) and returns before the new daemon has
+        // bound its port, causing the subsequent API call to connect to a stale port.
+        let _ = fs::remove_file(&pid_file);
+        let _ = fs::remove_file(&cfg_file);
+
+        let session_id = ws.file_name().unwrap().to_string_lossy().to_string();
+
+        // Restart the daemon. recover_stale_sessions() runs synchronously at startup —
+        // by the time start returns, Active sessions with dead agent_pid are marked Failed (AC-25).
+        env.command("bm")
+            .args(["daemon", "start", "--mode", "poll", "--port", "0", "-t", TEAM_NAME])
+            .run();
+
+        // Verify via daemon API that restart recovery marked the session Failed.
+        let daemon_port = read_daemon_port(&env.home, TEAM_NAME);
+        let detail_out = env.command("curl")
+            .args(["-s", &format!("http://127.0.0.1:{}/api/sessions/{}", daemon_port, session_id)])
+            .run();
+        let detail: serde_json::Value = serde_json::from_str(&detail_out)
+            .expect("daemon session detail must be valid JSON");
+        assert_eq!(
+            detail["session"]["current_state"].as_str(),
+            Some("Failed"),
+            "daemon restart recovery must mark stale Active session Failed (AC-25), got: {detail:?}"
+        );
+
+        // Stop the daemon started in this test to leave a clean state for subsequent cases.
+        env.command("bm")
+            .args(["daemon", "stop", "-t", TEAM_NAME])
+            .run();
+    }
+}
+
 fn members_list_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         let stdout = env.command("bm")
@@ -1479,6 +1626,9 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("stop_force_kills_fresh", stop_force_kills_fn(gh_token.clone()))
         .case("retrigger_after_force_stop_fresh", retrigger_after_force_stop_fn(gh_token.clone()))
         .case("status_detects_crashed_fresh", status_detects_crashed_fn(gh_token.clone()))
+        .case("status_shows_session_history_fresh", status_shows_session_history_fn(gh_token.clone()))
+        .case("session_inspect_and_cleanup_fresh", session_inspect_and_cleanup_fn(gh_token.clone()))
+        .case("daemon_restart_marks_stale_failed_fresh", daemon_restart_marks_stale_failed_fn(gh_token.clone()))
         .case("members_list_fresh", members_list_fn())
         .case("teams_list_fresh", teams_list_fn())
         // Stop members and daemon auto-started by bm start before explicit daemon tests
@@ -1571,6 +1721,9 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
         .case("stop_force_kills_existing", stop_force_kills_fn(gh_token.clone()))
         .case("retrigger_after_force_stop_existing", retrigger_after_force_stop_fn(gh_token.clone()))
         .case("status_detects_crashed_existing", status_detects_crashed_fn(gh_token.clone()))
+        .case("status_shows_session_history_existing", status_shows_session_history_fn(gh_token.clone()))
+        .case("session_inspect_and_cleanup_existing", session_inspect_and_cleanup_fn(gh_token.clone()))
+        .case("daemon_restart_marks_stale_failed_existing", daemon_restart_marks_stale_failed_fn(gh_token.clone()))
         .case("members_list_existing", members_list_fn())
         .case("teams_list_existing", teams_list_fn())
         // Stop members and daemon auto-started by bm start before explicit daemon tests
@@ -1652,19 +1805,21 @@ fn build_suite(gh_org: String, gh_token: String, config: &E2eConfig) -> GithubSu
     //   23: stop_clean_shutdown
     //   24: start_single_member, 25: stop_single_member
     //   26: stop_force_kills, 27: retrigger_after_force_stop, 28: status_detects_crashed
-    //   29: members_list, 30: teams_list
-    //   31: daemon_cleanup
-    //   32: daemon_start_poll, 33: daemon_poll_launches, 34: daemon_stop_poll
-    //   35: daemon_start_webhook, 36: daemon_stop_webhook
-    //   37-40: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
-    //   41: bridge_stop, 42: fire_member
-    //   43: reset_home, 44: verify_board_survives_reset
-    // Second pass starts at 45, same shape as first pass
-    //   65: start_status_healthy, 66: start_skips_running, 67: bridge_functional
-    //   80: daemon_start_webhook, 81: daemon_stop_webhook
+    //   29: status_shows_session_history, 30: session_inspect_and_cleanup
+    //   31: daemon_restart_marks_stale_failed
+    //   32: members_list, 33: teams_list
+    //   34: daemon_cleanup
+    //   35: daemon_start_poll, 36: daemon_poll_launches, 37: daemon_stop_poll
+    //   38: daemon_start_webhook, 39: daemon_stop_webhook
+    //   40-43: daemon_sigkill, daemon_stale_pid, daemon_already_running, daemon_crashed
+    //   44: bridge_stop, 45: fire_member
+    //   46: reset_home, 47: verify_board_survives_reset
+    // Second pass starts at 48, same shape as first pass
+    //   68: start_status_healthy, 69: start_skips_running, 70: bridge_functional
+    //   86: daemon_start_webhook, 87: daemon_stop_webhook
     suite
-        .group(20, 22).group(35, 36)
-        .group(65, 67).group(80, 81)
+        .group(20, 22).group(38, 39)
+        .group(68, 70).group(86, 87)
 }
 
 pub fn scenario(config: &E2eConfig) -> Trial {

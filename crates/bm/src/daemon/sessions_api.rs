@@ -79,9 +79,12 @@ impl SessionsApiState {
         config: HydrationWorkspaceConfig,
         bridge_context: Option<BridgeContext>,
     ) -> Self {
+        // Load persisted sessions from disk so daemon restart recovery can see prior sessions.
+        let registry = SessionRegistry::load(registry_path.clone())
+            .unwrap_or_else(|_| SessionRegistry::new(registry_path));
         Self {
             inner: Arc::new(Mutex::new(SessionsInner {
-                registry: SessionRegistry::new(registry_path),
+                registry,
                 work_item_lock: WorkItemLock::new(),
             })),
             workspace_ops: Some(Arc::new(HydrationWorkspaceOps::new(config))),

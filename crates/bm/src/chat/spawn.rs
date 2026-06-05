@@ -87,6 +87,10 @@ pub fn validates_tty_inheritance(_config: &SpawnConfig) -> bool {
 mod tests {
     use super::*;
 
+    // Tests share the process-global CHILD_PID atomic. Serialize them so one test's
+    // setup_signal_forwarding() cannot overwrite CHILD_PID mid-assertion in another test.
+    static SPAWN_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     fn test_config() -> SpawnConfig {
         SpawnConfig {
             agent_binary: "/usr/bin/echo".to_string(),
@@ -100,6 +104,7 @@ mod tests {
 
     #[test]
     fn spawn_and_wait_returns_exit_code_from_agent() {
+        let _lock = SPAWN_TEST_LOCK.lock().unwrap();
         let config = test_config();
         let result = spawn_and_wait(&config).expect("spawn_and_wait should succeed");
         assert_eq!(
@@ -110,6 +115,7 @@ mod tests {
 
     #[test]
     fn spawn_and_wait_propagates_nonzero_exit_code() {
+        let _lock = SPAWN_TEST_LOCK.lock().unwrap();
         let config = SpawnConfig {
             agent_binary: "/usr/bin/false".to_string(),
             agent_args: vec![],
@@ -125,6 +131,7 @@ mod tests {
 
     #[test]
     fn spawn_and_wait_records_agent_pid() {
+        let _lock = SPAWN_TEST_LOCK.lock().unwrap();
         let config = test_config();
         let result = spawn_and_wait(&config).expect("spawn_and_wait should succeed");
         assert!(
@@ -136,6 +143,7 @@ mod tests {
 
     #[test]
     fn spawn_and_wait_clears_child_pid_after_exit() {
+        let _lock = SPAWN_TEST_LOCK.lock().unwrap();
         CHILD_PID.store(99999, Ordering::SeqCst);
         let config = test_config();
         let _result = spawn_and_wait(&config).expect("spawn_and_wait should succeed");
@@ -161,6 +169,7 @@ mod tests {
 
     #[test]
     fn signal_forwarding_setup_accepts_valid_pid() {
+        let _lock = SPAWN_TEST_LOCK.lock().unwrap();
         let fake_pid = std::process::id();
         let result = setup_signal_forwarding(fake_pid);
         assert!(
@@ -171,6 +180,7 @@ mod tests {
 
     #[test]
     fn spawn_and_wait_with_env_vars() {
+        let _lock = SPAWN_TEST_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let env_file = tmp.path().join("env-out.txt");
         let config = SpawnConfig {
@@ -190,6 +200,7 @@ mod tests {
 
     #[test]
     fn spawn_and_wait_with_stub_agent() {
+        let _lock = SPAWN_TEST_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let stub_agent = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/e2e/stub-agent.sh");
@@ -219,6 +230,7 @@ mod tests {
 
     #[test]
     fn spawn_and_wait_stub_agent_nonzero_exit() {
+        let _lock = SPAWN_TEST_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let stub_agent = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/e2e/stub-agent.sh");
@@ -244,6 +256,7 @@ mod tests {
 
     #[test]
     fn spawn_and_wait_signal_forwarding_to_stub_agent() {
+        let _lock = SPAWN_TEST_LOCK.lock().unwrap();
         let tmp = tempfile::tempdir().unwrap();
         let stub_agent = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("tests/e2e/stub-agent.sh");
