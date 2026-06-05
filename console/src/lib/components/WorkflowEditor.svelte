@@ -12,15 +12,20 @@
 	let nodes = $state.raw<import('@xyflow/svelte').Node[]>([]);
 	let edges = $state.raw<import('@xyflow/svelte').Edge[]>([]);
 
-	let hasHats = $derived(() => {
-		if (!ralph_yml) return false;
+	/** Check whether the raw ralph_yml string contains at least one hat definition. */
+	function yamlContainsHats(raw: string | null): boolean {
+		if (!raw) return false;
 		try {
-			const parsed = yaml.load(ralph_yml) as Record<string, unknown> | null;
-			return parsed !== null && typeof parsed === 'object' && 'hats' in parsed && parsed.hats !== null && typeof parsed.hats === 'object' && Object.keys(parsed.hats as object).length > 0;
+			const parsed = yaml.load(raw) as Record<string, unknown> | null;
+			if (parsed === null || typeof parsed !== 'object') return false;
+			if (!('hats' in parsed) || parsed.hats === null || typeof parsed.hats !== 'object') return false;
+			return Object.keys(parsed.hats as object).length > 0;
 		} catch {
 			return false;
 		}
-	});
+	}
+
+	let hasHats = $derived(yamlContainsHats(ralph_yml));
 
 	onMount(async () => {
 		await import('@xyflow/svelte/dist/style.css');
@@ -38,7 +43,7 @@
 
 	<!-- Canvas -->
 	<div class="workflow-canvas" data-testid="workflow-canvas">
-		{#if hasHats() && flowModule}
+		{#if hasHats && flowModule}
 			{@const SvelteFlow = flowModule.SvelteFlow}
 			{@const Controls = flowModule.Controls}
 			{@const MiniMap = flowModule.MiniMap}
@@ -49,7 +54,7 @@
 				<MiniMap />
 				<Background variant={BackgroundVariant.Dots} />
 			</SvelteFlow>
-		{:else if !hasHats()}
+		{:else if !hasHats}
 			<div class="empty-state">
 				<p>No hats configured — click + Add Hat to get started</p>
 			</div>
