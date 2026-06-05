@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, waitFor, fireEvent } from '@testing-library/svelte';
 
 // --- Mock @xyflow/svelte (SVG/Canvas APIs unavailable in jsdom) ---
@@ -770,6 +770,188 @@ describe('WorkflowEditor component', () => {
 				expect(flexContainer).not.toBeNull();
 				const style = window.getComputedStyle(flexContainer!);
 				expect(style.display).toBe('flex');
+			});
+		});
+	});
+
+	// --- CT-05: Save flow tests ---
+
+	describe('CT-05: Save flow', () => {
+		const saveFlowYml = `hats:
+  po_gate:
+    name: PO Gate
+    description: Gates human review
+    triggers:
+      - po.triage
+    publishes:
+      - po.gate.approved
+`;
+
+		afterEach(() => {
+			// Clean up any beforeunload listeners
+			window.onbeforeunload = null;
+		});
+
+		it('renders a Save button in the Workflow tab', async () => {
+			render(WorkflowEditor, {
+				props: {
+					ralph_yml: saveFlowYml,
+					team: 'my-team',
+					ralphYmlPath: 'members/engineer-01/ralph.yml'
+				}
+			});
+
+			await waitFor(() => {
+				const saveButton = screen.getByRole('button', { name: /save/i });
+				expect(saveButton).toBeInTheDocument();
+			});
+		});
+
+		it('Save button calls API with serialized YAML', async () => {
+			// Mock the api module
+			const mockSaveFile = vi.fn().mockResolvedValue({
+				ok: true,
+				path: 'members/engineer-01/ralph.yml',
+				commit_sha: 'abc123'
+			});
+			vi.doMock('$lib/api.js', () => ({
+				api: { saveFile: mockSaveFile }
+			}));
+
+			render(WorkflowEditor, {
+				props: {
+					ralph_yml: saveFlowYml,
+					team: 'my-team',
+					ralphYmlPath: 'members/engineer-01/ralph.yml'
+				}
+			});
+
+			await waitFor(() => {
+				const nodes = lastSvelteFlowProps.nodes as Array<{ id: string }> | undefined;
+				expect(nodes).toBeDefined();
+			});
+
+			// Make a mutation to mark as dirty (add a hat)
+			const addHatButton = screen.getByRole('button', { name: /add hat/i });
+			await fireEvent.click(addHatButton);
+
+			// Click save
+			const saveButton = screen.getByRole('button', { name: /save/i });
+			await fireEvent.click(saveButton);
+
+			await waitFor(() => {
+				expect(mockSaveFile).toHaveBeenCalledWith(
+					'my-team',
+					'members/engineer-01/ralph.yml',
+					expect.any(String)
+				);
+			});
+		});
+
+		it('shows unsaved changes indicator after mutation', async () => {
+			const { container } = render(WorkflowEditor, {
+				props: {
+					ralph_yml: saveFlowYml,
+					team: 'my-team',
+					ralphYmlPath: 'members/engineer-01/ralph.yml'
+				}
+			});
+
+			await waitFor(() => {
+				const nodes = lastSvelteFlowProps.nodes as Array<{ id: string }> | undefined;
+				expect(nodes).toBeDefined();
+			});
+
+			// Make a mutation (add a hat)
+			const addHatButton = screen.getByRole('button', { name: /add hat/i });
+			await fireEvent.click(addHatButton);
+
+			await waitFor(() => {
+				// Look for an unsaved changes indicator (dot, text, or data attribute)
+				const indicator = container.querySelector('[data-testid="unsaved-indicator"]')
+					|| container.querySelector('.unsaved-indicator')
+					|| screen.queryByText(/unsaved/i)
+					|| screen.queryByText(/modified/i);
+				expect(indicator).not.toBeNull();
+			});
+		});
+
+		it('unsaved changes indicator disappears after save', async () => {
+			const mockSaveFile = vi.fn().mockResolvedValue({
+				ok: true,
+				path: 'members/engineer-01/ralph.yml',
+				commit_sha: 'abc123'
+			});
+			vi.doMock('$lib/api.js', () => ({
+				api: { saveFile: mockSaveFile }
+			}));
+
+			const { container } = render(WorkflowEditor, {
+				props: {
+					ralph_yml: saveFlowYml,
+					team: 'my-team',
+					ralphYmlPath: 'members/engineer-01/ralph.yml'
+				}
+			});
+
+			await waitFor(() => {
+				const nodes = lastSvelteFlowProps.nodes as Array<{ id: string }> | undefined;
+				expect(nodes).toBeDefined();
+			});
+
+			// Make a mutation
+			const addHatButton = screen.getByRole('button', { name: /add hat/i });
+			await fireEvent.click(addHatButton);
+
+			// Confirm dirty
+			await waitFor(() => {
+				const indicator = container.querySelector('[data-testid="unsaved-indicator"]')
+					|| container.querySelector('.unsaved-indicator')
+					|| screen.queryByText(/unsaved/i);
+				expect(indicator).not.toBeNull();
+			});
+
+			// Click save
+			const saveButton = screen.getByRole('button', { name: /save/i });
+			await fireEvent.click(saveButton);
+
+			// After save completes, the indicator should be gone
+			await waitFor(() => {
+				const indicator = container.querySelector('[data-testid="unsaved-indicator"]')
+					|| container.querySelector('.unsaved-indicator')
+					|| screen.queryByText(/unsaved/i);
+				expect(indicator).toBeNull();
+			});
+		});
+
+		it('beforeunload handler is registered when dirty', async () => {
+			render(WorkflowEditor, {
+				props: {
+					ralph_yml: saveFlowYml,
+					team: 'my-team',
+					ralphYmlPath: 'members/engineer-01/ralph.yml'
+				}
+			});
+
+			await waitFor(() => {
+				const nodes = lastSvelteFlowProps.nodes as Array<{ id: string }> | undefined;
+				expect(nodes).toBeDefined();
+			});
+
+			// Make a mutation (add a hat)
+			const addHatButton = screen.getByRole('button', { name: /add hat/i });
+			await fireEvent.click(addHatButton);
+
+			await waitFor(() => {
+				// After mutation, the beforeunload handler should call preventDefault.
+				// We use a spy on Event.prototype.preventDefault to detect this.
+				const preventDefaultSpy = vi.spyOn(Event.prototype, 'preventDefault');
+				const event = new Event('beforeunload', { cancelable: true });
+				window.dispatchEvent(event);
+
+				// The dirty-state handler should have called preventDefault
+				expect(preventDefaultSpy).toHaveBeenCalled();
+				preventDefaultSpy.mockRestore();
 			});
 		});
 	});
