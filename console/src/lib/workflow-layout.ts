@@ -10,7 +10,16 @@ import type { WorkflowNode, WorkflowEdge } from './workflow-types.js';
 const NODE_WIDTH = 180;
 const NODE_HEIGHT = 60;
 
-export function layoutGraph(nodes: WorkflowNode[], edges: WorkflowEdge[]): WorkflowNode[] {
+/** Shape returned by dagre for each laid-out node. */
+interface DagreNodePosition {
+	readonly x: number;
+	readonly y: number;
+}
+
+export function layoutGraph(
+	nodes: readonly WorkflowNode[],
+	edges: readonly WorkflowEdge[]
+): WorkflowNode[] {
 	const g = new dagre.graphlib.Graph();
 	g.setGraph({ rankdir: 'LR', nodesep: 50, ranksep: 100 });
 	g.setDefaultEdgeLabel(() => ({}));
@@ -26,12 +35,12 @@ export function layoutGraph(nodes: WorkflowNode[], edges: WorkflowEdge[]): Workf
 	dagre.layout(g);
 
 	return nodes.map((node) => {
-		const nodeWithPos = g.node(node.id) as { x: number; y: number };
+		const pos = g.node(node.id) as DagreNodePosition;
 		return {
 			...node,
 			position: {
-				x: nodeWithPos.x - NODE_WIDTH / 2,
-				y: nodeWithPos.y - NODE_HEIGHT / 2
+				x: pos.x - NODE_WIDTH / 2,
+				y: pos.y - NODE_HEIGHT / 2
 			}
 		};
 	});

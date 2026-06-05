@@ -8,55 +8,70 @@
 import * as yaml from 'js-yaml';
 import type { WorkflowNode, WorkflowEdge, WorkflowGraph } from './workflow-types.js';
 
+const EMPTY_GRAPH: WorkflowGraph = Object.freeze({
+	nodes: [],
+	edges: [],
+	guardrails: [],
+	rawYaml: Object.freeze({})
+});
+
 export function parseRalphYaml(rawYaml: string): WorkflowGraph {
 	const parsed = yaml.load(rawYaml) as Record<string, unknown> | null;
 
 	if (parsed === null || typeof parsed !== 'object') {
-		return { nodes: [], edges: [], guardrails: [], rawYaml: Object.freeze({}) };
+		return EMPTY_GRAPH;
 	}
 
 	const rawYamlObj = Object.freeze({ ...parsed });
-
-	// Extract guardrails from core.guardrails
 	const guardrails = extractGuardrails(parsed);
 
-	// Extract hats section
 	const hatsSection = parsed.hats;
 	if (!hatsSection || typeof hatsSection !== 'object') {
 		return { nodes: [], edges: [], guardrails, rawYaml: rawYamlObj };
 	}
 
-	const hatsMap = hatsSection as Record<string, unknown>;
+	const nodes = extractNodes(hatsSection as Record<string, unknown>);
+	const edges = buildEdges(nodes);
+
+	return { nodes, edges, guardrails, rawYaml: rawYamlObj };
+}
+
+/** Extracts WorkflowNode[] from the hats section of the parsed YAML. */
+function extractNodes(hatsMap: Record<string, unknown>): WorkflowNode[] {
 	const nodes: WorkflowNode[] = [];
-	// Build a map of trigger event -> hat id for edge building
-	const triggerToHat = new Map<string, string>();
 
 	for (const [hatId, hatConfig] of Object.entries(hatsMap)) {
 		if (!hatConfig || typeof hatConfig !== 'object') continue;
 
 		const config = hatConfig as Record<string, unknown>;
-		const triggers = toStringArray(config.triggers);
-		const publishes = toStringArray(config.publishes);
-
-		const node: WorkflowNode = {
+		nodes.push({
 			id: hatId,
-			name: typeof config.name === 'string' ? config.name : hatId,
-			description: typeof config.description === 'string' ? config.description : '',
-			triggers,
-			publishes,
-			instructions: typeof config.instructions === 'string' ? config.instructions : '',
+			name: stringField(config, 'name', hatId),
+			description: stringField(config, 'description', ''),
+			triggers: toStringArray(config.triggers),
+			publishes: toStringArray(config.publishes),
+			instructions: stringField(config, 'instructions', ''),
 			position: { x: 0, y: 0 }
-		};
-		nodes.push(node);
+		});
+	}
 
-		// Register this hat's triggers
-		for (const trigger of triggers) {
-			triggerToHat.set(trigger, hatId);
+	return nodes;
+}
+
+/**
+ * Builds directed edges by matching published events to triggers.
+ *
+ * For each node's published event, if another node triggers on that event,
+ * an edge is created from the publisher to the listener.
+ */
+function buildEdges(nodes: readonly WorkflowNode[]): WorkflowEdge[] {
+	const triggerToHat = new Map<string, string>();
+	for (const node of nodes) {
+		for (const trigger of node.triggers) {
+			triggerToHat.set(trigger, node.id);
 		}
 	}
 
-	// Build edges: for each hat, for each published event, if another hat
-	// triggers on that event, create an edge from the publisher to the listener
 	const edges: WorkflowEdge[] = [];
 	for (const node of nodes) {
 		for (const event of node.publishes) {
@@ -72,18 +87,23 @@ export function parseRalphYaml(rawYaml: string): WorkflowGraph {
 		}
 	}
 
-	return { nodes, edges, guardrails, rawYaml: rawYamlObj };
+	return edges;
 }
 
 function extractGuardrails(parsed: Record<string, unknown>): string[] {
 	const core = parsed.core;
 	if (!core || typeof core !== 'object') return [];
 
-	const coreObj = core as Record<string, unknown>;
-	const guardrails = coreObj.guardrails;
+	const guardrails = (core as Record<string, unknown>).guardrails;
 	if (!Array.isArray(guardrails)) return [];
 
 	return guardrails.filter((g): g is string => typeof g === 'string');
+}
+
+/** Safely extracts a string field from a config object, returning a fallback if absent. */
+function stringField(config: Record<string, unknown>, key: string, fallback: string): string {
+	const value = config[key];
+	return typeof value === 'string' ? value : fallback;
 }
 
 function toStringArray(value: unknown): string[] {

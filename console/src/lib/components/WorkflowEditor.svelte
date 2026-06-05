@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { parseRalphYaml } from '$lib/workflow-parser.js';
 	import { layoutGraph } from '$lib/workflow-layout.js';
+	import type { WorkflowNode, WorkflowEdge } from '$lib/workflow-types.js';
 
 	interface Props {
 		ralph_yml: string | null;
@@ -15,55 +16,60 @@
 	let parseError = $state<string | null>(null);
 	let hasHats = $state(false);
 
+	function toFlowNodes(positioned: readonly WorkflowNode[]): import('@xyflow/svelte').Node[] {
+		return positioned.map((n) => ({
+			id: n.id,
+			type: 'hatNode',
+			position: { x: n.position.x, y: n.position.y },
+			data: {
+				name: n.name,
+				description: n.description,
+				triggers: n.triggers,
+				publishes: n.publishes,
+				instructions: n.instructions
+			}
+		}));
+	}
+
+	function toFlowEdges(graphEdges: readonly WorkflowEdge[]): import('@xyflow/svelte').Edge[] {
+		return graphEdges.map((e) => ({
+			id: e.id,
+			source: e.source,
+			target: e.target,
+			label: e.event
+		}));
+	}
+
+	function clearGraph() {
+		hasHats = false;
+		nodes = [];
+		edges = [];
+	}
+
 	function buildGraph(raw: string | null) {
 		parseError = null;
 		if (!raw) {
-			hasHats = false;
-			nodes = [];
-			edges = [];
+			clearGraph();
 			return;
 		}
 
 		try {
 			const graph = parseRalphYaml(raw);
 			if (graph.nodes.length === 0) {
-				hasHats = false;
-				nodes = [];
-				edges = [];
+				clearGraph();
 				return;
 			}
 
 			hasHats = true;
 			const positioned = layoutGraph(graph.nodes, graph.edges);
-
-			nodes = positioned.map((n) => ({
-				id: n.id,
-				type: 'hatNode',
-				position: n.position,
-				data: {
-					name: n.name,
-					description: n.description,
-					triggers: n.triggers,
-					publishes: n.publishes,
-					instructions: n.instructions
-				}
-			}));
-
-			edges = graph.edges.map((e) => ({
-				id: e.id,
-				source: e.source,
-				target: e.target,
-				label: e.event
-			}));
+			nodes = toFlowNodes(positioned);
+			edges = toFlowEdges(graph.edges);
 		} catch (err: unknown) {
 			parseError = err instanceof Error ? err.message : 'Failed to parse YAML';
-			hasHats = false;
-			nodes = [];
-			edges = [];
+			clearGraph();
 		}
 	}
 
-	// Build graph whenever ralph_yml changes
 	$effect(() => {
 		buildGraph(ralph_yml);
 	});
