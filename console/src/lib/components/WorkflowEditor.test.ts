@@ -290,4 +290,122 @@ describe('WorkflowEditor component', () => {
 			});
 		});
 	});
+
+	// --- CT-03: Side panel interaction tests ---
+
+	describe('CT-03: Side panel interactions', () => {
+		const twoHatYml = `hats:
+  po_gate:
+    name: PO Gate
+    description: Gates human review
+    triggers:
+      - po.triage
+    publishes:
+      - po.gate.approved
+  lead_plan-create:
+    name: Plan Creator
+    description: Creates planning artifacts
+    triggers:
+      - po.gate.approved
+    publishes:
+      - lead.plan_review
+`;
+
+		it('single-click on a node opens the side panel', async () => {
+			const { container } = render(WorkflowEditor, {
+				props: { ralph_yml: twoHatYml }
+			});
+
+			await waitFor(() => {
+				const nodes = lastSvelteFlowProps.nodes as Array<{ id: string }> | undefined;
+				expect(nodes).toBeDefined();
+				expect(nodes!.length).toBeGreaterThanOrEqual(1);
+			});
+
+			// Simulate node click via the onNodeClick callback passed to SvelteFlow
+			const onNodeClick = lastSvelteFlowProps.onnodeclick as
+				| ((event: { detail: { node: { id: string } } }) => void)
+				| undefined;
+			expect(onNodeClick).toBeDefined();
+
+			// Trigger the node click
+			onNodeClick!({ detail: { node: { id: 'po_gate' } } });
+
+			await waitFor(() => {
+				// Side panel should be visible after clicking a node
+				const sidePanel = container.querySelector('[data-testid="hat-detail-panel"]')
+					|| container.querySelector('.hat-detail-panel');
+				expect(sidePanel).not.toBeNull();
+			});
+		});
+
+		it('clicking canvas background closes the side panel (deselects node)', async () => {
+			const { container } = render(WorkflowEditor, {
+				props: { ralph_yml: twoHatYml }
+			});
+
+			await waitFor(() => {
+				const nodes = lastSvelteFlowProps.nodes as Array<{ id: string }> | undefined;
+				expect(nodes).toBeDefined();
+			});
+
+			// First, open the panel by clicking a node
+			const onNodeClick = lastSvelteFlowProps.onnodeclick as
+				| ((event: { detail: { node: { id: string } } }) => void)
+				| undefined;
+			if (onNodeClick) {
+				onNodeClick({ detail: { node: { id: 'po_gate' } } });
+			}
+
+			// Then, click the canvas background (pane click) to deselect
+			const onPaneClick = lastSvelteFlowProps.onpaneclick as
+				| (() => void)
+				| undefined;
+			expect(onPaneClick).toBeDefined();
+			onPaneClick!();
+
+			await waitFor(() => {
+				// Side panel should be hidden after clicking canvas background
+				const sidePanel = container.querySelector('[data-testid="hat-detail-panel"]')
+					|| container.querySelector('.hat-detail-panel');
+				expect(sidePanel).toBeNull();
+			});
+		});
+
+		it('canvas area shrinks when side panel is open (flex layout)', async () => {
+			const { container } = render(WorkflowEditor, {
+				props: { ralph_yml: twoHatYml }
+			});
+
+			await waitFor(() => {
+				const nodes = lastSvelteFlowProps.nodes as Array<{ id: string }> | undefined;
+				expect(nodes).toBeDefined();
+			});
+
+			// Open side panel
+			const onNodeClick = lastSvelteFlowProps.onnodeclick as
+				| ((event: { detail: { node: { id: string } } }) => void)
+				| undefined;
+			expect(onNodeClick).toBeDefined();
+			onNodeClick!({ detail: { node: { id: 'po_gate' } } });
+
+			await waitFor(() => {
+				// The workflow editor should use a flex layout where canvas
+				// and side panel share space — canvas area shrinks
+				const canvasArea = container.querySelector('.workflow-canvas')
+					|| container.querySelector('[data-testid="workflow-canvas"]');
+				const sidePanel = container.querySelector('[data-testid="hat-detail-panel"]')
+					|| container.querySelector('.hat-detail-panel');
+
+				expect(canvasArea).not.toBeNull();
+				expect(sidePanel).not.toBeNull();
+
+				// Both should be inside a flex container
+				const flexContainer = canvasArea!.parentElement;
+				expect(flexContainer).not.toBeNull();
+				const style = window.getComputedStyle(flexContainer!);
+				expect(style.display).toBe('flex');
+			});
+		});
+	});
 });
