@@ -107,7 +107,7 @@ export function validateEventName(
 	eventName: string,
 	existingTriggers: Array<{ event: string; hatId: string }>
 ): ValidationResult {
-	if (!eventName || eventName.length === 0) {
+	if (!eventName) {
 		return { valid: false, error: 'Event name cannot be empty' };
 	}
 

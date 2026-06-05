@@ -132,7 +132,7 @@
 	}
 
 	/** Handle connection event from SvelteFlow (drag-to-connect). */
-	function handleConnect({ connection }: { connection: { source: string; target: string } }) {
+	function handleConnect(connection: { source: string; target: string }) {
 		pendingConnection = { source: connection.source, target: connection.target };
 	}
 
@@ -141,16 +141,11 @@
 		if (!pendingConnection) return;
 		const { source, target } = pendingConnection;
 
-		// Add event to source's publishes
+		// Update source publishes and target triggers in a single pass
 		graphNodes = graphNodes.map((n) => {
 			if (n.id === source && !n.publishes.includes(eventName)) {
 				return { ...n, publishes: [...n.publishes, eventName] };
 			}
-			return n;
-		});
-
-		// Add event to target's triggers if not already present
-		graphNodes = graphNodes.map((n) => {
 			if (n.id === target && !n.triggers.includes(eventName)) {
 				return { ...n, triggers: [...n.triggers, eventName] };
 			}

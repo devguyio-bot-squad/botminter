@@ -439,13 +439,11 @@ describe('WorkflowEditor component', () => {
 
 			// Simulate a connection event (drag-to-connect)
 			const onConnect = lastSvelteFlowProps.onconnect as
-				| ((args: { connection: { source: string; target: string } }) => void)
+				| ((connection: { source: string; target: string }) => void)
 				| undefined;
 
-			// If onConnect is not provided, check for onconnectstart/onconnectend
-			// or similar SvelteFlow connection callbacks
 			if (onConnect) {
-				onConnect({ connection: { source: 'po_gate', target: 'lead_plan-create' } });
+				onConnect({ source: 'po_gate', target: 'lead_plan-create' });
 			}
 
 			await waitFor(() => {
@@ -470,11 +468,11 @@ describe('WorkflowEditor component', () => {
 
 			// Simulate connection + event selection
 			const onConnect = lastSvelteFlowProps.onconnect as
-				| ((args: { connection: { source: string; target: string } }) => void)
+				| ((connection: { source: string; target: string }) => void)
 				| undefined;
 
 			if (onConnect) {
-				onConnect({ connection: { source: 'lead_plan-create', target: 'po_gate' } });
+				onConnect({ source: 'lead_plan-create', target: 'po_gate' });
 			}
 
 			// After selecting an event from the picker, a new edge should exist
@@ -504,11 +502,11 @@ describe('WorkflowEditor component', () => {
 			// After a connection with a new event name, the destination hat
 			// should have the new event in its triggers
 			const onConnect = lastSvelteFlowProps.onconnect as
-				| ((args: { connection: { source: string; target: string } }) => void)
+				| ((connection: { source: string; target: string }) => void)
 				| undefined;
 
 			if (onConnect) {
-				onConnect({ connection: { source: 'po_gate', target: 'lead_plan-create' } });
+				onConnect({ source: 'po_gate', target: 'lead_plan-create' });
 			}
 
 			// The event picker flow should allow adding a new event.

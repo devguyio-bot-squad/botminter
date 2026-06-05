@@ -1,14 +1,12 @@
 import { describe, it, expect } from 'vitest';
 
 /**
- * CT-04 Red Phase: Pure function tests for workflow graph operations.
+ * Pure function tests for workflow graph operations (CT-04).
  *
  * Tests edge deletion with trigger cleanup, node deletion with edge cleanup,
- * and event name validation. All tests MUST fail — workflow-graph-ops.ts
- * does not exist yet.
+ * and event name validation.
  */
 
-// Import will fail until workflow-graph-ops.ts is created
 import {
 	deleteEdge,
 	deleteNode,

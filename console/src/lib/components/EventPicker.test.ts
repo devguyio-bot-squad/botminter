@@ -2,16 +2,13 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/svelte';
 
 /**
- * CT-04 Red Phase: EventPicker component tests.
+ * EventPicker component tests (CT-04).
  *
  * Tests the event picker dropdown shown during edge creation (drag-to-connect).
  * The picker shows existing trigger events on the destination hat and allows
  * entering a new event name.
- *
- * All tests MUST fail — EventPicker.svelte does not exist yet.
  */
 
-// Import will fail until EventPicker.svelte is created
 import EventPicker from './EventPicker.svelte';
 
 describe('EventPicker component', () => {
