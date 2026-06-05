@@ -1,8 +1,10 @@
 <script lang="ts">
-	import { onMount } from 'svelte';
+	import { onMount, tick } from 'svelte';
 	import { parseRalphYaml } from '$lib/workflow-parser.js';
 	import { layoutGraph } from '$lib/workflow-layout.js';
 	import type { WorkflowNode, WorkflowEdge } from '$lib/workflow-types.js';
+	import HatDetailPanel from './HatDetailPanel.svelte';
+	import InstructionsModal from './InstructionsModal.svelte';
 
 	interface Props {
 		ralph_yml: string | null;
@@ -15,6 +17,77 @@
 	let edges = $state.raw<import('@xyflow/svelte').Edge[]>([]);
 	let parseError = $state<string | null>(null);
 	let hasHats = $state(false);
+
+	// --- CT-03: Node selection and side panel state ---
+	let selectedNodeId = $state<string | null>(null);
+	let showInstructionsModal = $state(false);
+
+	/** Returns the workflow node data for the selected node, or null. */
+	function getSelectedNodeData(): {
+		id: string;
+		name: string;
+		description: string;
+		triggers: string[];
+		publishes: string[];
+		instructions: string;
+	} | null {
+		if (!selectedNodeId) return null;
+		const flowNode = nodes.find((n) => n.id === selectedNodeId);
+		if (!flowNode) return null;
+		const d = flowNode.data as Record<string, unknown>;
+		return {
+			id: flowNode.id,
+			name: (d.name as string) ?? flowNode.id,
+			description: (d.description as string) ?? '',
+			triggers: (d.triggers as string[]) ?? [],
+			publishes: (d.publishes as string[]) ?? [],
+			instructions: (d.instructions as string) ?? ''
+		};
+	}
+
+	function handleNodeClick(event: { detail: { node: { id: string } } }) {
+		selectedNodeId = event.detail.node.id;
+	}
+
+	function handlePaneClick() {
+		selectedNodeId = null;
+	}
+
+	function handleNameChange(newName: string) {
+		if (!selectedNodeId) return;
+		nodes = nodes.map((n) =>
+			n.id === selectedNodeId
+				? { ...n, data: { ...n.data, name: newName } }
+				: n
+		);
+	}
+
+	function handleDescriptionChange(newDescription: string) {
+		if (!selectedNodeId) return;
+		nodes = nodes.map((n) =>
+			n.id === selectedNodeId
+				? { ...n, data: { ...n.data, description: newDescription } }
+				: n
+		);
+	}
+
+	function handleEditInstructions() {
+		showInstructionsModal = true;
+	}
+
+	function handleSaveInstructions(content: string) {
+		if (!selectedNodeId) return;
+		nodes = nodes.map((n) =>
+			n.id === selectedNodeId
+				? { ...n, data: { ...n.data, instructions: content } }
+				: n
+		);
+		showInstructionsModal = false;
+	}
+
+	function handleCloseInstructionsModal() {
+		showInstructionsModal = false;
+	}
 
 	function toFlowNodes(positioned: readonly WorkflowNode[]): import('@xyflow/svelte').Node[] {
 		return positioned.map((n) => ({
@@ -44,6 +117,7 @@
 		hasHats = false;
 		nodes = [];
 		edges = [];
+		selectedNodeId = null;
 	}
 
 	function buildGraph(raw: string | null) {
@@ -85,6 +159,8 @@
 			// Module import may fail in SSR environments
 		}
 	});
+
+	let selected = $derived(getSelectedNodeData());
 </script>
 
 <div class="workflow-editor">
@@ -95,29 +171,62 @@
 		</button>
 	</div>
 
-	<!-- Canvas -->
-	<div class="workflow-canvas" data-testid="workflow-canvas">
-		{#if parseError}
-			<div class="error-state">
-				<p>Parse error: {parseError}</p>
-			</div>
-		{:else if hasHats && flowModule}
-			{@const SvelteFlow = flowModule.SvelteFlow}
-			{@const Controls = flowModule.Controls}
-			{@const MiniMap = flowModule.MiniMap}
-			{@const Background = flowModule.Background}
-			{@const BackgroundVariant = flowModule.BackgroundVariant}
-			<SvelteFlow {nodes} {edges} fitView>
-				<Controls />
-				<MiniMap />
-				<Background variant={BackgroundVariant.Dots} />
-			</SvelteFlow>
-		{:else if !hasHats}
-			<div class="empty-state">
-				<p>No hats configured — click + Add Hat to get started</p>
-			</div>
+	<!-- Main content area: canvas + optional side panel -->
+	<div class="workflow-main" style="display: flex;">
+		<!-- Canvas -->
+		<div class="workflow-canvas" data-testid="workflow-canvas" style="flex: 1;">
+			{#if parseError}
+				<div class="error-state">
+					<p>Parse error: {parseError}</p>
+				</div>
+			{:else if hasHats && flowModule}
+				{@const SvelteFlow = flowModule.SvelteFlow}
+				{@const Controls = flowModule.Controls}
+				{@const MiniMap = flowModule.MiniMap}
+				{@const Background = flowModule.Background}
+				{@const BackgroundVariant = flowModule.BackgroundVariant}
+				<SvelteFlow
+					{nodes}
+					{edges}
+					fitView
+					onnodeclick={handleNodeClick}
+					onpaneclick={handlePaneClick}
+				>
+					<Controls />
+					<MiniMap />
+					<Background variant={BackgroundVariant.Dots} />
+				</SvelteFlow>
+			{:else if !hasHats}
+				<div class="empty-state">
+					<p>No hats configured — click + Add Hat to get started</p>
+				</div>
+			{/if}
+		</div>
+
+		<!-- Side panel (CT-03) -->
+		{#if selected}
+			<HatDetailPanel
+				name={selected.name}
+				description={selected.description}
+				triggers={[...selected.triggers]}
+				publishes={[...selected.publishes]}
+				instructions={selected.instructions}
+				onNameChange={handleNameChange}
+				onDescriptionChange={handleDescriptionChange}
+				onEditInstructions={handleEditInstructions}
+			/>
 		{/if}
 	</div>
+
+	<!-- Instructions modal (CT-03) -->
+	{#if showInstructionsModal && selected}
+		<InstructionsModal
+			hatName={selected.name}
+			instructions={selected.instructions}
+			onSave={handleSaveInstructions}
+			onClose={handleCloseInstructionsModal}
+		/>
+	{/if}
 </div>
 
 <style>
@@ -149,9 +258,13 @@
 		background-color: rgba(96, 165, 250, 0.2);
 	}
 
-	.workflow-canvas {
+	.workflow-main {
 		height: 65vh;
 		width: 100%;
+	}
+
+	.workflow-canvas {
+		height: 100%;
 		position: relative;
 	}
 
