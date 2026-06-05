@@ -20,8 +20,10 @@ use super::event::{
 };
 use super::log::daemon_log;
 use super::process::handle_member_launch;
-use super::sessions_api::{SessionsApiState, sessions_router};
+use super::sessions_api::{sessions_router, BridgeContext, SessionsApiState};
+use crate::bridge;
 use crate::config as app_config;
+use crate::workspace::HydrationWorkspaceConfig;
 use crate::formation::AppCredentialsCached;
 use crate::web::state::WebState;
 use crate::web::web_router;
@@ -43,6 +45,10 @@ pub(super) struct DaemonState {
     /// In-memory cache of App credentials for members that have been started.
     /// Used by the background refresh loop to re-sign JWTs without re-reading keyring.
     pub(super) app_credentials: Arc<Mutex<HashMap<String, AppCredentialsCached>>>,
+    /// Sessions API state — shared with the poll loop and webhook handler so
+    /// event-driven member launches go through the sessions API (not the legacy
+    /// formation path), creating ephemeral session workspaces on disk.
+    pub(super) sessions_state: SessionsApiState,
 }
 
 /// Runs the daemon event loop. Called by the hidden `bm daemon-run` command.
@@ -95,6 +101,36 @@ async fn run_daemon_async(
         .context("Daemon failed to resolve team at startup")?
         .clone();
 
+    // Build sessions_state first so it can be embedded in DaemonState and
+    // shared with the poll loop and webhook handler.
+    let sessions_state = {
+        let team_repo_path = team_entry.path.join("team");
+        let repo_urls = read_project_repos(&team_repo_path);
+        let team_repo_url = format!("https://github.com/{}.git", team_entry.github_repo);
+        let hydration_config = HydrationWorkspaceConfig {
+            clones_dir: paths.sessions_base().join("clones"),
+            sessions_base: paths.sessions_base(),
+            team_repo_path: team_repo_path.clone(),
+            credential_base: paths.sessions_base().join("credentials"),
+            freshness_threshold: std::time::Duration::from_secs(300),
+            repo_urls,
+            team_repo_url,
+            team_repo_branch: "main".to_string(),
+            workspace_base: team_entry.path.clone(),
+            project_number: team_entry.project_number,
+            skill_dirs: vec![],
+        };
+
+        // Resolve bridge credentials for injecting env vars when launching ralph.
+        let bridge_context = resolve_bridge_context(&team_repo_path, &team_entry, &cfg);
+
+        SessionsApiState::new_with_workspace_ops(
+            paths.sessions_registry(),
+            hydration_config,
+            bridge_context,
+        )
+    };
+
     let state = DaemonState {
         team_name: team_name.to_string(),
         paths: Arc::clone(&paths),
@@ -105,6 +141,7 @@ async fn run_daemon_async(
         config: Arc::new(cfg),
         team_entry: Arc::new(team_entry),
         app_credentials: Arc::new(Mutex::new(HashMap::new())),
+        sessions_state: sessions_state.clone(),
     };
 
     // Resolve config path for the web API (console routes)
@@ -130,8 +167,6 @@ async fn run_daemon_async(
             axum::http::Method::PUT,
         ])
         .allow_headers([axum::http::header::CONTENT_TYPE]);
-
-    let sessions_state = SessionsApiState::new(paths.sessions_registry());
 
     // Startup recovery: mark Active/Finalizing sessions with dead PIDs as Failed
     let recovered = sessions_state.recover_stale_sessions();
@@ -179,7 +214,7 @@ async fn run_daemon_async(
         .route("/api/loops/start", post(api::start_loop_handler))
         .with_state(state.clone())
         // Session management API
-        .merge(sessions_router(sessions_state))
+        .merge(sessions_router(sessions_state.clone()))
         .merge(web_router(web_state))
         .layer(cors);
 
@@ -188,8 +223,9 @@ async fn run_daemon_async(
         let poll_team = team_name.to_string();
         let poll_paths = Arc::clone(&paths);
         let poll_shutdown = Arc::clone(&shutdown);
+        let poll_sessions = sessions_state.clone();
         tokio::spawn(async move {
-            run_poll_loop(&poll_team, &poll_paths, interval, &poll_shutdown).await;
+            run_poll_loop(&poll_team, &poll_paths, interval, &poll_shutdown, poll_sessions).await;
         });
     }
 
@@ -250,27 +286,75 @@ async fn run_daemon_async(
         .await
         .context("Server error")?;
 
-    // Clean up: stop all running members before exiting.
-    // Members are fire-and-forget (PIDs in state.json), so the daemon must
-    // actively terminate them on shutdown. Use force=true to stay within the
-    // 30s budget that stop_daemon() allows before SIGKILL'ing us.
-    //
-    // NOTE: This calls stop_local_members directly (not through the API handler),
-    // so it does NOT write suspended markers. This is intentional — the daemon
-    // itself is going away, so suspension is meaningless.
-    daemon_log(&paths, "INFO", "Stopping members before exit...");
-    let cleanup_team = team_name.to_string();
-    let cleanup_cfg = app_config::load().ok();
-    if let Some(cfg) = cleanup_cfg {
-        if let Ok(team) = app_config::resolve_team(&cfg, Some(&cleanup_team)) {
-            if let Err(e) = crate::formation::stop_local_members(team, &cfg, None, true) {
-                daemon_log(&paths, "WARN", &format!("Member cleanup error: {e}"));
-            }
+    // Clean up: stop all active sessions before exiting.
+    // Send SIGTERM, wait up to 5 seconds, then SIGKILL any survivors.
+    daemon_log(&paths, "INFO", "Stopping sessions before exit...");
+    state.sessions_state.stop_autonomous_sessions_gracefully();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    while std::time::Instant::now() < deadline {
+        if !state.sessions_state.has_alive_autonomous_sessions() {
+            break;
         }
+        std::thread::sleep(std::time::Duration::from_millis(200));
     }
+    state.sessions_state.force_stop_autonomous_sessions();
 
     daemon_log(&paths, "INFO", "Daemon stopped");
     Ok(())
+}
+
+/// Reads the project repo list from `botminter.yml` in the team repo.
+/// Returns `Vec<(url, project_name)>` for each project entry.
+/// Returns an empty list if the manifest is absent or unparseable.
+fn read_project_repos(team_repo_path: &std::path::Path) -> Vec<(String, String)> {
+    let manifest_path = team_repo_path.join("botminter.yml");
+    let contents = match std::fs::read_to_string(&manifest_path) {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+    let manifest: serde_yml::Value = match serde_yml::from_str(&contents) {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+    manifest["projects"]
+        .as_sequence()
+        .map(|ps| {
+            ps.iter()
+                .filter_map(|p| {
+                    let name = p["name"].as_str()?.to_string();
+                    let url = p["fork_url"].as_str()?.to_string();
+                    Some((url, name))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// Resolve bridge credentials for per-member env injection when launching ralph.
+/// Returns None if no bridge is configured or the bridge state cannot be read.
+fn resolve_bridge_context(
+    team_repo_path: &std::path::Path,
+    team_entry: &app_config::TeamEntry,
+    cfg: &app_config::BotminterConfig,
+) -> Option<BridgeContext> {
+    let bridge_dir = bridge::discover(team_repo_path, &team_entry.name).ok().flatten()?;
+    let bridge_manifest = bridge::load_manifest(&bridge_dir).ok()?;
+    // metadata.name is the plugin identifier (e.g. "tuwunel", "rocketchat", "telegram").
+    // launch_ralph() uses this name to select the correct env var (RALPH_MATRIX_ACCESS_TOKEN, etc.).
+    let bridge_name = bridge_manifest.metadata.name.clone();
+    let bstate_path = bridge::state_path(&cfg.workzone, &team_entry.name);
+    let credential_store = bridge::LocalCredentialStore::new(
+        &team_entry.name,
+        &bridge_name,
+        bstate_path.clone(),
+    )
+    .with_collection(cfg.keyring_collection.clone());
+
+    Some(BridgeContext {
+        bridge_type_name: bridge_name,
+        bstate_path,
+        credential_store,
+    })
 }
 
 /// Waits for SIGTERM or SIGINT, then sets the shutdown flag.
@@ -339,8 +423,9 @@ async fn webhook_handler(
             let team = state.team_name.clone();
             let paths = Arc::clone(&state.paths);
             let shutdown = Arc::clone(&state.shutdown);
+            let sessions = state.sessions_state.clone();
             tokio::task::spawn_blocking(move || {
-                handle_member_launch(&team, &paths, &shutdown);
+                handle_member_launch(&team, &paths, &shutdown, Some(sessions));
             });
         } else {
             daemon_log(
@@ -367,6 +452,7 @@ async fn run_poll_loop(
     paths: &DaemonPaths,
     interval: u64,
     shutdown: &Arc<AtomicBool>,
+    sessions_state: SessionsApiState,
 ) {
     daemon_log(
         paths,
@@ -402,6 +488,7 @@ async fn run_poll_loop(
         let poll_state_clone = poll_state.clone();
         let poll_paths = paths.clone();
         let poll_shutdown = Arc::clone(shutdown);
+        let poll_sessions = sessions_state.clone();
 
         let result = tokio::task::spawn_blocking(move || {
             let github_repo = resolve_github_repo(&poll_team)?;
@@ -417,7 +504,7 @@ async fn run_poll_loop(
                     "INFO",
                     &format!("Found {} relevant event(s)", relevant_count),
                 );
-                handle_member_launch(&poll_team, &poll_paths, &poll_shutdown);
+                handle_member_launch(&poll_team, &poll_paths, &poll_shutdown, Some(poll_sessions));
             }
 
             Ok::<_, anyhow::Error>(events)

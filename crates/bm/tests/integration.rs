@@ -2256,26 +2256,21 @@ fn chat_without_workspace_errors() {
     let tmp = tempfile::tempdir().unwrap();
     setup_team(tmp.path(), "chat-nows-team", "scrum");
 
-    let profiles_path = profile::profiles_dir_for(tmp.path());
-    let roles = profile::list_roles_from("scrum", &profiles_path).unwrap();
-    let role = &roles[0];
-
-    // Hire but don't create workspace
-    bm_hire(tmp.path(), role, "bob", "chat-nows-team");
-    let member_name = format!("{}-bob", role);
-
+    // Do NOT hire the member — "nonexistent-bob" is not in the team repo's members dir.
+    // The daemon will create a session workspace, but prepare_chat_session_from_path
+    // will fail because the member doesn't exist in the team repo.
     let stderr = bm_run_fail(
         tmp.path(),
         &[
             "chat",
-            &member_name,
+            "nonexistent-bob",
             "-t",
             "chat-nows-team",
         ],
     );
     assert!(
-        stderr.contains("No workspace") || stderr.contains("sync"),
-        "should mention missing workspace, stderr:\n{}",
+        stderr.contains("nonexistent-bob") || stderr.contains("not found") || stderr.contains("Member"),
+        "should mention member not found, stderr:\n{}",
         stderr
     );
 }

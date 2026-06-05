@@ -59,6 +59,9 @@ pub fn launch_ralph(
             }
             _ => {
                 cmd.env("RALPH_TELEGRAM_BOT_TOKEN", token);
+                if let Some(url) = service_url {
+                    cmd.env("RALPH_TELEGRAM_API_URL", url);
+                }
             }
         }
     }

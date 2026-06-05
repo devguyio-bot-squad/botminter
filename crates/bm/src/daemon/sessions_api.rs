@@ -1,6 +1,34 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use crate::bridge;
+use crate::session::manager::WorkspaceOps;
+use crate::workspace::{HydrationWorkspaceConfig, HydrationWorkspaceOps};
+
+/// Bridge credentials resolved at daemon startup, used to inject env vars when launching ralph.
+pub struct BridgeContext {
+    /// Bridge type name, e.g. "tuwunel", "rocketchat", "telegram".
+    pub bridge_type_name: String,
+    /// Path to bridge-state.json, read fresh on each launch to get current service_url.
+    pub bstate_path: PathBuf,
+    /// Per-member token store (reads from system keyring or env override).
+    pub credential_store: bridge::LocalCredentialStore,
+}
+
+impl BridgeContext {
+    /// Read the current service URL from bridge-state.json.
+    pub fn service_url(&self) -> Option<String> {
+        bridge::load_state(&self.bstate_path).ok()?.service_url
+    }
+
+    /// Resolve this member's bridge access token from the credential store.
+    pub fn member_token(&self, member_name: &str) -> Option<String> {
+        bridge::resolve_credential_from_store(member_name, &self.credential_store)
+            .ok()
+            .flatten()
+    }
+}
+
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
@@ -10,7 +38,7 @@ use serde::{Deserialize, Serialize};
 use crate::session::cleanup;
 use crate::session::history::{self, ExitStatus};
 use crate::session::registry::SessionRegistry;
-use crate::session::retention;
+use crate::session::retention::{self, ProcessChecker};
 use crate::session::stop::{self, StopMode, StopOptions};
 use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
 use crate::session::work_item_lock::WorkItemLock;
@@ -24,6 +52,13 @@ struct SessionsInner {
 #[derive(Clone)]
 pub struct SessionsApiState {
     inner: Arc<Mutex<SessionsInner>>,
+    /// Workspace ops for hydrating ephemeral session workspaces.
+    /// None in test mode or when workspace hydration is not configured.
+    /// Stored outside the Mutex so blocking I/O does not hold the lock.
+    workspace_ops: Option<Arc<HydrationWorkspaceOps>>,
+    /// Bridge credentials resolved at startup for env injection into ralph processes.
+    /// None when no bridge is configured.
+    bridge_context: Option<Arc<BridgeContext>>,
 }
 
 impl SessionsApiState {
@@ -33,6 +68,24 @@ impl SessionsApiState {
                 registry: SessionRegistry::new(registry_path),
                 work_item_lock: WorkItemLock::new(),
             })),
+            workspace_ops: None,
+            bridge_context: None,
+        }
+    }
+
+    /// Production constructor that wires workspace hydration and optional bridge credentials.
+    pub fn new_with_workspace_ops(
+        registry_path: PathBuf,
+        config: HydrationWorkspaceConfig,
+        bridge_context: Option<BridgeContext>,
+    ) -> Self {
+        Self {
+            inner: Arc::new(Mutex::new(SessionsInner {
+                registry: SessionRegistry::new(registry_path),
+                work_item_lock: WorkItemLock::new(),
+            })),
+            workspace_ops: Some(Arc::new(HydrationWorkspaceOps::new(config))),
+            bridge_context: bridge_context.map(Arc::new),
         }
     }
 
@@ -47,6 +100,147 @@ impl SessionsApiState {
         let policy = retention::RetentionPolicy::default();
         let disk_usage = retention::FsDiskUsage;
         retention::run_cycle(&mut inner.registry, &policy, &disk_usage)
+    }
+
+    /// Send SIGTERM to all autonomous (non-Interactive) active sessions.
+    /// Used during daemon shutdown before waiting for exit.
+    pub fn stop_autonomous_sessions_gracefully(&self) {
+        use crate::session::stop::{stop_sessions, StopMode, StopOptions};
+        let options = StopOptions {
+            mode: StopMode::AutonomousOnly,
+            force: false,
+        };
+        let mut inner = self.inner.lock().unwrap();
+        stop_sessions(&mut inner.registry, &options);
+    }
+
+    /// Send SIGKILL to all autonomous (non-Interactive) sessions still alive.
+    /// Used as a last resort during daemon shutdown after SIGTERM + wait.
+    pub fn force_stop_autonomous_sessions(&self) {
+        use crate::session::stop::{stop_sessions, StopMode, StopOptions};
+        let options = StopOptions {
+            mode: StopMode::AutonomousOnly,
+            force: true,
+        };
+        let mut inner = self.inner.lock().unwrap();
+        stop_sessions(&mut inner.registry, &options);
+    }
+
+    /// Returns true if any autonomous session has a live agent process.
+    pub fn has_alive_autonomous_sessions(&self) -> bool {
+        use crate::session::types::SessionState;
+        let checker = retention::LiveProcessChecker;
+        let inner = self.inner.lock().unwrap();
+        inner.registry.list().into_iter().any(|r| {
+            matches!(
+                r.current_state,
+                SessionState::Active | SessionState::Finalizing
+            ) && r.session_type != SessionType::Interactive
+                && r.agent_pid.is_some_and(|pid| checker.is_pid_alive(pid))
+        })
+    }
+
+    /// Starts a Loop session synchronously — called by the daemon poll/webhook handler.
+    ///
+    /// Replicates the `start_session_handler` flow without async.
+    /// Returns the new `SessionId` on success, or an error string.
+    ///
+    /// Skips launch when the member already has an active Loop session with a live PID.
+    pub fn start_loop_session_blocking(
+        &self,
+        member_name: &str,
+    ) -> Result<SessionId, String> {
+        // Dedup: skip if member already has a live autonomous session.
+        {
+            let inner = self.inner.lock().unwrap();
+            let checker = retention::LiveProcessChecker;
+            let already_running = inner.registry.list().into_iter().any(|r| {
+                r.member_name == member_name
+                    && matches!(
+                        r.current_state,
+                        SessionState::Active | SessionState::Finalizing
+                    )
+                    && r.session_type != SessionType::Interactive
+                    && r.agent_pid.is_some_and(|pid| checker.is_pid_alive(pid))
+            });
+            if already_running {
+                return Err(format!(
+                    "member {} already has a live autonomous session",
+                    member_name
+                ));
+            }
+        }
+
+        let session_id = SessionId::new();
+
+        // Step 1: Hydrate workspace synchronously (no Mutex held).
+        let workspace_path: Option<std::path::PathBuf> =
+            if let Some(ref ops) = self.workspace_ops {
+                match ops.hydrate_workspace(&session_id, member_name) {
+                    Ok(path) => Some(path),
+                    Err(e) => {
+                        return Err(format!("workspace hydration failed: {e}"));
+                    }
+                }
+            } else {
+                None
+            };
+
+        // Step 2: Register session and transition to Active (under Mutex).
+        {
+            let mut inner = self.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let record = SessionRecord {
+                session_id: session_id.clone(),
+                member_name: member_name.to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: workspace_path.clone(),
+                finalization_result: None,
+            };
+            inner.registry.register(record).map_err(|e| e.to_string())?;
+            inner
+                .registry
+                .update_state(&session_id, SessionState::Active)
+                .map_err(|e| e.to_string())?;
+        }
+
+        // Step 3: Launch ralph (synchronous, no Mutex held).
+        let agent_pid: Option<u32> = if let Some(ref ws) = workspace_path {
+            let bridge_type_name =
+                self.bridge_context.as_ref().map(|bc| bc.bridge_type_name.clone());
+            let service_url = self.bridge_context.as_ref().and_then(|bc| bc.service_url());
+            let member_token = self
+                .bridge_context
+                .as_ref()
+                .and_then(|bc| bc.member_token(member_name));
+            let gh_config_dir = self
+                .workspace_ops
+                .as_ref()
+                .and_then(|ops| ops.gh_config_dir_for_member(member_name));
+
+            crate::formation::launch_ralph(
+                ws,
+                member_token.as_deref(),
+                bridge_type_name.as_deref(),
+                service_url.as_deref(),
+                gh_config_dir.as_deref(),
+            )
+            .ok()
+        } else {
+            None
+        };
+
+        // Step 4: Persist agent PID (under Mutex).
+        if let Some(pid) = agent_pid {
+            let mut inner = self.inner.lock().unwrap();
+            let _ = inner.registry.set_agent_pid(&session_id, pid);
+        }
+
+        Ok(session_id)
     }
 }
 
@@ -67,6 +261,10 @@ pub struct StartSessionRequest {
 pub struct StartSessionResponse {
     pub ok: bool,
     pub session_id: Option<String>,
+    /// Absolute path to the hydrated ephemeral workspace on disk.
+    /// None when workspace hydration is not configured (test mode).
+    #[serde(default)]
+    pub workspace_path: Option<String>,
     pub error: Option<String>,
 }
 
@@ -260,7 +458,14 @@ pub async fn list_session_history_handler(
     (StatusCode::OK, Json(SessionHistoryResponse { sessions }))
 }
 
-/// POST /api/sessions/start — creates a new session.
+/// POST /api/sessions/start — creates a new ephemeral session with workspace hydration.
+///
+/// Flow:
+/// 1. Acquire work_item_lock (under Mutex) — prevents duplicate work-item sessions.
+/// 2. Hydrate workspace (blocking git I/O, no Mutex held) — creates ephemeral worktrees.
+/// 3. Register session record with workspace_path (under Mutex) → Active.
+/// 4. Launch agent process (blocking, no Mutex held) — ralph for Loop, brain-run for Brain.
+/// 5. Persist agent PID (under Mutex).
 pub async fn start_session_handler(
     State(state): State<SessionsApiState>,
     Json(req): Json<StartSessionRequest>,
@@ -273,77 +478,209 @@ pub async fn start_session_handler(
                 Json(StartSessionResponse {
                     ok: false,
                     session_id: None,
+                    workspace_path: None,
                     error: Some(e.to_string()),
                 }),
             );
         }
     };
 
-    let mut inner = state.inner.lock().unwrap();
     let session_id = SessionId::new();
 
+    // Step 1: Acquire work_item_lock (under Mutex) then release the lock before I/O.
     if let Some(ref work_item_id) = req.work_item_id {
+        let inner = state.inner.lock().unwrap();
         if let Err(e) = inner.work_item_lock.acquire(work_item_id, &session_id) {
             return (
                 StatusCode::CONFLICT,
                 Json(StartSessionResponse {
                     ok: false,
                     session_id: None,
+                    workspace_path: None,
                     error: Some(e.to_string()),
                 }),
             );
         }
     }
+    // Mutex released. workspace hydration runs without holding the lock.
 
-    let now = chrono::Utc::now();
-    let record = SessionRecord {
-        session_id: session_id.clone(),
-        member_name: req.member_name,
-        session_type,
-        current_state: SessionState::Creating,
-        created_at: now,
-        state_transitioned_at: now,
-        agent_pid: None,
-        workspace_path: None,
-        finalization_result: None,
+    // Step 2: Hydrate workspace (blocking git I/O — worktree provisioning + config assembly).
+    let workspace_path: Option<PathBuf> = if let Some(ref ops) = state.workspace_ops {
+        let ops_ref = Arc::clone(ops);
+        let sid = session_id.clone();
+        let member = req.member_name.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            ops_ref.hydrate_workspace(&sid, &member)
+        })
+        .await;
+
+        match result {
+            Ok(Ok(path)) => Some(path),
+            Ok(Err(e)) => {
+                if let Some(ref work_item_id) = req.work_item_id {
+                    let inner = state.inner.lock().unwrap();
+                    inner.work_item_lock.release(work_item_id, &session_id);
+                }
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(StartSessionResponse {
+                        ok: false,
+                        session_id: None,
+                        workspace_path: None,
+                        error: Some(format!("Workspace hydration failed: {e}")),
+                    }),
+                );
+            }
+            Err(e) => {
+                if let Some(ref work_item_id) = req.work_item_id {
+                    let inner = state.inner.lock().unwrap();
+                    inner.work_item_lock.release(work_item_id, &session_id);
+                }
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(StartSessionResponse {
+                        ok: false,
+                        session_id: None,
+                        workspace_path: None,
+                        error: Some(format!("Workspace hydration task panicked: {e}")),
+                    }),
+                );
+            }
+        }
+    } else {
+        None
     };
 
-    if let Err(e) = inner.registry.register(record) {
-        if let Some(ref work_item_id) = req.work_item_id {
-            inner.work_item_lock.release(work_item_id, &session_id);
+    // Step 3: Register session with workspace_path and transition to Active (under Mutex).
+    {
+        let mut inner = state.inner.lock().unwrap();
+        let now = chrono::Utc::now();
+        let record = SessionRecord {
+            session_id: session_id.clone(),
+            member_name: req.member_name.clone(),
+            session_type: session_type.clone(),
+            current_state: SessionState::Creating,
+            created_at: now,
+            state_transitioned_at: now,
+            agent_pid: None,
+            workspace_path: workspace_path.clone(),
+            finalization_result: None,
+        };
+
+        if let Err(e) = inner.registry.register(record) {
+            if let Some(ref work_item_id) = req.work_item_id {
+                inner.work_item_lock.release(work_item_id, &session_id);
+            }
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(StartSessionResponse {
+                    ok: false,
+                    session_id: None,
+                    workspace_path: None,
+                    error: Some(e.to_string()),
+                }),
+            );
         }
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(StartSessionResponse {
-                ok: false,
-                session_id: None,
-                error: Some(e.to_string()),
-            }),
-        );
+
+        if let Err(e) = inner
+            .registry
+            .update_state(&session_id, SessionState::Active)
+        {
+            if let Some(ref work_item_id) = req.work_item_id {
+                inner.work_item_lock.release(work_item_id, &session_id);
+            }
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(StartSessionResponse {
+                    ok: false,
+                    session_id: None,
+                    workspace_path: None,
+                    error: Some(e.to_string()),
+                }),
+            );
+        }
+    }
+    // Mutex released. Agent launch runs without holding the lock.
+
+    // Step 4: Launch agent process (blocking, no Mutex held).
+    // Loop → ralph run -p PROMPT.md in workspace
+    // Brain → bm brain-run in workspace
+    // Interactive → no agent (user connects via bm chat)
+    //
+    // Resolve bridge credentials once, outside the closure.
+    let bridge_type_name: Option<String>;
+    let service_url: Option<String>;
+    let member_token: Option<String>;
+    if let Some(ref bc) = state.bridge_context {
+        bridge_type_name = Some(bc.bridge_type_name.clone());
+        service_url = bc.service_url();
+        member_token = bc.member_token(&req.member_name);
+    } else {
+        bridge_type_name = None;
+        service_url = None;
+        member_token = None;
     }
 
-    if let Err(e) = inner
-        .registry
-        .update_state(&session_id, SessionState::Active)
-    {
-        if let Some(ref work_item_id) = req.work_item_id {
-            inner.work_item_lock.release(work_item_id, &session_id);
-        }
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(StartSessionResponse {
-                ok: false,
-                session_id: None,
-                error: Some(e.to_string()),
-            }),
-        );
+    let gh_config_dir: Option<PathBuf> = state
+        .workspace_ops
+        .as_ref()
+        .and_then(|ops| ops.gh_config_dir_for_member(&req.member_name));
+
+    let agent_pid: Option<u32> = if let Some(ref ws) = workspace_path {
+        let ws_owned = ws.clone();
+        let st = session_type.clone();
+
+        tokio::task::spawn_blocking(move || -> Option<u32> {
+            match st {
+                SessionType::Loop => {
+                    crate::formation::launch_ralph(
+                        &ws_owned,
+                        member_token.as_deref(),
+                        bridge_type_name.as_deref(),
+                        service_url.as_deref(),
+                        gh_config_dir.as_deref(),
+                    ).ok()
+                }
+                SessionType::Brain => {
+                    let system_prompt = ws_owned.join("brain-prompt.md");
+                    let brain_cfg = crate::formation::BrainLaunchConfig {
+                        workspace: &ws_owned,
+                        system_prompt_path: &system_prompt,
+                        member_token: member_token.as_deref(),
+                        bridge_type: bridge_type_name.as_deref(),
+                        service_url: service_url.as_deref(),
+                        room_id: None,
+                        user_id: None,
+                        operator_user_id: None,
+                        team_repo: None,
+                        gh_config_dir: gh_config_dir.as_deref(),
+                    };
+                    crate::formation::launch_brain(&brain_cfg).ok()
+                }
+                SessionType::Interactive => None,
+            }
+        })
+        .await
+        .ok()
+        .flatten()
+    } else {
+        None
+    };
+
+    // Step 5: Persist agent PID (under Mutex).
+    if let Some(pid) = agent_pid {
+        let mut inner = state.inner.lock().unwrap();
+        let _ = inner.registry.set_agent_pid(&session_id, pid);
     }
+
+    let workspace_path_str = workspace_path.map(|p| p.display().to_string());
 
     (
         StatusCode::OK,
         Json(StartSessionResponse {
             ok: true,
             session_id: Some(session_id.to_string()),
+            workspace_path: workspace_path_str,
             error: None,
         }),
     )
@@ -353,7 +690,27 @@ pub async fn start_session_handler(
 pub async fn list_sessions_handler(
     State(state): State<SessionsApiState>,
 ) -> (StatusCode, Json<SessionListResponse>) {
-    let inner = state.inner.lock().unwrap();
+    let mut inner = state.inner.lock().unwrap();
+
+    // Detect agent processes that crashed since the last check.
+    // Only sessions that have an agent_pid set — Interactive sessions have none by design.
+    let checker = retention::LiveProcessChecker;
+    let crashed_ids: Vec<_> = inner
+        .registry
+        .list()
+        .into_iter()
+        .filter(|r| {
+            matches!(
+                r.current_state,
+                SessionState::Active | SessionState::Finalizing
+            ) && r.agent_pid.is_some_and(|pid| !checker.is_pid_alive(pid))
+        })
+        .map(|r| r.session_id.clone())
+        .collect();
+    for id in &crashed_ids {
+        let _ = inner.registry.update_state(id, SessionState::Failed);
+    }
+
     let refs = inner.registry.list();
     let sessions = refs
         .iter()

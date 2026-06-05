@@ -3,6 +3,12 @@ use anyhow::Result;
 use crate::session::registry::SessionRegistry;
 use crate::session::types::{SessionId, SessionState, SessionType};
 
+#[cfg(unix)]
+fn send_signal(pid: u32, force: bool) {
+    let sig = if force { libc::SIGKILL } else { libc::SIGTERM };
+    unsafe { libc::kill(pid as libc::pid_t, sig) };
+}
+
 /// How sessions are selected for stopping.
 #[derive(Debug)]
 pub enum StopMode {
@@ -43,11 +49,12 @@ pub fn stop_sessions(
                 r.member_name.clone(),
                 r.session_type.clone(),
                 r.current_state.clone(),
+                r.agent_pid,
             )
         })
         .collect();
 
-    for (id, member_name, session_type, current_state) in &snapshot {
+    for (id, member_name, session_type, current_state, agent_pid) in &snapshot {
         let should_process = match &options.mode {
             StopMode::AllForMember(member) => member_name == member,
             StopMode::SpecificSession(target_id) => id == target_id,
@@ -70,16 +77,24 @@ pub fn stop_sessions(
         if options.force {
             match current_state {
                 SessionState::Active | SessionState::Finalizing => {
+                    if let Some(pid) = agent_pid {
+                        #[cfg(unix)]
+                        send_signal(*pid, true);
+                    }
                     if registry.update_state(id, SessionState::Killed).is_ok() {
                         summary.killed += 1;
                     }
                 }
                 _ => {}
             }
-        } else if *current_state == SessionState::Active
-            && registry.update_state(id, SessionState::Finalizing).is_ok()
-        {
-            summary.deactivated += 1;
+        } else if *current_state == SessionState::Active {
+            if let Some(pid) = agent_pid {
+                #[cfg(unix)]
+                send_signal(*pid, false);
+            }
+            if registry.update_state(id, SessionState::Finalizing).is_ok() {
+                summary.deactivated += 1;
+            }
         }
     }
 

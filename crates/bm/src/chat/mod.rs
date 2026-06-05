@@ -41,6 +41,107 @@ pub struct AgentSession {
     pub ws_path: std::path::PathBuf,
 }
 
+/// Prepares a chat session from a pre-existing session workspace path.
+///
+/// Unlike [`prepare_chat_session`], this variant accepts the workspace path
+/// directly (e.g., an ephemeral session workspace returned by the daemon) and
+/// does NOT check for a `.botminter.workspace` marker.
+pub fn prepare_chat_session_from_path(
+    team_repo: &Path,
+    team_name: &str,
+    member: &str,
+    workspace_path: &Path,
+    hat: Option<&str>,
+) -> Result<AgentSession> {
+    // Verify member exists in team repo
+    let member_dir = team_repo.join("members").join(member);
+    if !member_dir.is_dir() {
+        bail!(
+            "Member '{}' not found in team '{}'. \
+             Run `bm members list` to see hired members.",
+            member, team_name
+        );
+    }
+
+    // Read ralph.yml from session workspace
+    let ralph_yml_path = workspace_path.join("ralph.yml");
+    let ralph_contents = std::fs::read_to_string(&ralph_yml_path)
+        .with_context(|| format!("Failed to read {}", ralph_yml_path.display()))?;
+    let ralph_config: RalphConfig = serde_yml::from_str(&ralph_contents)
+        .with_context(|| format!("Failed to parse {}", ralph_yml_path.display()))?;
+
+    // Read PROMPT.md from session workspace
+    let prompt_md_path = workspace_path.join("PROMPT.md");
+    let prompt_md_content = std::fs::read_to_string(&prompt_md_path)
+        .with_context(|| format!("Failed to read {}", prompt_md_path.display()))?;
+
+    // Read member info from team repo
+    let (role_name, display_name) = read_member_info(&member_dir, member)?;
+
+    // Extract hat instructions and validate --hat flag
+    let hat_instructions: BTreeMap<String, String> = ralph_config
+        .hats
+        .into_iter()
+        .filter_map(|(name, h)| h.instructions.map(|instr| (name, instr)))
+        .collect();
+
+    if let Some(hat_name) = hat {
+        if !hat_instructions.contains_key(hat_name) {
+            if hat_instructions.is_empty() {
+                bail!(
+                    "Hat '{}' not found for member '{}'. \
+                     No hats with instructions found in ralph.yml",
+                    hat_name, member
+                );
+            } else {
+                let mut available: Vec<&str> =
+                    hat_instructions.keys().map(|k| k.as_str()).collect();
+                available.sort();
+                bail!(
+                    "Hat '{}' not found for member '{}'. Available hats: {}",
+                    hat_name, member, available.join(", ")
+                );
+            }
+        }
+    }
+
+    // Load manifest for role description
+    let manifest = crate::profile::read_team_repo_manifest(team_repo)?;
+    let role_description = manifest
+        .roles
+        .iter()
+        .find(|r| r.name == role_name)
+        .map(|r| r.description.as_str())
+        .unwrap_or("");
+
+    // Scan skills in session workspace
+    let skills = if ralph_config.skills.enabled {
+        scan_skills(workspace_path, &ralph_config.skills.dirs)
+    } else {
+        Vec::new()
+    };
+
+    // Build meta-prompt
+    let params = MetaPromptParams {
+        member_name: &display_name,
+        role_name: &role_name,
+        role_description,
+        team_name,
+        guardrails: &ralph_config.core.guardrails,
+        hat_instructions: &hat_instructions,
+        prompt_md_content: &prompt_md_content,
+        reference_dir: "team/ralph-prompts/reference/",
+        hat,
+        skills: &skills,
+    };
+    let meta_prompt = build_meta_prompt(&params);
+
+    Ok(AgentSession {
+        meta_prompt,
+        ws_path: workspace_path.to_path_buf(),
+    })
+}
+
 /// Prepares all data for a `bm chat` session: validates the member and
 /// workspace exist, reads ralph.yml and PROMPT.md, validates hat flags,
 /// scans skills, and builds the meta-prompt.

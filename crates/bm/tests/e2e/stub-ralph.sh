@@ -8,6 +8,13 @@
 case "$1" in
   run)
     echo $$ > "$PWD/.ralph-stub-pid"
+    # Give the test a window to write .ralph-stub-ignore-sigterm before we set
+    # up the signal trap below. Poll for up to 5 seconds (50 × 0.1s).
+    _si=0
+    while [ $_si -lt 50 ] && [ ! -f "$PWD/.ralph-stub-ignore-sigterm" ]; do
+        sleep 0.1
+        _si=$((_si + 1))
+    done
     if [ -n "$RALPH_TELEGRAM_API_URL" ] && [ -n "$RALPH_TELEGRAM_BOT_TOKEN" ]; then
       curl -s "${RALPH_TELEGRAM_API_URL}/bot${RALPH_TELEGRAM_BOT_TOKEN}/getUpdates" \
         > "$PWD/.ralph-stub-tg-response" 2>&1
@@ -17,6 +24,7 @@ case "$1" in
         > "$PWD/.ralph-stub-matrix-response" 2>&1
     fi
     env | grep -E '^(RALPH_|GH_TOKEN|GH_CONFIG_DIR)' | sort > "$PWD/.ralph-stub-env"
+    # The poll at the top already waited; check the flag one final time.
     if [ -f "$PWD/.ralph-stub-ignore-sigterm" ]; then
       echo "$(date -u +%FT%TZ) SIGTERM trap set to ignore" >> "$PWD/.ralph-stub-sigterm.log"
       trap 'echo "$(date -u +%FT%TZ) SIGTERM received and ignored" >> "$PWD/.ralph-stub-sigterm.log"' SIGTERM

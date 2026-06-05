@@ -212,10 +212,53 @@ impl ConfigAssembler {
     }
 
     /// Assemble workspace configuration from `config` into `workspace`.
-    /// Returns a list of skill-validation warning strings (e.g., missing skill
-    /// directories are warnings, not hard errors).
+    /// Surfaces PROMPT.md, CLAUDE.md, and ralph.yml from the team repo member
+    /// directory, writes the .botminter.workspace marker, and validates skill dirs.
+    /// Returns a list of warning strings (e.g., missing files, missing skill dirs).
     pub fn assemble(&self, workspace: &Path, config: &AssemblyConfig) -> Result<Vec<String>> {
         let mut warnings = Vec::new();
+
+        // Surface member config files from team repo (required for ralph to launch).
+        // team_repo_path/members/<member>/{PROMPT.md,CLAUDE.md,ralph.yml} → workspace/
+        if self.team_repo_path.exists() {
+            let member_dir = self
+                .team_repo_path
+                .join("members")
+                .join(&config.member_name);
+
+            // PROMPT.md — required; warn if missing
+            let prompt_src = member_dir.join("PROMPT.md");
+            if prompt_src.exists() {
+                fs::copy(&prompt_src, workspace.join("PROMPT.md")).with_context(|| {
+                    format!(
+                        "Failed to copy PROMPT.md from {}",
+                        prompt_src.display()
+                    )
+                })?;
+            } else {
+                warnings.push(format!(
+                    "PROMPT.md not found for member '{}' at {} — ralph may not start correctly",
+                    config.member_name,
+                    prompt_src.display()
+                ));
+            }
+
+            // CLAUDE.md — optional
+            let claude_src = member_dir.join("CLAUDE.md");
+            if claude_src.exists() {
+                fs::copy(&claude_src, workspace.join("CLAUDE.md")).with_context(|| {
+                    format!("Failed to copy CLAUDE.md from {}", claude_src.display())
+                })?;
+            }
+
+            // ralph.yml — optional but expected for loop sessions
+            let ralph_src = member_dir.join("ralph.yml");
+            if ralph_src.exists() {
+                fs::copy(&ralph_src, workspace.join("ralph.yml")).with_context(|| {
+                    format!("Failed to copy ralph.yml from {}", ralph_src.display())
+                })?;
+            }
+        }
 
         // Write .botminter.workspace marker (idempotent: always overwrite).
         let marker = format!(
@@ -454,6 +497,10 @@ pub struct HydrationWorkspaceConfig {
     pub repo_urls: Vec<(String, String)>,
     pub team_repo_url: String,
     pub team_repo_branch: String,
+    /// Team workspace root (e.g. `~/workspaces/my-team`). Permanent member
+    /// workspaces live at `<workspace_base>/<member>/` — used to locate App
+    /// credential directories (`GH_CONFIG_DIR`) when launching ralph.
+    pub workspace_base: PathBuf,
     pub project_number: Option<u64>,
     pub skill_dirs: Vec<PathBuf>,
 }
@@ -468,6 +515,8 @@ pub struct HydrationWorkspaceOps {
     team_repo_branch: String,
     project_number: Option<u64>,
     skill_dirs: Vec<PathBuf>,
+    /// Team workspace root for resolving per-member App credential paths.
+    workspace_base: PathBuf,
 }
 
 impl HydrationWorkspaceOps {
@@ -484,11 +533,29 @@ impl HydrationWorkspaceOps {
             team_repo_branch: config.team_repo_branch,
             project_number: config.project_number,
             skill_dirs: config.skill_dirs,
+            workspace_base: config.workspace_base,
         }
     }
 
     pub fn teardown(&self, session_id: &SessionId, member: &str) -> Result<()> {
         self.hydrator.teardown(session_id, member)
+    }
+
+    /// Return the GitHub App credential directory for `member_name` if it exists.
+    ///
+    /// The path is `<workspace_base>/<member>/.config/gh` — set as `GH_CONFIG_DIR`
+    /// when launching ralph so it uses the member's App installation token.
+    pub fn gh_config_dir_for_member(&self, member_name: &str) -> Option<PathBuf> {
+        let gh_dir = self
+            .workspace_base
+            .join(member_name)
+            .join(".config")
+            .join("gh");
+        if gh_dir.join("hosts.yml").exists() {
+            Some(gh_dir)
+        } else {
+            None
+        }
     }
 }
 

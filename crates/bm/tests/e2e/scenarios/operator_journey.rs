@@ -8,7 +8,9 @@
 //! whose lifecycle is managed by Podman. Bridge-dependent steps are skipped
 //! gracefully when Podman is not available.
 
+use std::collections::HashSet;
 use std::fs;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use bm::profile;
@@ -18,7 +20,7 @@ use libtest_mimic::Trial;
 
 use super::super::helpers::{
     cleanup_project_boards, find_free_port, force_kill, is_alive,
-    read_pid_from_state, repo_from_config,
+    repo_from_config,
     DaemonGuard, E2eConfig, GithubSuite, ProcessGuard,
 };
 use super::super::telegram;
@@ -484,17 +486,24 @@ fn start_single_member_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + s
         let stdout = cmd.run();
         assert!(stdout.contains("Started 1 member"), "should start exactly 1 member, got: {}", stdout);
         // Should NOT mention bridge (single member skips bridge lifecycle)
-        assert!(!stdout.contains("Starting bridge") && !stdout.contains("Bridge") ,
+        assert!(!stdout.contains("Starting bridge") && !stdout.contains("Bridge"),
             "single member start should skip bridge, got: {}", stdout);
 
-        if let Some(pid) = read_pid_from_state(&env.home) { guard.set_pid(pid); }
+        if let Some(ws) = super::super::helpers::wait_for_session_workspace(
+            &env.home, TEAM_NAME, MEMBER_DIR, Duration::from_secs(10),
+        ) {
+            if let Some(pid) = super::super::helpers::wait_for_stub_pid(&ws, Duration::from_secs(10)) {
+                guard.set_pid(pid);
+            }
+        }
         std::mem::forget(guard);
     }
 }
 
 fn stop_single_member_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let pid_before = read_pid_from_state(&env.home);
+        let pid_before = super::super::helpers::find_session_workspace(&env.home, TEAM_NAME, MEMBER_DIR)
+            .and_then(|ws| super::super::helpers::read_stub_pid(&ws));
         let stdout = env.command("bm")
             .args(["stop", MEMBER_DIR, "-t", TEAM_NAME])
             .run();
@@ -645,11 +654,6 @@ fn start_without_ralph_errors_fn() -> impl Fn(&mut TestEnv) + Send + std::panic:
 
 fn start_status_healthy_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        // Remove brain-prompt.md so bm start uses ralph (the stub) instead of
-        // bm brain-run. Brain mode is tested separately in exploratory tests.
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
-        let _ = fs::remove_file(ws.join("brain-prompt.md"));
-
         let mut guard = ProcessGuard::new(env, TEAM_NAME);
         let mut cmd = env.command("bm");
         cmd.args(["start", "-t", TEAM_NAME]);
@@ -659,12 +663,56 @@ fn start_status_healthy_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + 
         let stdout = cmd.run();
         assert!(stdout.contains("Started 1 member"));
 
-        if let Some(pid) = read_pid_from_state(&env.home) { guard.set_pid(pid); }
+        // Wait for session workspace to appear — fail loudly if it never does.
+        let ws = super::super::helpers::wait_for_session_workspace(
+            &env.home, TEAM_NAME, MEMBER_DIR, Duration::from_secs(10),
+        ).expect("session workspace should appear within 10s after bm start");
+
+        if let Some(pid) = super::super::helpers::wait_for_stub_pid(&ws, Duration::from_secs(10)) {
+            guard.set_pid(pid);
+        }
+
+        // Verify ephemeral workspace was hydrated: config files surfaced from team repo.
+        for config_file in ["PROMPT.md", "CLAUDE.md", "ralph.yml"] {
+            assert!(
+                ws.join(config_file).exists(),
+                "session workspace must contain {config_file} (hydrated from team repo member dir)"
+            );
+        }
+
+        // Verify each project has a git worktree inside the session workspace.
+        let manifest_path = env.home
+            .join("workspaces")
+            .join(TEAM_NAME)
+            .join("team/botminter.yml");
+        if manifest_path.exists() {
+            let contents = fs::read_to_string(&manifest_path).unwrap();
+            let manifest: serde_yml::Value = serde_yml::from_str(&contents).unwrap();
+            if let Some(projects) = manifest["projects"].as_sequence() {
+                for project in projects {
+                    if let Some(name) = project["name"].as_str() {
+                        let project_dir = ws.join("projects").join(name);
+                        assert!(
+                            project_dir.is_dir(),
+                            "session workspace must have projects/{name}/ directory"
+                        );
+                        assert!(
+                            project_dir.join(".git").exists(),
+                            "session workspace projects/{name}/ must have .git (git worktree)"
+                        );
+                    }
+                }
+            }
+        }
 
         let stdout = env.command("bm")
             .args(["status", "-t", TEAM_NAME])
             .run();
-        assert!(stdout.contains("running") && stdout.contains(MEMBER_DIR));
+        // Sessions table shows state "Active" and the member name
+        assert!(
+            stdout.contains("Active") && stdout.contains(MEMBER_DIR),
+            "bm status should show Active session for {MEMBER_DIR}, got: {stdout}"
+        );
 
         std::mem::forget(guard);
     }
@@ -676,9 +724,18 @@ fn bridge_functional_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSa
             eprintln!("SKIP: bridge not started (no podman)");
             return;
         }
-        std::thread::sleep(Duration::from_secs(3));
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
-        let env_content = fs::read_to_string(ws.join(".ralph-stub-env")).unwrap();
+        // Ralph runs in the ephemeral session workspace, not the old workspace dir.
+        // stub-ralph.sh polls for .ralph-stub-ignore-sigterm for up to 5 s before writing
+        // .ralph-stub-env — poll for the file rather than sleeping a fixed duration.
+        let ws = super::super::helpers::find_session_workspace(&env.home, TEAM_NAME, MEMBER_DIR)
+            .expect("session workspace should exist after bm start");
+        let env_file = ws.join(".ralph-stub-env");
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        while !env_file.exists() && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        let env_content = fs::read_to_string(&env_file)
+            .expect(".ralph-stub-env must exist in session workspace after stub-ralph starts");
         assert!(env_content.contains("RALPH_MATRIX_ACCESS_TOKEN="),
             "stub env should contain RALPH_MATRIX_ACCESS_TOKEN, got: {}", env_content);
         assert!(env_content.contains("RALPH_MATRIX_HOMESERVER_URL="),
@@ -695,11 +752,12 @@ fn bridge_functional_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSa
 
 fn stop_clean_shutdown_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let pid_before = read_pid_from_state(&env.home);
+        let pid_before = super::super::helpers::find_session_workspace(&env.home, TEAM_NAME, MEMBER_DIR)
+            .and_then(|ws| super::super::helpers::read_stub_pid(&ws));
         let stdout = env.command("bm")
             .args(["stop", "-t", TEAM_NAME])
             .run();
-        assert!(stdout.contains("Stopped 1 member"));
+        assert!(stdout.contains("Stopped 1 member"), "bm stop should report stopped member, got: {stdout}");
         if let Some(pid) = pid_before {
             super::super::helpers::wait_for_exit(pid, Duration::from_secs(5));
             assert!(!is_alive(pid));
@@ -716,7 +774,11 @@ fn stop_force_kills_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std:
             cmd.env("TUWUNEL_PORT", port);
         }
         cmd.run();
-        let pid = read_pid_from_state(&env.home).expect("should have PID");
+        let ws = super::super::helpers::wait_for_session_workspace(
+            &env.home, TEAM_NAME, MEMBER_DIR, Duration::from_secs(10),
+        ).expect("session workspace should appear after bm start");
+        let pid = super::super::helpers::wait_for_stub_pid(&ws, Duration::from_secs(10))
+            .expect("stub-ralph should write PID file");
         guard.set_pid(pid);
         env.command("bm")
             .args(["stop", "--force", "-t", TEAM_NAME])
@@ -734,13 +796,21 @@ fn status_detects_crashed_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send 
             cmd.env("TUWUNEL_PORT", port);
         }
         cmd.run();
-        let pid = read_pid_from_state(&env.home).expect("should have PID");
+        let ws = super::super::helpers::wait_for_session_workspace(
+            &env.home, TEAM_NAME, MEMBER_DIR, Duration::from_secs(10),
+        ).expect("session workspace should appear after bm start");
+        let pid = super::super::helpers::wait_for_stub_pid(&ws, Duration::from_secs(10))
+            .expect("stub-ralph should write PID file");
         force_kill(pid);
         super::super::helpers::wait_for_exit(pid, Duration::from_secs(5));
+        // list_sessions_handler detects dead agent_pid and marks session Failed
         let stdout = env.command("bm")
             .args(["status", "-t", TEAM_NAME])
             .run();
-        assert!(stdout.contains("crashed"));
+        assert!(
+            stdout.contains("Failed"),
+            "bm status should show Failed after crash, got: {stdout}"
+        );
     }
 }
 
@@ -765,10 +835,6 @@ fn teams_list_fn() -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + st
 
 fn daemon_start_poll_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
-        let _ = fs::remove_file(ws.join(".ralph-stub-pid"));
-        let _ = fs::remove_file(ws.join(".ralph-stub-env"));
-        let _ = fs::remove_file(ws.join(".ralph-stub-matrix-response"));
 
         // Enable the member for event-driven restart — daemon poll only
         // launches members in the enabled set.
@@ -827,6 +893,17 @@ fn daemon_start_poll_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std
             ).unwrap();
         }
 
+        // Snapshot existing session workspaces before starting the daemon so we can
+        // distinguish pre-existing (stale) directories from newly created ones.
+        let pre_existing_workspaces = super::super::helpers::list_session_workspaces(
+            &env.home, TEAM_NAME, MEMBER_DIR,
+        );
+        let pre_existing_uuids: Vec<String> = pre_existing_workspaces
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
+            .collect();
+        env.export("pre_daemon_session_uuids", &pre_existing_uuids.join(","));
+
         let mut cmd = env.command("bm");
         cmd.args(["daemon", "start", "--mode", "poll", "--interval", "2", "-t", TEAM_NAME]);
         if let Some(port) = env.get_export("tuwunel_port") {
@@ -840,7 +917,16 @@ fn daemon_start_poll_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std
             .run();
         assert!(out.contains("running") && out.contains("poll"));
 
-        assert!(!ws.join(".ralph-stub-pid").exists(), "Ralph should NOT be running before any GH event");
+        // No NEW session workspace should exist yet — daemon hasn't received any GH events.
+        // Filter against the pre-existing set to avoid false positives from stale dirs.
+        let pre_existing_set: HashSet<PathBuf> = pre_existing_workspaces.into_iter().collect();
+        let current_workspaces = super::super::helpers::list_session_workspaces(
+            &env.home, TEAM_NAME, MEMBER_DIR,
+        );
+        let new_workspaces: Vec<_> = current_workspaces.into_iter()
+            .filter(|p| !pre_existing_set.contains(p))
+            .collect();
+        assert!(new_workspaces.is_empty(), "Ralph should NOT be running before any GH event");
     }
 }
 
@@ -851,20 +937,34 @@ fn daemon_poll_launches_member_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + 
             return;
         }
 
+        // Build the excluded set from the UUIDs persisted by daemon_start_poll_fn.
+        // This prevents stale workspace dirs left by previous stop/start cycles from
+        // being mistaken for a newly launched session workspace.
+        let sessions_dir = env.home.join(".botminter").join("sessions").join(TEAM_NAME).join(MEMBER_DIR);
+        let excluded_set: HashSet<PathBuf> = env.get_export("pre_daemon_session_uuids")
+            .map(|s| s.to_string())
+            .unwrap_or_default()
+            .split(',')
+            .filter(|s| !s.is_empty())
+            .map(|uuid| sessions_dir.join(uuid))
+            .collect();
+
         env.command("gh")
             .args(["issue", "create", "-R", &env.repo_full_name,
                 "--title", "Trigger daemon member launch", "--body", "E2E test trigger"])
             .run();
 
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
-        let stub_pid_file = ws.join(".ralph-stub-pid");
-        let deadline = std::time::Instant::now() + Duration::from_secs(90);
-        while !stub_pid_file.exists() && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(500));
-        }
-        assert!(stub_pid_file.exists(), "Daemon did not launch member within 90s");
-        let stub_pid: u32 = fs::read_to_string(&stub_pid_file).unwrap().trim().parse().unwrap();
-        assert!(is_alive(stub_pid));
+        // Ralph now runs in the ephemeral session workspace, not the old member workspace.
+        // Wait for a NEW session workspace (not in the excluded set) to appear, then for
+        // the stub PID file.
+        let ws = super::super::helpers::wait_for_new_session_workspace(
+            &env.home, TEAM_NAME, MEMBER_DIR, &excluded_set, Duration::from_secs(90),
+        );
+        assert!(ws.is_some(), "Daemon did not create session workspace within 90s");
+        let ws = ws.unwrap();
+        let stub_pid = super::super::helpers::wait_for_stub_pid(&ws, Duration::from_secs(30));
+        assert!(stub_pid.is_some(), "Ralph stub did not write PID file within 30s");
+        assert!(is_alive(stub_pid.unwrap()));
 
         let daemon_log = env.home.join(format!(".botminter/logs/daemon-{}.log", TEAM_NAME));
         assert!(daemon_log.exists());
@@ -875,8 +975,9 @@ fn daemon_stop_poll_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std:
     move |env| {
         let pid_file = env.home.join(format!(".botminter/daemon-{}.pid", TEAM_NAME));
         let daemon_pid: u32 = fs::read_to_string(&pid_file).expect("daemon PID file").trim().parse().unwrap();
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
-        let stub_pid: Option<u32> = fs::read_to_string(ws.join(".ralph-stub-pid")).ok().and_then(|s| s.trim().parse().ok());
+        // Ralph runs in the session workspace — look up the stub PID there.
+        let stub_pid: Option<u32> = super::super::helpers::find_session_workspace(&env.home, TEAM_NAME, MEMBER_DIR)
+            .and_then(|ws| super::super::helpers::read_stub_pid(&ws));
 
         let out = env.command("bm")
             .args(["daemon", "stop", "-t", TEAM_NAME])
@@ -889,9 +990,6 @@ fn daemon_stop_poll_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std:
             super::super::helpers::wait_for_exit(pid, Duration::from_secs(10));
             assert!(!is_alive(pid));
         }
-        let _ = fs::remove_file(ws.join(".ralph-stub-pid"));
-        let _ = fs::remove_file(ws.join(".ralph-stub-env"));
-        let _ = fs::remove_file(ws.join(".ralph-stub-matrix-response"));
     }
 }
 
@@ -915,9 +1013,6 @@ fn daemon_stop_webhook_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + s
         env.command("bm")
             .args(["daemon", "stop", "-t", TEAM_NAME])
             .run();
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
-        let _ = fs::remove_file(ws.join(".ralph-stub-pid"));
-        let _ = fs::remove_file(ws.join(".ralph-stub-env"));
     }
 }
 
@@ -928,17 +1023,17 @@ fn daemon_sigkill_escalation_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Se
             return;
         }
 
-        let ws = env.home.join("workspaces").join(TEAM_NAME).join(MEMBER_DIR);
-        let ignore_file = ws.join(".ralph-stub-ignore-sigterm");
-        fs::write(&ignore_file, "").unwrap();
-        let sigterm_log = ws.join(".ralph-stub-sigterm.log");
-        let _ = fs::remove_file(&sigterm_log);
-        let _ = fs::remove_file(ws.join(".ralph-stub-pid"));
-
         // Enable the member for event-driven restart by daemon poll.
         env.command("bm")
             .args(["enable", MEMBER_DIR, "-t", TEAM_NAME])
             .run();
+
+        // Snapshot existing session workspaces before starting the daemon so we only
+        // wait for a workspace that was genuinely created by this daemon invocation.
+        let pre_existing_workspaces: HashSet<PathBuf> =
+            super::super::helpers::list_session_workspaces(&env.home, TEAM_NAME, MEMBER_DIR)
+                .into_iter()
+                .collect();
 
         let _guard = DaemonGuard::new(env, TEAM_NAME);
         let mut cmd = env.command("bm");
@@ -953,29 +1048,36 @@ fn daemon_sigkill_escalation_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Se
                 "--title", "Trigger SIGKILL test", "--body", "E2E"])
             .run();
 
-        let stub_pid_file = ws.join(".ralph-stub-pid");
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        while !stub_pid_file.exists() && std::time::Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(500));
-        }
-        assert!(stub_pid_file.exists(), "Daemon should have launched ralph");
-        let ralph_pid: u32 = fs::read_to_string(&stub_pid_file).unwrap().trim().parse().unwrap();
+        // Wait for a NEW session workspace (not in the pre-existing set) to be created
+        // by the daemon (hydration step, before ralph is spawned). Write the ignore file
+        // while ralph is still starting up.
+        let ws = super::super::helpers::wait_for_new_session_workspace(
+            &env.home, TEAM_NAME, MEMBER_DIR, &pre_existing_workspaces, Duration::from_secs(90),
+        ).expect("session workspace should appear after GH event");
+
+        let ignore_file = ws.join(".ralph-stub-ignore-sigterm");
+        fs::write(&ignore_file, "").unwrap();
+        let sigterm_log = ws.join(".ralph-stub-sigterm.log");
+        let _ = fs::remove_file(&sigterm_log);
+
+        // Now wait for ralph to write its PID (it reads the ignore file shortly after)
+        let ralph_pid = super::super::helpers::wait_for_stub_pid(&ws, Duration::from_secs(30))
+            .expect("Daemon should have launched ralph within 30s");
         assert!(is_alive(ralph_pid));
+
+        // Give ralph a moment to set up its SIGTERM trap
+        std::thread::sleep(Duration::from_secs(2));
         assert!(sigterm_log.exists(), "Ralph should have logged SIGTERM trap setup");
 
         env.command("bm")
             .args(["daemon", "stop", "-t", TEAM_NAME])
             .run();
 
-        super::super::helpers::wait_for_exit(ralph_pid, Duration::from_secs(10));
+        // Daemon sends SIGTERM (ralph ignores), then escalates to SIGKILL after 5s
+        super::super::helpers::wait_for_exit(ralph_pid, Duration::from_secs(15));
         assert!(!is_alive(ralph_pid));
         let log_content = fs::read_to_string(&sigterm_log).unwrap();
         assert!(log_content.contains("SIGTERM received and ignored"));
-
-        let _ = fs::remove_file(&ignore_file);
-        let _ = fs::remove_file(&sigterm_log);
-        let _ = fs::remove_file(ws.join(".ralph-stub-pid"));
-        let _ = fs::remove_file(ws.join(".ralph-stub-env"));
     }
 }
 
