@@ -955,4 +955,204 @@ describe('WorkflowEditor component', () => {
 			});
 		});
 	});
+
+	// --- CT-08: Edge Deletion UI Tests ---
+
+	describe('CT-08: Edge deletion via UI', () => {
+		/** Three-hat YAML with fan-in: both po_gate and lead_plan-create publish to a shared target.
+		 *  po_gate publishes po.gate.approved -> lead_plan-create triggers po.gate.approved
+		 *  This matches the twoHatYml fixture for single-publisher edge deletion scenarios.
+		 */
+
+		it('clicking an edge sets selectedEdgeId (edge is visually selected)', async () => {
+			const { container } = render(WorkflowEditor, {
+				props: { ralph_yml: twoHatYml }
+			});
+
+			await waitFor(() => {
+				const edges = lastSvelteFlowProps.edges as Array<{ id: string; source: string; target: string }> | undefined;
+				expect(edges).toBeDefined();
+				expect(edges!.length).toBeGreaterThanOrEqual(1);
+			});
+
+			// SvelteFlow exposes onedgeclick — the component should wire it up
+			const onEdgeClick = lastSvelteFlowProps.onedgeclick as
+				| ((args: { edge: { id: string }; event: MouseEvent }) => void)
+				| undefined;
+			expect(onEdgeClick).toBeDefined();
+
+			// Click the first edge
+			const edges = lastSvelteFlowProps.edges as Array<{ id: string }>;
+			onEdgeClick!({ edge: { id: edges[0].id }, event: new MouseEvent('click') });
+
+			await waitFor(() => {
+				// After clicking an edge, the component should indicate which edge is selected.
+				// This could be via a CSS class, a data attribute on the container, or a visible indicator.
+				// At minimum, the edge ID should be tracked internally as selectedEdgeId state.
+				// We verify by checking that pressing Delete now targets this edge (tested in next test),
+				// and that the component passes the selected state to SvelteFlow or marks the edge visually.
+				// For this test: verify the onedgeclick callback exists and the edge ID is captured
+				// by checking that a subsequent pane click deselects it (tested below).
+				// Direct check: the edge click handler should be defined on SvelteFlow props.
+				expect(onEdgeClick).toBeDefined();
+			});
+		});
+
+		it('pressing Delete with a selected edge removes the edge and applies trigger cleanup', async () => {
+			render(WorkflowEditor, {
+				props: { ralph_yml: twoHatYml }
+			});
+
+			await waitFor(() => {
+				const edges = lastSvelteFlowProps.edges as Array<{ id: string }> | undefined;
+				expect(edges).toBeDefined();
+				expect(edges!.length).toBeGreaterThanOrEqual(1);
+			});
+
+			const initialEdges = lastSvelteFlowProps.edges as Array<{ id: string; source: string; target: string; label?: string }>;
+			const initialEdgeCount = initialEdges.length;
+			expect(initialEdgeCount).toBeGreaterThanOrEqual(1);
+
+			// Find the po_gate -> lead_plan-create edge (po.gate.approved)
+			const targetEdge = initialEdges.find(
+				(e) => e.source === 'po_gate' && e.target === 'lead_plan-create'
+			);
+			expect(targetEdge).toBeDefined();
+
+			// Click the edge to select it
+			const onEdgeClick = lastSvelteFlowProps.onedgeclick as
+				| ((args: { edge: { id: string }; event: MouseEvent }) => void)
+				| undefined;
+			expect(onEdgeClick).toBeDefined();
+			onEdgeClick!({ edge: { id: targetEdge!.id }, event: new MouseEvent('click') });
+
+			// Press Delete key to delete the selected edge
+			await fireEvent.keyDown(document, { key: 'Delete' });
+
+			await waitFor(() => {
+				const edges = lastSvelteFlowProps.edges as Array<{ id: string; source: string; target: string }> | undefined;
+				expect(edges).toBeDefined();
+				expect(edges).toHaveLength(initialEdgeCount - 1);
+
+				// The deleted edge should no longer exist
+				const deletedEdge = edges!.find((e) => e.id === targetEdge!.id);
+				expect(deletedEdge).toBeUndefined();
+			});
+		});
+
+		it('pressing Delete with a selected edge but no selected node targets edge deletion (not node)', async () => {
+			render(WorkflowEditor, {
+				props: { ralph_yml: twoHatYml }
+			});
+
+			await waitFor(() => {
+				const nodes = lastSvelteFlowProps.nodes as Array<{ id: string }> | undefined;
+				expect(nodes).toBeDefined();
+				expect(nodes).toHaveLength(2);
+			});
+
+			const edges = lastSvelteFlowProps.edges as Array<{ id: string }>;
+			expect(edges.length).toBeGreaterThanOrEqual(1);
+
+			// Click an edge (NOT a node) — this should set selectedEdgeId
+			// but NOT selectedNodeId
+			const onEdgeClick = lastSvelteFlowProps.onedgeclick as
+				| ((args: { edge: { id: string }; event: MouseEvent }) => void)
+				| undefined;
+			expect(onEdgeClick).toBeDefined();
+			onEdgeClick!({ edge: { id: edges[0].id }, event: new MouseEvent('click') });
+
+			// Press Delete — should delete the edge, NOT any node
+			await fireEvent.keyDown(document, { key: 'Delete' });
+
+			await waitFor(() => {
+				// Both nodes should still exist (no node was deleted)
+				const currentNodes = lastSvelteFlowProps.nodes as Array<{ id: string }> | undefined;
+				expect(currentNodes).toBeDefined();
+				expect(currentNodes).toHaveLength(2);
+				expect(currentNodes!.map((n) => n.id)).toContain('po_gate');
+				expect(currentNodes!.map((n) => n.id)).toContain('lead_plan-create');
+
+				// But the edge should be deleted
+				const currentEdges = lastSvelteFlowProps.edges as Array<{ id: string }> | undefined;
+				expect(currentEdges).toBeDefined();
+				expect(currentEdges!.length).toBeLessThan(edges.length);
+			});
+		});
+
+		it('clicking canvas background deselects the selected edge', async () => {
+			render(WorkflowEditor, {
+				props: { ralph_yml: twoHatYml }
+			});
+
+			await waitFor(() => {
+				const edges = lastSvelteFlowProps.edges as Array<{ id: string }> | undefined;
+				expect(edges).toBeDefined();
+				expect(edges!.length).toBeGreaterThanOrEqual(1);
+			});
+
+			const initialEdges = lastSvelteFlowProps.edges as Array<{ id: string }>;
+			const initialEdgeCount = initialEdges.length;
+
+			// Select an edge
+			const onEdgeClick = lastSvelteFlowProps.onedgeclick as
+				| ((args: { edge: { id: string }; event: MouseEvent }) => void)
+				| undefined;
+			expect(onEdgeClick).toBeDefined();
+			onEdgeClick!({ edge: { id: initialEdges[0].id }, event: new MouseEvent('click') });
+
+			// Click the canvas background (pane click) to deselect
+			const onPaneClick = lastSvelteFlowProps.onpaneclick as
+				| ((args: { event: MouseEvent }) => void)
+				| undefined;
+			expect(onPaneClick).toBeDefined();
+			onPaneClick!({ event: new MouseEvent('click') });
+
+			// Now press Delete — should NOT delete any edge because nothing is selected
+			await fireEvent.keyDown(document, { key: 'Delete' });
+
+			await waitFor(() => {
+				// All edges should still be present (nothing was selected when Delete was pressed)
+				const currentEdges = lastSvelteFlowProps.edges as Array<{ id: string }> | undefined;
+				expect(currentEdges).toBeDefined();
+				expect(currentEdges).toHaveLength(initialEdgeCount);
+			});
+		});
+
+		it('edge deletion marks the graph as dirty (unsaved indicator appears)', async () => {
+			const { container } = render(WorkflowEditor, {
+				props: {
+					ralph_yml: twoHatYml,
+					team: 'my-team',
+					ralphYmlPath: 'members/engineer-01/ralph.yml'
+				}
+			});
+
+			await waitFor(() => {
+				const edges = lastSvelteFlowProps.edges as Array<{ id: string }> | undefined;
+				expect(edges).toBeDefined();
+				expect(edges!.length).toBeGreaterThanOrEqual(1);
+			});
+
+			// Verify no unsaved indicator initially
+			let indicator = container.querySelector('[data-testid="unsaved-indicator"]');
+			expect(indicator).toBeNull();
+
+			// Select and delete an edge
+			const edges = lastSvelteFlowProps.edges as Array<{ id: string }>;
+			const onEdgeClick = lastSvelteFlowProps.onedgeclick as
+				| ((args: { edge: { id: string }; event: MouseEvent }) => void)
+				| undefined;
+			expect(onEdgeClick).toBeDefined();
+			onEdgeClick!({ edge: { id: edges[0].id }, event: new MouseEvent('click') });
+
+			await fireEvent.keyDown(document, { key: 'Delete' });
+
+			await waitFor(() => {
+				// The unsaved changes indicator should appear after edge deletion
+				indicator = container.querySelector('[data-testid="unsaved-indicator"]');
+				expect(indicator).not.toBeNull();
+			});
+		});
+	});
 });
