@@ -726,6 +726,28 @@ describe('WorkflowEditor component', () => {
 		});
 	});
 
+	// --- CT-06: HatNode nodeTypes registration ---
+
+	describe('CT-06: nodeTypes registration', () => {
+		it('passes nodeTypes prop to SvelteFlow including hatNode component', async () => {
+			render(WorkflowEditor, {
+				props: { ralph_yml: twoHatYml }
+			});
+
+			await waitFor(() => {
+				const nodes = lastSvelteFlowProps.nodes as Array<{ id: string }> | undefined;
+				expect(nodes).toBeDefined();
+				expect(nodes!.length).toBeGreaterThanOrEqual(1);
+			});
+
+			// SvelteFlow must receive a nodeTypes prop that maps 'hatNode' to the HatNode component
+			const nodeTypes = lastSvelteFlowProps.nodeTypes as Record<string, unknown> | undefined;
+			expect(nodeTypes).toBeDefined();
+			expect(nodeTypes).toHaveProperty('hatNode');
+			expect(nodeTypes!.hatNode).toBeDefined();
+		});
+	});
+
 	// --- CT-05: Save flow tests ---
 
 	describe('CT-05: Save flow', () => {
