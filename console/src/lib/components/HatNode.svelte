@@ -1,15 +1,9 @@
 <script lang="ts">
 	import { Handle, Position } from '@xyflow/svelte';
-
-	interface HatData {
-		name: string;
-		description?: string;
-		triggers?: string[];
-		publishes?: string[];
-	}
+	import type { HatNodeData } from '$lib/workflow-types.js';
 
 	interface Props {
-		data: HatData;
+		data: HatNodeData;
 	}
 
 	let { data }: Props = $props();

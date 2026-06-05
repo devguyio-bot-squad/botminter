@@ -49,13 +49,14 @@ import HatNode from './HatNode.svelte';
 describe('HatNode custom node component', () => {
 	describe('AC1: HatNode renders the hat name from props.data.name', () => {
 		it('displays the hat name text', () => {
-			const { container } = render(HatNode, {
+			render(HatNode, {
 				props: {
 					data: {
 						name: 'po_gate',
 						description: 'Gates human review',
 						triggers: ['po.triage'],
-						publishes: ['po.gate.approved']
+						publishes: ['po.gate.approved'],
+						instructions: ''
 					}
 				}
 			});
@@ -71,7 +72,8 @@ describe('HatNode custom node component', () => {
 						name: 'lead_plan-create',
 						description: 'Creates planning artifacts',
 						triggers: ['po.gate.approved'],
-						publishes: ['lead.plan_review']
+						publishes: ['lead.plan_review'],
+						instructions: ''
 					}
 				}
 			});
@@ -80,13 +82,14 @@ describe('HatNode custom node component', () => {
 		});
 
 		it('renders only the hat name (YAML key), not the display name or description', () => {
-			const { container } = render(HatNode, {
+			render(HatNode, {
 				props: {
 					data: {
 						name: 'po_gate',
 						description: 'Gates human review decisions',
 						triggers: ['po.triage'],
-						publishes: ['po.gate.approved']
+						publishes: ['po.gate.approved'],
+						instructions: ''
 					}
 				}
 			});
@@ -108,7 +111,8 @@ describe('HatNode custom node component', () => {
 						name: 'po_gate',
 						description: '',
 						triggers: [],
-						publishes: []
+						publishes: [],
+						instructions: ''
 					}
 				}
 			});
@@ -126,7 +130,8 @@ describe('HatNode custom node component', () => {
 						name: 'po_gate',
 						description: '',
 						triggers: [],
-						publishes: []
+						publishes: [],
+						instructions: ''
 					}
 				}
 			});
@@ -144,7 +149,8 @@ describe('HatNode custom node component', () => {
 						name: 'po_gate',
 						description: '',
 						triggers: [],
-						publishes: []
+						publishes: [],
+						instructions: ''
 					}
 				}
 			});

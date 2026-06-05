@@ -4,7 +4,7 @@
 	import { layoutGraph } from '$lib/workflow-layout.js';
 	import { deleteNode as graphDeleteNode } from '$lib/workflow-graph-ops.js';
 	import { serializeWorkflow } from '$lib/workflow-serializer.js';
-	import type { WorkflowNode, WorkflowEdge, WorkflowGraph } from '$lib/workflow-types.js';
+	import type { WorkflowNode, WorkflowEdge, WorkflowGraph, HatNodeData } from '$lib/workflow-types.js';
 	import HatNode from './HatNode.svelte';
 	import HatDetailPanel from './HatDetailPanel.svelte';
 	import InstructionsModal from './InstructionsModal.svelte';
@@ -14,14 +14,9 @@
 	/** Custom node types — defined outside reactive scope to avoid SvelteFlow re-initialization. */
 	const nodeTypes = { hatNode: HatNode } as const;
 
-	/** Mutable projection of WorkflowNode for the side panel. */
-	interface SelectedHatData {
-		id: string;
-		name: string;
-		description: string;
-		triggers: string[];
-		publishes: string[];
-		instructions: string;
+	/** Node data with ID, used for side panel selection state. */
+	interface SelectedHatData extends HatNodeData {
+		readonly id: string;
 	}
 
 	interface Props {
@@ -64,14 +59,14 @@
 		if (!selectedNodeId) return null;
 		const flowNode = nodes.find((n) => n.id === selectedNodeId);
 		if (!flowNode) return null;
-		const d = flowNode.data as Record<string, unknown>;
+		const d = flowNode.data as unknown as HatNodeData;
 		return {
 			id: flowNode.id,
-			name: (d.name as string) ?? flowNode.id,
-			description: (d.description as string) ?? '',
-			triggers: (d.triggers as string[]) ?? [],
-			publishes: (d.publishes as string[]) ?? [],
-			instructions: (d.instructions as string) ?? ''
+			name: d.name ?? flowNode.id,
+			description: d.description ?? '',
+			triggers: d.triggers ?? [],
+			publishes: d.publishes ?? [],
+			instructions: d.instructions ?? ''
 		};
 	}
 
@@ -279,7 +274,7 @@
 	function toFlowNodes(wfNodes: readonly WorkflowNode[]): import('@xyflow/svelte').Node[] {
 		return wfNodes.map((n) => ({
 			id: n.id,
-			type: 'hatNode',
+			type: 'hatNode' as const,
 			position: { x: n.position.x, y: n.position.y },
 			data: {
 				name: n.name,
@@ -287,7 +282,7 @@
 				triggers: n.triggers,
 				publishes: n.publishes,
 				instructions: n.instructions
-			}
+			} satisfies HatNodeData
 		}));
 	}
 
