@@ -77,6 +77,27 @@
 		hasUnsavedChanges = true;
 	}
 
+	/**
+	 * Apply a graph mutation result to internal state, sync to SvelteFlow,
+	 * and mark the editor dirty.
+	 *
+	 * Centralises the repeated pattern of:
+	 *   graphNodes = [...result.nodes]; graphEdges = [...result.edges];
+	 *   syncFlowState(); markDirty();
+	 */
+	function applyGraphMutation(result: import('$lib/workflow-graph-ops.js').GraphMutationResult) {
+		graphNodes = [...result.nodes];
+		graphEdges = [...result.edges];
+		syncFlowState();
+		markDirty();
+	}
+
+	/** Clear both selection states (node and edge are mutually exclusive). */
+	function clearSelection() {
+		selectedNodeId = null;
+		selectedEdgeId = null;
+	}
+
 	/** Update a single field on the selected node's data. */
 	function updateSelectedNodeData(field: string, value: unknown) {
 		if (!selectedNodeId) return;
@@ -97,8 +118,7 @@
 	}
 
 	function handlePaneClick(_: { event: MouseEvent }) {
-		selectedNodeId = null;
-		selectedEdgeId = null;
+		clearSelection();
 	}
 
 	function handleNameChange(newName: string) {
@@ -219,29 +239,26 @@
 		return targetNode ? [...targetNode.triggers] : [];
 	}
 
-	/** Handle Delete/Backspace key to delete the selected node or edge. */
+	/**
+	 * Handle Delete/Backspace key to delete the selected node or edge.
+	 *
+	 * Priority: node deletion takes precedence over edge deletion.
+	 * When a node is selected, Delete removes the node and all its
+	 * connected edges. When only an edge is selected, Delete removes
+	 * that single edge with trigger cleanup.
+	 */
 	function handleKeyDown(e: KeyboardEvent) {
-		if (e.key === 'Delete' || e.key === 'Backspace') {
-			if (selectedNodeId) {
-				const result = graphDeleteNode(graphNodes, graphEdges, selectedNodeId);
-				graphNodes = [...result.nodes];
-				graphEdges = [...result.edges];
-				selectedNodeId = null;
+		if (e.key !== 'Delete' && e.key !== 'Backspace') return;
 
-				if (graphNodes.length === 0) {
-					hasHats = false;
-				}
-
-				syncFlowState();
-				markDirty();
-			} else if (selectedEdgeId) {
-				const result = graphDeleteEdge(graphNodes, graphEdges, selectedEdgeId);
-				graphNodes = [...result.nodes];
-				graphEdges = [...result.edges];
-				selectedEdgeId = null;
-				syncFlowState();
-				markDirty();
+		if (selectedNodeId) {
+			applyGraphMutation(graphDeleteNode(graphNodes, graphEdges, selectedNodeId));
+			selectedNodeId = null;
+			if (graphNodes.length === 0) {
+				hasHats = false;
 			}
+		} else if (selectedEdgeId) {
+			applyGraphMutation(graphDeleteEdge(graphNodes, graphEdges, selectedEdgeId));
+			selectedEdgeId = null;
 		}
 	}
 
@@ -321,8 +338,7 @@
 		graphRawYaml = {};
 		nodes = [];
 		edges = [];
-		selectedNodeId = null;
-		selectedEdgeId = null;
+		clearSelection();
 		pendingConnection = null;
 	}
 
@@ -346,7 +362,7 @@
 				graphEdges = [];
 				nodes = [];
 				edges = [];
-				selectedNodeId = null;
+				clearSelection();
 				pendingConnection = null;
 				return;
 			}
