@@ -7,7 +7,7 @@ use serde::Serialize;
 
 use crate::config;
 use crate::daemon::DaemonClient;
-use crate::daemon::sessions_api::SessionInfo;
+use crate::daemon::sessions_api::{SessionHistoryInfo, SessionInfo};
 use crate::state::{self, MemberStatus};
 
 #[derive(Debug, Clone, Serialize)]
@@ -35,8 +35,11 @@ impl SessionDisplayRow {
     }
 }
 
-/// Handles `bm status [-t team] [-v] [--json]`.
-pub fn run(team_flag: Option<&str>, verbose: bool, json: bool) -> Result<()> {
+/// Handles `bm status [-t team] [-v] [--json] [--history]`.
+pub fn run(team_flag: Option<&str>, verbose: bool, json: bool, history: bool) -> Result<()> {
+    if history {
+        return run_history(team_flag);
+    }
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, team_flag)?;
 
@@ -267,6 +270,55 @@ fn build_session_output(
     } else {
         render_sessions_section(rows.as_deref())
     }
+}
+
+/// Handles `bm status --history`: prints terminal session history from the daemon.
+fn run_history(team_flag: Option<&str>) -> Result<()> {
+    let cfg = config::load()?;
+    let team = config::resolve_team(&cfg, team_flag)?;
+
+    let client = match DaemonClient::connect(&team.name) {
+        Ok(c) => c,
+        Err(_) => {
+            println!("Session history: unavailable (daemon not running)");
+            return Ok(());
+        }
+    };
+
+    let resp = client.list_session_history()?;
+    render_history_table(&resp.sessions);
+    Ok(())
+}
+
+fn render_history_table(sessions: &[SessionHistoryInfo]) {
+    if sessions.is_empty() {
+        println!("Session history: none");
+        return;
+    }
+    let mut table = Table::new();
+    table
+        .load_preset(UTF8_FULL_CONDENSED)
+        .apply_modifier(UTF8_ROUND_CORNERS)
+        .set_content_arrangement(ContentArrangement::DynamicFullWidth)
+        .set_header(vec![
+            "Session ID",
+            "Member",
+            "Type",
+            "Start Time",
+            "End Time",
+            "Exit",
+        ]);
+    for s in sessions {
+        table.add_row(vec![
+            truncate_session_id(&s.session_id).as_str(),
+            s.member_name.as_str(),
+            s.session_type.as_str(),
+            format_timestamp(&s.start_time).as_str(),
+            format_timestamp(&s.end_time).as_str(),
+            if s.exit_normal { "normal" } else { "abnormal" },
+        ]);
+    }
+    println!("{table}");
 }
 
 /// Formats an ISO 8601 timestamp for display, stripping sub-seconds.

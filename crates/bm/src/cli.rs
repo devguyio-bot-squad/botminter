@@ -210,6 +210,16 @@ pub enum Command {
         /// Output in JSON format
         #[arg(long)]
         json: bool,
+
+        /// Show session history (terminal sessions) instead of live sessions
+        #[arg(long)]
+        history: bool,
+    },
+
+    /// Session management commands (inspect, cleanup)
+    Session {
+        #[command(subcommand)]
+        command: SessionCommand,
     },
 
     /// Team management commands
@@ -830,6 +840,41 @@ pub enum BridgeRoomCommand {
 
     /// List rooms
     List {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum SessionCommand {
+    /// Inspect a session's details
+    Inspect {
+        /// Session ID to inspect
+        session_id: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
+
+    /// Clean up retained sessions
+    Cleanup {
+        /// Session ID to clean up (omit to use --all, --member, or --older-than)
+        session_id: Option<String>,
+
+        /// Clean up all retained sessions
+        #[arg(long)]
+        all: bool,
+
+        /// Clean up sessions for a specific member
+        #[arg(long)]
+        member: Option<String>,
+
+        /// Clean up sessions older than a duration (e.g. 48h, 7d, 30m)
+        #[arg(long)]
+        older_than: Option<String>,
+
         /// Team to operate on
         #[arg(short, long)]
         team: Option<String>,

@@ -1025,6 +1025,33 @@ pub async fn bulk_cleanup_handler(
                 )
             }
         },
+        "older_than" => match req.value.as_deref() {
+            Some(secs_str) => match secs_str.parse::<i64>() {
+                Ok(secs) => cleanup::CleanupFilter::OlderThan(chrono::Duration::seconds(secs)),
+                Err(_) => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(BulkCleanupResponse {
+                            ok: false,
+                            cleaned: 0,
+                            reports: vec![],
+                            error: Some(format!("older_than value must be an integer number of seconds, got: {secs_str}")),
+                        }),
+                    )
+                }
+            },
+            None => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(BulkCleanupResponse {
+                        ok: false,
+                        cleaned: 0,
+                        reports: vec![],
+                        error: Some("older_than filter requires a value (seconds)".to_string()),
+                    }),
+                )
+            }
+        },
         other => {
             return (
                 StatusCode::BAD_REQUEST,
