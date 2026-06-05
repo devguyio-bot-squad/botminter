@@ -123,8 +123,26 @@ export const mockTree: TreeResponse = {
  * Sets up API route interception on a Playwright page.
  * All /api/* requests are intercepted and return mock data,
  * allowing tests to verify DOM rendering without a live backend.
+ *
+ * Also patches page.goto to wait for 'networkidle' after navigation,
+ * ensuring the SvelteKit CSR app has finished rendering before the
+ * test proceeds. This is necessary because adapter-static with
+ * ssr=false serves an empty HTML shell — the SvelteKit client router
+ * bootstraps asynchronously after the browser 'load' event, so the
+ * default waitUntil:'load' returns before any Svelte components mount.
  */
 export async function mockApi(page: Page): Promise<void> {
+	// Patch page.goto so that every navigation waits for the SvelteKit
+	// CSR app to settle.  Mock API responses resolve instantly, so
+	// 'networkidle' fires as soon as the client router finishes its
+	// data-loading cycle — typically a few milliseconds after 'load'.
+	const originalGoto = page.goto.bind(page);
+	page.goto = async (url: string, options?: Parameters<Page['goto']>[1]) => {
+		const response = await originalGoto(url, options);
+		await page.waitForLoadState('networkidle');
+		return response;
+	};
+
 	await page.route('**/api/teams', (route) => {
 		if (route.request().method() === 'GET') {
 			return route.fulfill({ json: mockTeams });

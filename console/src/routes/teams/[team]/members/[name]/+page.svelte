@@ -5,13 +5,14 @@
 	import { api } from '$lib/api.js';
 	import { marked } from 'marked';
 	import { roleColor } from '$lib/role-colors.js';
+	import WorkflowEditor from '$lib/components/WorkflowEditor.svelte';
 
 	const team = $derived($page.params.team ?? '');
 	const name = $derived($page.params.name ?? '');
 	let member = $state<MemberDetail | null>(null);
 	let error = $state<string | null>(null);
 	let loading = $state(true);
-	let activeTab = $state<'yaml' | 'claude' | 'prompt' | 'hats' | 'knowledge' | 'invariants'>(
+	let activeTab = $state<'yaml' | 'claude' | 'prompt' | 'workflow' | 'hats' | 'knowledge' | 'invariants'>(
 		'yaml'
 	);
 
@@ -107,6 +108,7 @@
 		{ key: 'yaml' as const, label: 'Ralph YAML' },
 		{ key: 'claude' as const, label: 'CLAUDE.md' },
 		{ key: 'prompt' as const, label: 'PROMPT.md' },
+		{ key: 'workflow' as const, label: 'Workflow' },
 		{ key: 'hats' as const, label: 'Hats' },
 		{ key: 'knowledge' as const, label: 'Knowledge' },
 		{ key: 'invariants' as const, label: 'Invariants' }
@@ -208,6 +210,10 @@
 					<p class="text-gray-500">No PROMPT.md file found.</p>
 				{/if}
 			</div>
+
+		<!-- Workflow Tab -->
+		{:else if activeTab === 'workflow'}
+			<WorkflowEditor ralph_yml={member.ralph_yml} />
 
 		<!-- Hats Tab -->
 		{:else if activeTab === 'hats'}
