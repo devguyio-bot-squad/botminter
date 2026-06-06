@@ -70,21 +70,21 @@ pub fn finalize_session(
     }
 
     match subagent::retrigger_finalization(workspace_path, session_id) {
-        Ok(()) => FinalizationResult::new(FinalizationOutcome::Completed),
+        Ok(_child) => FinalizationResult::new(FinalizationOutcome::Completed),
         Err(e) => FinalizationResult::new(FinalizationOutcome::Failed(
             format!("Failed to launch finalization subagent: {e}"),
         )),
     }
 }
 
-/// Re-trigger finalization for a retained session by launching the
-/// finalization subagent.
+/// Re-trigger finalization for a retained session by launching the finalization subagent.
+///
+/// Returns the spawned child so callers can attach a watcher (e.g., `wait_and_transition`).
 pub fn retrigger_finalization(
     session_id: &SessionId,
     workspace_path: &Path,
-) -> Result<FinalizationResult> {
-    subagent::retrigger_finalization(workspace_path, session_id)?;
-    Ok(FinalizationResult::new(FinalizationOutcome::Completed))
+) -> Result<std::process::Child> {
+    subagent::retrigger_finalization(workspace_path, session_id)
 }
 
 pub fn push_to_recovery_branch(

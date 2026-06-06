@@ -113,18 +113,34 @@ pub fn stop_sessions(
 }
 
 /// Re-trigger finalization on a retained session.
+///
+/// Returns the spawned child on success so callers can attach a watcher.
+/// Spawn failures are logged and returned as `None` — the session is already
+/// in `Finalizing` state when this returns, so the caller can still respond OK.
 pub fn retrigger_session_finalization(
     registry: &mut SessionRegistry,
     session_id: &SessionId,
-) -> Result<StopSummary> {
+) -> Result<(StopSummary, Option<std::process::Child>)> {
     let workspace_path = registry
         .get(session_id)
         .and_then(|r| r.workspace_path.clone());
     registry.update_state(session_id, SessionState::Finalizing)?;
-    if let Some(ref wp) = workspace_path {
-        let _ = deactivation::retrigger_finalization(session_id, wp);
-    }
-    Ok(StopSummary::default())
+    let child = if let Some(ref wp) = workspace_path {
+        match deactivation::retrigger_finalization(session_id, wp) {
+            Ok(child) => Some(child),
+            Err(e) => {
+                tracing::error!(
+                    session_id = session_id.as_str(),
+                    "failed to spawn finalization subagent: {}",
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    Ok((StopSummary::default(), child))
 }
 
 #[cfg(test)]

@@ -36,6 +36,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::session::cleanup;
+use crate::session::finalization::subagent as fin_subagent;
 use crate::session::history::{self, ExitStatus};
 use crate::session::registry::SessionRegistry;
 use crate::session::retention::{self, ProcessChecker};
@@ -860,17 +861,40 @@ pub async fn retrigger_finalization_handler(
     State(state): State<SessionsApiState>,
     Path(session_id_str): Path<String>,
 ) -> (StatusCode, Json<RetriggerResponse>) {
-    let mut inner = state.inner.lock().unwrap();
     let session_id = SessionId::from_raw(&session_id_str);
 
-    match stop::retrigger_session_finalization(&mut inner.registry, &session_id) {
-        Ok(_) => (
-            StatusCode::OK,
-            Json(RetriggerResponse {
-                ok: true,
-                error: None,
-            }),
-        ),
+    // Acquire lock only long enough to transition state and get the child handle.
+    let retrigger_result = {
+        let mut inner = state.inner.lock().unwrap();
+        stop::retrigger_session_finalization(&mut inner.registry, &session_id)
+    };
+
+    match retrigger_result {
+        Ok((_, child)) => {
+            if let Some(child) = child {
+                let arc_inner = Arc::clone(&state.inner);
+                let sid = session_id.clone();
+                let timeout =
+                    std::time::Duration::from_secs(fin_subagent::FINALIZATION_TIMEOUT_SECS);
+                tokio::spawn(fin_subagent::wait_and_transition(
+                    child,
+                    sid.clone(),
+                    timeout,
+                    move |new_state| {
+                        if let Ok(mut guard) = arc_inner.lock() {
+                            if let Err(e) = guard.registry.update_state(&sid, new_state) {
+                                tracing::error!(
+                                    session_id = sid.as_str(),
+                                    "failed to update session state after finalization: {}",
+                                    e
+                                );
+                            }
+                        }
+                    },
+                ));
+            }
+            (StatusCode::OK, Json(RetriggerResponse { ok: true, error: None }))
+        }
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(RetriggerResponse {
