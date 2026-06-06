@@ -318,22 +318,52 @@ impl ConfigAssembler {
 
 // ── CredentialRelay ─────────────────────────────────────────────────────────
 
-/// Returns the shared per-member credential directory path.
+/// Writes credential files (hosts.yml) into a member's shared credential directory.
+pub trait CredentialWriter: Send + Sync {
+    fn write_credentials(&self, member_dir: &Path) -> Result<()>;
+}
+
+/// A no-op credential writer — used when no App credentials are configured.
+pub struct NoOpCredentialWriter;
+
+impl CredentialWriter for NoOpCredentialWriter {
+    fn write_credentials(&self, _member_dir: &Path) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Manages per-member credential directories: writes credential files during
+/// session creation and provides the directory path for runtime use.
 /// Credentials are never copied into session workspaces — only referenced.
 pub struct CredentialRelay {
     /// Root directory under which `<member>/` subdirectories hold credentials.
     pub credentials_base: PathBuf,
+    writer: Box<dyn CredentialWriter>,
 }
 
 impl CredentialRelay {
     pub fn new(credentials_base: PathBuf) -> Self {
-        Self { credentials_base }
+        Self {
+            credentials_base,
+            writer: Box::new(NoOpCredentialWriter),
+        }
+    }
+
+    pub fn with_writer(credentials_base: PathBuf, writer: Box<dyn CredentialWriter>) -> Self {
+        Self {
+            credentials_base,
+            writer,
+        }
+    }
+
+    fn member_dir(&self, member_name: &str) -> PathBuf {
+        self.credentials_base.join(member_name)
     }
 
     /// Return the credential directory for `member_name`. Errors if the member
     /// has no configured credential directory.
     pub fn credential_path(&self, member_name: &str) -> Result<PathBuf> {
-        let path = self.credentials_base.join(member_name);
+        let path = self.member_dir(member_name);
         if !path.exists() {
             bail!(
                 "No credential directory for member '{}' at {} \
@@ -343,6 +373,11 @@ impl CredentialRelay {
             );
         }
         Ok(path)
+    }
+
+    /// Write credentials (hosts.yml) to the shared credential directory for `member_name`.
+    pub fn ensure_credentials(&self, member_name: &str) -> Result<()> {
+        self.writer.write_credentials(&self.member_dir(member_name))
     }
 }
 
@@ -475,8 +510,10 @@ impl<R: RepoSource> WorkspaceHydrator<R> {
         };
         let config_assembly_ms = assembly_start.elapsed().as_millis() as u64;
 
-        // Credentials are referenced, not copied — a missing dir is not a hard error here.
-        let _ = self.credential_relay.credential_path(member);
+        // Write credentials to the shared dir — non-fatal; session starts without them on failure.
+        if let Err(e) = self.credential_relay.ensure_credentials(member) {
+            tracing::warn!("Credential write failed for member '{}': {e}", member);
+        }
 
         Ok(HydrationResult {
             workspace_path,
@@ -1116,6 +1153,128 @@ mod tests {
         assert!(
             workspace.join(".claude").is_dir(),
             ".claude/ must be created by assemble() even when team has no coding-agent dir"
+        );
+    }
+
+    // ── AC-09: Credential write-path ─────────────────────────────────────────
+
+    struct TestCredentialWriter {
+        token: String,
+    }
+
+    impl CredentialWriter for TestCredentialWriter {
+        fn write_credentials(&self, member_dir: &Path) -> Result<()> {
+            fs::create_dir_all(member_dir)?;
+            let hosts_content = format!(
+                "github.com:\n    oauth_token: {}\n    git_protocol: https\n",
+                self.token
+            );
+            fs::write(member_dir.join("hosts.yml"), &hosts_content)?;
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn ensure_credentials_writes_hosts_yml_to_member_credential_dir() {
+        let tmp = TempDir::new().unwrap();
+        let creds_base = tmp.path().join("credentials");
+        let relay = CredentialRelay::with_writer(
+            creds_base.clone(),
+            Box::new(TestCredentialWriter {
+                token: "test-token".to_string(),
+            }),
+        );
+
+        relay.ensure_credentials("alice").unwrap();
+
+        let hosts_yml = creds_base.join("alice").join("hosts.yml");
+        assert!(
+            hosts_yml.exists(),
+            "hosts.yml must exist at the shared credential path after ensure_credentials()"
+        );
+    }
+
+    #[test]
+    fn credential_path_contains_hosts_yml_after_ensure_credentials() {
+        let tmp = TempDir::new().unwrap();
+        let creds_base = tmp.path().join("credentials");
+        // Pre-create the member dir so credential_path() does not fail on missing dir.
+        fs::create_dir_all(creds_base.join("alice")).unwrap();
+
+        let relay = CredentialRelay::with_writer(
+            creds_base.clone(),
+            Box::new(TestCredentialWriter {
+                token: "test-token".to_string(),
+            }),
+        );
+
+        relay.ensure_credentials("alice").unwrap();
+        let path = relay.credential_path("alice").unwrap();
+
+        assert!(
+            path.join("hosts.yml").exists(),
+            "credential_path() must point to a directory containing hosts.yml after ensure_credentials()"
+        );
+    }
+
+    #[test]
+    fn hydrate_writes_hosts_yml_to_shared_credential_path() {
+        let tmp = TempDir::new().unwrap();
+        let repo = init_bare_repo(&tmp, "myproject");
+        let creds_base = tmp.path().join("credentials");
+        let source = git_worktree_source(&tmp);
+        let assembler = ConfigAssembler::new(tmp.path().join("team"), "alice".to_string());
+        let relay = CredentialRelay::with_writer(
+            creds_base.clone(),
+            Box::new(TestCredentialWriter {
+                token: "test-token".to_string(),
+            }),
+        );
+        let hydrator =
+            WorkspaceHydrator::new(source, assembler, relay, tmp.path().join("sessions"));
+
+        let session_id = SessionId::new();
+        let config = make_assembly_config(&tmp, session_id.clone(), repo.to_str().unwrap());
+
+        hydrator
+            .hydrate(
+                &session_id,
+                "alice",
+                &[(repo.to_str().unwrap(), "myproject")],
+                config,
+            )
+            .unwrap();
+
+        let hosts_yml = creds_base.join("alice").join("hosts.yml");
+        assert!(
+            hosts_yml.exists(),
+            "hosts.yml must exist at the shared credential path after hydrate()"
+        );
+    }
+
+    #[test]
+    fn hydrate_proceeds_without_error_when_no_credential_writer() {
+        let tmp = TempDir::new().unwrap();
+        let repo = init_bare_repo(&tmp, "myproject");
+        let source = git_worktree_source(&tmp);
+        let assembler = ConfigAssembler::new(tmp.path().join("team"), "alice".to_string());
+        let relay = CredentialRelay::new(tmp.path().join("credentials")); // NoOp — no app creds
+        let hydrator =
+            WorkspaceHydrator::new(source, assembler, relay, tmp.path().join("sessions"));
+
+        let session_id = SessionId::new();
+        let config = make_assembly_config(&tmp, session_id.clone(), repo.to_str().unwrap());
+
+        let result = hydrator.hydrate(
+            &session_id,
+            "alice",
+            &[(repo.to_str().unwrap(), "myproject")],
+            config,
+        );
+
+        assert!(
+            result.is_ok(),
+            "hydrate() must succeed even when no credential writer is configured (non-fatal)"
         );
     }
 
