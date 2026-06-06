@@ -879,4 +879,25 @@ pub enum SessionCommand {
         #[arg(short, long)]
         team: Option<String>,
     },
+
+    /// List all sessions (active and terminal) with finalization status. Replaces `bm status --history`.
+    List {
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
+
+    /// Trigger finalization of a retained session
+    Finalize {
+        /// Session ID to finalize
+        session_id: String,
+
+        /// Team to operate on
+        #[arg(short, long)]
+        team: Option<String>,
+    },
 }

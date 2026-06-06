@@ -357,6 +357,9 @@ pub struct SessionHistoryInfo {
     pub start_time: String,
     pub end_time: String,
     pub exit_normal: bool,
+    /// Finalization outcome: "completed", "failed", "skipped", "pending", or "n/a".
+    #[serde(default)]
+    pub finalization_status: String,
 }
 
 /// Response for `GET /api/sessions/history`.
@@ -446,6 +449,16 @@ fn record_to_info(r: &SessionRecord) -> SessionInfo {
     }
 }
 
+fn finalization_status_str(status: Option<&crate::session::types::FinalizationExitStatus>) -> &'static str {
+    use crate::session::types::FinalizationExitStatus;
+    match status {
+        Some(FinalizationExitStatus::Completed | FinalizationExitStatus::CompletedDegraded) => "completed",
+        Some(FinalizationExitStatus::Failed) => "failed",
+        Some(FinalizationExitStatus::Skipped) => "skipped",
+        None => "n/a",
+    }
+}
+
 // ── Handlers ────────────────────────────────────────────────────────────
 
 /// GET /api/sessions/history — lists terminal sessions as history.
@@ -455,6 +468,16 @@ pub async fn list_session_history_handler(
 ) -> (StatusCode, Json<SessionHistoryResponse>) {
     let inner = state.inner.lock().unwrap();
     let refs = inner.registry.list();
+
+    let fin_map: std::collections::HashMap<String, Option<crate::session::types::FinalizationExitStatus>> = refs
+        .iter()
+        .map(|r| {
+            (
+                r.session_id.to_string(),
+                r.finalization_result.as_ref().map(|f| f.exit_status.clone()),
+            )
+        })
+        .collect();
 
     let since = params.since.as_deref().and_then(|s| {
         chrono::DateTime::parse_from_rfc3339(s)
@@ -468,13 +491,19 @@ pub async fn list_session_history_handler(
 
     let sessions = history::query_history(&refs, &query)
         .into_iter()
-        .map(|e| SessionHistoryInfo {
-            session_id: e.session_id,
-            member_name: e.member,
-            session_type: e.session_type,
-            start_time: e.start_time.to_rfc3339(),
-            end_time: e.end_time.to_rfc3339(),
-            exit_normal: e.exit_status == ExitStatus::Normal,
+        .map(|e| {
+            let finalization_status =
+                finalization_status_str(fin_map.get(&e.session_id).and_then(|f| f.as_ref()))
+                    .to_string();
+            SessionHistoryInfo {
+                session_id: e.session_id,
+                member_name: e.member,
+                session_type: e.session_type,
+                start_time: e.start_time.to_rfc3339(),
+                end_time: e.end_time.to_rfc3339(),
+                exit_normal: e.exit_status == ExitStatus::Normal,
+                finalization_status,
+            }
         })
         .collect();
 
@@ -2258,5 +2287,172 @@ mod tests {
         let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
         let json: ReleaseLockResponse = serde_json::from_slice(&bytes).unwrap();
         assert!(json.released, "idempotent release must return released: true");
+    }
+
+    // ── CT-154-05: bm session list — finalization_status field ───────────
+
+    fn make_terminal_session_with_finalization(
+        state: &SessionsApiState,
+        session_id: &str,
+        final_state: SessionState,
+        fin_result: Option<crate::session::types::FinalizationResult>,
+    ) {
+        let mut inner = state.inner.lock().unwrap();
+        let now = chrono::Utc::now();
+        let id = SessionId::from_raw(session_id);
+        let record = SessionRecord {
+            session_id: id.clone(),
+            member_name: "test-member".to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Creating,
+            created_at: now,
+            state_transitioned_at: now,
+            agent_pid: None,
+            workspace_path: None,
+            finalization_result: fin_result,
+        };
+        inner.registry.register(record).unwrap();
+        inner.registry.update_state(&id, SessionState::Active).unwrap();
+        inner.registry.update_state(&id, SessionState::Finalizing).unwrap();
+        inner.registry.update_state(&id, final_state).unwrap();
+    }
+
+    fn make_finalization_result(
+        exit_status: crate::session::types::FinalizationExitStatus,
+    ) -> crate::session::types::FinalizationResult {
+        crate::session::types::FinalizationResult {
+            exit_status,
+            committed_repos: vec![],
+            pushed_branches: vec![],
+            recovery_branches: vec![],
+            github_issue_urls: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn history_finalization_status_completed_when_exit_status_is_completed() {
+        use crate::session::types::FinalizationExitStatus;
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        make_terminal_session_with_finalization(
+            &state,
+            "sess-fin-completed",
+            SessionState::Completed,
+            Some(make_finalization_result(FinalizationExitStatus::Completed)),
+        );
+
+        let app = sessions_router(state);
+        let request = Request::builder()
+            .uri("/api/sessions/history")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let json: SessionHistoryResponse = serde_json::from_slice(&bytes).unwrap();
+
+        let session = json.sessions.iter().find(|s| s.session_id == "sess-fin-completed")
+            .expect("session must appear in history");
+        assert_eq!(
+            session.finalization_status, "completed",
+            "Completed finalization exit status must map to 'completed', got '{}'",
+            session.finalization_status
+        );
+    }
+
+    #[tokio::test]
+    async fn history_finalization_status_failed_when_exit_status_is_failed() {
+        use crate::session::types::FinalizationExitStatus;
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        make_terminal_session_with_finalization(
+            &state,
+            "sess-fin-failed",
+            SessionState::Failed,
+            Some(make_finalization_result(FinalizationExitStatus::Failed)),
+        );
+
+        let app = sessions_router(state);
+        let request = Request::builder()
+            .uri("/api/sessions/history")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let json: SessionHistoryResponse = serde_json::from_slice(&bytes).unwrap();
+
+        let session = json.sessions.iter().find(|s| s.session_id == "sess-fin-failed")
+            .expect("session must appear in history");
+        assert_eq!(
+            session.finalization_status, "failed",
+            "Failed finalization exit status must map to 'failed', got '{}'",
+            session.finalization_status
+        );
+    }
+
+    #[tokio::test]
+    async fn history_finalization_status_skipped_when_exit_status_is_skipped() {
+        use crate::session::types::FinalizationExitStatus;
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        make_terminal_session_with_finalization(
+            &state,
+            "sess-fin-skipped",
+            SessionState::Completed,
+            Some(make_finalization_result(FinalizationExitStatus::Skipped)),
+        );
+
+        let app = sessions_router(state);
+        let request = Request::builder()
+            .uri("/api/sessions/history")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let json: SessionHistoryResponse = serde_json::from_slice(&bytes).unwrap();
+
+        let session = json.sessions.iter().find(|s| s.session_id == "sess-fin-skipped")
+            .expect("session must appear in history");
+        assert_eq!(
+            session.finalization_status, "skipped",
+            "Skipped finalization exit status must map to 'skipped', got '{}'",
+            session.finalization_status
+        );
+    }
+
+    #[tokio::test]
+    async fn history_finalization_status_na_when_no_finalization_result() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        make_terminal_session_with_finalization(
+            &state,
+            "sess-fin-na",
+            SessionState::Completed,
+            None, // no finalization_result — daemon was killed before finalization ran
+        );
+
+        let app = sessions_router(state);
+        let request = Request::builder()
+            .uri("/api/sessions/history")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let json: SessionHistoryResponse = serde_json::from_slice(&bytes).unwrap();
+
+        let session = json.sessions.iter().find(|s| s.session_id == "sess-fin-na")
+            .expect("session must appear in history");
+        assert_eq!(
+            session.finalization_status, "n/a",
+            "Session with no finalization_result must have 'n/a' status, got '{}'",
+            session.finalization_status
+        );
     }
 }
