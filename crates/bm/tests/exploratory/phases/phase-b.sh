@@ -44,25 +44,62 @@ EC=$?
 if [ $EC -ne 0 ]; then note "B7" "Init again" "Correctly rejects: already exists"; else pass "B7" "Init again (idempotent or re-init)"; fi
 
 # B8: Hire alice (with --reuse-app via bm_hire wrapper)
-OUT=$(bm_hire superman --name alice 2>&1)
+OUT=$(bm_hire engineer --name alice 2>&1)
 EC=$?
 if [ $EC -eq 0 ]; then pass "B8" "Hired alice (--reuse-app)"; else fail "B8" "Hire alice" "exit $EC: $(echo "$OUT" | tail -3)"; fi
 
 # B9: Hire bob (with --reuse-app via bm_hire wrapper)
-OUT=$(bm_hire superman --name bob 2>&1)
+OUT=$(bm_hire engineer --name bob 2>&1)
 EC=$?
 if [ $EC -eq 0 ]; then pass "B9" "Hired bob (--reuse-app)"; else fail "B9" "Hire bob" "exit $EC: $(echo "$OUT" | tail -3)"; fi
 
 # B10: Member dirs exist
-if [ -d "$TEAM_REPO/members/superman-alice" ] && [ -d "$TEAM_REPO/members/superman-bob" ]; then
-    pass "B10" "Member dirs exist (superman-alice, superman-bob)"
+if [ -d "$TEAM_REPO/members/engineer-alice" ] && [ -d "$TEAM_REPO/members/engineer-bob" ]; then
+    pass "B10" "Member dirs exist (engineer-alice, engineer-bob)"
 else
     fail "B10" "Member dirs" "missing"
 fi
 
 # B11: Hire duplicate without --reuse-app (should fail because member dir exists)
-OUT=$(bm hire superman --name alice -t "$TEAM" 2>&1)
+OUT=$(bm hire engineer --name alice -t "$TEAM" 2>&1)
 EC=$?
 if [ $EC -ne 0 ]; then note "B11" "Hire duplicate alice" "Correctly rejects: 'already exists'"; else fail "B11" "Hire duplicate" "Should have failed"; fi
+
+# B12: Create test project repo in org + add to team
+PROJECT_URL="https://github.com/$FULL_PROJECT_REPO.git"
+if gh repo view "$FULL_PROJECT_REPO" --json name >/dev/null 2>&1; then
+    pass "B12" "Test project repo already exists ($FULL_PROJECT_REPO)"
+else
+    OUT=$(gh repo create "$FULL_PROJECT_REPO" --public --description "Exploratory test project (auto-created)" 2>&1)
+    EC=$?
+    if [ $EC -eq 0 ]; then
+        # Initialize with a commit so git operations work
+        TMPDIR=$(mktemp -d)
+        git clone "$PROJECT_URL" "$TMPDIR/repo" 2>/dev/null
+        echo "# Exploratory Test Project" > "$TMPDIR/repo/README.md"
+        git -C "$TMPDIR/repo" add -A && git -C "$TMPDIR/repo" commit -m "chore: initial commit" 2>/dev/null
+        git -C "$TMPDIR/repo" push origin main 2>/dev/null
+        rm -rf "$TMPDIR"
+        pass "B12" "Created test project repo ($FULL_PROJECT_REPO)"
+    else
+        fail "B12" "Create project repo" "exit $EC: $OUT"
+    fi
+fi
+
+# B13: Add project to team
+OUT=$(bm projects add "$PROJECT_URL" -t "$TEAM" 2>&1)
+EC=$?
+if [ $EC -eq 0 ]; then
+    pass "B13" "Added project to team (bm projects add)"
+else
+    fail "B13" "Projects add" "exit $EC: $(echo "$OUT" | tail -3)"
+fi
+
+# B14: Verify project in team config
+if grep -q "$PROJECT_REPO" "$TEAM_REPO/botminter.yml" 2>/dev/null; then
+    pass "B14" "Project registered in botminter.yml"
+else
+    fail "B14" "Project config" "not found in botminter.yml"
+fi
 
 echo "Phase B complete."
