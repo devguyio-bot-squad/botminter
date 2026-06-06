@@ -276,7 +276,43 @@ impl ConfigAssembler {
             }
         }
 
+        // Assemble .claude/ directory from team coding-agent assets (non-fatal).
+        if let Err(e) = self.assemble_claude_dir(workspace) {
+            warnings.push(format!(
+                ".claude/ assembly failed: {e} — coding-agent assets (agents, skills, settings) may be missing"
+            ));
+        }
+
         Ok(warnings)
+    }
+
+    fn assemble_claude_dir(&self, workspace: &Path) -> Result<()> {
+        let claude_dir = workspace.join(".claude");
+        fs::create_dir_all(&claude_dir).context("Failed to create .claude/")?;
+
+        let coding_agent = self.team_repo_path.join("coding-agent");
+
+        let agents_src = coding_agent.join("agents");
+        if agents_src.is_dir() {
+            let agents_dst = claude_dir.join("agents");
+            fs::create_dir_all(&agents_dst).context("Failed to create .claude/agents/")?;
+            super::util::symlink_md_files(&agents_src, &agents_dst)?;
+        }
+
+        let skills_src = coding_agent.join("skills");
+        if skills_src.is_dir() {
+            let skills_dst = claude_dir.join("skills");
+            fs::create_dir_all(&skills_dst).context("Failed to create .claude/skills/")?;
+            super::util::symlink_subdirs(&skills_src, &skills_dst)?;
+        }
+
+        let settings_src = coding_agent.join("settings.json");
+        if settings_src.exists() {
+            fs::copy(&settings_src, claude_dir.join("settings.json"))
+                .context("Failed to copy settings.json")?;
+        }
+
+        Ok(())
     }
 }
 
@@ -944,6 +980,142 @@ mod tests {
             "workspace marker must contain session ID '{}', got:\n{}",
             session_id,
             marker
+        );
+    }
+
+    // ── AC-08: .claude/ assembly ─────────────────────────────────────────────
+
+    #[test]
+    fn assemble_creates_claude_agents_symlink_from_team_coding_agent() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        let agents_src = team.join("coding-agent/agents");
+        fs::create_dir_all(&agents_src).unwrap();
+        fs::write(agents_src.join("finalization.md"), "# Finalization").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        let agent_file = workspace.join(".claude/agents/finalization.md");
+        assert!(
+            agent_file.exists(),
+            ".claude/agents/finalization.md must exist after assemble()"
+        );
+        assert!(
+            agent_file
+                .symlink_metadata()
+                .map(|m| m.file_type().is_symlink())
+                .unwrap_or(false),
+            ".claude/agents/finalization.md must be a symlink"
+        );
+    }
+
+    #[test]
+    fn assemble_creates_claude_skills_symlinks_from_team_coding_agent() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        let skill_src = team.join("coding-agent/skills/my-skill");
+        fs::create_dir_all(&skill_src).unwrap();
+        fs::write(skill_src.join("SKILL.md"), "# My Skill").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        let skills_dir = workspace.join(".claude/skills");
+        assert!(
+            skills_dir.exists(),
+            ".claude/skills/ must exist after assemble()"
+        );
+        assert!(
+            skills_dir.join("my-skill").symlink_metadata().is_ok(),
+            ".claude/skills/my-skill must exist as a symlink after assemble()"
+        );
+    }
+
+    #[test]
+    fn assemble_copies_team_settings_json_into_claude_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        let coding_agent_dir = team.join("coding-agent");
+        fs::create_dir_all(&coding_agent_dir).unwrap();
+        fs::write(coding_agent_dir.join("settings.json"), r#"{"hooks": {}}"#).unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/settings.json").exists(),
+            ".claude/settings.json must exist after assemble()"
+        );
+    }
+
+    #[test]
+    fn assemble_completes_and_creates_claude_dir_when_no_coding_agent_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        fs::create_dir_all(&team).unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+        };
+
+        let result = assembler.assemble(&workspace, &config);
+        assert!(
+            result.is_ok(),
+            "assemble() must not error when no coding-agent dir exists"
+        );
+        assert!(
+            workspace.join(".claude").is_dir(),
+            ".claude/ must be created by assemble() even when team has no coding-agent dir"
         );
     }
 
