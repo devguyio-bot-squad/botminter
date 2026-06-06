@@ -47,6 +47,12 @@ impl WorkItemLock {
         let mut map = self.locks.lock().unwrap();
         map.retain(|_, holder| holder != session_id);
     }
+
+    /// Return the current holder of the lock on `work_item_id`, if any.
+    pub fn holder_of(&self, work_item_id: &str) -> Option<SessionId> {
+        let map = self.locks.lock().unwrap();
+        map.get(work_item_id).cloned()
+    }
 }
 
 impl Default for WorkItemLock {

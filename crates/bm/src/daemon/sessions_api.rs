@@ -31,7 +31,7 @@ impl BridgeContext {
 
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
@@ -411,6 +411,25 @@ pub struct BulkCleanupResponse {
     pub cleaned: u32,
     pub reports: Vec<CleanupReportInfo>,
     pub error: Option<String>,
+}
+
+// ── Work-item lock ───────────────────────────────────────────────────────
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AcquireLockRequest {
+    pub work_item_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct AcquireLockResponse {
+    pub acquired: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub holder: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ReleaseLockResponse {
+    pub released: bool,
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────
@@ -1126,6 +1145,40 @@ pub async fn bulk_cleanup_handler(
     }
 }
 
+/// POST /api/sessions/{id}/locks — acquire a work-item lock for this session.
+pub async fn acquire_lock_handler(
+    State(state): State<SessionsApiState>,
+    Path(session_id): Path<String>,
+    Json(body): Json<AcquireLockRequest>,
+) -> (StatusCode, Json<AcquireLockResponse>) {
+    let id = SessionId::from_raw(&session_id);
+    let inner = state.inner.lock().unwrap();
+    match inner.work_item_lock.acquire(&body.work_item_id, &id) {
+        Ok(()) => {
+            tracing::debug!(session=%session_id, work_item=%body.work_item_id, "work-item lock acquired");
+            (StatusCode::OK, Json(AcquireLockResponse { acquired: true, holder: None }))
+        }
+        Err(_) => {
+            let holder = inner.work_item_lock.holder_of(&body.work_item_id)
+                .map(|h| h.to_string());
+            tracing::debug!(session=%session_id, work_item=%body.work_item_id, holder=?holder, "work-item lock contended");
+            (StatusCode::OK, Json(AcquireLockResponse { acquired: false, holder }))
+        }
+    }
+}
+
+/// DELETE /api/sessions/{id}/locks/{work_item_id} — release a work-item lock.
+pub async fn release_lock_handler(
+    State(state): State<SessionsApiState>,
+    Path((session_id, work_item_id)): Path<(String, String)>,
+) -> (StatusCode, Json<ReleaseLockResponse>) {
+    let id = SessionId::from_raw(&session_id);
+    let inner = state.inner.lock().unwrap();
+    inner.work_item_lock.release(&work_item_id, &id);
+    tracing::debug!(session=%session_id, work_item=%work_item_id, "work-item lock released");
+    (StatusCode::OK, Json(ReleaseLockResponse { released: true }))
+}
+
 /// Build the sessions API router fragment (merged into the daemon router in green phase).
 pub fn sessions_router(state: SessionsApiState) -> Router {
     Router::new()
@@ -1149,6 +1202,11 @@ pub fn sessions_router(state: SessionsApiState) -> Router {
             post(retrigger_finalization_handler),
         )
         .route("/api/sessions/{id}/stop", post(stop_session_handler))
+        .route("/api/sessions/{id}/locks", post(acquire_lock_handler))
+        .route(
+            "/api/sessions/{id}/locks/{work_item_id}",
+            delete(release_lock_handler),
+        )
         .route("/api/sessions/{id}", get(session_detail_handler).delete(cleanup_session_handler))
         .with_state(state)
 }
@@ -2061,5 +2119,144 @@ mod tests {
             info.state_transitioned_at.is_some(),
             "SessionInfo must include state_transitioned_at from SessionRecord"
         );
+    }
+
+    // --- CT-154-04: bm-agent lock acquire/release — daemon endpoints ---
+
+    fn make_active_session(state: &SessionsApiState, session_id: &str) {
+        let mut inner = state.inner.lock().unwrap();
+        let now = chrono::Utc::now();
+        let id = SessionId::from_raw(session_id);
+        let record = SessionRecord {
+            session_id: id.clone(),
+            member_name: "test-member".to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Creating,
+            created_at: now,
+            state_transitioned_at: now,
+            agent_pid: None,
+            workspace_path: None,
+            finalization_result: None,
+        };
+        inner.registry.register(record).unwrap();
+        inner.registry.update_state(&id, SessionState::Active).unwrap();
+    }
+
+    #[tokio::test]
+    async fn lock_acquire_unclaimed_returns_acquired_true() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        make_active_session(&state, "sess-acq-1");
+
+        let app = sessions_router(state);
+        let body = serde_json::json!({ "work_item_id": "ISSUE-42" });
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/sess-acq-1/locks")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "POST /locks must return 200"
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let json: AcquireLockResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(json.acquired, "unclaimed lock must return acquired: true");
+        assert!(json.holder.is_none(), "no holder when acquired");
+    }
+
+    #[tokio::test]
+    async fn lock_acquire_contended_returns_acquired_false_with_holder() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        make_active_session(&state, "sess-holder");
+        make_active_session(&state, "sess-requester");
+
+        // Pre-acquire lock with the holder session
+        {
+            let inner = state.inner.lock().unwrap();
+            inner.work_item_lock.acquire("ISSUE-42", &SessionId::from_raw("sess-holder")).unwrap();
+        }
+
+        let app = sessions_router(state);
+        let body = serde_json::json!({ "work_item_id": "ISSUE-42" });
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/sess-requester/locks")
+            .header("content-type", "application/json")
+            .body(Body::from(serde_json::to_string(&body).unwrap()))
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "contention must return HTTP 200 (not 4xx)"
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let json: AcquireLockResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(!json.acquired, "contended lock must return acquired: false");
+        assert_eq!(
+            json.holder.as_deref(),
+            Some("sess-holder"),
+            "holder field must identify the current lock owner"
+        );
+    }
+
+    #[tokio::test]
+    async fn lock_release_held_returns_released_true() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        make_active_session(&state, "sess-rel-1");
+
+        {
+            let inner = state.inner.lock().unwrap();
+            inner.work_item_lock.acquire("ISSUE-42", &SessionId::from_raw("sess-rel-1")).unwrap();
+        }
+
+        let app = sessions_router(state);
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/api/sessions/sess-rel-1/locks/ISSUE-42")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "DELETE /locks/:work_item_id must return 200"
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let json: ReleaseLockResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(json.released, "releasing a held lock must return released: true");
+    }
+
+    #[tokio::test]
+    async fn lock_release_unheld_is_idempotent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        make_active_session(&state, "sess-rel-2");
+
+        let app = sessions_router(state);
+        let request = Request::builder()
+            .method("DELETE")
+            .uri("/api/sessions/sess-rel-2/locks/ISSUE-99")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::OK,
+            "releasing an unheld lock must return 200 (idempotent)"
+        );
+        let bytes = axum::body::to_bytes(response.into_body(), 1024 * 1024).await.unwrap();
+        let json: ReleaseLockResponse = serde_json::from_slice(&bytes).unwrap();
+        assert!(json.released, "idempotent release must return released: true");
     }
 }

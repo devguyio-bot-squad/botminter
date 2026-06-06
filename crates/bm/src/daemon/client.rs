@@ -8,10 +8,10 @@ use super::api::{
     StartMembersRequest, StartMembersResponse, StopMembersRequest, StopMembersResponse,
 };
 use super::sessions_api::{
-    BulkCleanupRequest, BulkCleanupResponse, CleanupSessionResponse, InspectSessionResponse,
-    RetriggerResponse, SessionDetailResponse, SessionHistoryResponse, SessionListResponse,
-    StartSessionRequest, StartSessionResponse, StopBulkRequest, StopBulkResponse,
-    StopSessionRequest, StopSessionResponse,
+    AcquireLockRequest, AcquireLockResponse, BulkCleanupRequest, BulkCleanupResponse,
+    CleanupSessionResponse, InspectSessionResponse, ReleaseLockResponse, RetriggerResponse,
+    SessionDetailResponse, SessionHistoryResponse, SessionListResponse, StartSessionRequest,
+    StartSessionResponse, StopBulkRequest, StopBulkResponse, StopSessionRequest, StopSessionResponse,
 };
 use super::config::{DaemonConfig, DaemonPaths};
 use crate::state;
@@ -338,6 +338,40 @@ impl DaemonClient {
 
         resp.json::<SessionHistoryResponse>()
             .context("Failed to parse session history response")
+    }
+
+    /// POST /api/sessions/{id}/locks — acquire a work-item lock.
+    pub fn acquire_lock(&self, session_id: &str, work_item_id: &str) -> Result<AcquireLockResponse> {
+        let url = format!("{}/api/sessions/{}/locks", self.base_url, session_id);
+        let req_body = AcquireLockRequest { work_item_id: work_item_id.to_string() };
+        let resp = self
+            .client
+            .post(&url)
+            .json(&req_body)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for acquire lock: {}", status, body);
+        }
+        resp.json::<AcquireLockResponse>().context("Failed to parse acquire lock response")
+    }
+
+    /// DELETE /api/sessions/{id}/locks/{work_item_id} — release a work-item lock.
+    pub fn release_lock(&self, session_id: &str, work_item_id: &str) -> Result<ReleaseLockResponse> {
+        let url = format!("{}/api/sessions/{}/locks/{}", self.base_url, session_id, work_item_id);
+        let resp = self
+            .client
+            .delete(&url)
+            .send()
+            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
+        let status = resp.status();
+        if !status.is_success() {
+            let body = resp.text().unwrap_or_default();
+            bail!("Daemon returned {} for release lock: {}", status, body);
+        }
+        resp.json::<ReleaseLockResponse>().context("Failed to parse release lock response")
     }
 
     /// GET /api/health — daemon health check.
