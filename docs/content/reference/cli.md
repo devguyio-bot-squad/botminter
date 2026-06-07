@@ -597,13 +597,12 @@ bm stop [<member>] [-t <team>] [-f|--force] [--bridge] [--all]
 Status dashboard.
 
 ```bash
-bm status [-t <team>] [-v] [--history]
+bm status [-t <team>] [-v]
 ```
 
 | Parameter | Required | Description |
 |-----------|----------|-------------|
 | `-v` | No | Show verbose workspace submodule status and Ralph runtime details |
-| `--history` | No | Show session history (terminal sessions) instead of live sessions |
 | `-t <team>` | No | Team to operate on |
 
 **Behavior:**
@@ -616,15 +615,70 @@ bm status [-t <team>] [-v] [--history]
 - Checks PID liveness via `kill(pid, 0)`
 - Auto-cleans crashed entries
 - Verbose mode shows per-member submodule status (up-to-date/behind/modified) and queries Ralph CLI commands per running member
-- `--history` mode shows terminal sessions (Completed, Failed, Killed, Retained) with session ID, member, type, start/end time, and exit status
+
+!!! note "Session history moved"
+    `--history` has been removed. Use `bm session list` to view active and terminal sessions.
 
 ### `bm session`
 
-Session management commands (inspect and cleanup).
+Session management commands: list, finalize, inspect, and cleanup.
 
 ```bash
+bm session list [--json] [-t <team>]
+bm session finalize <session-id> [-t <team>]
 bm session inspect <session-id> [-t <team>]
 bm session cleanup [<session-id>] [--all] [--member <name>] [--older-than <duration>] [-t <team>]
+```
+
+#### `bm session list`
+
+List all sessions (active and terminal) with finalization status. Replaces `bm status --history`.
+
+```bash
+bm session list [--json] [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `--json` | No | Output as JSON array |
+| `-t <team>` | No | Team to operate on |
+
+**Behavior:**
+
+- Shows all active sessions (Active, Finalizing) and terminal sessions (Completed, Failed, Killed, Retained)
+- Displays session ID, member, type, state, finalization status, start time, and end time
+- JSON output is suitable for scripting and downstream tooling
+
+**Example:**
+
+```bash
+bm session list
+bm session list --json
+```
+
+#### `bm session finalize`
+
+Trigger finalization of a retained session that did not finalize automatically.
+
+```bash
+bm session finalize <session-id> [-t <team>]
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<session-id>` | Yes | Session ID to finalize |
+| `-t <team>` | No | Team to operate on |
+
+**Behavior:**
+
+- Sends a retrigger request to the daemon for the given session
+- The session must be in **Retained** state
+- Exits non-zero with an error message if finalization cannot be triggered
+
+**Example:**
+
+```bash
+bm session finalize sess-abc123
 ```
 
 #### `bm session inspect`
@@ -1149,6 +1203,61 @@ bm-agent loop start "Implement issue #5: add caching" [--member <name>]
 - Sends `POST /api/loops/start` with the prompt
 - Prints the loop ID to stdout on success
 - Exits with code 1 if the daemon is not running or the request fails
+
+### `bm-agent lock`
+
+Work-item locking to prevent parallel sessions from processing the same issue simultaneously.
+
+#### `bm-agent lock acquire`
+
+Acquire a work-item lock for this session.
+
+```bash
+bm-agent lock acquire <work-item-id>
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<work-item-id>` | Yes | Work item ID to lock (e.g. `ISSUE-42`) |
+
+**Behavior:**
+
+- Registers an exclusive in-daemon lock on the given work item for the current session
+- Reads the session ID from the `.botminter.workspace` marker in the workspace root
+- **Exit code 0**: lock acquired successfully
+- **Exit code 1**: work item is already held by another session (holder session ID is printed to stderr)
+- Requires being inside a BotMinter workspace
+
+**Example:**
+
+```bash
+# Acquire; exit 0 means we hold the lock
+bm-agent lock acquire ISSUE-42 || exit 0
+```
+
+#### `bm-agent lock release`
+
+Release a work-item lock held by this session.
+
+```bash
+bm-agent lock release <work-item-id>
+```
+
+| Parameter | Required | Description |
+|-----------|----------|-------------|
+| `<work-item-id>` | Yes | Work item ID to release (e.g. `ISSUE-42`) |
+
+**Behavior:**
+
+- Releases the in-daemon lock on the given work item for the current session
+- No-op if the current session does not hold the lock
+- Exits non-zero if the daemon cannot be reached
+
+**Example:**
+
+```bash
+bm-agent lock release ISSUE-42
+```
 
 ## Development commands
 
