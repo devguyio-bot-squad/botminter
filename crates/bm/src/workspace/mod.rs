@@ -1,10 +1,16 @@
 mod context;
+mod hydration;
 mod repo;
 mod robot;
 mod sync;
 mod team_sync;
 mod util;
 
+pub use hydration::{
+    AssemblyConfig, ConfigAssembler, CredentialRelay, GitWorktreeSource, HydrationResult,
+    HydrationTiming, HydrationWorkspaceConfig, HydrationWorkspaceOps, RepoSource,
+    WorkspaceHydrator,
+};
 pub use repo::{
     assemble_workspace_repo_context, create_workspace_repo, GhRemoteOps, RemoteRepoOps,
     RemoteRepoState, WorkspaceRepoParams,
@@ -17,3 +23,4 @@ pub use util::{
     workspace_git_branch, workspace_remote_url, workspace_submodule_status, SubmoduleState,
     SubmoduleStatus,
 };
+pub(crate) use util::{push_with_rebase_retry, DEFAULT_MAX_RETRIES};

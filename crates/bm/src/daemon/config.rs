@@ -76,6 +76,19 @@ impl DaemonPaths {
         Ok(logs_dir.join(format!("daemon-{}.log", self.team_name)))
     }
 
+    /// Sessions registry file path: `~/.botminter/sessions-<team>.json`
+    pub fn sessions_registry(&self) -> PathBuf {
+        self.config_dir
+            .join(format!("sessions-{}.json", self.team_name))
+    }
+
+    /// Base directory for ephemeral session workspaces: `~/.botminter/sessions/<team>/`
+    ///
+    /// Each session workspace is created at `sessions_base/<member>/<session_id>/`.
+    pub fn sessions_base(&self) -> PathBuf {
+        self.config_dir.join("sessions").join(&self.team_name)
+    }
+
     /// Per-member log file path: `~/.botminter/logs/member-<team>-<member>.log`
     pub fn member_log(&self, member_name: &str) -> Result<PathBuf> {
         let logs_dir = self.config_dir.join("logs");

@@ -460,7 +460,7 @@ mod tests {
     #[test]
     fn stop_reason_serialization() {
         let reason = StopReason::EndTurn;
-        let json = serde_json::to_value(&reason).unwrap();
+        let json = serde_json::to_value(reason).unwrap();
         assert_eq!(json, "end_turn");
 
         let deserialized: StopReason = serde_json::from_value(json).unwrap();

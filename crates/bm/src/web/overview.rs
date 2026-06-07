@@ -338,7 +338,7 @@ mod tests {
         let resp = app
             .oneshot(
                 Request::builder()
-                    .uri(&format!("/api/teams/{team_name}/overview"))
+                    .uri(format!("/api/teams/{team_name}/overview"))
                     .body(Body::empty())
                     .unwrap(),
             )

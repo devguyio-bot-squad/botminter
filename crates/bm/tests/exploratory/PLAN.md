@@ -344,3 +344,58 @@ the brain acknowledges the issue/board in its response.
 | H50 | Brain survived task execution | Check brain PID still alive | Process stable after task request |
 | H51 | Task journey cleanup | `bm stop`, close GitHub issue | Clean state |
 | H52 | Final cleanup | Stop all, rm state | All artifacts removed |
+
+## Phase D-Session: Ephemeral Session Lifecycle (Epic #85, Story #154)
+
+End-to-end verification of all 25 acceptance criteria for the ephemeral workspace model introduced in Epic #85. Sessions are started and stopped on `bm-test-user@localhost` via SSH. Each group targets a specific set of ACs.
+
+**Prerequisites:** Phase B must run first (team init + hire). Bridge is optional for session lifecycle (used only for webhook delivery in finalization path).
+
+### D-Session Groups
+
+| # | Scenario | ACs Covered | Method | Expected |
+|---|----------|-------------|--------|----------|
+| D01 | bm stop without daemon | AC-12 | `bm stop` before daemon starts | Non-zero exit or "daemon not running" message |
+| D02 | bm status without daemon | AC-12 | `bm status` before daemon starts | "daemon not running" reported |
+| D03 | bm session inspect without daemon | AC-12 | `bm session inspect nonexistent` before daemon | Non-zero exit |
+| D04 | Start session without prior sync | AC-22 | `bm start alice` | Session started (sync triggered automatically) |
+| D05 | Session creation latency | AC-06 | Measure elapsed time from start invocation | Under 120 seconds |
+| D06 | Workspace marker has session_id + member | AC-01 | Read `.botminter.workspace` | JSON with session_id and member fields |
+| D07 | Project provisioned in workspace | AC-01 | `ls workspace/projects/<project>` | Project directory present |
+| D08 | Config files present in workspace | AC-01 | `ls workspace/` | PROMPT.md, CLAUDE.md, ralph.yml all present |
+| D09 | .claude/ fully assembled: agents/, skills/, settings.json | AC-08 | `ls workspace/.claude/` | All three components present (directory + symlinks) |
+| D10 | GH credentials valid for session | AC-09 | `GH_CONFIG_DIR=<session-dir> gh api user` | API call succeeds |
+| D11 | bm status --json has required fields | AC-10 | Parse JSON output | session_id, member, session_type, state, start_time present |
+| D12 | Two concurrent sessions active | AC-04 | `bm start bob` while alice active | Both sessions in Active state |
+| D13 | Workspaces isolated between sessions | AC-04 | Write file in alice workspace, check bob | File not visible in bob workspace |
+| D14 | Stop bob selectively, alice stays active | AC-15 | `bm stop bob` then check status | Alice still Active after bob stops |
+| D15 | Stop returns immediately (async deactivation) | AC-19 | Measure stop latency | Under 10 seconds |
+| D16 | Force-stopped session in bm session list | AC-15 | `bm stop --force` then `bm session list` | Session appears with terminal state |
+| D17 | bm session list shows sessions with IDs | AC-17 | Check output has hex IDs | 8-char hex IDs with ellipsis visible |
+| D18 | bm session list shows state and finalization columns | AC-17 | Check column headers | State and Fin. Status columns present |
+| D19 | Session inspect shows all required fields | AC-18 | `bm session inspect <id>` | Session ID, Member, Type, State, Workspace all shown |
+| D20 | Individual session cleanup | AC-18 | `bm session cleanup <id>` | Session removed from registry |
+| D21 | Bulk session cleanup | AC-18 | `bm session cleanup --all` | All sessions cleaned |
+| D22 | Graceful stop triggers finalization | AC-02 | `bm stop alice` + poll 120s for finalization_status=completed | Session reaches Completed, branch pushed to remote |
+| D23 | Finalization results visible in inspect | AC-05 | `bm session inspect` after finalization | Finalization or Git State section shown |
+| D24 | bm session finalize re-triggers for Retained session | AC-23 | Grace+force-stop sequence → `bm session finalize` | Finalize command accepted (exit 0) |
+| D25 | Provision failure leaves no partial session | AC-07 | Corrupt botminter.yml, attempt start | Non-zero exit, no dangling Active session |
+| D26 | New session starts after crash + force-stop | AC-03 | Kill ralph process, force-stop, start new | Fresh session created cleanly |
+| D27 | Crashed session workspace retained | AC-26 | Check workspace dir after ralph kill | Workspace directory survives crash |
+| D28 | Daemon restart: stale sessions in bm session list | AC-25 | Kill daemon + restart, check session list | Previous session entries visible |
+| D29 | Session state observed after start | AC-11 | `bm status --json` immediately after start | State is Active or terminal (never unknown) |
+| D30 | Session in bm session list after force-stop | AC-11 | `bm session list` after stop | Session entry visible with terminal state |
+| D31 | Terminal state observed via inspect | AC-11 | `bm session inspect` after stop | Completed/Failed/Killed/Retained state shown |
+| D32 | Session workspace retained after force-stop | AC-20 | Check workspace dir after stop | Directory still exists (retention policy) |
+| D33 | Stopped session visible in bm session list | AC-20 | `bm session list` after stop | Session in history list |
+| D34 | Manual cleanup removes workspace | AC-21 | `bm session cleanup <id>` | Workspace dir removed, registry entry cleared |
+| D35 | Work item lock lifecycle: acquire → contend → release → re-acquire | AC-13 | bm-agent lock acquire/release from two workspaces | A acquires (exit 0), B contends (exit 1), A releases, B acquires (exit 0) |
+| D36 | Independent branches in isolated workspaces | AC-14a | Create separate branches in alice + bob workspaces | Different branch names, no conflicts |
+| D37 | Session inspect captures git/workspace state | AC-14b | `bm session inspect` after push | Finalization or Git State section shown |
+| D38 | bm session list shows finalization_status for terminal sessions | CT-154-05 | `bm session list --json` after force-stop | finalization_status field present per row |
+| D39 | bm session list --json has finalization_status in all rows | CT-154-05 | Validate JSON schema | All JSON rows have finalization_status key |
+| D40 | bm status --history exits non-zero with migration hint | CT-154-05 | `bm status --history` | Exit non-zero, hint to use bm session list |
+| D41 | .claude/ assembly with team-level coding-agent/ — no crash | CT-154-02 | Session workspace created successfully | .claude/ dir present or graceful note |
+| D42 | Lock parallel contention: exactly one session acquires | CT-154-04 | Both sessions acquire same lock concurrently | Sum of exit codes = 1, one gets 0 and one gets 1 |
+| D43 | Lock release cycle: A-acquire → A-release → B-acquire | CT-154-04 | Sequential lock operations | All three steps succeed (exit 0) |
+| D44 | Lock released when session stops | CT-154-04 | A acquires, A stops, B acquires | B can acquire after A's session is gone |

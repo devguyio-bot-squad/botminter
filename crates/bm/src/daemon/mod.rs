@@ -6,6 +6,7 @@ mod lifecycle;
 mod log;
 mod process;
 mod run;
+pub mod sessions_api;
 
 pub use self::api::{
     HealthResponse, MemberStatusInfo, MembersStatusResponse, StartLoopRequest,

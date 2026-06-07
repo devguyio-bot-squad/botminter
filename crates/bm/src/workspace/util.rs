@@ -352,6 +352,64 @@ pub(super) fn git_cmd_output(dir: &Path, args: &[&str]) -> Result<String> {
     Ok(String::from_utf8_lossy(&output.stdout).to_string())
 }
 
+pub(crate) const DEFAULT_MAX_RETRIES: u32 = 3;
+
+/// Pushes the current branch with automatic fetch+rebase retry on non-fast-forward rejection.
+pub(crate) fn push_with_rebase_retry(dir: &Path, branch: &str, max_retries: u32) -> Result<()> {
+    for attempt in 0..=max_retries {
+        let output = Command::new("git")
+            .args(["push", "origin", branch])
+            .current_dir(dir)
+            .output()
+            .with_context(|| format!("Failed to run git push origin {}", branch))?;
+
+        if output.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let is_rejection =
+            stderr.contains("non-fast-forward") || stderr.contains("[rejected]");
+
+        if !is_rejection {
+            bail!("git push origin {} failed: {}", branch, stderr.trim());
+        }
+
+        if attempt == max_retries {
+            bail!(
+                "Push failed after {} rebase+retry attempts on branch {}",
+                max_retries,
+                branch
+            );
+        }
+
+        git_cmd(dir, &["fetch", "origin"])
+            .context("fetch failed during rebase+retry")?;
+
+        let rebase_out = Command::new("git")
+            .args(["rebase", &format!("origin/{}", branch)])
+            .current_dir(dir)
+            .output()
+            .with_context(|| format!("Failed to run git rebase origin/{}", branch))?;
+
+        if !rebase_out.status.success() {
+            Command::new("git")
+                .args(["rebase", "--abort"])
+                .current_dir(dir)
+                .output()
+                .ok();
+            let rebase_stderr = String::from_utf8_lossy(&rebase_out.stderr);
+            bail!(
+                "git rebase origin/{} failed: {}",
+                branch,
+                rebase_stderr.trim()
+            );
+        }
+    }
+
+    unreachable!()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -615,5 +673,169 @@ mod tests {
         assert_eq!(SubmoduleState::Behind.label(), "behind");
         assert_eq!(SubmoduleState::Modified.label(), "modified");
         assert_eq!(SubmoduleState::Uninitialized.label(), "uninitialized");
+    }
+
+    // ── push_with_rebase_retry ───────────────────────────────────────
+
+    fn setup_push_fixture(tmp: &Path) -> (PathBuf, PathBuf) {
+        let bare = tmp.join("origin.git");
+        let ws = tmp.join("workspace");
+
+        Command::new("git")
+            .args(["init", "--bare", "-b", "main", bare.to_str().unwrap()])
+            .output()
+            .unwrap();
+
+        Command::new("git")
+            .args(["clone", bare.to_str().unwrap(), ws.to_str().unwrap()])
+            .output()
+            .unwrap();
+
+        git_cmd(&ws, &["config", "user.email", "test@test.com"]).unwrap();
+        git_cmd(&ws, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(&ws, &["config", "commit.gpgsign", "false"]).unwrap();
+
+        fs::write(ws.join("README.md"), "initial").unwrap();
+        git_cmd(&ws, &["add", "."]).unwrap();
+        git_cmd(&ws, &["commit", "-m", "initial"]).unwrap();
+        git_cmd(&ws, &["push", "-u", "origin", "main"]).unwrap();
+
+        (bare, ws)
+    }
+
+    fn advance_remote(tmp: &Path, bare: &Path, filename: &str, content: &str) {
+        let advancer = tmp.join("advancer");
+        Command::new("git")
+            .args(["clone", bare.to_str().unwrap(), advancer.to_str().unwrap()])
+            .output()
+            .unwrap();
+        git_cmd(&advancer, &["config", "user.email", "adv@test.com"]).unwrap();
+        git_cmd(&advancer, &["config", "user.name", "Advancer"]).unwrap();
+        git_cmd(&advancer, &["config", "commit.gpgsign", "false"]).unwrap();
+
+        fs::write(advancer.join(filename), content).unwrap();
+        git_cmd(&advancer, &["add", "."]).unwrap();
+        git_cmd(&advancer, &["commit", "-m", "advance remote"]).unwrap();
+        git_cmd(&advancer, &["push", "origin", "main"]).unwrap();
+    }
+
+    fn install_always_rejecting_hook(bare: &Path) {
+        let hooks_dir = bare.join("hooks");
+        fs::create_dir_all(&hooks_dir).unwrap();
+        let hook = hooks_dir.join("pre-receive");
+        fs::write(
+            &hook,
+            r#"#!/bin/bash
+while read old new ref; do true; done
+PARENT=$(git rev-parse refs/heads/main)
+TREE=$(git rev-parse "$PARENT^{tree}")
+NEW=$(echo "advance" | GIT_COMMITTER_NAME=hook GIT_COMMITTER_EMAIL=hook@test GIT_AUTHOR_NAME=hook GIT_AUTHOR_EMAIL=hook@test git commit-tree "$TREE" -p "$PARENT")
+git update-ref refs/heads/main "$NEW"
+echo "! [rejected] main -> main (non-fast-forward)" >&2
+exit 1
+"#,
+        )
+        .unwrap();
+        Command::new("chmod")
+            .args(["+x", hook.to_str().unwrap()])
+            .output()
+            .unwrap();
+    }
+
+    #[test]
+    fn push_rebase_retry_succeeds_on_first_try() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_bare, ws) = setup_push_fixture(tmp.path());
+
+        fs::write(ws.join("new.txt"), "new content").unwrap();
+        git_cmd(&ws, &["add", "."]).unwrap();
+        git_cmd(&ws, &["commit", "-m", "new file"]).unwrap();
+
+        let result = push_with_rebase_retry(&ws, "main", 3);
+        assert!(result.is_ok(), "Push should succeed: {:?}", result.err());
+    }
+
+    #[test]
+    fn push_rebase_retry_recovers_from_non_fast_forward() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (bare, ws) = setup_push_fixture(tmp.path());
+
+        advance_remote(tmp.path(), &bare, "remote.txt", "remote content");
+
+        fs::write(ws.join("local.txt"), "local content").unwrap();
+        git_cmd(&ws, &["add", "."]).unwrap();
+        git_cmd(&ws, &["commit", "-m", "local change"]).unwrap();
+
+        let result = push_with_rebase_retry(&ws, "main", 3);
+        assert!(
+            result.is_ok(),
+            "Push should succeed after rebase+retry: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn push_rebase_retry_error_after_max_retries() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (bare, ws) = setup_push_fixture(tmp.path());
+
+        advance_remote(tmp.path(), &bare, "remote.txt", "remote content");
+        install_always_rejecting_hook(&bare);
+
+        fs::write(ws.join("local.txt"), "local content").unwrap();
+        git_cmd(&ws, &["add", "."]).unwrap();
+        git_cmd(&ws, &["commit", "-m", "local change"]).unwrap();
+
+        let result = push_with_rebase_retry(&ws, "main", 2);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            err.contains("2") && err.contains("rebase+retry"),
+            "Error should mention retry count: {err}"
+        );
+    }
+
+    #[test]
+    fn push_rebase_retry_non_retryable_error_returns_immediately() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        fs::create_dir_all(&ws).unwrap();
+        git_cmd(&ws, &["init", "-b", "main"]).unwrap();
+        git_cmd(&ws, &["config", "user.email", "test@test.com"]).unwrap();
+        git_cmd(&ws, &["config", "user.name", "Test"]).unwrap();
+        git_cmd(&ws, &["config", "commit.gpgsign", "false"]).unwrap();
+
+        fs::write(ws.join("README.md"), "content").unwrap();
+        git_cmd(&ws, &["add", "."]).unwrap();
+        git_cmd(&ws, &["commit", "-m", "initial"]).unwrap();
+        git_cmd(&ws, &["remote", "add", "origin", "/nonexistent/path.git"]).unwrap();
+
+        let result = push_with_rebase_retry(&ws, "main", 3);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            !err.contains("rebase+retry"),
+            "Non-retryable error should not mention rebase+retry: {err}"
+        );
+    }
+
+    #[test]
+    fn push_rebase_retry_conflict_returns_error_without_retry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (bare, ws) = setup_push_fixture(tmp.path());
+
+        advance_remote(tmp.path(), &bare, "README.md", "remote version");
+
+        fs::write(ws.join("README.md"), "local version").unwrap();
+        git_cmd(&ws, &["add", "."]).unwrap();
+        git_cmd(&ws, &["commit", "-m", "conflicting change"]).unwrap();
+
+        let result = push_with_rebase_retry(&ws, "main", 3);
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(
+            !err.contains("rebase+retry"),
+            "Rebase conflict should return immediately, not exhaust retries: {err}"
+        );
     }
 }

@@ -35,7 +35,9 @@ TEAM := "exploratory-test"
 ORG := "devguyio-bot-squad"
 REPO := "exploratory-test-team"
 FULL_REPO := ORG + "/" + REPO
-PROFILE := "agentic-sdlc-minimal"
+PROJECT_REPO := "exploratory-test-project"
+FULL_PROJECT_REPO := ORG + "/" + PROJECT_REPO
+PROFILE := "agentic-sdlc-planning"
 BOARD := "Exploratory Test Board"
 TUWUNEL_PORT := env("TUWUNEL_PORT", "8008")
 
@@ -100,12 +102,13 @@ clean:
 
         # ── GitHub ──
         gh repo delete $FULL_REPO --yes 2>/dev/null || true
+        gh repo delete $FULL_PROJECT_REPO --yes 2>/dev/null || true
         PROJ_NUM=\$(gh project list --owner $ORG --format json 2>/dev/null | jq -r \".projects[] | select(.title==\\\"$BOARD\\\") | .number\" 2>/dev/null)
         [ -n \"\$PROJ_NUM\" ] && gh project delete \"\$PROJ_NUM\" --owner $ORG --format json 2>/dev/null || true
 
         # ── Keyring ──
         if type load_isolated_keyring &>/dev/null && load_isolated_keyring; then
-            for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing; do
+            for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing engineer-alice engineer-bob; do
                 secret_tool clear service botminter.$TEAM.tuwunel username \$u 2>/dev/null || true
             done
             stop_isolated_keyring 2>/dev/null || true
@@ -178,6 +181,8 @@ deploy: build clean
         'export ORG="{{ORG}}"' \
         'export REPO="{{REPO}}"' \
         'export FULL_REPO="{{FULL_REPO}}"' \
+        'export PROJECT_REPO="{{PROJECT_REPO}}"' \
+        'export FULL_PROJECT_REPO="{{FULL_PROJECT_REPO}}"' \
         'export PROFILE="{{PROFILE}}"' \
         'export BOARD="{{BOARD}}"' \
         'export TEAM_DIR="{{REMOTE_TEAM_DIR}}"' \
@@ -271,6 +276,8 @@ phase-b: ensure-keyring (run-phase "phase-b.sh")
 phase-c: ensure-keyring (run-phase "phase-c.sh")
 
 phase-d: ensure-keyring (run-phase "phase-d.sh")
+
+phase-d-session: ensure-keyring (run-phase "phase-d-session.sh" "900")
 
 phase-e: ensure-keyring (run-phase "phase-e.sh")
 
