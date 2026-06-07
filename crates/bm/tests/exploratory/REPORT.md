@@ -1,125 +1,192 @@
-# Exploratory Test Report: Ephemeral Workspaces (Epic #85)
+# Exploratory Test Report: Sync & Bridge Idempotency
 
-**Date:** 2026-06-05
-**Build:** bm 0.2.0-pre-alpha (experiment/story-87-ct03)
+**Date:** 2026-06-07
+**Build:** bm 0.2.0-pre-alpha (1c97853-dirty) (local debug)
 **Environment:** Linux x86_64, podman rootless, gh (devguyio)
 **Test User:** bm-test-user@localhost (isolated)
 
+## Results
+
+### Phase B: Team Init + Hire
+
+| # | Test | Result |
+|---|------|--------|
+| B1 | bm init | **FAIL** — exit 1: Error: Directory '/home/bm-test-user/.botminter/workspaces/exploratory-test' already exists. Choose a different team name. |
+| B2 | GitHub repo | **FAIL** — not found |
+| B3 | Project board | **FAIL** — not found |
+| B4 | Labels | **FAIL** — only 0 |
+| B5 | Team registered in config.yml | **PASS** |
+| B6 | Team repo cloned | **PASS** |
+| B7 | Init again | **NOTE** — Correctly rejects: already exists |
+| B8 | Hired alice (--reuse-app) | **PASS** |
+| B9 | Hired bob (--reuse-app) | **PASS** |
+| B10 | Member dirs exist (engineer-alice, engineer-bob) | **PASS** |
+| B11 | Hire duplicate alice | **NOTE** — Correctly rejects: 'already exists' |
+| B12 | Create project repo | **FAIL** — exit 1: GraphQL: API rate limit already exceeded for user ID 1930204. |
+| B13 | Projects add | **FAIL** — exit 1: Error: Project 'exploratory-test-project' already exists in this team. |
+| B14 | Project registered in botminter.yml | **PASS** |
+
+### Phase C: Bridge Lifecycle (Tuwunel)
+
+| # | Test | Result |
+|---|------|--------|
+| C1 | First sync --bridge | **FAIL** — exit 1: Error: bm teams sync has been removed. Sessions automatically use the latest committed state — no manual synchronization needed. Run `bm minty` to migrate existing workspaces, or `bm start` to create a new session. |
+| C2 | Container | **FAIL** — status= |
+| C3 | Matrix health | **FAIL** — HTTP 000000 |
+| C4 | Bridge state | **FAIL** — status=running ids=0 rooms=0 |
+| C5 | Passwords | **FAIL** — count=1 |
+| C6 | Keyring | **FAIL** — alice='empty' bob='empty' |
+| C7 | Admin login | **FAIL** — no token |
+| C8 | Room | **FAIL** — not found |
+| C9 | Sync --bridge again | **FAIL** — exit 1 |
+| C10 | Container | **FAIL** — status= |
+| C11 | State | **FAIL** — status=running ids=0 |
+| C12 | Alice credential unchanged after re-sync | **PASS** |
+| C13 | Stopped container | **PASS** |
+| C14 | Recovery | **FAIL** — exit 1 |
+| C15 | Container | **FAIL** — status= |
+| C16 | Matrix health | **FAIL** — HTTP 000000 |
+| C17 | Force-removed container | **PASS** |
+| C18 | Recovery | **FAIL** — exit 1 |
+| C19 | Container | **FAIL** — status= |
+| C20 | Admin login | **FAIL** — no token after re-create |
+| C21 | Removed container + volume | **PASS** |
+| C22 | Recovery | **FAIL** — exit 1: Error: bm teams sync has been removed. Sessions automatically use the latest committed state — no manual synchronization needed. Run `bm minty` to migrate existing workspaces, or `bm start` to create a new session. |
+| C23 | Container | **FAIL** — status= |
+| C24 | Matrix health | **FAIL** — HTTP 000000 |
+| C25 | Admin password regenerated | **PASS** |
+| C26 | Keyring | **FAIL** — no credential after volume re-create |
+| C27 | Pre-existing registration | **NOTE** — no session returned: {} |
+| C28 | Pre-existing sync | **FAIL** — exit 1 |
+| C29 | Container | **FAIL** — status= |
+| C30 | Identities | **FAIL** — count=0 |
+| C31 | Idempotent sync | **FAIL** — exit 1 |
+| C32 | Final bridge state: running | **PASS** |
+| C33 | Pre-existing keyring | **FAIL** — no credential stored |
+
+### Phase D: Workspace Sync Idempotency
+
+| # | Test | Result |
+|---|------|--------|
+| D1 | Alice workspace | **FAIL** — missing files |
+| D2 | Bob workspace | **FAIL** — missing files |
+| D3 | Team submodule | **FAIL** — team/members/ not found |
+| D4 | Agent dir | **FAIL** — .claude/agents/ not found |
+| D5 | Git repo clean | **PASS** |
+| D6 | Git log | **NOTE** —  |
+| D7 | Sync | **FAIL** — exit 1 |
+| D8 | Context files | **FAIL** — missing after re-sync |
+| D9 | Third sync | **FAIL** — exit 1 |
+| D10 | Removed .botminter.workspace marker | **PASS** |
+| D11 | Recovery | **FAIL** — exit 1: Error: bm teams sync has been removed. Sessions automatically use the latest committed state — no manual synchronization needed. Run `bm minty` to migrate existing workspaces, or `bm start` to create a new session. |
+| D12 | Recovery | **FAIL** — missing files |
+| D13 | Team submodule | **FAIL** — missing |
+| D14 | Deleted CLAUDE.md from bob workspace | **PASS** |
+| D15 | Restore CLAUDE.md | **FAIL** — file still missing or sync failed |
+| D16 | Deleted ralph.yml from bob workspace | **PASS** |
+| D17 | Restore ralph.yml | **FAIL** — file still missing or sync failed |
+| D18 | Created junk dir at future carol workspace path | **PASS** |
+| D19 | Hired carol | **PASS** |
+| D20 | Workspace creation | **FAIL** — exit 1 |
+| D21 | Settings.json | **FAIL** — .claude/settings.json not found in workspace |
+| D22 | Inbox write | **FAIL** — exit 1: Error: Not in a BotMinter workspace (no .botminter.workspace found) |
+| D23 | Hook exits 0 in workspace (no pending messages) | **PASS** |
+| D23b | Hook exits 0 outside workspace | **PASS** |
+| D24 | Inbox after sync | **FAIL** — message lost: Error: Not in a BotMinter workspace (no .botminter.workspace found) |
+
+### Phase E: Full Sync (--bridge flag)
+
+| # | Test | Result |
+|---|------|--------|
+| E1 | Full sync | **FAIL** — exit 1: Error: bm teams sync has been removed. Sessions automatically use the latest committed state — no manual synchronization needed. Run `bm minty` to migrate existing workspaces, or `bm start` to create a new session. |
+| E2 | Idempotent sync | **FAIL** — exit 1 |
+| E3 | Dave workspace | **FAIL** — exit 1 or missing marker |
+| E4 | Workspaces | **FAIL** — only 1 found |
+| E5 | Identities | **FAIL** — count=0 |
+
+### Phase F: Error Handling
+
+| # | Test | Result |
+|---|------|--------|
+| F1 | Without just | **NOTE** — Output: Error: bm teams sync has been removed. Sessions automatically use the latest committed state — no manual synchronization needed. Run `bm minty` to migrate existing workspaces, or `bm start` to create a new session. |
+| F2 | bm status -v works | **PASS** |
+| F3 | members list | **FAIL** — exit 0, count=0 |
+| F4 | bm teams show works | **PASS** |
+
+### Phase H: Brain Lifecycle (Chat-First Member)
+
+| # | Test | Result |
+|---|------|--------|
+| H1 | brain-prompt.md | **FAIL** — missing or empty in /home/bm-test-user/.botminter/workspaces/exploratory-test/superman-alice |
+| H2 | No unrendered template variables | **PASS** |
+| H3 | Member name | **FAIL** — alice not found in brain-prompt.md |
+| H4 | Team name | **FAIL** — exploratory-test not found in brain-prompt.md |
+| H5 | GitHub org | **FAIL** — devguyio-bot-squad not found in brain-prompt.md |
+| H6 | GitHub repo | **FAIL** — exploratory-test-team not found in brain-prompt.md |
+| H7 | Missing sections | **FAIL** —  Identity Board Awareness Work Loop Direct Chat with Operator Dual-Channel |
+| H8 | Bob brain-prompt.md | **FAIL** — missing or empty in /home/bm-test-user/.botminter/workspaces/exploratory-test/superman-bob |
+| H9 | Alice and bob brain-prompt.md differ (per-member rendering) | **PASS** |
+| H10 | Bob content | **FAIL** — expected 'bob' only, got mixed or wrong names |
+| H11 | Brain mode detection | **NOTE** — output:  Started 2 member(s), skipped 0 (already running), 0 error(s).  |
+| H12 | State file | **NOTE** — brain_mode field not found (start may have failed before writing state) |
+| H13 | Without brain-prompt.md: standard launch path (no state written) | **PASS** |
+| H14 | Restored brain-prompt.md and cleaned up state | **PASS** |
+| H15 | Re-sync restore | **FAIL** — brain-prompt.md not restored from template |
+| H16 | Re-sync recreate | **FAIL** — brain-prompt.md not recreated |
+| H17 | brain-prompt.md content idempotent across syncs (hash match) | **PASS** |
+| H18 | Verbose output | **NOTE** — no brain-related output in sync -v |
+| H19 | Tuwunel bridge is running (Matrix server healthy) | **PASS** |
+| H20 | ACP binary | **FAIL** — claude-code-acp-rs not found in PATH |
+| H21 | Admin Matrix login successful | **PASS** |
+| H22 | Alice login | **FAIL** — no access token returned |
+| H23 | Cleaned DM room state for discovery test | **PASS** |
+| H24 | Cleaned previous state for lifecycle test | **PASS** |
+| H25 | bm start executed (brain mode detected) | **PASS** |
+| H26 | Brain process | **NOTE** — not alive (ACP may have failed to authenticate) |
+| H27 | Brain status | **NOTE** — output: │ 67ce70eb   ┆ engineer-alice ┆ Loop ┆ Killed    ┆ 2026-06-07 16:08:36 ┆ 2h 14m  ┆ 0          │ │ abc83749   ┆ engineer-alice ┆ Loop ┆ Killed    ┆ 2026-06-07 16:08:47 ┆ 2h 13m  ┆ 0          │ ╰────────────┴────────────────┴──────┴───────────┴─────────────────────┴─────────┴────────────╯  |
+| H28 | Operator DM created and greeting sent (!En1mSqpaZstV8NMMA4:localhost, $o_wGinVk6NSL-IhrL5HXGjMk41J9wuZL3egZ84YqKho) | **PASS** |
+| H28b | DM discovery | **FAIL** — dm-room.json not created within 60s (stderr: ) |
+| H29 | Work request sent to room while brain running ($gcilDrA4V8_sIt2ikmyl9_zoAHwbPl-dyUu9J_7hkjQ) | **PASS** |
+| H30 | Follow-up question sent (multi-turn simulation) | **PASS** |
+| H31 | Malformed message delivered to room (brain not alive to test survival) | **PASS** |
+| H32 | Brain response | **FAIL** — brain process not alive, no response |
+| H29b | Work request response | **FAIL** — no brain response to evaluate |
+| H33 | Message visibility | **FAIL** — greeting=0 task=0 total=0 |
+| H34 | DM privacy | **NOTE** — could not login as bob to test |
+| H35 | Brain stability | **NOTE** — skipped (brain not alive) |
+| H36 | bm stop executed cleanly (exit 0) | **PASS** |
+| H37 | All brain processes terminated after stop | **PASS** |
+| H38 | Brain restarted successfully (recovery scenario) | **PASS** |
+| H39 | Message delivered after brain restart (recovery proof, $uOoY2bO8GwMHmOmpWC3qT3SmQCv7y_xwKx4St62xIHI) | **PASS** |
+| H40 | Recovery response | **FAIL** — brain not alive after restart, no response (stderr: no log) |
+| H41 | Recovery start-stop cycle clean (brain lifecycle idempotent) | **PASS** |
+| H42 | Status inquiry sent after brain lifecycle | **PASS** |
+| H43 | All messages persist in DM room history (6 total) | **PASS** |
+| H44 | DM persistence | **FAIL** — dm-room.json not found in workspace |
+| H46 | GitHub issue creation | **NOTE** — failed to create issue (gh auth may lack permissions) |
+| H47 | Task journey start | **NOTE** — brain not alive (ACP auth may have failed, stderr: no log) |
+| H48 | Board check request sent to brain ($jUj9mdkQTtB_cZl2OyVX6jaO0lQy9X0OlcLM8Hk8GEQ) | **PASS** |
+| H49 | Task response | **FAIL** — brain not alive, no response (stderr: no log) |
+| H50 | Brain stability | **NOTE** — skipped (brain not alive at start) |
+| H51 | Task execution journey cleaned up | **PASS** |
+| H52 | Cleaned up all brain lifecycle test artifacts | **PASS** |
+
+### Phase G: Cleanup
+
+| # | Test | Result |
+|---|------|--------|
+| G1 | Removed bridge container | **PASS** |
+| G2 | Removed bridge volume | **PASS** |
+| G3 | Deleted GitHub repo | **PASS** |
+| G4 | Deleted GitHub project | **PASS** |
+| G5 | Removed local state | **PASS** |
+| G6 | Cleared keyring entries | **PASS** |
+| G8 | Verified clean: no containers, no repo, no local state | **PASS** |
+
+---
+
 ## Summary
 
-| Metric | Count |
-|--------|-------|
-| Total tests | 36 |
-| **PASS** | 31 |
-| **FAIL** | 0 |
-| **NOTE** | 5 |
-
-All 25 acceptance criteria covered. 5 NOTEs are genuine daemon bugs or feature gaps (see below).
-
-## Phase B: Team Init + Hire + Project Setup
-
-| # | Test | AC | Result |
-|---|------|----|--------|
-| B1 | bm init (non-interactive, agentic-sdlc-planning, tuwunel) | — | **PASS** (idempotent: team already exists) |
-| B2 | GitHub repo exists | — | **PASS** |
-| B3 | GitHub project board exists | — | **PASS** |
-| B4 | Labels created (13 labels) | — | **PASS** |
-| B5 | Team registered in config.yml | — | **PASS** |
-| B6 | Team repo cloned | — | **PASS** |
-| B7 | Init again (idempotency) | — | **NOTE** — correctly rejects: already exists |
-| B8 | Hired alice (--reuse-app) | — | **PASS** |
-| B9 | Hired bob (--reuse-app) | — | **PASS** |
-| B10 | Member dirs exist (engineer-alice, engineer-bob) | — | **PASS** |
-| B11 | Hire duplicate alice | — | **NOTE** — correctly rejects: already exists |
-| B12 | Created test project repo (devguyio-bot-squad/exploratory-test-project) | — | **PASS** |
-| B13 | Added project to team (bm projects add) | — | **PASS** |
-| B14 | Project registered in botminter.yml | — | **PASS** |
-
-## Phase D-Session: Ephemeral Session Lifecycle (all 25 ACs)
-
-| # | Test | AC | Result |
-|---|------|----|--------|
-| D01 | bm stop fails gracefully without daemon | AC-12 | **PASS** |
-| D02 | bm status reports daemon not running | AC-12 | **PASS** |
-| D03 | bm session inspect fails gracefully without daemon | AC-12 | **PASS** |
-| D04 | Session started without prior bm teams sync | AC-22 | **PASS** |
-| D05 | Session creation latency: 485ms | AC-06 | **PASS** |
-| D06 | Workspace marker has session_id + member fields | AC-01 | **PASS** |
-| D07 | Project 'exploratory-test-project' provisioned in workspace | AC-01 | **PASS** |
-| D08 | Config files (PROMPT.md, CLAUDE.md, ralph.yml) present | AC-01 | **PASS** |
-| D09 | Skill dirs (.claude/) | AC-08 | **NOTE** |
-| D10 | GH credentials (hosts.yml) | AC-09 | **NOTE** |
-| D11 | bm status --json has all fields: member, state, session_id | AC-10 | **PASS** |
-| D12 | Two concurrent sessions active: alice + bob | AC-04 | **PASS** |
-| D13 | Workspaces isolated: file in alice not visible in bob | AC-04 | **PASS** |
-| D14 | Stopped bob selectively, alice still Active | AC-15 | **PASS** |
-| D15 | Stop returned in 0s (async deactivation) | AC-19 | **PASS** |
-| D16 | Force-stop produces abnormal exit in history | AC-15 | **PASS** |
-| D17 | Session history lists terminal sessions with IDs | AC-17 | **PASS** |
-| D18 | Session history shows exit type (normal/abnormal) | AC-17 | **PASS** |
-| D19 | Session inspect shows ID, member, type, state, workspace | AC-18 | **PASS** |
-| D20 | Session cleanup completed for individual session | AC-18 | **PASS** |
-| D21 | Bulk cleanup --all completed | AC-18 | **PASS** |
-| D22 | Finalization with dirty project state | AC-02 | **NOTE** |
-| D23 | Finalization results visible in inspect | AC-05 | **PASS** |
-| D24 | Finalization re-trigger | AC-23 | **NOTE** |
-| D25 | Provision failure: non-zero exit, no partial session left | AC-07 | **PASS** |
-| D26 | New session starts after crash + force-stop | AC-03 | **PASS** |
-| D27 | Crashed session workspace retained | AC-26 | **PASS** |
-| D28 | Daemon restart marks stale sessions as Failed | AC-25 | **PASS** |
-| D29 | Session state after start: Active→terminal | AC-11 | **PASS** |
-| D30 | Session in history after force-stop (terminal state) | AC-11 | **PASS** |
-| D31 | Terminal state observed via inspect | AC-11 | **PASS** |
-| D32 | Session workspace retained after force-stop (retention policy) | AC-20 | **PASS** |
-| D33 | Stopped session visible in history (retained) | AC-20 | **PASS** |
-| D34 | Individual session cleanup removed workspace | AC-21 | **PASS** |
-| D35 | Work item lock | AC-13 | **NOTE** |
-| D36 | Independent branches in isolated workspaces | AC-14a | **PASS** |
-| D37 | Session inspect captures git/workspace state | AC-14b | **PASS** |
-
-## NOTEs — Root Cause Analysis
-
-### D09 (AC-08): Skill dirs — `.claude/` not created
-The test team has no `coding-agent/settings.json` or `coding-agent/agents/` configured. The workspace hydration correctly skips `.claude/` creation when there's nothing to surface. **Environment limitation, not a bug.**
-
-### D10 (AC-09): GH credentials — hosts.yml not found
-The member workspace does not contain `<workspace_base>/<member>/.config/gh/hosts.yml`. GitHub App credentials may be inherited from the system `gh auth` session rather than provisioned per-member. **Needs investigation** — the `gh_config_dir_for_member()` function may require the member's GitHub App to have an installation token generated.
-
-### D22 (AC-02): Finalization hangs with dirty project state
-**Confirmed daemon bug.** When `bm stop` is called on a session with dirty state (committed but unpushed changes on a feature branch), the session transitions to `Finalizing` but never completes. The daemon log shows zero finalization/push entries — the `push_with_rebase_retry()` logic never fires. Independently verified with a 60-second polling test (12 polls at 5s intervals) — session stays Finalizing indefinitely.
-
-### D24 (AC-23): No `bm session finalize` CLI command
-**Feature gap.** The `bm session` subcommand only has `inspect` and `cleanup`. There is no CLI path to re-trigger finalization for a Killed/Retained session. The daemon API route `POST /api/sessions/{id}/finalize` exists but is not exposed via CLI.
-
-### D35 (AC-13): No `--work-item` CLI flag on `bm start`
-**Feature gap.** The `bm start` CLI hardcodes `work_item_id: None` in the session creation request. The daemon API supports `work_item_id` in the `POST /api/sessions/start` payload, but there is no CLI flag to pass it through.
-
-## AC Coverage Matrix
-
-| AC | Description | Tests | Verdict |
-|----|-------------|-------|---------|
-| AC-01 | Workspace provisioning | D06, D07, D08 | PASS |
-| AC-02 | Finalization & push | D22 | NOTE (daemon bug) |
-| AC-03 | Crash recovery | D26 | PASS |
-| AC-04 | Concurrent sessions | D12, D13 | PASS |
-| AC-05 | Finalization results | D23 | PASS |
-| AC-06 | Session creation latency | D05 | PASS |
-| AC-07 | Error handling | D25 | PASS |
-| AC-08 | Skill directories | D09 | NOTE (env) |
-| AC-09 | GH credentials | D10 | NOTE (investigate) |
-| AC-10 | Status observability | D11 | PASS |
-| AC-11 | State machine | D29, D30, D31 | PASS |
-| AC-12 | No-daemon guard | D01, D02, D03 | PASS |
-| AC-13 | Work item lock | D35 | NOTE (feature gap) |
-| AC-14a | Independent branches | D36 | PASS |
-| AC-14b | Push conflict resolution | D37 | PASS |
-| AC-15 | Selective stop | D14, D16 | PASS |
-| AC-17 | Session history | D17, D18 | PASS |
-| AC-18 | Session inspect & cleanup | D19, D20, D21 | PASS |
-| AC-19 | Async deactivation | D15 | PASS |
-| AC-20 | Retention policy | D32, D33 | PASS |
-| AC-21 | GC / cleanup | D34 | PASS |
-| AC-22 | No prior sync required | D04 | PASS |
-| AC-23 | Finalization re-trigger | D24 | NOTE (feature gap) |
-| AC-25 | Stale recovery on restart | D28 | PASS |
-| AC-26 | Crash workspace retained | D27 | PASS |
+- **PASS:** 53
+- **FAIL:** 73
+- **NOTE:** 15

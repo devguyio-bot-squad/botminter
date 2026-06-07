@@ -14,6 +14,13 @@ SESSIONS_BASE="$HOME/.botminter/sessions/$TEAM"
 DAEMON_CFG="$HOME/.botminter/daemon-$TEAM.json"
 PROJECT_NAME="$PROJECT_REPO"
 
+cleanup_all() {
+    bm stop --force -t "$TEAM" 2>/dev/null || true
+    bm session cleanup --all -t "$TEAM" 2>/dev/null || true
+    bm daemon stop -t "$TEAM" 2>/dev/null || true
+}
+trap cleanup_all EXIT
+
 extract_sid() {
     echo "$1" | grep -oP 'session \K[a-f0-9-]+' | head -1
 }
@@ -559,7 +566,7 @@ WS_F=$(extract_ws "$START_F")
 sleep 2
 
 if [ $EC -eq 0 ] && [ -n "$SID_F" ]; then
-    RALPH_PID=$(ps aux | grep "[r]alph run" | awk '{print $2}' | head -1)
+    RALPH_PID=$(pgrep -u "$(id -u)" -f "ralph run" 2>/dev/null | head -1)
     if [ -n "$RALPH_PID" ]; then
         kill -9 "$RALPH_PID" 2>/dev/null
         sleep 2

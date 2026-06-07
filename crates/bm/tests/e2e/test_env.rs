@@ -510,6 +510,28 @@ impl Drop for TestEnv {
             }
         }
 
+        // Catch-all: kill any processes still running with the test HOME in their cmdline.
+        // This handles the race where the stub writes its PID file after the sessions walk
+        // runs, and any other stragglers missed by the PID-file approach above.
+        if let Ownership::Fresh(ref home) = self.ownership {
+            let home_str = home.to_string_lossy();
+            if let Ok(proc_entries) = fs::read_dir("/proc") {
+                for entry in proc_entries.flatten() {
+                    let cmdline_path = entry.path().join("cmdline");
+                    if let Ok(cmdline) = fs::read_to_string(&cmdline_path) {
+                        if cmdline.contains(home_str.as_ref()) {
+                            if let Ok(pid_name) = entry.file_name().into_string() {
+                                if let Ok(pid) = pid_name.parse::<i32>() {
+                                    eprintln!("  TestEnv: killing stray process PID {}", pid);
+                                    unsafe { libc::kill(pid, libc::SIGKILL); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Fresh mode: delete the test HOME
         if let Ownership::Fresh(ref home) = self.ownership {
             let _ = fs::remove_dir_all(home);
