@@ -449,6 +449,40 @@ impl Drop for TestEnv {
             }
         }
 
+        // Kill any stub-ralph processes left behind by sessions.
+        // Stub processes write their PID to <session_workspace>/.ralph-stub-pid.
+        // Session workspaces live at $HOME/.botminter/sessions/<team>/<member>/<session_id>/.
+        let sessions_root = botminter_dir.join("sessions");
+        if sessions_root.exists() {
+            if let Ok(teams) = fs::read_dir(&sessions_root) {
+                for team_entry in teams.flatten() {
+                    if let Ok(members) = fs::read_dir(team_entry.path()) {
+                        for member_entry in members.flatten() {
+                            if let Ok(session_ids) = fs::read_dir(member_entry.path()) {
+                                for session_entry in session_ids.flatten() {
+                                    let pid_file = session_entry.path().join(".ralph-stub-pid");
+                                    if pid_file.exists() {
+                                        if let Ok(pid_str) = fs::read_to_string(&pid_file) {
+                                            if let Ok(pid) = pid_str.trim().parse::<i32>() {
+                                                eprintln!(
+                                                    "  TestEnv: killing stub-ralph PID {}",
+                                                    pid
+                                                );
+                                                unsafe { libc::kill(pid, libc::SIGTERM); }
+                                                std::thread::sleep(Duration::from_millis(200));
+                                                unsafe { libc::kill(pid, libc::SIGKILL); }
+                                            }
+                                        }
+                                        let _ = fs::remove_file(&pid_file);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         // Clean up Lima VMs tracked via exports
         if let Some(vm_name) = self.exports.get("lima_vm_name").cloned() {
             eprintln!("  TestEnv: deleting Lima VM '{}'", vm_name);

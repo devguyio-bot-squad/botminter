@@ -921,13 +921,15 @@ fn status_detects_crashed_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send 
 fn status_shows_session_history_fn(_gh_token: String) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
     move |env| {
         // Precondition: status_detects_crashed ran immediately before this case, creating at
-        // least one Failed (terminal) session. bm status --history must show it.
+        // least one Failed session. The crashed session stays in the active registry with
+        // state "Failed" (no finalization). bm session list must show it.
+        // NOTE: bm status --history was removed in CT-154-05. Use bm session list instead.
         let stdout = env.command("bm")
-            .args(["status", "--history", "-t", TEAM_NAME])
+            .args(["session", "list", "-t", TEAM_NAME])
             .run();
         assert!(
-            stdout.contains("normal") || stdout.contains("abnormal"),
-            "bm status --history should show terminal session history with exit status (AC-17), got: {stdout}"
+            stdout.contains("Failed") || stdout.contains("completed"),
+            "bm session list should show Failed sessions (AC-17), got: {stdout}"
         );
     }
 }

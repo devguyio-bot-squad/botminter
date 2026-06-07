@@ -87,13 +87,16 @@ pub fn stop_sessions(
                     }
                 }
                 SessionState::Finalizing => {
-                    if let Some(pid) = agent_pid {
-                        #[cfg(unix)]
-                        send_signal(*pid, true);
-                    }
+                    // Update state BEFORE sending SIGKILL so the deactivation watcher always
+                    // sees Retained when it detects the dead process (signal arrives before
+                    // state update in the opposite order, creating a race).
                     if registry.update_state(id, SessionState::Killed).is_ok() {
                         let _ = registry.update_state(id, SessionState::Retained);
                         summary.killed += 1;
+                    }
+                    if let Some(pid) = agent_pid {
+                        #[cfg(unix)]
+                        send_signal(*pid, true);
                     }
                 }
                 _ => {}

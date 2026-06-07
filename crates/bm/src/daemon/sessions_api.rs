@@ -1,6 +1,8 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
+use libc;
+
 use crate::bridge;
 use crate::session::manager::WorkspaceOps;
 use crate::workspace::{HydrationWorkspaceConfig, HydrationWorkspaceOps};
@@ -36,7 +38,7 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 
 use crate::session::cleanup;
-use crate::session::finalization::subagent as fin_subagent;
+use crate::session::finalization::{deactivation as fin_deactivation, subagent as fin_subagent};
 use crate::session::history::{self, ExitStatus};
 use crate::session::registry::SessionRegistry;
 use crate::session::retention::{self, ProcessChecker};
@@ -781,6 +783,146 @@ pub async fn list_sessions_handler(
 ///
 /// Accepts an optional JSON body with `{ "force": true }` to force-kill
 /// instead of graceful deactivation.
+/// Spawn a background tokio task that waits for a gracefully-stopped agent to exit,
+/// inspects workspace dirty state, and triggers the finalization subagent if needed.
+///
+/// Called after graceful stop transitions a session to `Finalizing`. The watcher
+/// transitions the session to `Completed` (clean or finalization exit 0) or
+/// `Failed` (finalization exit non-zero or spawn failure).
+fn spawn_deactivation_watcher(
+    session_id: SessionId,
+    workspace_path: Option<PathBuf>,
+    agent_pid: Option<u32>,
+    arc_inner: Arc<Mutex<SessionsInner>>,
+    workspace_ops: Option<Arc<HydrationWorkspaceOps>>,
+) {
+    use std::time::Duration;
+    tokio::spawn(async move {
+        // Wait up to 60s for the agent process to exit after SIGTERM.
+        if let Some(pid) = agent_pid {
+            let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+            loop {
+                let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
+                if !alive {
+                    break;
+                }
+                if tokio::time::Instant::now() >= deadline {
+                    tracing::warn!(
+                        session_id = session_id.as_str(),
+                        "agent PID {} did not exit within 60s after SIGTERM",
+                        pid
+                    );
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            }
+        }
+
+        // Re-read the session state. A concurrent force-stop may have moved it to Retained
+        // while we were waiting for the agent to exit. Only proceed if still Finalizing.
+        let still_finalizing = {
+            if let Ok(guard) = arc_inner.lock() {
+                guard
+                    .registry
+                    .get(&session_id)
+                    .map(|r| r.current_state == SessionState::Finalizing)
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        };
+
+        if !still_finalizing {
+            // Session was moved out of Finalizing (e.g., force-stopped → Retained). Do not
+            // override the new state.
+            return;
+        }
+
+        let Some(ws) = workspace_path else {
+            // No workspace — transition to Completed only if still Finalizing (force-stop
+            // sends SIGKILL before updating state, so the process can die while the registry
+            // still shows Finalizing; the state update to Retained arrives moments later).
+            if let Ok(mut guard) = arc_inner.lock() {
+                if guard
+                    .registry
+                    .get(&session_id)
+                    .map(|r| r.current_state == SessionState::Finalizing)
+                    .unwrap_or(false)
+                {
+                    let _ = guard.registry.update_state(&session_id, SessionState::Completed);
+                }
+            }
+            return;
+        };
+
+        // Inspect dirty state to decide whether to run the finalization subagent.
+        let dirty_state = if let Some(ref ops) = workspace_ops {
+            ops.inspect_dirty_state(&ws).unwrap_or_default()
+        } else {
+            vec![]
+        };
+
+        if fin_deactivation::has_committable_files(&ws, &dirty_state) {
+            match fin_deactivation::retrigger_finalization(&session_id, &ws) {
+                Ok(child) => {
+                    let timeout = Duration::from_secs(fin_subagent::FINALIZATION_TIMEOUT_SECS);
+                    let sid = session_id.clone();
+                    fin_subagent::wait_and_transition(
+                        child,
+                        sid.clone(),
+                        timeout,
+                        move |new_state| {
+                            if let Ok(mut guard) = arc_inner.lock() {
+                                // Conditional: don't overwrite Retained if force-stop raced.
+                                if guard
+                                    .registry
+                                    .get(&sid)
+                                    .map(|r| r.current_state == SessionState::Finalizing)
+                                    .unwrap_or(false)
+                                {
+                                    let _ = guard.registry.update_state(&sid, new_state);
+                                }
+                            }
+                        },
+                    )
+                    .await;
+                }
+                Err(e) => {
+                    tracing::error!(
+                        session_id = session_id.as_str(),
+                        "failed to spawn finalization subagent during deactivation: {}",
+                        e
+                    );
+                    if let Ok(mut guard) = arc_inner.lock() {
+                        if guard
+                            .registry
+                            .get(&session_id)
+                            .map(|r| r.current_state == SessionState::Finalizing)
+                            .unwrap_or(false)
+                        {
+                            let _ = guard
+                                .registry
+                                .update_state(&session_id, SessionState::Failed);
+                        }
+                    }
+                }
+            }
+        } else {
+            // Clean workspace — transition to Completed only if still Finalizing.
+            if let Ok(mut guard) = arc_inner.lock() {
+                if guard
+                    .registry
+                    .get(&session_id)
+                    .map(|r| r.current_state == SessionState::Finalizing)
+                    .unwrap_or(false)
+                {
+                    let _ = guard.registry.update_state(&session_id, SessionState::Completed);
+                }
+            }
+        }
+    });
+}
+
 pub async fn stop_session_handler(
     State(state): State<SessionsApiState>,
     Path(session_id_str): Path<String>,
@@ -872,7 +1014,29 @@ pub async fn stop_bulk_handler(
         mode,
         force: req.force,
     };
+
+    // Snapshot sessions already in Finalizing so we don't double-watch them.
+    let pre_finalizing: std::collections::HashSet<SessionId> = inner
+        .registry
+        .list()
+        .iter()
+        .filter(|r| r.current_state == SessionState::Finalizing)
+        .map(|r| r.session_id.clone())
+        .collect();
+
     let summary = stop::stop_sessions(&mut inner.registry, &options);
+
+    // Collect sessions that just transitioned to Finalizing in this call.
+    let newly_finalizing: Vec<(SessionId, Option<PathBuf>, Option<u32>)> = inner
+        .registry
+        .list()
+        .iter()
+        .filter(|r| {
+            r.current_state == SessionState::Finalizing
+                && !pre_finalizing.contains(&r.session_id)
+        })
+        .map(|r| (r.session_id.clone(), r.workspace_path.clone(), r.agent_pid))
+        .collect();
 
     let stopped_ids: Vec<SessionId> = inner
         .registry
@@ -889,6 +1053,19 @@ pub async fn stop_bulk_handler(
 
     for id in &stopped_ids {
         inner.work_item_lock.release_all(id);
+    }
+
+    // Spawn deactivation watchers after releasing the mutex.
+    drop(inner);
+
+    for (session_id, workspace_path, agent_pid) in newly_finalizing {
+        spawn_deactivation_watcher(
+            session_id,
+            workspace_path,
+            agent_pid,
+            Arc::clone(&state.inner),
+            state.workspace_ops.clone(),
+        );
     }
 
     (

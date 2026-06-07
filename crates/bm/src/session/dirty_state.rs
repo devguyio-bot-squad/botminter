@@ -16,13 +16,27 @@ impl RepoDirtyState {
     }
 }
 
-/// Inspect all project repositories under `workspace_path/projects/` for dirty state.
+/// Inspect repositories under `workspace_path` for dirty state.
 ///
-/// Returns one `RepoDirtyState` entry per project directory that is a git repository.
+/// Checks `team/` (if it is a git repo) and all git repos under `projects/`.
+/// Returns one `RepoDirtyState` entry per directory that is a git repository.
 pub fn inspect_dirty_state(workspace_path: &Path) -> Result<Vec<RepoDirtyState>> {
-    let projects_dir = workspace_path.join("projects");
     let mut results = Vec::new();
 
+    // Check the team/ directory first (may be a git submodule or clone).
+    let team_dir = workspace_path.join("team");
+    if team_dir.join(".git").exists() {
+        let uncommitted = inspect_uncommitted(&team_dir)?;
+        let unpushed = inspect_unpushed(&team_dir)?;
+        results.push(RepoDirtyState {
+            repo_name: "team".to_string(),
+            uncommitted_files: uncommitted,
+            unpushed_branches: unpushed,
+        });
+    }
+
+    // Check project repositories under projects/.
+    let projects_dir = workspace_path.join("projects");
     if !projects_dir.exists() {
         return Ok(results);
     }
