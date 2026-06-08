@@ -53,6 +53,35 @@ OUT=$(bm_hire engineer --name bob 2>&1)
 EC=$?
 if [ $EC -eq 0 ]; then pass "B9" "Hired bob (--reuse-app)"; else fail "B9" "Hire bob" "exit $EC: $(echo "$OUT" | tail -3)"; fi
 
+# B9b: Deploy brain-prompt.md into the team repo member dirs (ephemeral model).
+# ConfigAssembler.assemble() (CT-154-14) copies brain-prompt.md from
+# team_repo/members/<member>/brain-prompt.md into the ephemeral session workspace.
+# Do NOT create permanent workspace directories (~/.botminter/workspaces/<team>/<member>/).
+BRAIN_TEMPLATE="$TEAM_REPO/brain/system-prompt.md"
+if [ -f "$BRAIN_TEMPLATE" ]; then
+    SENTINEL_FAIL=false
+    for MEMBER in engineer-alice engineer-bob; do
+        MEMBER_DIR="$TEAM_REPO/members/$MEMBER"
+        MANIFEST="$MEMBER_DIR/botminter.yml"
+        MEMBER_NAME=$(grep '^name:' "$MANIFEST" 2>/dev/null | awk '{print $2}' | tr -d '"' || echo "$MEMBER")
+        MEMBER_ROLE=$(grep '^role:' "$MANIFEST" 2>/dev/null | awk '{print $2}' | tr -d '"' || echo "engineer")
+        sed \
+            -e "s|{{member_name}}|${MEMBER_NAME}|g" \
+            -e "s|{{team_name}}|${TEAM}|g" \
+            -e "s|{{role}}|${MEMBER_ROLE}|g" \
+            -e "s|{{gh_org}}|${ORG}|g" \
+            -e "s|{{gh_repo}}|${REPO}|g" \
+            "$BRAIN_TEMPLATE" > "$MEMBER_DIR/brain-prompt.md" || SENTINEL_FAIL=true
+    done
+    if $SENTINEL_FAIL; then
+        fail "B9b" "Brain deploy" "sed rendering failed for one or more members"
+    else
+        pass "B9b" "Deployed brain-prompt.md to team repo (alice and bob, per-member rendered)"
+    fi
+else
+    fail "B9b" "Brain template" "brain/system-prompt.md not in team repo at $TEAM_REPO"
+fi
+
 # B10: Member dirs exist
 if [ -d "$TEAM_REPO/members/engineer-alice" ] && [ -d "$TEAM_REPO/members/engineer-bob" ]; then
     pass "B10" "Member dirs exist (engineer-alice, engineer-bob)"

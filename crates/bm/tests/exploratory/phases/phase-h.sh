@@ -23,23 +23,32 @@ STATE_FILE="$HOME/.botminter/state.json"
 
 echo "  H.1: Template Rendering & Content..."
 
-# H2: No unrendered template variables remain (pass if file absent — nothing to render)
-UNRENDERED=$(grep -o '{{' "$ALICE_WS/brain-prompt.md" 2>/dev/null | wc -l || true)
+# H2: No unrendered template variables remain in team repo brain-prompt.md
+# CT-154-14: brain-prompt.md lives in team_repo/members/<member>/ (pass if absent)
+ALICE_BRAIN_REPO="$TEAM_REPO/members/engineer-alice/brain-prompt.md"
+UNRENDERED=$(grep -o '{{' "$ALICE_BRAIN_REPO" 2>/dev/null | wc -l || true)
 if [ "${UNRENDERED:-0}" -eq 0 ]; then
-    pass "H2" "No unrendered template variables"
+    pass "H2" "No unrendered template variables in team repo brain-prompt.md"
 else
-    note "H2" "Unrendered vars" "$UNRENDERED occurrences of mustache-style vars found"
+    note "H2" "Unrendered vars" "$UNRENDERED occurrences of mustache-style vars found in $ALICE_BRAIN_REPO"
 fi
 
 # ── H.2: Per-Member Differentiation ──────────────────────────
 
 echo "  H.2: Per-Member Differentiation..."
 
-# H9: Alice and bob brain-prompt.md differ (or both absent — session model)
-if ! diff -q "$ALICE_WS/brain-prompt.md" "$BOB_WS/brain-prompt.md" >/dev/null 2>&1; then
-    pass "H9" "Alice and bob brain-prompt.md differ (per-member rendering)"
+# H9: Alice and bob brain-prompt.md differ in team repo (per-member rendering)
+# CT-154-14: brain-prompt.md lives in team_repo/members/<member>/, not permanent workspace dirs
+ALICE_BRAIN="$TEAM_REPO/members/engineer-alice/brain-prompt.md"
+BOB_BRAIN="$TEAM_REPO/members/engineer-bob/brain-prompt.md"
+if [ -f "$ALICE_BRAIN" ] && [ -f "$BOB_BRAIN" ]; then
+    if ! diff -q "$ALICE_BRAIN" "$BOB_BRAIN" >/dev/null 2>&1; then
+        pass "H9" "Alice and bob brain-prompt.md differ in team repo (per-member rendering)"
+    else
+        note "H9" "Per-member diff" "alice and bob have identical brain-prompt.md in team repo"
+    fi
 else
-    note "H9" "Per-member diff" "alice and bob have identical brain-prompt.md"
+    note "H9" "Per-member diff" "brain-prompt.md absent in team repo for one or both members"
 fi
 
 # ── H.3: Brain Mode Detection ────────────────────────────────
@@ -64,12 +73,12 @@ else
     fail "H12" "brain_mode" "no active Brain session — brain must start and set brain_mode=true when ACP infra is available"
 fi
 
-# H13: Remove brain-prompt.md from ALL workspaces and verify no brain mode
-# Save backups for all members
-for ws in "$TEAM_DIR"/engineer-*/; do
-    if [ -f "$ws/brain-prompt.md" ]; then
-        cp "$ws/brain-prompt.md" "$ws/brain-prompt.md.bak"
-        rm "$ws/brain-prompt.md"
+# H13: Remove brain-prompt.md from ALL team repo member dirs and verify no brain mode
+# brain-prompt.md lives in team_repo/members/<member>/ (ephemeral model, CT-154-14)
+for member_dir in "$TEAM_REPO/members/"/*/; do
+    if [ -f "${member_dir}brain-prompt.md" ]; then
+        cp "${member_dir}brain-prompt.md" "${member_dir}brain-prompt.md.bak"
+        rm "${member_dir}brain-prompt.md"
     fi
 done
 # Stop any previous processes
@@ -87,10 +96,10 @@ else
     note "H13" "Ralph fallback" "start output: $(echo "$OUT" | tail -2 | tr '\n' ' ')"
 fi
 
-# H14: Restore brain-prompt.md and clean up
-for ws in "$TEAM_DIR"/engineer-*/; do
-    if [ -f "$ws/brain-prompt.md.bak" ]; then
-        mv "$ws/brain-prompt.md.bak" "$ws/brain-prompt.md"
+# H14: Restore brain-prompt.md for all team repo member dirs and clean up
+for member_dir in "$TEAM_REPO/members/"/*/; do
+    if [ -f "${member_dir}brain-prompt.md.bak" ]; then
+        mv "${member_dir}brain-prompt.md.bak" "${member_dir}brain-prompt.md"
     fi
 done
 bm stop --force 2>/dev/null || true
