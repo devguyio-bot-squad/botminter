@@ -85,14 +85,14 @@ clean:
         # 2. SIGTERM stale bm/ralph/claude processes.
         # Use [x]yz patterns to avoid matching the grep command itself or
         # the bash -l -c "..." shell whose cmdline contains the pattern string.
-        for pattern in \"[b]m brain-run\" \"[b]m daemon-run\" \"[b]m daemon\" \"[b]m start\" \"[c]laude-code-acp-rs\" \"[c]laude.*stream-json\" \"[r]alph loop\" \"[r]alph run\" \"[s]tub-bin/ralph\"; do
+        for pattern in \"[b]m brain-run\" \"[b]m daemon-run\" \"[b]m daemon\" \"[b]m start\" \"[c]laude-agent-acp\" \"[c]laude.*stream-json\" \"[r]alph loop\" \"[r]alph run\" \"[s]tub-bin/ralph\"; do
             for pid in \$(ps aux | grep \"\$pattern\" | awk \"{print \\\$2}\"); do
                 kill \"\$pid\" 2>/dev/null || true
             done
         done
         sleep 2
         # 3. SIGKILL survivors
-        for pattern in \"[b]m brain-run\" \"[b]m daemon-run\" \"[b]m daemon\" \"[c]laude-code-acp-rs\" \"[r]alph loop\" \"[r]alph run\" \"[s]tub-bin/ralph\"; do
+        for pattern in \"[b]m brain-run\" \"[b]m daemon-run\" \"[b]m daemon\" \"[c]laude-agent-acp\" \"[r]alph loop\" \"[r]alph run\" \"[s]tub-bin/ralph\"; do
             for pid in \$(ps aux | grep \"\$pattern\" | awk \"{print \\\$2}\"); do
                 kill -9 \"\$pid\" 2>/dev/null || true
             done
@@ -119,8 +119,8 @@ clean:
         # ── Local state ──
         rm -rf ~/.botminter ~/.config/botminter 2>/dev/null || true
         rm -f {{REMOTE_BIN}}/bm {{REMOTE_BIN}}/bm-agent {{REMOTE_BIN}}/ralph {{REMOTE_BIN}}/claude
-        # claude-code-acp-rs is deployed (not pre-installed); remove if present
-        rm -f {{REMOTE_BIN}}/claude-code-acp-rs
+        # claude-agent-acp is deployed (not pre-installed); remove if present
+        rm -f {{REMOTE_BIN}}/claude-agent-acp
 
         # ── Port wait ──
         # Kill any conmon process holding the port (podman rm may not release immediately)
@@ -150,8 +150,8 @@ deploy: build clean
     # Copy binaries (bm + bm-agent from build, others from operator's PATH)
     scp -q {{CARGO_ROOT}}/target/debug/bm {{TEST_HOST}}:{{REMOTE_BIN}}/bm
     scp -q {{CARGO_ROOT}}/target/debug/bm-agent {{TEST_HOST}}:{{REMOTE_BIN}}/bm-agent
-    # Deploy ralph, claude, and claude-code-acp-rs from operator's PATH (optional — skipped if not found)
-    for bin in ralph claude claude-code-acp-rs; do
+    # Deploy ralph, claude, and claude-agent-acp from operator's PATH (optional — skipped if not found)
+    for bin in ralph claude claude-agent-acp; do
         LOCAL_BIN=$(which "$bin" 2>/dev/null || true)
         if [ -n "$LOCAL_BIN" ]; then
             scp -q "$LOCAL_BIN" {{TEST_HOST}}:{{REMOTE_BIN}}/"$bin"

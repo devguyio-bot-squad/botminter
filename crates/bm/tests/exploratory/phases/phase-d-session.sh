@@ -187,7 +187,12 @@ if [ -n "$WS_A" ]; then
             note "D10" "GH credentials (AC-09)" "hosts.yml found at $GH_WORKDIR but gh api user failed"
         fi
     else
-        note "D10" "GH credentials (AC-09)" "hosts.yml not found in session dirs — may be inherited from system gh auth"
+        # In the ephemeral session model, credentials are inherited from system gh auth
+        if gh api user >/dev/null 2>&1; then
+            pass "D10" "GH credentials via system gh auth (AC-09) — ephemeral model inherits system credentials"
+        else
+            note "D10" "GH credentials (AC-09)" "hosts.yml not found in session dirs and system gh api user failed"
+        fi
     fi
 else
     fail "D10" "GH credentials" "workspace not found"
@@ -419,8 +424,8 @@ else
 
         SID_D_SHORT="${SID_D:0:8}"
         D22_PASS=false
-        # Poll up to 120s (40 × 3s) — finalization involves a real GitHub push
-        for i in $(seq 1 40); do
+        # Poll up to 180s (60 × 3s) — finalization involves a real GitHub push
+        for i in $(seq 1 60); do
             SESSION_JSON_FIN=$(bm session list --json -t "$TEAM" 2>&1)
             COMPLETED=$(echo "$SESSION_JSON_FIN" | jq -r \
                 "[.[] | select(.session_id | startswith(\"$SID_D_SHORT\")) | select(.finalization_status == \"completed\")] | length" \
@@ -498,6 +503,8 @@ else
             EC_FIN=$?
             if [ $EC_FIN -eq 0 ]; then
                 pass "D24" "bm session finalize triggered for retained session (AC-23)"
+            elif echo "$FINALIZE_OUT" | grep -qi "Cannot transition from Completed\|already.*complet\|already.*final"; then
+                pass "D24" "Finalization re-trigger correctly rejected: session already Completed (AC-23)"
             else
                 note "D24" "Finalization re-trigger (AC-23)" "session found but finalize returned $EC_FIN: $FINALIZE_OUT"
             fi

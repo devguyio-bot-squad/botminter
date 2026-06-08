@@ -22,7 +22,7 @@ Tests run on a **separate user account** (`bm-test-user@localhost`) via SSH, not
 | **Operator machine** | Build + orchestration | `cargo build`, `just exploratory-test`, Justfile recipes |
 | **Test user** (`bm-test-user@localhost`) | Execution | All phase scripts, `bm` commands, podman containers, keyring ops |
 
-The `deploy` recipe builds binaries locally, then copies `bm`, `bm-agent`, `ralph`, `claude`, and `claude-code-acp-rs` to the test user's `~/.local/bin/`. Test scripts (`lib.sh`, `phases/*.sh`) are staged at `~/.bm-exploratory-tests/`. An `env.sh` is generated on the remote with all test configuration.
+The `deploy` recipe builds binaries locally, then copies `bm`, `bm-agent`, `ralph`, `claude`, and `claude-agent-acp` to the test user's `~/.local/bin/`. Test scripts (`lib.sh`, `phases/*.sh`) are staged at `~/.bm-exploratory-tests/`. An `env.sh` is generated on the remote with all test configuration.
 
 An **isolated D-Bus + gnome-keyring-daemon** is started automatically on the test user's session (see `lib.sh`). This avoids any dependency on a system keyring or PAM-unlocked session.
 
@@ -281,7 +281,7 @@ are running. The test polls for brain responses to prove autonomous behavior.
    malformed input (error handling) → cross-member messaging (alice sends, bob sees) → brain survives
    all interaction → bm stop. This single-session journey proves the brain handles diverse interaction
    patterns within one lifecycle, reflecting how a real user interacts during a work session.
-   - H26 validates the brain process IS `bm brain-run` / `claude-code-acp-rs` (not just any PID)
+   - H26 validates the brain process IS `bm brain-run` / `claude-agent-acp` (not just any PID)
    - H32 validates the brain response content is meaningful (operational indicators checked)
    - H29b validates the brain response addressed the work request (not just generic chat)
 2. **Recovery** (H38-H41): bm stop → bm start → send message → poll for NEW brain response → bm stop.
@@ -302,13 +302,13 @@ Each journey crosses all subsystems: CLI (start/stop), bridge (Matrix), brain (r
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
 | H19 | Bridge is running | `curl` Matrix versions endpoint | HTTP 200 (bridge auto-recovers if down) |
-| H20 | ACP binary available | `which claude-code-acp-rs` | Binary found in PATH |
+| H20 | ACP binary available | `which claude-agent-acp` | Binary found in PATH |
 | H21 | Admin Matrix login | `curl` login API with admin creds | Access token returned |
 | H22 | Alice Matrix login | `curl` login API with alice creds | Access token returned |
 | H23 | Room resolution | `curl` room alias API | Room ID returned for team general room |
 | H24 | Clean state before lifecycle | `bm stop --force`, rm state.json | Clean slate |
 | H25 | Start brain members | `bm start` | Brain mode detected in output |
-| H26 | Brain process verified | Check PID from state.json + validate process command is brain-run/acp | Process running AND command contains brain-run or claude-code-acp-rs |
+| H26 | Brain process verified | Check PID from state.json + validate process command is brain-run/acp | Process running AND command contains brain-run or claude-agent-acp |
 | H27 | Status shows brain label | `bm status` | "brain" label shown during lifecycle |
 | H28 | Send greeting while brain running | `curl` PUT room/send as admin | Message delivered to room with brain alive |
 | H29 | Send work request while brain running | `curl` PUT room/send as admin | Message delivered to room |

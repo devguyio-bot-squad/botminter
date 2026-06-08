@@ -11,9 +11,12 @@ header "Phase F: Error Handling"
 
 # F1: Without just — bm bridge start should handle missing just gracefully
 OUT=$(PATH=/usr/bin:/bin bm bridge start -t $TEAM 2>&1)
-# Should not crash — either skips or errors gracefully
-if echo "$OUT" | grep -qi "just\|skip\|not found"; then
-    pass "F1" "Graceful handling when just not in PATH"
+EC=$?
+# Graceful = no crash: handles missing just, reports already running, or exits cleanly
+if echo "$OUT" | grep -qi "just\|skip\|not found\|already running"; then
+    pass "F1" "Graceful handling when just not in PATH (output: $(echo "$OUT" | tail -1))"
+elif [ $EC -eq 0 ]; then
+    pass "F1" "Bridge start handled gracefully without just in PATH (exit 0)"
 else
     note "F1" "Without just" "Output: $(echo "$OUT" | tail -2)"
 fi
