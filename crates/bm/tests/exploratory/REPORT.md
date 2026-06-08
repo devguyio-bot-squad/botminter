@@ -1,7 +1,7 @@
 # Exploratory Test Report: Sync & Bridge Idempotency
 
 **Date:** 2026-06-08
-**Build:** bm 0.2.0-pre-alpha (24453c7-dirty) (local debug)
+**Build:** bm 0.2.0-pre-alpha (db7b930-dirty) (local debug)
 **Environment:** Linux x86_64, podman rootless, gh (devguyio)
 **Test User:** bm-test-user@localhost (isolated)
 
@@ -41,7 +41,7 @@
 | C5 | Passwords file has 3 entries | **PASS** |
 | C6 | Keyring has credentials for alice + bob | **PASS** |
 | C7 | Admin can login to Matrix | **PASS** |
-| C8 | Room exploratory-test-general exists (!BEkHy34EpY5hVtjBLw:localhost) | **PASS** |
+| C8 | Room exploratory-test-general exists (!qvI1KoGV1qc6NuCVZd:localhost) | **PASS** |
 | C9 | Bridge start again (idempotent — already running) | **PASS** |
 | C10 | Container still running | **PASS** |
 | C11 | Bridge state unchanged | **PASS** |
@@ -78,7 +78,7 @@
 | D02 | bm status reports daemon not running (AC-12) | **PASS** |
 | D03 | bm session inspect fails gracefully without daemon (AC-12) | **PASS** |
 | D04 | Session started without prior bm teams sync (AC-22) | **PASS** |
-| D05 | Session creation latency: 673ms (AC-06) | **PASS** |
+| D05 | Session creation latency: 699ms (AC-06) | **PASS** |
 | D06 | Workspace marker has session_id + member fields (AC-01) | **PASS** |
 | D07 | Project 'exploratory-test-project' provisioned in workspace (AC-01) | **PASS** |
 | D08 | Config files (PROMPT.md, CLAUDE.md, ralph.yml) present (AC-01) | **PASS** |
@@ -93,23 +93,23 @@
 | D17 | bm session list shows sessions with session IDs (AC-17) | **PASS** |
 | D18 | bm session list shows state and finalization status columns (AC-17) | **PASS** |
 | D19 | Session inspect shows ID, member, type, state, workspace (AC-18) | **PASS** |
-| D20 | Session cleanup completed for 2415d9a7 (AC-18) | **PASS** |
+| D20 | Session cleanup completed for 3b760275 (AC-18) | **PASS** |
 | D21 | Bulk cleanup --all completed (AC-18) | **PASS** |
-| D22 | Finalization (AC-02) | **FAIL** — session 28f94d14 did not reach Completed within 180s — finalization must complete (AC-02 requires committed changes pushed) |
+| D22 | Finalization (AC-02) | **FAIL** — session 1162051b did not reach Completed within 180s — finalization must complete (AC-02 requires committed changes pushed) |
 | D23 | Finalization results visible in inspect (AC-05) | **PASS** |
 | D24 | bm session finalize triggered for retained session (AC-23) | **PASS** |
 | D25 | Provision failure: non-zero exit, no partial session left (AC-07) | **PASS** |
-| D27 | Crashed session workspace retained at /home/bm-test-user/.botminter/sessions/exploratory-test/engineer-alice/8905c507 (AC-26) | **PASS** |
+| D27 | Crashed session workspace retained at /home/bm-test-user/.botminter/sessions/exploratory-test/engineer-alice/8f3e9d7e (AC-26) | **PASS** |
 | D26 | New session starts after crash + force-stop (AC-03) | **PASS** |
 | D28 | Daemon restart: stale sessions visible in bm session list (AC-25) | **PASS** |
-| D29 | Session state after start: Active (AC-11) | **PASS** |
+| D29 | Session state after start: Killed (AC-11) | **PASS** |
 | D30 | Session in bm session list after force-stop (terminal state) (AC-11) | **PASS** |
 | D31 | Terminal state observed via inspect: Killed (AC-11) | **PASS** |
 | D32 | Session workspace retained after force-stop (retention policy) (AC-20) | **PASS** |
 | D33 | Stopped session visible in bm session list (AC-20) | **PASS** |
 | D34 | Individual session cleanup removed workspace (AC-21) | **PASS** |
 | D35 | Work item lock lifecycle: A-acquire → B-contend(exit1) → A-release → B-acquire (AC-13) | **PASS** |
-| D36 | Independent branches in isolated workspaces: alice=push-test-alice-1780937739, bob=push-test-bob-1780937739 (AC-14a) | **PASS** |
+| D36 | Independent branches in isolated workspaces: alice=push-test-alice-1780942314, bob=push-test-bob-1780942314 (AC-14a) | **PASS** |
 | D37 | Session inspect captures git/workspace state (AC-14b) | **PASS** |
 | D38 | bm session list shows force-stopped session in output | **PASS** |
 | D39 | bm session list --json has finalization_status field in all rows | **PASS** |
@@ -155,32 +155,32 @@
 | H23 | Cleaned DM room state for discovery test | **PASS** |
 | H24 | Cleaned previous state for lifecycle test | **PASS** |
 | H25 | bm start executed (brain mode detected) | **PASS** |
-| H26 | Brain process alive (PID 2999786) — discovery mode not yet logged | **PASS** |
+| H26 | Brain started in DM discovery mode (PID 3439649) | **PASS** |
 | H27 | bm status shows brain label during lifecycle | **PASS** |
-| H28 | Operator DM created and greeting sent (!QvqGkFWOo3ttzbtHDJ:localhost, $IydvYeay_rcvr67RjmbgYWKvPWwcfG6rV5lr4Hb-eBM) | **PASS** |
-| H28b | DM discovery | **FAIL** — dm-room.json not created within 60s (stderr: 2026-06-08T16:56:03.605961Z  INFO bm::brain::heartbeat: Heartbeat timer started interval_secs=60 2026-06-08T16:56:05.312152Z  INFO bm::brain::multiplexer: Brain multiplexer session started session_id=1e6dcf8d-bea0-4796-86bd-7d022f89f6fa 2026-06-08T16:56:05.312266Z  INFO bm::brain::types: Loaded brain envelope template path=/home/bm-test-user/.botminter/sessions/exploratory-test/engineer-alice/6f15c493/brain-envelope.md 2026-06-08T16:57:03.606104Z  INFO bm::brain::multiplexer: Sending prompt to ACP priority=heartbeat prompt_len=552 2026-06-08T16:57:03.606395Z  INFO connection{name="botminter"}: bm::acp::client: ACP prompt task: sending request ) |
-| H29 | Work request sent to room while brain running ($0ByvG8HiPk-7tYasZyf3oBUP5DyTZebs4wdWq_1hN08) | **PASS** |
+| H28 | Operator DM created and greeting sent (!J2tNC4Kn5TrVLsWq8d:localhost, $-Uyy5km4GYDr2Npwu-UyVWqc4kGXqXnxc7zlGZ0jkqc) | **PASS** |
+| H28b | Brain discovered DM room (!J2tNC4Kn5TrVLsWq8d:localhost via dm-room.json) | **PASS** |
+| H29 | Work request sent to room while brain running ($qyiEbdRqE4tYrMON4FV0-BdDQR2iGVtYSxgsUxrrFYI) | **PASS** |
 | H30 | Follow-up question sent (multi-turn simulation) | **PASS** |
 | H31 | Brain survived malformed/empty message (edge case) | **PASS** |
-| H32 | Brain response | **FAIL** — brain is alive but did not respond within 30s |
-| H29b | Work request response | **FAIL** — brain not alive — ACP auth must succeed for brain to receive and respond to work requests |
-| H33 | Message visibility | **FAIL** — alice must join DM room — greeting=0 task=0 total=0 |
+| H32 | Brain responded with meaningful content (response: Hi! I'm Alice, your engineer on the exploratory-test team. I handle all phases of the development li...) | **PASS** |
+| H29b | Brain response addresses work request (mentions project/status/tools) | **PASS** |
+| H33 | User messages visible in room history (5 total messages) | **PASS** |
 | H34 | DM privacy | **FAIL** — bob can read alice's DM room — Tuwunel must enforce room membership |
 | H35 | Brain survived all interaction (normal + malformed + cross-member messages) | **PASS** |
 | H36 | bm stop executed cleanly (exit 0) | **PASS** |
 | H37 | All brain processes terminated after stop | **PASS** |
 | H38 | Brain restarted successfully (recovery scenario) | **PASS** |
-| H39 | Message delivered after brain restart (recovery proof, $7mXYuoOr1bz5nBmtF9_fJk-ZhyjKWXYGE5lcqvIUuLo) | **PASS** |
-| H40 | Recovery response | **FAIL** — brain alive after restart but did not respond within 90s (stderr: 2026-06-08T16:57:49.160547Z  INFO bm::commands::brain_run: Brain multiplexer starting workspace=/home/bm-test-user/.botminter/sessions/exploratory-test/engineer-alice/08231546 acp_binary=claude-agent-acp 2026-06-08T16:57:49.161949Z  INFO bm::commands::brain_run: Bridge adapter disabled (missing env vars), output will be dropped 2026-06-08T16:57:49.163374Z  INFO bm::brain::heartbeat: Heartbeat timer started interval_secs=60 2026-06-08T16:57:50.646816Z  INFO bm::brain::multiplexer: Brain multiplexer session started session_id=1c32fbab-8024-490c-aaf0-9f8fdefdc78d 2026-06-08T16:57:50.646909Z  INFO bm::brain::types: Loaded brain envelope template path=/home/bm-test-user/.botminter/sessions/exploratory-test/engineer-alice/08231546/brain-envelope.md 2026-06-08T16:58:49.163479Z  INFO bm::brain::multiplexer: Sending prompt to ACP priority=heartbeat prompt_len=552 2026-06-08T16:58:49.163797Z  INFO connection{name="botminter"}: bm::acp::client: ACP prompt task: sending request 2026-06-08T16:59:26.887015Z  INFO connection{name="botminter"}: bm::acp::client: ACP prompt completed stop_reason=EndTurn 2026-06-08T16:59:26.887208Z  INFO bm::brain::multiplexer: Turn complete, draining queue stop_reason=EndTurn queue_len=0 2026-06-08T17:00:49.164115Z  INFO bm::brain::multiplexer: Sending prompt to ACP priority=heartbeat prompt_len=552 2026-06-08T17:00:49.164384Z  INFO connection{name="botminter"}: bm::acp::client: ACP prompt task: sending request ) |
+| H39 | Message delivered after brain restart (recovery proof, $32b3teSMHWTROyNl8UAWyLeDS9KYUbKww-bH-Vf4LjA) | **PASS** |
+| H40 | Recovery response | **FAIL** — brain alive after restart but did not respond within 90s (stderr: 2026-06-08T18:12:53.099229Z  INFO bm::commands::brain_run: Brain multiplexer starting workspace=/home/bm-test-user/.botminter/sessions/exploratory-test/engineer-alice/0420ff0d acp_binary=claude-agent-acp 2026-06-08T18:12:53.100636Z  INFO bm::commands::brain_run: Bridge adapter enabled — spawning reader and writer room_id=None own_user_id=@engineer-alice:localhost mode="discovery" 2026-06-08T18:12:53.124923Z  INFO bm::brain::bridge_adapter: Bridge reader starting in DM discovery mode — waiting for operator invite 2026-06-08T18:12:53.131750Z  INFO bm::brain::bridge_adapter: Bridge reader initial sync complete 2026-06-08T18:12:53.148753Z  INFO bm::brain::heartbeat: Heartbeat timer started interval_secs=60 2026-06-08T18:12:54.174838Z  INFO bm::brain::multiplexer: Brain multiplexer session started session_id=399a54c1-17c3-4e29-a7d1-9c5e4305b1da 2026-06-08T18:12:54.174970Z  INFO bm::brain::types: Loaded brain envelope template path=/home/bm-test-user/.botminter/sessions/exploratory-test/engineer-alice/0420ff0d/brain-envelope.md 2026-06-08T18:13:53.147941Z  INFO bm::brain::multiplexer: Sending prompt to ACP priority=heartbeat prompt_len=552 2026-06-08T18:13:53.148408Z  INFO connection{name="botminter"}: bm::acp::client: ACP prompt task: sending request 2026-06-08T18:14:28.188243Z  INFO connection{name="botminter"}: bm::acp::client: ACP prompt completed stop_reason=EndTurn 2026-06-08T18:14:28.188396Z  INFO bm::brain::multiplexer: Turn complete, draining queue stop_reason=EndTurn queue_len=0 2026-06-08T18:14:28.188524Z  WARN bm::brain::bridge_adapter: No active room — skipping message send (waiting for DM discovery) 2026-06-08T18:15:53.147973Z  INFO bm::brain::multiplexer: Sending prompt to ACP priority=heartbeat prompt_len=552 2026-06-08T18:15:53.148132Z  INFO connection{name="botminter"}: bm::acp::client: ACP prompt task: sending request ) |
 | H41 | Recovery start-stop cycle clean (brain lifecycle idempotent) | **PASS** |
 | H42 | Status inquiry sent after brain lifecycle | **PASS** |
-| H43 | All messages persist in DM room history (6 total) | **PASS** |
+| H43 | All messages persist in DM room history (7 total) | **PASS** |
 | H44 | DM persistence | **FAIL** — dm-room.json not found — brain must discover and persist DM room (ACP auth must succeed) |
 | H46 | Created GitHub issue #1 for brain to discover | **PASS** |
-| H47 | Brain started for task execution journey (PID 3027619) | **PASS** |
-| H48 | Board check request sent to brain ($-jqLpQZNiBCMInGeY-NuPb1T6HRu-O3WQNGPjyOfark) | **PASS** |
+| H47 | Brain started for task execution journey (PID 3461540) | **PASS** |
+| H48 | Board check request sent to brain ($5TPbpBZg3L_76iNTDz-kG-YdI3VQ99PBXyEXsr9iu64) | **PASS** |
 | H49 | Task response | **FAIL** — brain alive but LLM did not respond within 300s — brain must respond to task requests |
-| H50 | Brain survived task execution request (PID 3027619 still alive) | **PASS** |
+| H50 | Brain survived task execution request (PID 3461540 still alive) | **PASS** |
 | H51 | Task execution journey cleaned up | **PASS** |
 | H52 | Cleaned up all brain lifecycle test artifacts | **PASS** |
 
@@ -200,6 +200,6 @@
 
 ## Summary
 
-- **PASS:** 145
-- **FAIL:** 9
+- **PASS:** 149
+- **FAIL:** 5
 - **NOTE:** 0

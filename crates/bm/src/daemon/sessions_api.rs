@@ -29,6 +29,20 @@ impl BridgeContext {
             .ok()
             .flatten()
     }
+
+    /// Resolve this member's Matrix user_id from the bridge state.
+    pub fn member_user_id(&self, member_name: &str) -> Option<String> {
+        bridge::load_state(&self.bstate_path)
+            .ok()?
+            .identities
+            .get(member_name)
+            .map(|id| id.user_id.clone())
+    }
+
+    /// Resolve the admin Matrix user_id from the bridge state.
+    pub fn admin_user_id(&self) -> Option<String> {
+        bridge::load_state(&self.bstate_path).ok()?.admin_user_id
+    }
 }
 
 use axum::extract::{Path, Query, State};
@@ -684,14 +698,20 @@ pub async fn start_session_handler(
     let bridge_type_name: Option<String>;
     let service_url: Option<String>;
     let member_token: Option<String>;
+    let brain_user_id: Option<String>;
+    let brain_operator_user_id: Option<String>;
     if let Some(ref bc) = state.bridge_context {
         bridge_type_name = Some(bc.bridge_type_name.clone());
         service_url = bc.service_url();
         member_token = bc.member_token(&req.member_name);
+        brain_user_id = bc.member_user_id(&req.member_name);
+        brain_operator_user_id = bc.admin_user_id();
     } else {
         bridge_type_name = None;
         service_url = None;
         member_token = None;
+        brain_user_id = None;
+        brain_operator_user_id = None;
     }
 
     let gh_config_dir: Option<PathBuf> = state
@@ -770,8 +790,8 @@ pub async fn start_session_handler(
                         bridge_type: bridge_type_name.as_deref(),
                         service_url: service_url.as_deref(),
                         room_id: None,
-                        user_id: None,
-                        operator_user_id: None,
+                        user_id: brain_user_id.as_deref(),
+                        operator_user_id: brain_operator_user_id.as_deref(),
                         team_repo: None,
                         gh_config_dir: gh_config_dir.as_deref(),
                     };
@@ -2717,5 +2737,81 @@ mod tests {
             "Session with no finalization_result must have 'n/a' status, got '{}'",
             session.finalization_status
         );
+    }
+
+    // --- CT-154-15: BridgeContext resolves user IDs from bridge state ---
+
+    #[test]
+    fn bridge_context_member_user_id_reads_from_state() {
+        use crate::bridge::{BridgeIdentity, BridgeState, LocalCredentialStore};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let bstate_path = tmp.path().join("bridge-state.json");
+
+        let mut state = BridgeState::default();
+        state.identities.insert(
+            "alice".to_string(),
+            BridgeIdentity {
+                username: "alice".to_string(),
+                user_id: "@alice:matrix.example.com".to_string(),
+                token: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                is_operator: false,
+            },
+        );
+        bridge::save_state(&bstate_path, &state).unwrap();
+
+        let bc = BridgeContext {
+            bridge_type_name: "tuwunel".to_string(),
+            bstate_path: bstate_path.clone(),
+            credential_store: LocalCredentialStore::new("team", "bridge", bstate_path),
+        };
+
+        assert_eq!(
+            bc.member_user_id("alice"),
+            Some("@alice:matrix.example.com".to_string())
+        );
+        assert_eq!(bc.member_user_id("nonexistent"), None);
+    }
+
+    #[test]
+    fn bridge_context_admin_user_id_reads_from_state() {
+        use crate::bridge::{BridgeState, LocalCredentialStore};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let bstate_path = tmp.path().join("bridge-state.json");
+
+        let mut state = BridgeState::default();
+        state.admin_user_id = Some("@admin:matrix.example.com".to_string());
+        bridge::save_state(&bstate_path, &state).unwrap();
+
+        let bc = BridgeContext {
+            bridge_type_name: "tuwunel".to_string(),
+            bstate_path: bstate_path.clone(),
+            credential_store: LocalCredentialStore::new("team", "bridge", bstate_path),
+        };
+
+        assert_eq!(
+            bc.admin_user_id(),
+            Some("@admin:matrix.example.com".to_string())
+        );
+    }
+
+    #[test]
+    fn bridge_context_user_id_missing_state_returns_none() {
+        use crate::bridge::LocalCredentialStore;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let bstate_path = tmp.path().join("nonexistent-bridge-state.json");
+
+        let bc = BridgeContext {
+            bridge_type_name: "tuwunel".to_string(),
+            bstate_path: bstate_path.clone(),
+            credential_store: LocalCredentialStore::new("team", "bridge", bstate_path),
+        };
+
+        // Missing state file: load_state returns default (empty) state → None
+        assert_eq!(bc.member_user_id("alice"), None);
+        assert_eq!(bc.admin_user_id(), None);
     }
 }
