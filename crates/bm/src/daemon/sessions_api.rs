@@ -43,7 +43,9 @@ use crate::session::history::{self, ExitStatus};
 use crate::session::registry::SessionRegistry;
 use crate::session::retention::{self, ProcessChecker};
 use crate::session::stop::{self, StopMode, StopOptions};
-use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
+use crate::session::types::{
+    FinalizationExitStatus, FinalizationResult, SessionId, SessionRecord, SessionState, SessionType,
+};
 use crate::session::work_item_lock::WorkItemLock;
 
 struct SessionsInner {
@@ -850,6 +852,10 @@ fn spawn_deactivation_watcher(
                     .unwrap_or(false)
                 {
                     let _ = guard.registry.update_state(&session_id, SessionState::Completed);
+                    let _ = guard.registry.set_finalization_result(
+                        &session_id,
+                        FinalizationResult::for_state(FinalizationExitStatus::Skipped),
+                    );
                 }
             }
             return;
@@ -880,7 +886,15 @@ fn spawn_deactivation_watcher(
                                     .map(|r| r.current_state == SessionState::Finalizing)
                                     .unwrap_or(false)
                                 {
+                                    let exit_status = match new_state {
+                                        SessionState::Completed => FinalizationExitStatus::Completed,
+                                        _ => FinalizationExitStatus::Failed,
+                                    };
                                     let _ = guard.registry.update_state(&sid, new_state);
+                                    let _ = guard.registry.set_finalization_result(
+                                        &sid,
+                                        FinalizationResult::for_state(exit_status),
+                                    );
                                 }
                             }
                         },
@@ -903,6 +917,10 @@ fn spawn_deactivation_watcher(
                             let _ = guard
                                 .registry
                                 .update_state(&session_id, SessionState::Failed);
+                            let _ = guard.registry.set_finalization_result(
+                                &session_id,
+                                FinalizationResult::for_state(FinalizationExitStatus::Failed),
+                            );
                         }
                     }
                 }
@@ -917,6 +935,10 @@ fn spawn_deactivation_watcher(
                     .unwrap_or(false)
                 {
                     let _ = guard.registry.update_state(&session_id, SessionState::Completed);
+                    let _ = guard.registry.set_finalization_result(
+                        &session_id,
+                        FinalizationResult::for_state(FinalizationExitStatus::Skipped),
+                    );
                 }
             }
         }

@@ -149,6 +149,19 @@ pub struct FinalizationResult {
     pub github_issue_urls: Vec<String>,
 }
 
+impl FinalizationResult {
+    /// Minimal result record for a given exit status, with no repo details.
+    pub fn for_state(exit_status: FinalizationExitStatus) -> Self {
+        Self {
+            exit_status,
+            committed_repos: vec![],
+            pushed_branches: vec![],
+            recovery_branches: vec![],
+            github_issue_urls: vec![],
+        }
+    }
+}
+
 /// Git state of a single repo within a workspace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoGitState {

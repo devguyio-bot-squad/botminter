@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use anyhow::{anyhow, Result};
 
-use super::types::{SessionId, SessionRecord, SessionState};
+use super::types::{FinalizationResult, SessionId, SessionRecord, SessionState};
 
 /// On-disk serialization format for the registry.
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -108,6 +108,21 @@ impl SessionRegistry {
             .get_mut(id)
             .ok_or_else(|| anyhow!("Session {} not found", id))?;
         record.agent_pid = Some(pid);
+        self.save()?;
+        Ok(())
+    }
+
+    /// Record the outcome of the finalization subagent for a session.
+    pub fn set_finalization_result(
+        &mut self,
+        id: &SessionId,
+        result: FinalizationResult,
+    ) -> Result<()> {
+        let record = self
+            .sessions
+            .get_mut(id)
+            .ok_or_else(|| anyhow!("Session {} not found", id))?;
+        record.finalization_result = Some(result);
         self.save()?;
         Ok(())
     }
