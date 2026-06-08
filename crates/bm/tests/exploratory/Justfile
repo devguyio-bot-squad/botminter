@@ -218,6 +218,12 @@ deploy: build clean
     # Pipe the token via stdin to avoid exposing it in process args.
     # setup-git wires the credential helper so git push uses gh for HTTPS auth.
     echo "$TESTS_GH_TOKEN" | ssh {{TEST_HOST}} 'gh auth login --with-token && gh auth setup-git'
+    # Read Vertex AI vars from operator shell — forwarded to bm-test-user env.sh so
+    # bm brain-run's collect_env_vars() can pass them to the claude-agent-acp child process.
+    VERTEX_PROJECT="${ANTHROPIC_VERTEX_PROJECT_ID:-}"
+    VERTEX_ENABLED="${CLAUDE_CODE_USE_VERTEX:-}"
+    VERTEX_REGION="${CLOUD_ML_REGION:-}"
+    REMOTE_GCP_CREDS="{{REMOTE_HOME}}/.config/gcloud/application_default_credentials.json"
     # Generate env.sh on the remote — sourced by run-phase before each phase
     printf '%s\n' \
         'export BM="{{REMOTE_BIN}}/bm"' \
@@ -241,6 +247,10 @@ deploy: build clean
         'export TESTS_APP_INSTALLATION_ID="{{TESTS_APP_INSTALLATION_ID}}"' \
         "export TESTS_APP_PRIVATE_KEY_FILE=\"{{REMOTE_HOME}}/.config/github-apps/bm-test-app.pem\"" \
         'export PATH="{{REMOTE_BIN}}:$PATH"' \
+        "export CLAUDE_CODE_USE_VERTEX=\"${VERTEX_ENABLED}\"" \
+        "export ANTHROPIC_VERTEX_PROJECT_ID=\"${VERTEX_PROJECT}\"" \
+        "export CLOUD_ML_REGION=\"${VERTEX_REGION}\"" \
+        "export GOOGLE_APPLICATION_CREDENTIALS=\"${REMOTE_GCP_CREDS}\"" \
         | ssh {{TEST_HOST}} 'cat > {{REMOTE_ENV}}'
     echo "Deploy complete."
 

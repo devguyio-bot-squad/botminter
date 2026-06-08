@@ -614,6 +614,11 @@ impl HydrationWorkspaceOps {
         self.hydrator.teardown(session_id, member)
     }
 
+    /// Return the permanent member workspace path: `<workspace_base>/<member>`.
+    pub fn member_workspace_for(&self, member_name: &str) -> PathBuf {
+        self.workspace_base.join(member_name)
+    }
+
     /// Return the GitHub App credential directory for `member_name` if it exists.
     ///
     /// The path is `<workspace_base>/<member>/.config/gh` — set as `GH_CONFIG_DIR`

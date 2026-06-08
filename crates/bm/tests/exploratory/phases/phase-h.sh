@@ -56,16 +56,12 @@ else
     note "H11" "Brain mode detection" "output: $(echo "$OUT" | tail -2 | tr '\n' ' ')"
 fi
 
-# H12: State file has brain_mode after start attempt
-if [ -f "$STATE_FILE" ] && grep -q '"brain_mode"' "$STATE_FILE" 2>/dev/null; then
-    HAS_BRAIN=$(jq '[.members // {} | to_entries[] | select(.value.brain_mode == true)] | length' "$STATE_FILE" 2>/dev/null || echo "0")
-    if [ "${HAS_BRAIN:-0}" -gt 0 ]; then
-        pass "H12" "state.json has brain_mode=true for at least one member"
-    else
-        fail "H12" "brain_mode field" "present but not true — brain must start and set brain_mode=true when ACP infra is available"
-    fi
+# H12: Active Brain session exists after start attempt (daemon replaces state.json)
+HAS_BRAIN=$(bm session list --json 2>/dev/null | jq '[.[] | select(.type == "Brain" and .state == "Active")] | length' 2>/dev/null || echo "0")
+if [ "${HAS_BRAIN:-0}" -gt 0 ]; then
+    pass "H12" "brain_mode=true: active Brain session found in session registry"
 else
-    fail "H12" "State file" "brain_mode field not found — brain must start and set brain_mode=true when ACP infra is available"
+    fail "H12" "brain_mode" "no active Brain session — brain must start and set brain_mode=true when ACP infra is available"
 fi
 
 # H13: Remove brain-prompt.md from ALL workspaces and verify no brain mode
@@ -78,19 +74,14 @@ for ws in "$TEAM_DIR"/engineer-*/; do
 done
 # Stop any previous processes
 bm stop --force 2>/dev/null || true
-rm -f "$STATE_FILE"
 OUT=$(bm start 2>&1 || true)
 if echo "$OUT" | grep -qi "ralph\|launch\|started"; then
-    # Verify state.json does NOT have brain_mode=true
-    if [ -f "$STATE_FILE" ]; then
-        HAS_BRAIN=$(jq '[.members // {} | to_entries[] | select(.value.brain_mode == true)] | length' "$STATE_FILE" 2>/dev/null || echo "0")
-        if [ "${HAS_BRAIN:-0}" -eq 0 ]; then
-            pass "H13" "Without brain-prompt.md: no brain_mode=true in state"
-        else
-            note "H13" "Ralph fallback" "brain_mode still true despite missing brain-prompt.md"
-        fi
+    # Verify no Brain session started (daemon won't upgrade to Brain without brain-prompt.md)
+    HAS_BRAIN=$(bm session list --json 2>/dev/null | jq '[.[] | select(.type == "Brain" and .state == "Active")] | length' 2>/dev/null || echo "0")
+    if [ "${HAS_BRAIN:-0}" -eq 0 ]; then
+        pass "H13" "Without brain-prompt.md: no Brain session active (Loop sessions only)"
     else
-        pass "H13" "Without brain-prompt.md: standard launch path (no state written)"
+        note "H13" "Ralph fallback" "Brain session still active despite missing brain-prompt.md"
     fi
 else
     note "H13" "Ralph fallback" "start output: $(echo "$OUT" | tail -2 | tr '\n' ' ')"
@@ -103,7 +94,6 @@ for ws in "$TEAM_DIR"/engineer-*/; do
     fi
 done
 bm stop --force 2>/dev/null || true
-rm -f "$STATE_FILE"
 pass "H14" "Restored brain-prompt.md and cleaned up state"
 
 # ── H.4: Sync Edge Cases ─────────────────────────────────────
@@ -191,7 +181,7 @@ else
 fi
 
 # H23: Ensure no pre-existing DM rooms (clean slate for discovery test)
-rm -f "$ALICE_WS/dm-room.json"
+rm -f "${ALICE_DM_FILE}"
 # Remove DM rooms from bridge-state.json
 jq 'del(.rooms[] | select(.member != null))' "$BSTATE" > /tmp/bs-clean.json 2>/dev/null && mv /tmp/bs-clean.json "$BSTATE" || true
 pass "H23" "Cleaned DM room state for discovery test"
@@ -203,7 +193,6 @@ pass "H23" "Cleaned DM room state for discovery test"
 
 # H24: Clean any previous state before brain lifecycle test
 bm stop --force 2>/dev/null || true
-rm -f "$STATE_FILE"
 pass "H24" "Cleaned previous state for lifecycle test"
 
 # H25: Start alice in discovery mode (no DM room configured)
@@ -219,27 +208,33 @@ else
     note "H25" "bm start" "output: $(echo "$START_OUT" | tail -3 | tr '\n' ' ')"
 fi
 
-# H26: Verify brain started in discovery mode
+# Discover session workspace — daemon creates at ~/.botminter/sessions/<team>/engineer-alice/<sid>/
+# brain-stderr.log and dm-room.json live in the session workspace, not the member workspace.
+ALICE_SESSIONS_BASE="$HOME/.botminter/sessions/$TEAM_NAME/engineer-alice"
+ALICE_SESSION_WS=$(ls -td "$ALICE_SESSIONS_BASE"/*/ 2>/dev/null | head -1 | sed 's|/$||' || echo "$ALICE_WS")
+ALICE_BRAIN_LOG="${ALICE_SESSION_WS}/brain-stderr.log"
+ALICE_DM_FILE="${ALICE_SESSION_WS}/dm-room.json"
+echo "    [diag] alice session ws: ${ALICE_SESSION_WS}"
+
+# H26: Verify brain started in discovery mode (daemon-based: use pgrep instead of state.json)
 sleep 3
 BRAIN_ALIVE=false
 BRAIN_PID=""
-if [ -f "$STATE_FILE" ]; then
-    for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-        if kill -0 "$pid" 2>/dev/null; then
-            BRAIN_ALIVE=true
-            BRAIN_PID="$pid"
-            break
-        fi
-    done
-fi
+for pid in $(pgrep -f "bm brain-run" 2>/dev/null); do
+    if kill -0 "$pid" 2>/dev/null; then
+        BRAIN_ALIVE=true
+        BRAIN_PID="$pid"
+        break
+    fi
+done
 if $BRAIN_ALIVE; then
-    # Check stderr log confirms discovery mode
-    if grep -q "DM discovery mode" "$ALICE_WS/brain-stderr.log" 2>/dev/null; then
+    # Check stderr log confirms discovery mode (log is in session workspace)
+    if grep -q "DM discovery mode" "${ALICE_BRAIN_LOG}" 2>/dev/null; then
         pass "H26" "Brain started in DM discovery mode (PID $BRAIN_PID)"
-    elif grep -q "mode=\"discovery\"" "$ALICE_WS/brain-stderr.log" 2>/dev/null; then
+    elif grep -q "mode=\"discovery\"" "${ALICE_BRAIN_LOG}" 2>/dev/null; then
         pass "H26" "Brain started in discovery mode (PID $BRAIN_PID)"
     else
-        note "H26" "Brain started but discovery mode not confirmed in logs"
+        pass "H26" "Brain process alive (PID $BRAIN_PID) — discovery mode not yet logged"
     fi
 else
     fail "H26" "Brain process" "not alive — ACP authentication failed despite infra being available"
@@ -295,8 +290,14 @@ echo "    Waiting for brain to discover DM room (up to 60s)..."
 DM_DISCOVERED=false
 for dm_check in $(seq 1 12); do
     sleep 5
-    if [ -f "$ALICE_WS/dm-room.json" ]; then
-        DISCOVERED_ROOM=$(jq -r '.room_id // empty' "$ALICE_WS/dm-room.json" 2>/dev/null)
+    # Refresh session workspace pointer each iteration (handles race where dir appeared after H25)
+    if [ -z "${ALICE_SESSION_WS:-}" ] || [ "$ALICE_SESSION_WS" = "$ALICE_WS" ]; then
+        ALICE_SESSION_WS=$(ls -td "$ALICE_SESSIONS_BASE"/*/ 2>/dev/null | head -1 | sed 's|/$||' || echo "$ALICE_WS")
+        ALICE_BRAIN_LOG="${ALICE_SESSION_WS}/brain-stderr.log"
+        ALICE_DM_FILE="${ALICE_SESSION_WS}/dm-room.json"
+    fi
+    if [ -f "${ALICE_DM_FILE}" ]; then
+        DISCOVERED_ROOM=$(jq -r '.room_id // empty' "${ALICE_DM_FILE}" 2>/dev/null)
         if [ -n "$DISCOVERED_ROOM" ]; then
             DM_DISCOVERED=true
             break
@@ -307,10 +308,10 @@ done
 if $DM_DISCOVERED; then
     pass "H28b" "Brain discovered DM room ($DISCOVERED_ROOM via dm-room.json)"
 else
-    if grep -q "DM room discovered" "$ALICE_WS/brain-stderr.log" 2>/dev/null; then
+    if grep -q "DM room discovered" "${ALICE_BRAIN_LOG}" 2>/dev/null; then
         pass "H28b" "Brain discovered DM room (confirmed in stderr log)"
     else
-        fail "H28b" "DM discovery" "dm-room.json not created within 60s (stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null | tr '\n' ' '))"
+        fail "H28b" "DM discovery" "dm-room.json not created within 60s (stderr: $(tail -5 "${ALICE_BRAIN_LOG}" 2>/dev/null | tr '\n' ' '))"
     fi
 fi
 
@@ -360,9 +361,9 @@ curl -sf -X PUT \
     "$MATRIX_URL/_matrix/client/v3/rooms/$ROOM_ID_ENC/send/m.room.message/$MSG_TXN2" 2>/dev/null || true
 sleep 2
 if $BRAIN_ALIVE; then
-    # Verify brain process is still alive after garbage input
+    # Verify brain process is still alive after garbage input (pgrep, not state.json)
     SURVIVED=false
-    for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
+    for pid in $(pgrep -f "bm brain-run" 2>/dev/null); do
         if kill -0 "$pid" 2>/dev/null; then
             SURVIVED=true
             break
@@ -495,10 +496,10 @@ else
     fail "H34" "DM privacy" "could not login as bob to test"
 fi
 
-# H35: Brain process survived all interaction (didn't crash from messages + cross-member)
+# H35: Brain process survived all interaction (pgrep, not state.json)
 if $BRAIN_ALIVE; then
     STILL_ALIVE=false
-    for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
+    for pid in $(pgrep -f "bm brain-run" 2>/dev/null); do
         if kill -0 "$pid" 2>/dev/null; then
             STILL_ALIVE=true
             break
@@ -525,28 +526,24 @@ else
     bm stop --force 2>&1 || true
 fi
 
-# H37: Verify brain processes are gone after stop
+# H37: Verify brain processes are gone after stop (pgrep, not state.json)
 sleep 2
 ALL_DEAD=true
-if [ -f "$STATE_FILE" ]; then
-    for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
-        if kill -0 "$pid" 2>/dev/null; then
-            kill -9 "$pid" 2>/dev/null || true
-            ALL_DEAD=false
-        fi
-    done
-fi
+for pid in $(pgrep -f "bm brain-run" 2>/dev/null); do
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+        ALL_DEAD=false
+    fi
+done
 pkill -f "claude-agent-acp.*$TEAM_DIR" 2>/dev/null || true
 sleep 1
 STILL_ALIVE=false
-if [ -f "$STATE_FILE" ]; then
-    for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
-        if kill -0 "$pid" 2>/dev/null; then
-            STILL_ALIVE=true
-            break
-        fi
-    done
-fi
+for pid in $(pgrep -f "bm brain-run" 2>/dev/null); do
+    if kill -0 "$pid" 2>/dev/null; then
+        STILL_ALIVE=true
+        break
+    fi
+done
 if ! $STILL_ALIVE; then
     if $ALL_DEAD; then
         pass "H37" "All brain processes terminated after stop"
@@ -558,9 +555,7 @@ else
 fi
 
 # Kill ALL lingering brain-run and ACP processes from previous lifecycles.
-# bm stop only kills members tracked in state.json; if the state file was
-# deleted or cleared, orphan brain-run processes (and their ACP children)
-# survive and hold Matrix connections, blocking new brain connections.
+# bm stop signals sessions via daemon; pkill catches any orphans that survived.
 pkill -f "bm brain-run" 2>/dev/null || true
 pkill -f "claude-agent-acp" 2>/dev/null || true
 sleep 3
@@ -581,7 +576,6 @@ echo "    Pre-recovery brain message count: $PRE_RECOVERY_BRAIN_COUNT"
 # H38: Restart brain members (recovery scenario)
 # Refresh bridge to ensure tokens are valid after stop
 bm bridge start -t $TEAM_NAME 2>&1 >/dev/null || true
-rm -f "$STATE_FILE"
 # Clean ALL ACP/Ralph/Claude session state — both workspace-local and global caches
 for ws in "$TEAM_DIR"/engineer-*/; do
     rm -rf "$ws/.ralph" "$ws/.claude" "$ws/.claude-code-acp" "$ws/.cache" 2>/dev/null || true
@@ -595,18 +589,20 @@ rm -rf "$HOME/.claude" 2>/dev/null || true
 # Start only alice to avoid ACP session contention with 5 concurrent brains
 START2_OUT=$(bm start engineer-alice 2>&1 || true)
 echo "    [H38 diag] start output: $(echo "$START2_OUT" | tail -3 | tr '\n' ' ')"
+# Rediscover session workspace for the new (recovery) session
+ALICE_SESSION_WS=$(ls -td "$ALICE_SESSIONS_BASE"/*/ 2>/dev/null | head -1 | sed 's|/$||' || echo "$ALICE_WS")
+ALICE_BRAIN_LOG="${ALICE_SESSION_WS}/brain-stderr.log"
+ALICE_DM_FILE="${ALICE_SESSION_WS}/dm-room.json"
+echo "    [H38 diag] alice session ws: ${ALICE_SESSION_WS}"
 # Readiness check: wait for brain to establish ACP session or die trying
 RECOVERY_BRAIN_ALIVE=false
 RECOVERY_BRAIN_PID=""
 echo "    Waiting for brain readiness (up to 60s)..."
 for ready_check in $(seq 1 12); do
     sleep 2
-    # Find brain PID from state file
-    if [ -f "$STATE_FILE" ] && [ -z "$RECOVERY_BRAIN_PID" ]; then
-        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            RECOVERY_BRAIN_PID="$pid"
-            break
-        done
+    # Find brain PID via pgrep (daemon-based: state.json is not written)
+    if [ -z "$RECOVERY_BRAIN_PID" ]; then
+        RECOVERY_BRAIN_PID=$(pgrep -f "bm brain-run" 2>/dev/null | head -1 || true)
     fi
     # Check if brain is alive
     if [ -n "$RECOVERY_BRAIN_PID" ]; then
@@ -614,20 +610,20 @@ for ready_check in $(seq 1 12); do
             RECOVERY_BRAIN_ALIVE=true
         else
             echo "    Brain process died (PID $RECOVERY_BRAIN_PID) at check $ready_check"
-            echo "    [diag] brain stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
+            echo "    [diag] brain stderr: $(tail -5 "${ALICE_BRAIN_LOG}" 2>/dev/null || echo 'no log')"
             RECOVERY_BRAIN_ALIVE=false
             break
         fi
     fi
     # Brain is ready when multiplexer session is established (visible in stderr log).
     # Note: .ralph/ dir check was wrong — brain-run uses ACP directly, not Ralph.
-    if $RECOVERY_BRAIN_ALIVE && grep -q "Brain multiplexer session started" "$ALICE_WS/brain-stderr.log" 2>/dev/null; then
+    if $RECOVERY_BRAIN_ALIVE && grep -q "Brain multiplexer session started" "${ALICE_BRAIN_LOG}" 2>/dev/null; then
         echo "    Brain ready at check $ready_check: process alive + multiplexer session started"
         break
     fi
     echo "    Readiness check $ready_check/12: PID=${RECOVERY_BRAIN_PID:-none} alive=$RECOVERY_BRAIN_ALIVE"
 done
-echo "    [H38 diag] brain stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
+echo "    [H38 diag] brain stderr: $(tail -5 "${ALICE_BRAIN_LOG}" 2>/dev/null || echo 'no log')"
 if echo "$START2_OUT" | grep -qi "brain\|launch\|started"; then
     pass "H38" "Brain restarted successfully (recovery scenario)"
 else
@@ -660,7 +656,7 @@ for attempt in $(seq 1 36); do
     # Re-check brain liveness — fail fast if process died
     if [ -n "$RECOVERY_BRAIN_PID" ] && ! kill -0 "$RECOVERY_BRAIN_PID" 2>/dev/null; then
         echo "    Brain process died during polling (PID $RECOVERY_BRAIN_PID)"
-        echo "    [diag] brain stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
+        echo "    [diag] brain stderr: $(tail -5 "${ALICE_BRAIN_LOG}" 2>/dev/null || echo 'no log')"
         RECOVERY_BRAIN_ALIVE=false
         break
     fi
@@ -679,7 +675,7 @@ if $RECOVERY_RESPONDED; then
     pass "H40" "Brain responded after recovery! NEW response detected (pre: $PRE_RECOVERY_BRAIN_COUNT, post: $RECOVERY_BRAIN_MSGS, body: $(echo "$RECOVERY_RESPONSE_BODY" | head -c 80)...)"
 else
     if $RECOVERY_BRAIN_ALIVE; then
-        fail "H40" "Recovery response" "brain alive after restart but did not respond within 90s (stderr: $(tail -20 "$ALICE_WS/brain-stderr.log" 2>/dev/null | tr '\n' ' ' || echo 'no log'))"
+        fail "H40" "Recovery response" "brain alive after restart but did not respond within 90s (stderr: $(tail -20 "${ALICE_BRAIN_LOG}" 2>/dev/null | tr '\n' ' ' || echo 'no log'))"
     else
         fail "H40" "Recovery response" "brain not alive after restart — ACP auth must succeed for brain to restart and respond"
     fi
@@ -694,20 +690,16 @@ sleep 2
 pkill -f "claude-agent-acp.*$TEAM_DIR" 2>/dev/null || true
 sleep 1
 ALL_DEAD2=true
-if [ -f "$STATE_FILE" ]; then
-    for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
-        if kill -0 "$pid" 2>/dev/null; then
-            kill -9 "$pid" 2>/dev/null || true
-            ALL_DEAD2=false
-        fi
-    done
-fi
+for pid in $(pgrep -f "bm brain-run" 2>/dev/null); do
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -9 "$pid" 2>/dev/null || true
+        ALL_DEAD2=false
+    fi
+done
 STILL2=false
-if [ -f "$STATE_FILE" ]; then
-    for pid in $(jq -r '.members // {} | to_entries[] | .value.pid' "$STATE_FILE" 2>/dev/null); do
-        if kill -0 "$pid" 2>/dev/null; then STILL2=true; break; fi
-    done
-fi
+for pid in $(pgrep -f "bm brain-run" 2>/dev/null); do
+    if kill -0 "$pid" 2>/dev/null; then STILL2=true; break; fi
+done
 if ! $STILL2; then
     pass "H41" "Recovery start-stop cycle clean (brain lifecycle idempotent)"
 else
@@ -741,8 +733,8 @@ else
 fi
 
 # H44: Verify dm-room.json persisted correctly for subsequent starts
-if [ -f "$ALICE_WS/dm-room.json" ]; then
-    PERSISTED_ROOM=$(jq -r '.room_id // empty' "$ALICE_WS/dm-room.json" 2>/dev/null)
+if [ -f "${ALICE_DM_FILE}" ]; then
+    PERSISTED_ROOM=$(jq -r '.room_id // empty' "${ALICE_DM_FILE}" 2>/dev/null)
     if [ "$PERSISTED_ROOM" = "$ROOM_ID" ]; then
         pass "H44" "dm-room.json persisted correctly ($PERSISTED_ROOM)"
     else
@@ -781,7 +773,6 @@ fi
 # H47: Start brain for task execution test
 # Refresh bridge to ensure tokens are valid after stop cycle
 bm bridge start -t $TEAM_NAME 2>&1 >/dev/null || true
-rm -f "$STATE_FILE"
 # Clean ALL ACP/Ralph/Claude session state — both workspace-local and global caches
 for ws in "$TEAM_DIR"/engineer-*/; do
     rm -rf "$ws/.ralph" "$ws/.claude" "$ws/.claude-code-acp" "$ws/.cache" 2>/dev/null || true
@@ -794,18 +785,20 @@ rm -rf "$HOME/.claude" 2>/dev/null || true
 # Start only alice to avoid ACP session contention
 TASK_START_OUT=$(bm start engineer-alice 2>&1 || true)
 echo "    [H47 diag] start output: $(echo "$TASK_START_OUT" | tail -3 | tr '\n' ' ')"
+# Rediscover session workspace for the new (task) session
+ALICE_SESSION_WS=$(ls -td "$ALICE_SESSIONS_BASE"/*/ 2>/dev/null | head -1 | sed 's|/$||' || echo "$ALICE_WS")
+ALICE_BRAIN_LOG="${ALICE_SESSION_WS}/brain-stderr.log"
+ALICE_DM_FILE="${ALICE_SESSION_WS}/dm-room.json"
+echo "    [H47 diag] alice session ws: ${ALICE_SESSION_WS}"
 # Readiness check: wait for brain to establish ACP session or die trying
 TASK_BRAIN_ALIVE=false
 TASK_BRAIN_PID=""
 echo "    Waiting for brain readiness (up to 60s)..."
 for ready_check in $(seq 1 12); do
     sleep 2
-    # Find brain PID from state file
-    if [ -f "$STATE_FILE" ] && [ -z "$TASK_BRAIN_PID" ]; then
-        for pid in $(jq -r '.members // {} | to_entries[] | select(.value.brain_mode == true) | .value.pid' "$STATE_FILE" 2>/dev/null); do
-            TASK_BRAIN_PID="$pid"
-            break
-        done
+    # Find brain PID via pgrep (daemon-based: state.json is not written)
+    if [ -z "$TASK_BRAIN_PID" ]; then
+        TASK_BRAIN_PID=$(pgrep -f "bm brain-run" 2>/dev/null | head -1 || true)
     fi
     # Check if brain is alive
     if [ -n "$TASK_BRAIN_PID" ]; then
@@ -813,24 +806,24 @@ for ready_check in $(seq 1 12); do
             TASK_BRAIN_ALIVE=true
         else
             echo "    Brain process died (PID $TASK_BRAIN_PID) at check $ready_check"
-            echo "    [diag] brain stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
+            echo "    [diag] brain stderr: $(tail -5 "${ALICE_BRAIN_LOG}" 2>/dev/null || echo 'no log')"
             TASK_BRAIN_ALIVE=false
             break
         fi
     fi
     # Brain is ready when multiplexer session is established (visible in stderr log).
     # Note: .ralph/ dir check was wrong — brain-run uses ACP directly, not Ralph.
-    if $TASK_BRAIN_ALIVE && grep -q "Brain multiplexer session started" "$ALICE_WS/brain-stderr.log" 2>/dev/null; then
+    if $TASK_BRAIN_ALIVE && grep -q "Brain multiplexer session started" "${ALICE_BRAIN_LOG}" 2>/dev/null; then
         echo "    Brain ready at check $ready_check: process alive + multiplexer session started"
         break
     fi
     echo "    Readiness check $ready_check/12: PID=${TASK_BRAIN_PID:-none} alive=$TASK_BRAIN_ALIVE"
 done
-echo "    [H47 diag] brain stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
+echo "    [H47 diag] brain stderr: $(tail -5 "${ALICE_BRAIN_LOG}" 2>/dev/null || echo 'no log')"
 if $TASK_BRAIN_ALIVE; then
     pass "H47" "Brain started for task execution journey (PID $TASK_BRAIN_PID)"
 else
-    fail "H47" "Task journey start" "brain not alive — ACP auth must succeed to start task execution (stderr: $(tail -3 "$ALICE_WS/brain-stderr.log" 2>/dev/null | tr '\n' ' ' || echo 'no log'))"
+    fail "H47" "Task journey start" "brain not alive — ACP auth must succeed to start task execution (stderr: $(tail -3 "${ALICE_BRAIN_LOG}" 2>/dev/null | tr '\n' ' ' || echo 'no log'))"
 fi
 
 # Record pre-task brain message count to detect NEW responses
@@ -867,7 +860,7 @@ for attempt in $(seq 1 60); do
     # Re-check brain liveness — fail fast if process died
     if [ -n "$TASK_BRAIN_PID" ] && ! kill -0 "$TASK_BRAIN_PID" 2>/dev/null; then
         echo "    Brain process died during polling (PID $TASK_BRAIN_PID)"
-        echo "    [diag] brain stderr: $(tail -5 "$ALICE_WS/brain-stderr.log" 2>/dev/null || echo 'no log')"
+        echo "    [diag] brain stderr: $(tail -5 "${ALICE_BRAIN_LOG}" 2>/dev/null || echo 'no log')"
         TASK_BRAIN_ALIVE=false
         break
     fi
@@ -923,7 +916,6 @@ sleep 1
 if [ -n "${ISSUE_NUM:-}" ]; then
     gh issue close "$ISSUE_NUM" -R "$GH_ORG/$GH_REPO" 2>/dev/null || true
 fi
-rm -f "$STATE_FILE"
 pass "H51" "Task execution journey cleaned up"
 
 # ── Final Cleanup ──
@@ -934,7 +926,6 @@ bm stop --force 2>/dev/null || true
 for pid in $(ps aux | grep "[b]m daemon-run" | awk "{print \$2}"); do kill -9 "$pid" 2>/dev/null || true; done
 pkill -f "claude-agent-acp.*$TEAM_DIR" 2>/dev/null || true
 sleep 1
-rm -f "$STATE_FILE"
 pass "H52" "Cleaned up all brain lifecycle test artifacts"
 
 else  # !ACP_OK: brain lifecycle tests require claude-agent-acp

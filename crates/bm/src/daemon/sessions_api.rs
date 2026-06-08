@@ -607,6 +607,25 @@ pub async fn start_session_handler(
         None
     };
 
+    // Auto-detect brain mode: if the member workspace contains brain-prompt.md,
+    // upgrade a Loop session to Brain so bm start doesn't have to know in advance.
+    // NOTE: brain-prompt.md lives in the permanent member workspace (written by bm sync),
+    // NOT in the ephemeral session workspace (which is freshly hydrated each time).
+    let session_type = if session_type == SessionType::Loop {
+        if let Some(ref ops) = state.workspace_ops {
+            let member_ws = ops.member_workspace_for(&req.member_name);
+            if crate::formation::is_brain_member(&member_ws) {
+                SessionType::Brain
+            } else {
+                session_type
+            }
+        } else {
+            session_type
+        }
+    } else {
+        session_type
+    };
+
     // Step 3: Register session with workspace_path and transition to Active (under Mutex).
     {
         let mut inner = state.inner.lock().unwrap();
