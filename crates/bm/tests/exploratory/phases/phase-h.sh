@@ -181,7 +181,7 @@ else
 fi
 
 # H23: Ensure no pre-existing DM rooms (clean slate for discovery test)
-rm -f "${ALICE_DM_FILE}"
+# (ALICE_DM_FILE is resolved after bm start in H25 — clean bridge-state.json here)
 # Remove DM rooms from bridge-state.json
 jq 'del(.rooms[] | select(.member != null))' "$BSTATE" > /tmp/bs-clean.json 2>/dev/null && mv /tmp/bs-clean.json "$BSTATE" || true
 pass "H23" "Cleaned DM room state for discovery test"
