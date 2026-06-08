@@ -82,15 +82,17 @@ clean:
         if [ -x {{REMOTE_BIN}}/bm ] && [ -f {{REMOTE_HOME}}/.botminter/config.yml ]; then
             {{REMOTE_BIN}}/bm stop --force --bridge -t $TEAM 2>/dev/null || true
         fi
-        # 2. SIGTERM stale processes (including bm commands from killed test runs)
-        for pattern in \"[b]m brain-run\" \"[b]m daemon\" \"[b]m start\" \"[b]m teams\" \"[b]m stop\" \"[c]laude-code-acp-rs\" \"[c]laude.*stream-json\" \"[r]alph run\"; do
+        # 2. SIGTERM stale bm/ralph/claude processes.
+        # Use [x]yz patterns to avoid matching the grep command itself or
+        # the bash -l -c "..." shell whose cmdline contains the pattern string.
+        for pattern in \"[b]m brain-run\" \"[b]m daemon-run\" \"[b]m daemon\" \"[b]m start\" \"[c]laude-code-acp-rs\" \"[c]laude.*stream-json\" \"[r]alph loop\" \"[r]alph run\" \"[s]tub-bin/ralph\"; do
             for pid in \$(ps aux | grep \"\$pattern\" | awk \"{print \\\$2}\"); do
                 kill \"\$pid\" 2>/dev/null || true
             done
         done
-        sleep 1
+        sleep 2
         # 3. SIGKILL survivors
-        for pattern in \"[b]m brain-run\" \"[b]m daemon\" \"[b]m start\" \"[b]m teams\" \"[b]m stop\" \"[c]laude-code-acp-rs\" \"[c]laude.*stream-json\" \"[r]alph run\"; do
+        for pattern in \"[b]m brain-run\" \"[b]m daemon-run\" \"[b]m daemon\" \"[c]laude-code-acp-rs\" \"[r]alph loop\" \"[r]alph run\" \"[s]tub-bin/ralph\"; do
             for pid in \$(ps aux | grep \"\$pattern\" | awk \"{print \\\$2}\"); do
                 kill -9 \"\$pid\" 2>/dev/null || true
             done
@@ -108,7 +110,7 @@ clean:
 
         # ── Keyring ──
         if type load_isolated_keyring &>/dev/null && load_isolated_keyring; then
-            for u in superman-alice superman-bob superman-carol superman-dave bmadmin superman-pre-existing engineer-alice engineer-bob; do
+            for u in engineer-alice engineer-bob engineer-carol engineer-pre-existing bmadmin; do
                 secret_tool clear service botminter.$TEAM.tuwunel username \$u 2>/dev/null || true
             done
             stop_isolated_keyring 2>/dev/null || true
@@ -116,7 +118,9 @@ clean:
 
         # ── Local state ──
         rm -rf ~/.botminter ~/.config/botminter 2>/dev/null || true
-        rm -f {{REMOTE_BIN}}/bm {{REMOTE_BIN}}/bm-agent {{REMOTE_BIN}}/ralph {{REMOTE_BIN}}/claude {{REMOTE_BIN}}/claude-code-acp-rs
+        rm -f {{REMOTE_BIN}}/bm {{REMOTE_BIN}}/bm-agent {{REMOTE_BIN}}/ralph {{REMOTE_BIN}}/claude
+        # claude-code-acp-rs is deployed (not pre-installed); remove if present
+        rm -f {{REMOTE_BIN}}/claude-code-acp-rs
 
         # ── Port wait ──
         # Kill any conmon process holding the port (podman rm may not release immediately)
@@ -146,14 +150,13 @@ deploy: build clean
     # Copy binaries (bm + bm-agent from build, others from operator's PATH)
     scp -q {{CARGO_ROOT}}/target/debug/bm {{TEST_HOST}}:{{REMOTE_BIN}}/bm
     scp -q {{CARGO_ROOT}}/target/debug/bm-agent {{TEST_HOST}}:{{REMOTE_BIN}}/bm-agent
-    # Deploy ralph and claude from operator's PATH
-    for bin in ralph claude; do
+    # Deploy ralph, claude, and claude-code-acp-rs from operator's PATH (optional — skipped if not found)
+    for bin in ralph claude claude-code-acp-rs; do
         LOCAL_BIN=$(which "$bin" 2>/dev/null || true)
         if [ -n "$LOCAL_BIN" ]; then
             scp -q "$LOCAL_BIN" {{TEST_HOST}}:{{REMOTE_BIN}}/"$bin"
         fi
     done
-    # claude-agent-acp is pre-installed on the test user via pnpm
     # Deploy GitHub App PEM file to the remote test user
     scp -q "{{TESTS_APP_PRIVATE_KEY_FILE}}" {{TEST_HOST}}:~/.config/github-apps/bm-test-app.pem
     # Copy test scripts
@@ -294,7 +297,7 @@ phase-acp-isolated: ensure-keyring (run-phase "phase-acp-isolated.sh" "600")
 
 # Run all phases (B through H)
 # Starts and ends with clean to ensure a known-good state.
-all: clean deploy preflight init-report phase-b phase-c phase-d phase-e phase-f phase-h phase-g fetch-report clean
+all: clean deploy preflight init-report phase-b phase-c phase-d-session phase-e phase-f phase-h phase-g fetch-report clean
 
 # Run only bridge + workspace phases (skip init, assume team exists)
 bridge-and-workspace: ensure-keyring phase-c phase-d phase-e
