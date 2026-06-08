@@ -509,7 +509,7 @@ mod tests {
     #[test]
     fn acp_config_with_env_vars() {
         let config = AcpConfig {
-            binary: "claude-code-acp-rs".into(),
+            binary: "claude-agent-acp".into(),
             cwd: "/workspace".into(),
             system_prompt: Some("Be helpful".into()),
             env_vars: vec![
@@ -518,6 +518,6 @@ mod tests {
             ],
         };
         assert_eq!(config.env_vars.len(), 2);
-        assert_eq!(config.binary, "claude-code-acp-rs");
+        assert_eq!(config.binary, "claude-agent-acp");
     }
 }

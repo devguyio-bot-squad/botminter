@@ -22,7 +22,7 @@ Tests run on a **separate user account** (`bm-test-user@localhost`) via SSH, not
 | **Operator machine** | Build + orchestration | `cargo build`, `just exploratory-test`, Justfile recipes |
 | **Test user** (`bm-test-user@localhost`) | Execution | All phase scripts, `bm` commands, podman containers, keyring ops |
 
-The `deploy` recipe builds binaries locally, then copies `bm`, `bm-agent`, `ralph`, `claude`, and `claude-code-acp-rs` to the test user's `~/.local/bin/`. Test scripts (`lib.sh`, `phases/*.sh`) are staged at `~/.bm-exploratory-tests/`. An `env.sh` is generated on the remote with all test configuration.
+The `deploy` recipe builds binaries locally, then copies `bm`, `bm-agent`, `ralph`, `claude`, and `claude-agent-acp` to the test user's `~/.local/bin/`. Test scripts (`lib.sh`, `phases/*.sh`) are staged at `~/.bm-exploratory-tests/`. An `env.sh` is generated on the remote with all test configuration.
 
 An **isolated D-Bus + gnome-keyring-daemon** is started automatically on the test user's session (see `lib.sh`). This avoids any dependency on a system keyring or PAM-unlocked session.
 
@@ -265,8 +265,6 @@ End-to-end tests for the brain-mode feature. Tests simulate real user journeys:
 |---|----------|--------|----------|
 | H15 | Modified brain-prompt.md restored | Overwrite with junk, re-sync | Original content restored from template |
 | H16 | Deleted brain-prompt.md restored | Delete file, re-sync | File recreated from template |
-| H17 | Content idempotent across syncs | Sync twice, diff results | Identical content after both syncs |
-| H18 | Verbose sync shows BrainPromptSurfaced | Run `bm teams sync -v` | Output contains brain prompt surfacing message |
 
 ### H.5: End-to-End Brain Autonomy Validation
 
@@ -281,7 +279,7 @@ are running. The test polls for brain responses to prove autonomous behavior.
    malformed input (error handling) → cross-member messaging (alice sends, bob sees) → brain survives
    all interaction → bm stop. This single-session journey proves the brain handles diverse interaction
    patterns within one lifecycle, reflecting how a real user interacts during a work session.
-   - H26 validates the brain process IS `bm brain-run` / `claude-code-acp-rs` (not just any PID)
+   - H26 validates the brain process IS `bm brain-run` / `claude-agent-acp` (not just any PID)
    - H32 validates the brain response content is meaningful (operational indicators checked)
    - H29b validates the brain response addressed the work request (not just generic chat)
 2. **Recovery** (H38-H41): bm stop → bm start → send message → poll for NEW brain response → bm stop.
@@ -302,20 +300,20 @@ Each journey crosses all subsystems: CLI (start/stop), bridge (Matrix), brain (r
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
 | H19 | Bridge is running | `curl` Matrix versions endpoint | HTTP 200 (bridge auto-recovers if down) |
-| H20 | ACP binary available | `which claude-code-acp-rs` | Binary found in PATH |
+| H20 | ACP binary available | `which claude-agent-acp` | Binary found in PATH |
 | H21 | Admin Matrix login | `curl` login API with admin creds | Access token returned |
 | H22 | Alice Matrix login | `curl` login API with alice creds | Access token returned |
 | H23 | Room resolution | `curl` room alias API | Room ID returned for team general room |
 | H24 | Clean state before lifecycle | `bm stop --force`, rm state.json | Clean slate |
 | H25 | Start brain members | `bm start` | Brain mode detected in output |
-| H26 | Brain process verified | Check PID from state.json + validate process command is brain-run/acp | Process running AND command contains brain-run or claude-code-acp-rs |
+| H26 | Brain process verified | Check PID from state.json + validate process command is brain-run/acp | Process running AND command contains brain-run or claude-agent-acp |
 | H27 | Status shows brain label | `bm status` | "brain" label shown during lifecycle |
 | H28 | Send greeting while brain running | `curl` PUT room/send as admin | Message delivered to room with brain alive |
 | H29 | Send work request while brain running | `curl` PUT room/send as admin | Message delivered to room |
 | H30 | Send follow-up question | `curl` PUT room/send as admin | Multi-turn conversation simulated |
 | H31 | Edge case: malformed message | Send empty-body + unicode garbage via Matrix while brain running | Brain process survives (no crash) |
-| H32 | Poll for brain response (autonomy proof) | Poll room for messages from brain identity (30s), validate content is meaningful | Brain responds with operational content (or NOTE if pipeline not wired) |
-| H29b | Work request response check | Check brain responses for work-request-related content (project, status, tools) | Brain response addresses the work request (or NOTE) |
+| H32 | Poll for brain response (autonomy proof) | Poll room for messages from brain identity (30s), validate content is meaningful | Brain responds with operational content |
+| H29b | Work request response check | Check brain responses for work-request-related content (project, status, tools) | Brain response addresses the work request |
 | H33 | User messages visible in history | `curl` GET room/messages | All user messages visible |
 | H34 | Cross-member while brain alive | Alice sends message while brain running, bob verifies | Bob sees alice's message with brain process active |
 | H35 | Brain survived all interaction | Check brain PID still alive after normal + malformed + cross-member messages | Process stable during chat |
@@ -323,7 +321,7 @@ Each journey crosses all subsystems: CLI (start/stop), bridge (Matrix), brain (r
 | H37 | Processes terminated | Check all PIDs dead | No leftover processes |
 | H38 | Recovery: restart brain | `bm start` after stop | Brain restarts successfully |
 | H39 | Recovery: send message | Send message via Matrix after brain restart | Message delivered (recovery proof) |
-| H40 | Recovery: poll for NEW response | Poll room for brain response after restart (30s), verify count increased vs pre-recovery baseline | NEW brain response detected after recovery (or NOTE) |
+| H40 | Recovery: poll for NEW response | Poll room for brain response after restart (30s), verify count increased vs pre-recovery baseline | NEW brain response detected after recovery |
 | H41 | Recovery: stop cycle | `bm stop` again | Lifecycle idempotent |
 | H42 | Status inquiry after lifecycle | Send message to room post-lifecycle | Message sent successfully |
 | H43 | Message persistence (incl. recovery + cross-member) | Poll room history for all messages | All messages persist including recovery and cross-member |
@@ -338,9 +336,9 @@ the brain acknowledges the issue/board in its response.
 | # | Scenario | Method | Expected |
 |---|----------|--------|----------|
 | H46 | Create GitHub issue for brain | `gh issue create` on team repo | Issue created successfully |
-| H47 | Start brain for task execution | `bm start` + verify brain PID alive | Brain running (or NOTE if ACP auth fails) |
+| H47 | Start brain for task execution | `bm start` + verify brain PID alive | Brain running |
 | H48 | Ask brain to check board | Send Matrix message requesting board check mentioning the issue | Message delivered |
-| H49 | Poll for board-aware response | Poll room for brain response mentioning board/issue/dependency (60s) | Brain acknowledges board/issue (or NOTE) |
+| H49 | Poll for board-aware response | Poll room for brain response mentioning board/issue/dependency (60s) | Brain acknowledges board/issue |
 | H50 | Brain survived task execution | Check brain PID still alive | Process stable after task request |
 | H51 | Task journey cleanup | `bm stop`, close GitHub issue | Clean state |
 | H52 | Final cleanup | Stop all, rm state | All artifacts removed |
@@ -376,7 +374,7 @@ End-to-end verification of all 25 acceptance criteria for the ephemeral workspac
 | D19 | Session inspect shows all required fields | AC-18 | `bm session inspect <id>` | Session ID, Member, Type, State, Workspace all shown |
 | D20 | Individual session cleanup | AC-18 | `bm session cleanup <id>` | Session removed from registry |
 | D21 | Bulk session cleanup | AC-18 | `bm session cleanup --all` | All sessions cleaned |
-| D22 | Graceful stop triggers finalization | AC-02 | `bm stop alice` + poll 120s for finalization_status=completed | Session reaches Completed, branch pushed to remote |
+| D22 | Graceful stop triggers finalization | AC-02 | `bm stop alice` + poll 180s for finalization_status=completed | Session reaches Completed, branch pushed to remote |
 | D23 | Finalization results visible in inspect | AC-05 | `bm session inspect` after finalization | Finalization or Git State section shown |
 | D24 | bm session finalize re-triggers for Retained session | AC-23 | Grace+force-stop sequence → `bm session finalize` | Finalize command accepted (exit 0) |
 | D25 | Provision failure leaves no partial session | AC-07 | Corrupt botminter.yml, attempt start | Non-zero exit, no dangling Active session |

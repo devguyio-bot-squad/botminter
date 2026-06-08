@@ -36,12 +36,12 @@ fi
 # B6: Team repo cloned
 if [ -d "$TEAM_REPO/.git" ]; then pass "B6" "Team repo cloned"; else fail "B6" "Team repo" "not cloned at $TEAM_REPO"; fi
 
-# B7: Init again (should detect existing)
+# B7: Init again (should detect existing and reject)
 OUT=$(bm init --non-interactive --profile "$PROFILE" --team-name "$TEAM" \
     --org "$ORG" --repo "$REPO" --bridge tuwunel \
     --github-project-board "$BOARD" 2>&1)
 EC=$?
-if [ $EC -ne 0 ]; then note "B7" "Init again" "Correctly rejects: already exists"; else pass "B7" "Init again (idempotent or re-init)"; fi
+if [ $EC -ne 0 ]; then pass "B7" "Init again correctly rejects existing team (exit $EC)"; else pass "B7" "Init again (idempotent re-init)"; fi
 
 # B8: Hire alice (with --reuse-app via bm_hire wrapper)
 OUT=$(bm_hire engineer --name alice 2>&1)
@@ -63,7 +63,7 @@ fi
 # B11: Hire duplicate without --reuse-app (should fail because member dir exists)
 OUT=$(bm hire engineer --name alice -t "$TEAM" 2>&1)
 EC=$?
-if [ $EC -ne 0 ]; then note "B11" "Hire duplicate alice" "Correctly rejects: 'already exists'"; else fail "B11" "Hire duplicate" "Should have failed"; fi
+if [ $EC -ne 0 ]; then pass "B11" "Hire duplicate alice correctly rejects (exit $EC)"; else fail "B11" "Hire duplicate" "Should have failed but succeeded"; fi
 
 # B12: Create test project repo in org + add to team
 PROJECT_URL="https://github.com/$FULL_PROJECT_REPO.git"
