@@ -30,12 +30,18 @@ impl FinalizationResult {
     }
 }
 
-/// Determines whether any uncommitted files in the dirty state warrant
-/// finalization (i.e., categorize as CommitAndPush).
+/// Determines whether any repository in the dirty state warrants finalization.
+///
+/// Returns `true` if:
+/// - Any repo has committed-but-unpushed branches, OR
+/// - Any repo has uncommitted files that categorize as `CommitAndPush`.
+///
+/// Returns `false` if all repos are either clean or contain only credential
+/// files or files on the default branch.
 pub fn has_committable_files(workspace_path: &Path, dirty_state: &[RepoDirtyState]) -> bool {
     for repo in dirty_state {
-        if repo.uncommitted_files.is_empty() {
-            continue;
+        if !repo.unpushed_branches.is_empty() {
+            return true;
         }
 
         let context = build_repo_context(workspace_path, repo);
@@ -313,13 +319,17 @@ mod tests {
     }
 
     #[test]
-    fn committable_files_unpushed_only_returns_false() {
+    fn committable_files_unpushed_branches_trigger_finalization() {
         let tmp = tempfile::tempdir().unwrap();
-        let dirty = vec![dirty_repo("myproject", &[], &["feature/story-88"])];
+        let dirty = vec![dirty_repo(
+            "myproject",
+            &[],
+            &["abc123 feat: committed but not pushed"],
+        )];
 
         assert!(
-            !has_committable_files(tmp.path(), &dirty),
-            "repos with only unpushed branches must not have committable files"
+            has_committable_files(tmp.path(), &dirty),
+            "repos with committed-but-unpushed branches must trigger finalization"
         );
     }
 
@@ -402,18 +412,19 @@ mod tests {
     }
 
     #[test]
-    fn unpushed_only_session_finalization_skipped() {
+    fn unpushed_only_session_finalization_triggers() {
         let session_id = SessionId::from_raw("abc12345");
         let tmp = tempfile::tempdir().unwrap();
         let dirty = vec![dirty_repo("myproject", &[], &["feature/story-88"])];
 
         let result = finalize_session(&session_id, tmp.path(), &dirty);
 
-        assert_eq!(
+        assert_ne!(
             result.outcome,
             FinalizationOutcome::Skipped,
-            "session with only unpushed branches must skip finalization \
-             — pushes are handled separately by push_and_refresh_dirty"
+            "session with unpushed branches must trigger finalization — \
+             push_and_refresh_dirty runs first and clears branches on success; \
+             remaining unpushed branches indicate push failure, requiring the subagent"
         );
     }
 
