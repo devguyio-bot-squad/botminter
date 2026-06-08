@@ -607,14 +607,12 @@ pub async fn start_session_handler(
         None
     };
 
-    // Auto-detect brain mode: if the member workspace contains brain-prompt.md,
-    // upgrade a Loop session to Brain so bm start doesn't have to know in advance.
-    // NOTE: brain-prompt.md lives in the permanent member workspace (written by bm sync),
-    // NOT in the ephemeral session workspace (which is freshly hydrated each time).
+    // Auto-detect brain mode from the assembled session workspace.
+    // ConfigAssembler copies brain-prompt.md from team_repo/members/<member>/brain-prompt.md
+    // (if it exists) during hydration — same path as PROMPT.md and CLAUDE.md.
     let session_type = if session_type == SessionType::Loop {
-        if let Some(ref ops) = state.workspace_ops {
-            let member_ws = ops.member_workspace_for(&req.member_name);
-            if crate::formation::is_brain_member(&member_ws) {
+        if let Some(ref ws_path) = workspace_path {
+            if crate::formation::is_brain_member(ws_path) {
                 SessionType::Brain
             } else {
                 session_type
@@ -701,6 +699,43 @@ pub async fn start_session_handler(
         .as_ref()
         .and_then(|ops| ops.gh_config_dir_for_member(&req.member_name));
 
+    // Gather info needed to render brain-prompt.md into the session workspace.
+    // surface_brain_prompt() reads the template from team_repo/brain/system-prompt.md
+    // and writes the rendered result to session_workspace/brain-prompt.md, which
+    // brain_run reads at startup. Without this, the brain crashes immediately.
+    let brain_render_info: Option<(PathBuf, crate::brain::BrainPromptVars)> =
+        if session_type == SessionType::Brain {
+            state.workspace_ops.as_ref().and_then(|ops| {
+                let team_repo = ops.team_repo_path();
+                let team_name = team_repo
+                    .parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("team")
+                    .to_string();
+                let role = crate::brain::read_member_role(&team_repo, &req.member_name)
+                    .unwrap_or_else(|| "engineer".to_string());
+                let member_name = crate::brain::read_member_name(&team_repo, &req.member_name);
+                // Parse org/repo from team_repo_url (https://github.com/org/repo.git)
+                let url = ops.team_repo_url().to_string();
+                let gh_str = url
+                    .trim_start_matches("https://github.com/")
+                    .trim_end_matches(".git");
+                crate::brain::parse_github_repo(gh_str).map(|(org, repo)| {
+                    let vars = crate::brain::BrainPromptVars {
+                        member_name,
+                        team_name,
+                        role,
+                        gh_org: org.to_string(),
+                        gh_repo: repo.to_string(),
+                    };
+                    (team_repo, vars)
+                })
+            })
+        } else {
+            None
+        };
+
     let agent_pid: Option<u32> = if let Some(ref ws) = workspace_path {
         let ws_owned = ws.clone();
         let st = session_type.clone();
@@ -717,6 +752,16 @@ pub async fn start_session_handler(
                     ).ok()
                 }
                 SessionType::Brain => {
+                    // Render brain-prompt.md from team repo template into session workspace.
+                    if let Some((ref team_repo, ref vars)) = brain_render_info {
+                        if let Err(e) = crate::brain::surface_brain_prompt(team_repo, &ws_owned, vars) {
+                            tracing::warn!(
+                                member = vars.member_name.as_str(),
+                                error = %e,
+                                "brain-prompt.md render failed — brain process will crash at startup"
+                            );
+                        }
+                    }
                     let system_prompt = ws_owned.join("brain-prompt.md");
                     let brain_cfg = crate::formation::BrainLaunchConfig {
                         workspace: &ws_owned,

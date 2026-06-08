@@ -258,6 +258,14 @@ impl ConfigAssembler {
                     format!("Failed to copy ralph.yml from {}", ralph_src.display())
                 })?;
             }
+
+            // brain-prompt.md — optional; presence marks member as brain in ephemeral model
+            let brain_src = member_dir.join("brain-prompt.md");
+            if brain_src.exists() {
+                fs::copy(&brain_src, workspace.join("brain-prompt.md")).with_context(|| {
+                    format!("Failed to copy brain-prompt.md from {}", brain_src.display())
+                })?;
+            }
         }
 
         // Write .botminter.workspace marker (idempotent: always overwrite).
@@ -614,9 +622,14 @@ impl HydrationWorkspaceOps {
         self.hydrator.teardown(session_id, member)
     }
 
-    /// Return the permanent member workspace path: `<workspace_base>/<member>`.
-    pub fn member_workspace_for(&self, member_name: &str) -> PathBuf {
-        self.workspace_base.join(member_name)
+    /// Return the team repo path: `<workspace_base>/team`.
+    pub fn team_repo_path(&self) -> PathBuf {
+        self.workspace_base.join("team")
+    }
+
+    /// Return the team repo URL (remote URL, e.g. `https://github.com/org/repo.git`).
+    pub fn team_repo_url(&self) -> &str {
+        &self.team_repo_url
     }
 
     /// Return the GitHub App credential directory for `member_name` if it exists.
@@ -1022,6 +1035,67 @@ mod tests {
             "workspace marker must contain session ID '{}', got:\n{}",
             session_id,
             marker
+        );
+    }
+
+    // ── brain-prompt.md assembly ─────────────────────────────────────────────
+
+    #[test]
+    fn assemble_copies_brain_prompt_when_present_in_team_member_dir() {
+        let tmp = TempDir::new().unwrap();
+        let member_dir = tmp.path().join("team/members/alice");
+        fs::create_dir_all(&member_dir).unwrap();
+        fs::write(member_dir.join("brain-prompt.md"), "# Brain Prompt").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(tmp.path().join("team"), "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join("brain-prompt.md").exists(),
+            "brain-prompt.md must be copied to session workspace when present in team member dir"
+        );
+        let content = fs::read_to_string(workspace.join("brain-prompt.md")).unwrap();
+        assert_eq!(content, "# Brain Prompt");
+    }
+
+    #[test]
+    fn assemble_skips_brain_prompt_when_absent_from_team_member_dir() {
+        let tmp = TempDir::new().unwrap();
+        let member_dir = tmp.path().join("team/members/alice");
+        fs::create_dir_all(&member_dir).unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(tmp.path().join("team"), "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            !workspace.join("brain-prompt.md").exists(),
+            "brain-prompt.md must not appear in session workspace when absent from team member dir"
         );
     }
 
