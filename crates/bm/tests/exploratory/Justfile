@@ -1,4 +1,4 @@
-# Exploratory test execution recipes for sync, bridge & brain lifecycle
+# Exploratory test execution recipes for session lifecycle, bridge & brain lifecycle
 # Usage: just -f crates/bm/tests/exploratory/Justfile <phase>
 # Full run: just -f crates/bm/tests/exploratory/Justfile all
 #
@@ -330,8 +330,6 @@ phase-b: ensure-keyring (run-phase "phase-b.sh")
 
 phase-c: ensure-keyring (run-phase "phase-c.sh")
 
-phase-d: ensure-keyring (run-phase "phase-d.sh")
-
 phase-d-session: ensure-keyring (run-phase "phase-d-session.sh" "900")
 
 phase-e: ensure-keyring (run-phase "phase-e.sh")
@@ -342,14 +340,8 @@ phase-g: (run-phase "phase-g.sh")
 
 phase-h: ensure-keyring (run-phase "phase-h.sh" "1200")
 
-# Isolated ACP diagnostic test (requires team to exist — run after phase-e)
-phase-acp-isolated: ensure-keyring (run-phase "phase-acp-isolated.sh" "600")
-
 # ─── Orchestration ─────────────────────────────────────────────
 
 # Run all phases (B through H)
 # Starts and ends with clean to ensure a known-good state.
 all: clean deploy preflight init-report phase-b phase-c phase-d-session phase-e phase-f phase-h phase-g fetch-report clean
-
-# Run only bridge + workspace phases (skip init, assume team exists)
-bridge-and-workspace: ensure-keyring phase-c phase-d phase-e
