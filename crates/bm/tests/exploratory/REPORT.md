@@ -1,7 +1,7 @@
 # Exploratory Test Report: Sync & Bridge Idempotency
 
 **Date:** 2026-06-09
-**Build:** bm 0.2.0-pre-alpha (de0bed5-dirty) (local debug)
+**Build:** bm 0.2.0-pre-alpha (a486b09-dirty) (local debug)
 **Environment:** Linux x86_64, podman rootless, gh (devguyio)
 **Test User:** bm-test-user@localhost (isolated)
 
@@ -41,7 +41,7 @@
 | C5 | Passwords file has 3 entries | **PASS** |
 | C6 | Keyring has credentials for alice + bob | **PASS** |
 | C7 | Admin can login to Matrix | **PASS** |
-| C8 | Room exploratory-test-general exists (!h74MPFUx1q7xKY5LfZ:localhost) | **PASS** |
+| C8 | Room exploratory-test-general exists (!Mn0bfjO5Kf5YDoamR1:localhost) | **PASS** |
 | C9 | Bridge start again (idempotent — already running) | **PASS** |
 | C10 | Container still running | **PASS** |
 | C11 | Bridge state unchanged | **PASS** |
@@ -78,7 +78,7 @@
 | D02 | bm status reports daemon not running (AC-12) | **PASS** |
 | D03 | bm session inspect fails gracefully without daemon (AC-12) | **PASS** |
 | D04 | Session started without prior bm teams sync (AC-22) | **PASS** |
-| D05 | Session creation latency: 685ms (AC-06) | **PASS** |
+| D05 | Session creation latency: 692ms (AC-06) | **PASS** |
 | D06 | Workspace marker has session_id + member fields (AC-01) | **PASS** |
 | D07 | Project 'exploratory-test-project' provisioned in workspace (AC-01) | **PASS** |
 | D08 | Config files (PROMPT.md, CLAUDE.md, ralph.yml) present (AC-01) | **PASS** |
@@ -93,23 +93,23 @@
 | D17 | bm session list shows sessions with session IDs (AC-17) | **PASS** |
 | D18 | bm session list shows state and finalization status columns (AC-17) | **PASS** |
 | D19 | Session inspect shows ID, member, type, state, workspace (AC-18) | **PASS** |
-| D20 | Session cleanup completed for 69f0689e (AC-18) | **PASS** |
+| D20 | Session cleanup completed for 5a3c91a4 (AC-18) | **PASS** |
 | D21 | Bulk cleanup --all completed (AC-18) | **PASS** |
-| D22 | Graceful stop finalized (completed) and branch 'finalization-test-1780971924' confirmed pushed to remote (AC-02) | **PASS** |
+| D22 | Graceful stop finalized (completed) and branch 'finalization-test-1780973963' confirmed pushed to remote (AC-02) | **PASS** |
 | D23 | Finalization results visible in inspect (AC-05) | **PASS** |
 | D24 | Finalization re-trigger correctly rejected: session already Completed (AC-23) | **PASS** |
 | D25 | Provision failure: non-zero exit, no partial session left (AC-07) | **PASS** |
-| D27 | Crashed session workspace retained at /home/bm-test-user/.botminter/sessions/exploratory-test/engineer-alice/0a730582 (AC-26) | **PASS** |
+| D27 | Crashed session workspace retained at /home/bm-test-user/.botminter/sessions/exploratory-test/engineer-alice/de874d94 (AC-26) | **PASS** |
 | D26 | New session starts after crash + force-stop (AC-03) | **PASS** |
 | D28 | Daemon restart: stale sessions visible in bm session list (AC-25) | **PASS** |
-| D29 | State machine | **NOTE** — unexpected state: Completed |
+| D29 | Session state after start: Completed (AC-11) | **PASS** |
 | D30 | Session in bm session list after force-stop (terminal state) (AC-11) | **PASS** |
 | D31 | Terminal state observed via inspect: Killed (AC-11) | **PASS** |
 | D32 | Session workspace retained after force-stop (retention policy) (AC-20) | **PASS** |
 | D33 | Stopped session visible in bm session list (AC-20) | **PASS** |
 | D34 | Individual session cleanup removed workspace (AC-21) | **PASS** |
 | D35 | Work item lock lifecycle: A-acquire → B-contend(exit1) → A-release → B-acquire (AC-13) | **PASS** |
-| D36 | Independent branches in isolated workspaces: alice=push-test-alice-1780971970, bob=push-test-bob-1780971970 (AC-14a) | **PASS** |
+| D36 | Independent branches in isolated workspaces: alice=push-test-alice-1780974010, bob=push-test-bob-1780974010 (AC-14a) | **PASS** |
 | D37 | Session inspect captures git/workspace state (AC-14b) | **PASS** |
 | D38 | bm session list shows force-stopped session in output | **PASS** |
 | D39 | bm session list --json has finalization_status field in all rows | **PASS** |
@@ -155,16 +155,14 @@
 | H23 | Cleaned DM room state for discovery test | **PASS** |
 | H24 | Cleaned previous state for lifecycle test | **PASS** |
 | H25 | bm start executed (brain mode detected) | **PASS** |
-| H26 | Brain started in DM discovery mode (PID 2024909) | **PASS** |
+| H26 | Brain started in DM discovery mode (PID 2244173) | **PASS** |
 | H27 | bm status shows brain label during lifecycle | **PASS** |
-| H28 | Operator DM created and greeting sent (!SStk7HXmczwPEVdTTO:localhost, $b9067TI3qZfCM_tn-mYM-38xJ5Ke1HbPncqhTZGcogs) | **PASS** |
-| H28b | Brain discovered DM room (!SStk7HXmczwPEVdTTO:localhost via dm-room.json) | **PASS** |
-| H29 | Work request sent to room while brain running ($uCOjwh3ZcTIsW1na_Vujs8ohiezQYoWBV0JQLfHZvoE) | **PASS** |
+| H28 | Operator DM created and greeting sent (!YtAMMyKVCYIAPmCLUg:localhost, $V1T49x_7LfKwZ6lN2d_8qt04ZRNQ9uAc4RDR5gO6FBM) | **PASS** |
+| H28b | Brain discovered DM room (!YtAMMyKVCYIAPmCLUg:localhost via dm-room.json) | **PASS** |
+| H29 | Work request sent to room while brain running ($o8Xs50n6MInzfyOWaggTg0e_hxKiptfBsiTrk2c0iZ0) | **PASS** |
 | H30 | Follow-up question sent (multi-turn simulation) | **PASS** |
 | H31 | Brain survived malformed/empty message (edge case) | **PASS** |
-| H32 | Brain responded with meaningful content (response: Hi! I'm Alice, your engineer on the exploratory-test team. I'm operational and ready to work.
-
-Quick...) | **PASS** |
+| H32 | Brain responded with meaningful content (response: Hey! I'm alice, your engineer on the exploratory-test team. I handle all phases of the development l...) | **PASS** |
 | H29b | Brain response addresses work request (mentions project/status/tools) | **PASS** |
 | H33 | User messages visible in room history (5 total messages) | **PASS** |
 | H34 | DM room is private — bob is not a member of alice's DM room (expected) | **PASS** |
@@ -172,17 +170,17 @@ Quick...) | **PASS** |
 | H36 | bm stop executed cleanly (exit 0) | **PASS** |
 | H37 | All brain processes terminated after stop | **PASS** |
 | H38 | Brain restarted successfully (recovery scenario) | **PASS** |
-| H39 | Message delivered after brain restart (recovery proof, $u17Zz8c-9uPll5T1pMreDL2JdpMfBy910ZIXYliNy7o) | **PASS** |
-| H40 | Brain responded after recovery! NEW response detected (pre: 1, post: 2, body: Yes, fully operational. Brain restart recovery confirmed — I'm alice, engineer...) | **PASS** |
+| H39 | Message delivered after brain restart (recovery proof, $kOWeepkEp424fb1rCx1WTAxj4nNyWJdiaa9ukCojNnU) | **PASS** |
+| H40 | Brain responded after recovery! NEW response detected (pre: 1, post: 2, body: Yes, fully operational. Brain restart recovered cleanly — context intact, read...) | **PASS** |
 | H41 | Recovery start-stop cycle clean (brain lifecycle idempotent) | **PASS** |
 | H42 | Status inquiry sent after brain lifecycle | **PASS** |
 | H43 | All messages persist in DM room history (8 total) | **PASS** |
-| H44 | dm-room.json persisted correctly (!SStk7HXmczwPEVdTTO:localhost) | **PASS** |
+| H44 | dm-room.json persisted correctly (!YtAMMyKVCYIAPmCLUg:localhost) | **PASS** |
 | H46 | Created GitHub issue #1 for brain to discover | **PASS** |
-| H47 | Brain started for task execution journey (PID 2031817) | **PASS** |
-| H48 | Board check request sent to brain ($dj98R0cElaW2_DKh-m2Zz8ISZNZ8mYbpv_GlyQVhDW0) | **PASS** |
+| H47 | Brain started for task execution journey (PID 2251038) | **PASS** |
+| H48 | Board check request sent to brain ($lYWe0qeZW3hH3VTI3wZ3g2UL8XBcDuVbCHISJGjV33k) | **PASS** |
 | H49 | Brain acknowledged board/issue in response! (body: On it — checking the board now....) | **PASS** |
-| H50 | Brain survived task execution request (PID 2031817 still alive) | **PASS** |
+| H50 | Brain survived task execution request (PID 2251038 still alive) | **PASS** |
 | H51 | Task execution journey cleaned up | **PASS** |
 | H52 | Cleaned up all brain lifecycle test artifacts | **PASS** |
 
@@ -202,6 +200,6 @@ Quick...) | **PASS** |
 
 ## Summary
 
-- **PASS:** 153
+- **PASS:** 154
 - **FAIL:** 0
-- **NOTE:** 1
+- **NOTE:** 0

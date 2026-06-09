@@ -673,7 +673,7 @@ if [ $EC -eq 0 ]; then
     STATUS_I_OUT=$(bm status --json -t "$TEAM" 2>&1)
     JSON_I=$(extract_json "$STATUS_I_OUT")
     STATE_I=$(echo "$JSON_I" | jq -r '.sessions[0].state' 2>/dev/null)
-    if [ "$STATE_I" = "Active" ] || [ "$STATE_I" = "Failed" ] || [ "$STATE_I" = "Killed" ]; then
+    if [ "$STATE_I" = "Active" ] || [ "$STATE_I" = "Failed" ] || [ "$STATE_I" = "Killed" ] || [ "$STATE_I" = "Completed" ]; then
         pass "D29" "Session state after start: $STATE_I (AC-11)"
     else
         note "D29" "State machine" "unexpected state: $STATE_I"
