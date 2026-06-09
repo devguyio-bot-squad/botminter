@@ -197,22 +197,27 @@ impl AcpClient {
         self.event_rx.lock().await.recv().await
     }
 
-    /// Shut down the ACP client gracefully.
+    /// Shut down the ACP client.
     ///
-    /// Sends a shutdown command, waits for the connection task to finish,
-    /// then kills the child process.
+    /// Kills the child process first (which closes the transport and unblocks any
+    /// in-flight network I/O inside the connection task), then waits for the task to finish.
+    /// Sending a Shutdown command afterward is harmless but ensures a clean exit.
     pub async fn shutdown(self) -> Result<(), AcpError> {
-        // Signal shutdown
+        // Kill the child process first so the connection task's transport is torn
+        // down immediately. The task may be blocked on cx.spawn()'d prompt I/O;
+        // killing the child closes stdin/stdout and lets connect_with return fast.
+        let mut child = self.child.lock().await;
+        let _ = child.kill().await;
+        drop(child);
+
+        // Signal shutdown so the task breaks out of the command loop if it's
+        // already past the transport-wait (or if kill raced).
         let _ = self.command_tx.send(AcpCommand::Shutdown).await;
 
-        // Wait for connection task
+        // Wait for the connection task (near-instant since child is now dead).
         if let Some(task) = self.task.lock().await.take() {
             let _ = task.await;
         }
-
-        // Kill child process
-        let mut child = self.child.lock().await;
-        let _ = child.kill().await;
 
         Ok(())
     }

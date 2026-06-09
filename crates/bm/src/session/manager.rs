@@ -81,6 +81,7 @@ impl<W: WorkspaceOps> SessionManager<W> {
             agent_pid: None,
             workspace_path: Some(workspace_path),
             finalization_result: None,
+            finalization_agent_pid: None,
         };
 
         self.registry.register(record)?;
@@ -287,6 +288,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws")),
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
@@ -326,6 +328,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws")),
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
@@ -356,6 +359,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(active).unwrap();
         mgr.registry
@@ -374,6 +378,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(completed).unwrap();
         mgr.registry
@@ -395,6 +400,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(failed).unwrap();
         mgr.registry
@@ -416,6 +422,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(killed).unwrap();
         mgr.registry
@@ -437,6 +444,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(finalizing).unwrap();
         mgr.registry
@@ -458,6 +466,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(retained).unwrap();
         mgr.registry
@@ -508,6 +517,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws")),
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
@@ -653,6 +663,7 @@ exit 1
             agent_pid: None,
             workspace_path: Some(mgr.workspace_ops.workspace_path.clone()),
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry

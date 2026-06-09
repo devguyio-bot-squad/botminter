@@ -222,6 +222,7 @@ impl SessionsApiState {
                 agent_pid: None,
                 workspace_path: workspace_path.clone(),
                 finalization_result: None,
+                finalization_agent_pid: None,
             };
             inner.registry.register(record).map_err(|e| e.to_string())?;
             inner
@@ -652,6 +653,7 @@ pub async fn start_session_handler(
             agent_pid: None,
             workspace_path: workspace_path.clone(),
             finalization_result: None,
+            finalization_agent_pid: None,
         };
 
         if let Err(e) = inner.registry.register(record) {
@@ -833,17 +835,16 @@ pub async fn list_sessions_handler(
     let mut inner = state.inner.lock().unwrap();
 
     // Detect agent processes that crashed since the last check.
-    // Only sessions that have an agent_pid set — Interactive sessions have none by design.
+    // Only Active sessions — Finalizing sessions have an intentionally dead PID (SIGTERM was
+    // sent during graceful stop). The spawn_deactivation_watcher owns Finalizing → Completed/Failed.
     let checker = retention::LiveProcessChecker;
     let crashed_ids: Vec<_> = inner
         .registry
         .list()
         .into_iter()
         .filter(|r| {
-            matches!(
-                r.current_state,
-                SessionState::Active | SessionState::Finalizing
-            ) && r.agent_pid.is_some_and(|pid| !checker.is_pid_alive(pid))
+            r.current_state == SessionState::Active
+                && r.agent_pid.is_some_and(|pid| !checker.is_pid_alive(pid))
         })
         .map(|r| r.session_id.clone())
         .collect();
@@ -884,20 +885,32 @@ fn spawn_deactivation_watcher(
 ) {
     use std::time::Duration;
     tokio::spawn(async move {
-        // Wait up to 60s for the agent process to exit after SIGTERM.
+        // Wait up to 10s for the agent process to exit after SIGTERM, then SIGKILL.
+        // A 60s grace period left zero margin for the 120s finalization subagent within
+        // D22's 180s window; 10s + SIGKILL gives ~168s for finalization to complete.
         if let Some(pid) = agent_pid {
-            let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+            let graceful_deadline = tokio::time::Instant::now() + Duration::from_secs(10);
             loop {
                 let alive = unsafe { libc::kill(pid as i32, 0) } == 0;
                 if !alive {
                     break;
                 }
-                if tokio::time::Instant::now() >= deadline {
+                if tokio::time::Instant::now() >= graceful_deadline {
                     tracing::warn!(
                         session_id = session_id.as_str(),
-                        "agent PID {} did not exit within 60s after SIGTERM",
+                        "agent PID {} did not exit within 10s after SIGTERM; sending SIGKILL",
                         pid
                     );
+                    // SAFETY: valid PID, SIGKILL is a valid signal. The reap_child thread
+                    // from launch_brain handles the wait() call to prevent a zombie.
+                    unsafe { libc::kill(pid as i32, libc::SIGKILL); }
+                    // Wait briefly for the kernel to deliver SIGKILL before inspecting state.
+                    for _ in 0..10u32 {
+                        tokio::time::sleep(Duration::from_millis(200)).await;
+                        if unsafe { libc::kill(pid as i32, 0) } != 0 {
+                            break;
+                        }
+                    }
                     break;
                 }
                 tokio::time::sleep(Duration::from_millis(500)).await;
@@ -953,58 +966,132 @@ fn spawn_deactivation_watcher(
         };
 
         if fin_deactivation::has_committable_files(&ws, &dirty_state) {
-            match fin_deactivation::retrigger_finalization(&session_id, &ws) {
-                Ok(child) => {
-                    let timeout = Duration::from_secs(fin_subagent::FINALIZATION_TIMEOUT_SECS);
-                    let sid = session_id.clone();
-                    fin_subagent::wait_and_transition(
-                        child,
-                        sid.clone(),
-                        timeout,
-                        move |new_state| {
-                            if let Ok(mut guard) = arc_inner.lock() {
-                                // Conditional: don't overwrite Retained if force-stop raced.
-                                if guard
-                                    .registry
-                                    .get(&sid)
-                                    .map(|r| r.current_state == SessionState::Finalizing)
-                                    .unwrap_or(false)
-                                {
-                                    let exit_status = match new_state {
-                                        SessionState::Completed => FinalizationExitStatus::Completed,
-                                        _ => FinalizationExitStatus::Failed,
-                                    };
-                                    let _ = guard.registry.update_state(&sid, new_state);
-                                    let _ = guard.registry.set_finalization_result(
-                                        &sid,
-                                        FinalizationResult::for_state(exit_status),
-                                    );
-                                }
-                            }
-                        },
-                    )
-                    .await;
+            // Fast path: attempt a direct `git push origin --all` for repos that only have
+            // committed-but-unpushed branches (the common D22 case). This avoids spawning the
+            // LLM finalization agent when a plain git push is sufficient, keeping finalization
+            // well inside D22's 180s polling window regardless of Vertex AI availability.
+            let ws_push = ws.clone();
+            let dirty_push = dirty_state.clone();
+            let push_result = tokio::task::spawn_blocking(move || {
+                fin_deactivation::push_unpushed_repos(&ws_push, &dirty_push)
+            })
+            .await;
+
+            // Re-inspect after push to see if uncommitted files still require the LLM agent.
+            // Do NOT re-check unpushed_branches: bare-clone worktrees have no refs/remotes/,
+            // so inspect_unpushed always reports all branches as "not in remotes" even after
+            // a successful push. Checking only uncommitted files avoids a false-positive that
+            // would otherwise force every session through the 160 s LLM timeout.
+            let still_committable = match push_result {
+                Ok(Ok(())) => {
+                    let fresh = if let Some(ref ops) = workspace_ops {
+                        ops.inspect_dirty_state(&ws).unwrap_or_default()
+                    } else {
+                        vec![]
+                    };
+                    fin_deactivation::has_uncommitted_committable_files(&ws, &fresh)
                 }
-                Err(e) => {
-                    tracing::error!(
+                Ok(Err(ref e)) => {
+                    tracing::info!(
                         session_id = session_id.as_str(),
-                        "failed to spawn finalization subagent during deactivation: {}",
+                        "direct git push failed ({}); falling through to LLM finalization agent",
                         e
                     );
-                    if let Ok(mut guard) = arc_inner.lock() {
-                        if guard
-                            .registry
-                            .get(&session_id)
-                            .map(|r| r.current_state == SessionState::Finalizing)
-                            .unwrap_or(false)
-                        {
+                    true
+                }
+                Err(ref join_err) => {
+                    tracing::warn!(
+                        session_id = session_id.as_str(),
+                        "push_unpushed_repos task panicked: {join_err}; falling through to LLM agent"
+                    );
+                    true
+                }
+            };
+
+            if !still_committable {
+                // Fast path handled all dirty state — transition directly to Completed.
+                tracing::info!(
+                    session_id = session_id.as_str(),
+                    "direct git push succeeded; transitioning to Completed without LLM agent"
+                );
+                if let Ok(mut guard) = arc_inner.lock() {
+                    if guard
+                        .registry
+                        .get(&session_id)
+                        .map(|r| r.current_state == SessionState::Finalizing)
+                        .unwrap_or(false)
+                    {
+                        let _ = guard.registry.update_state(&session_id, SessionState::Completed);
+                        let _ = guard.registry.set_finalization_result(
+                            &session_id,
+                            FinalizationResult::for_state(FinalizationExitStatus::Completed),
+                        );
+                    }
+                }
+            } else {
+                // Direct push insufficient (uncommitted files, push failed, etc.) — spawn LLM agent.
+                match fin_deactivation::retrigger_finalization(&session_id, &ws) {
+                    Ok(child) => {
+                        // Record the finalization agent PID so force-stop can kill it.
+                        // Without this, force-stop sends SIGKILL to the stale brain PID,
+                        // leaving abandoned finalization agents running until their timeout.
+                        let fin_pid = child.id();
+                        if let Ok(mut guard) = arc_inner.lock() {
                             let _ = guard
                                 .registry
-                                .update_state(&session_id, SessionState::Failed);
-                            let _ = guard.registry.set_finalization_result(
-                                &session_id,
-                                FinalizationResult::for_state(FinalizationExitStatus::Failed),
-                            );
+                                .set_finalization_agent_pid(&session_id, fin_pid);
+                        }
+                        let timeout = Duration::from_secs(fin_subagent::FINALIZATION_TIMEOUT_SECS);
+                        let sid = session_id.clone();
+                        fin_subagent::wait_and_transition(
+                            child,
+                            sid.clone(),
+                            timeout,
+                            move |new_state| {
+                                if let Ok(mut guard) = arc_inner.lock() {
+                                    // Conditional: don't overwrite Retained if force-stop raced.
+                                    if guard
+                                        .registry
+                                        .get(&sid)
+                                        .map(|r| r.current_state == SessionState::Finalizing)
+                                        .unwrap_or(false)
+                                    {
+                                        let exit_status = match new_state {
+                                            SessionState::Completed => FinalizationExitStatus::Completed,
+                                            _ => FinalizationExitStatus::Failed,
+                                        };
+                                        let _ = guard.registry.update_state(&sid, new_state);
+                                        let _ = guard.registry.set_finalization_result(
+                                            &sid,
+                                            FinalizationResult::for_state(exit_status),
+                                        );
+                                    }
+                                }
+                            },
+                        )
+                        .await;
+                    }
+                    Err(e) => {
+                        tracing::error!(
+                            session_id = session_id.as_str(),
+                            "failed to spawn finalization subagent during deactivation: {}",
+                            e
+                        );
+                        if let Ok(mut guard) = arc_inner.lock() {
+                            if guard
+                                .registry
+                                .get(&session_id)
+                                .map(|r| r.current_state == SessionState::Finalizing)
+                                .unwrap_or(false)
+                            {
+                                let _ = guard
+                                    .registry
+                                    .update_state(&session_id, SessionState::Failed);
+                                let _ = guard.registry.set_finalization_result(
+                                    &session_id,
+                                    FinalizationResult::for_state(FinalizationExitStatus::Failed),
+                                );
+                            }
                         }
                     }
                 }
@@ -1549,6 +1636,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: Some(PathBuf::from("/tmp/ws")),
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(record).unwrap();
             inner
@@ -1675,6 +1763,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: None,
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(active).unwrap();
             inner
@@ -1694,6 +1783,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: None,
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(completed).unwrap();
             inner
@@ -1717,6 +1807,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: None,
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(failed).unwrap();
             inner
@@ -1811,6 +1902,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: Some(PathBuf::from("/tmp/ws")),
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(record).unwrap();
             inner
@@ -1887,6 +1979,7 @@ mod tests {
                     recovery_branches: vec!["recovery/abc/main".to_string()],
                     github_issue_urls: vec![],
                 }),
+                finalization_agent_pid: None,
             };
             inner.registry.register(record).unwrap();
             inner
@@ -1953,6 +2046,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: None,
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(record).unwrap();
             inner
@@ -2012,6 +2106,7 @@ mod tests {
                     agent_pid: None,
                     workspace_path: None,
                     finalization_result: None,
+            finalization_agent_pid: None,
                 };
                 inner.registry.register(record).unwrap();
                 inner
@@ -2082,6 +2177,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: None,
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(record).unwrap();
             inner
@@ -2131,6 +2227,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: None,
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(record).unwrap();
             inner
@@ -2184,6 +2281,7 @@ mod tests {
                     agent_pid: None,
                     workspace_path: None,
                     finalization_result: None,
+            finalization_agent_pid: None,
                 };
                 inner.registry.register(record).unwrap();
                 inner
@@ -2242,6 +2340,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: None,
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(loop_record).unwrap();
             inner
@@ -2260,6 +2359,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: None,
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(interactive_record).unwrap();
             inner
@@ -2323,6 +2423,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: None,
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(record).unwrap();
             inner
@@ -2387,6 +2488,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: None,
                 finalization_result: None,
+            finalization_agent_pid: None,
             };
             inner.registry.register(record).unwrap();
             inner
@@ -2425,6 +2527,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         let info = record_to_info(&record);
         assert!(
@@ -2449,6 +2552,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         inner.registry.register(record).unwrap();
         inner.registry.update_state(&id, SessionState::Active).unwrap();
@@ -2593,6 +2697,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: fin_result,
+            finalization_agent_pid: None,
         };
         inner.registry.register(record).unwrap();
         inner.registry.update_state(&id, SessionState::Active).unwrap();
@@ -2813,5 +2918,57 @@ mod tests {
         // Missing state file: load_state returns default (empty) state → None
         assert_eq!(bc.member_user_id("alice"), None);
         assert_eq!(bc.admin_user_id(), None);
+    }
+
+    // --- CT-154-16: Finalizing sessions with dead PIDs must not be crash-detected ---
+
+    #[tokio::test]
+    async fn finalizing_session_with_dead_pid_stays_finalizing() {
+        // A Finalizing session has an intentionally dead PID (SIGTERM was sent during graceful
+        // stop). The spawn_deactivation_watcher owns the Finalizing → Completed/Failed
+        // transition. Crash detection in list_sessions_handler must NOT race by moving
+        // Finalizing → Failed when the agent PID is dead.
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let session_id = SessionId::from_raw("finalizing-dead-pid");
+            let record = SessionRecord {
+                session_id: session_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: Some(u32::MAX), // guaranteed dead PID
+                workspace_path: None,
+                finalization_result: None,
+            finalization_agent_pid: None,
+            };
+            inner.registry.register(record).unwrap();
+            inner.registry.update_state(&session_id, SessionState::Active).unwrap();
+            inner.registry.update_state(&session_id, SessionState::Finalizing).unwrap();
+        }
+
+        let app = sessions_router(state.clone());
+        let request = Request::builder()
+            .uri("/api/sessions")
+            .body(Body::empty())
+            .unwrap();
+
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let inner = state.inner.lock().unwrap();
+        let session_id = SessionId::from_raw("finalizing-dead-pid");
+        let record = inner.registry.get(&session_id).unwrap();
+        assert_eq!(
+            record.current_state,
+            SessionState::Finalizing,
+            "Finalizing session with dead PID must stay Finalizing — \
+             spawn_deactivation_watcher owns the Finalizing → Completed/Failed transition"
+        );
     }
 }

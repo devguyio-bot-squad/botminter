@@ -190,6 +190,13 @@ pub struct SessionRecord {
     pub workspace_path: Option<PathBuf>,
     #[serde(default)]
     pub finalization_result: Option<FinalizationResult>,
+    /// PID of the finalization subagent process spawned during deactivation.
+    /// Cleared when the session leaves Finalizing state.
+    /// Used by force-stop to SIGKILL the finalization agent even after the brain PID
+    /// has been recycled (sending SIGKILL to the stale brain PID was a no-op that left
+    /// abandoned finalization agents consuming memory until their timeout fired).
+    #[serde(default)]
+    pub finalization_agent_pid: Option<u32>,
 }
 
 #[cfg(test)]
@@ -207,6 +214,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         }
     }
 

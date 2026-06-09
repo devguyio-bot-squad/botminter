@@ -112,6 +112,20 @@ impl SessionRegistry {
         Ok(())
     }
 
+    /// Track the PID of the finalization subagent process for a session.
+    ///
+    /// Called from the deactivation watcher immediately after spawning the finalization
+    /// agent. Enables force-stop to SIGKILL the agent before its timeout fires.
+    pub fn set_finalization_agent_pid(&mut self, id: &SessionId, pid: u32) -> Result<()> {
+        let record = self
+            .sessions
+            .get_mut(id)
+            .ok_or_else(|| anyhow!("Session {} not found", id))?;
+        record.finalization_agent_pid = Some(pid);
+        self.save()?;
+        Ok(())
+    }
+
     /// Record the outcome of the finalization subagent for a session.
     pub fn set_finalization_result(
         &mut self,
@@ -155,6 +169,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         }
     }
 

@@ -93,6 +93,83 @@ pub fn retrigger_finalization(
     subagent::retrigger_finalization(workspace_path, session_id)
 }
 
+/// Directly push the currently checked-out branch for repos that have committed-but-unpushed
+/// branches.
+///
+/// Fast path for the common "committed-but-not-yet-pushed" case (e.g. D22 test scenario).
+/// Runs before spawning the LLM finalization agent — avoids Vertex AI latency when a plain
+/// `git push` is sufficient. Returns `Ok(())` if every repo with unpushed branches was pushed
+/// (or skipped because HEAD is detached); returns `Err` on the first push failure so callers
+/// can fall through to the LLM agent.
+///
+/// Pushes the HEAD branch only (not `--all`) to avoid pushing branches from other sessions
+/// that share the same bare clone, and because bare-clone worktrees have no `refs/remotes/`
+/// so `--all` would attempt to push every branch in the shared object store.
+pub fn push_unpushed_repos(workspace_path: &Path, dirty_state: &[RepoDirtyState]) -> Result<()> {
+    for repo in dirty_state {
+        if repo.unpushed_branches.is_empty() {
+            continue;
+        }
+        let repo_path = if repo.repo_name == "team" {
+            workspace_path.join("team")
+        } else {
+            workspace_path.join("projects").join(&repo.repo_name)
+        };
+
+        // Determine the current branch. A detached HEAD (e.g. the worktree was
+        // provisioned with `--detach` and the agent never checked out a branch)
+        // has nothing to push via this fast path.
+        let head_output = std::process::Command::new("git")
+            .args(["rev-parse", "--abbrev-ref", "HEAD"])
+            .current_dir(&repo_path)
+            .output()?;
+        let branch = String::from_utf8_lossy(&head_output.stdout)
+            .trim()
+            .to_string();
+        if branch.is_empty() || branch == "HEAD" {
+            continue;
+        }
+
+        let output = std::process::Command::new("git")
+            .args(["push", "origin", &branch])
+            .current_dir(&repo_path)
+            .output()?;
+        if !output.status.success() {
+            return Err(anyhow::anyhow!(
+                "git push failed for repo {} branch {}: {}",
+                repo.repo_name,
+                branch,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Returns `true` if any repo has uncommitted files that categorize as `CommitAndPush`.
+///
+/// Unlike `has_committable_files`, this function does NOT examine `unpushed_branches`.
+/// It is used after `push_unpushed_repos` succeeds to check whether the LLM finalization
+/// agent is still needed — bare-clone worktrees have no `refs/remotes/`, so
+/// `inspect_unpushed` always reports branches as "not in remotes" even after a successful
+/// push. Checking only uncommitted files avoids a false-positive that would otherwise force
+/// every session through the 160 s LLM timeout.
+pub fn has_uncommitted_committable_files(
+    workspace_path: &Path,
+    dirty_state: &[RepoDirtyState],
+) -> bool {
+    for repo in dirty_state {
+        let context = build_repo_context(workspace_path, repo);
+        for file in &repo.uncommitted_files {
+            let file_path = extract_porcelain_path(file);
+            if categorize::categorize(Path::new(file_path), &context) == Category::CommitAndPush {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 pub fn push_to_recovery_branch(
     _repo_path: &Path,
     session_id: &SessionId,
@@ -471,6 +548,213 @@ mod tests {
     }
 
     // ---
+    // push_unpushed_repos
+    // ---
+
+    /// Set up a local bare repo and a clone with an unpushed branch.
+    /// Returns (workspace_root, bare_remote_path, repo_name).
+    fn setup_push_workspace(tmp: &Path, repo_name: &str, branch: &str) -> (PathBuf, PathBuf) {
+        let bare = tmp.join(format!("{repo_name}.git"));
+        std::fs::create_dir_all(&bare).unwrap();
+        git(&bare, &["init", "--bare", "-b", "main"]);
+
+        let ws = tmp.join("workspace");
+        let repo_path = ws.join("projects").join(repo_name);
+        std::fs::create_dir_all(&repo_path).unwrap();
+
+        git(&repo_path, &["init", "-b", "main"]);
+        git(&repo_path, &["config", "user.email", "test@test.com"]);
+        git(&repo_path, &["config", "user.name", "Test"]);
+        git(&repo_path, &["config", "commit.gpgsign", "false"]);
+
+        // Initial commit on main and push it
+        std::fs::write(repo_path.join("README.md"), "init").unwrap();
+        git(&repo_path, &["add", "."]);
+        git(&repo_path, &["commit", "-m", "initial"]);
+        git(&repo_path, &["remote", "add", "origin", bare.to_str().unwrap()]);
+        git(&repo_path, &["push", "origin", "main"]);
+
+        // Create feature branch with a commit
+        if branch != "main" {
+            git(&repo_path, &["checkout", "-b", branch]);
+            std::fs::write(repo_path.join("feature.txt"), "work").unwrap();
+            git(&repo_path, &["add", "."]);
+            git(&repo_path, &["commit", "-m", "feat: add feature"]);
+        }
+
+        (ws, bare)
+    }
+
+    #[test]
+    fn push_unpushed_repos_succeeds_for_project_with_unpushed_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, _bare) =
+            setup_push_workspace(tmp.path(), "myproject", "feature/story-99");
+
+        let dirty = vec![dirty_repo(
+            "myproject",
+            &[],
+            &["feature/story-99 feat: add feature"],
+        )];
+
+        let result = push_unpushed_repos(&ws, &dirty);
+
+        assert!(
+            result.is_ok(),
+            "push_unpushed_repos must succeed when remote is reachable: {:?}",
+            result.err()
+        );
+    }
+
+    #[test]
+    fn push_unpushed_repos_skips_repos_with_no_unpushed_branches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        std::fs::create_dir_all(&ws).unwrap();
+
+        let dirty = vec![dirty_repo("myproject", &["src/lib.rs"], &[])];
+
+        // No git repo exists at workspace/projects/myproject — if we tried to push,
+        // git would fail. Passing means the function correctly skipped it.
+        let result = push_unpushed_repos(&ws, &dirty);
+
+        assert!(
+            result.is_ok(),
+            "push_unpushed_repos must skip repos with no unpushed branches"
+        );
+    }
+
+    #[test]
+    fn push_unpushed_repos_returns_err_when_remote_is_unreachable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        let repo_path = ws.join("projects").join("myproject");
+        std::fs::create_dir_all(&repo_path).unwrap();
+
+        // Repo with a remote pointing to a non-existent path
+        git(&repo_path, &["init", "-b", "main"]);
+        git(&repo_path, &["config", "user.email", "test@test.com"]);
+        git(&repo_path, &["config", "user.name", "Test"]);
+        git(&repo_path, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(repo_path.join("file.txt"), "content").unwrap();
+        git(&repo_path, &["add", "."]);
+        git(&repo_path, &["commit", "-m", "initial"]);
+        git(&repo_path, &["remote", "add", "origin", "/nonexistent/bare.git"]);
+
+        let dirty = vec![dirty_repo(
+            "myproject",
+            &[],
+            &["main feat: some commit"],
+        )];
+
+        let result = push_unpushed_repos(&ws, &dirty);
+
+        assert!(
+            result.is_err(),
+            "push_unpushed_repos must return Err when git push fails"
+        );
+    }
+
+    #[test]
+    fn push_unpushed_repos_empty_dirty_state_is_noop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = tmp.path().join("workspace");
+        std::fs::create_dir_all(&ws).unwrap();
+
+        let result = push_unpushed_repos(&ws, &[]);
+
+        assert!(
+            result.is_ok(),
+            "push_unpushed_repos on empty dirty state must be a noop"
+        );
+    }
+
+    #[test]
+    fn push_unpushed_repos_skips_detached_head() {
+        // Bare-clone worktrees provisioned with `--detach` start in detached HEAD state.
+        // push_unpushed_repos must skip these repos rather than fail.
+        let tmp = tempfile::tempdir().unwrap();
+        let (ws, _bare) = setup_push_workspace(tmp.path(), "myproject", "main");
+        let repo_path = ws.join("projects").join("myproject");
+
+        // Force detached HEAD by checking out the commit hash directly.
+        let hash = std::process::Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(&repo_path)
+            .output()
+            .unwrap();
+        let hash_str = String::from_utf8_lossy(&hash.stdout).trim().to_string();
+        git(&repo_path, &["checkout", "--detach", &hash_str]);
+
+        let dirty = vec![dirty_repo("myproject", &[], &["main abc123 initial"])];
+
+        let result = push_unpushed_repos(&ws, &dirty);
+
+        assert!(
+            result.is_ok(),
+            "push_unpushed_repos must skip detached HEAD repos: {:?}",
+            result.err()
+        );
+    }
+
+    // ---
+    // has_uncommitted_committable_files
+    // ---
+
+    #[test]
+    fn uncommitted_committable_files_project_on_feature_branch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = setup_project_workspace(tmp.path(), "myproject", "feature/story-88");
+        let dirty = vec![dirty_repo("myproject", &["src/lib.rs"], &[])];
+
+        assert!(
+            has_uncommitted_committable_files(&ws, &dirty),
+            "uncommitted file on feature branch must be detected as committable"
+        );
+    }
+
+    #[test]
+    fn uncommitted_committable_files_ignores_unpushed_branches() {
+        // This is the key invariant: after push_unpushed_repos succeeds, bare-clone
+        // worktrees still show branches as "not in remotes". has_uncommitted_committable_files
+        // must return false so the session correctly reaches Completed.
+        let tmp = tempfile::tempdir().unwrap();
+        let dirty = vec![dirty_repo(
+            "myproject",
+            &[],
+            &["abc123 feat: committed but not pushed"],
+        )];
+
+        assert!(
+            !has_uncommitted_committable_files(tmp.path(), &dirty),
+            "unpushed_branches alone must not trigger LLM agent after a successful push"
+        );
+    }
+
+    #[test]
+    fn uncommitted_committable_files_project_on_default_branch_returns_false() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ws = setup_project_workspace(tmp.path(), "myproject", "main");
+        let dirty = vec![dirty_repo("myproject", &["src/lib.rs"], &[])];
+
+        assert!(
+            !has_uncommitted_committable_files(&ws, &dirty),
+            "uncommitted file on default branch must not trigger LLM agent"
+        );
+    }
+
+    #[test]
+    fn uncommitted_committable_files_clean_repos_returns_false() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dirty = vec![clean_repo("myproject")];
+
+        assert!(
+            !has_uncommitted_committable_files(tmp.path(), &dirty),
+            "clean repos must not trigger LLM agent"
+        );
+    }
+
+    // ---
     // push_to_recovery_branch
     // ---
 
@@ -547,6 +831,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws1")),
             finalization_result: None,
+                finalization_agent_pid: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
@@ -584,6 +869,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws1")),
             finalization_result: None,
+                finalization_agent_pid: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry

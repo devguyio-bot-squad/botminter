@@ -220,6 +220,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/workspace-test")),
             finalization_result: None,
+                finalization_agent_pid: None,
         }
     }
 

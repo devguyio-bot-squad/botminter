@@ -984,12 +984,19 @@ else
 fi
 
 # D41: .claude/ assembly with only team-level coding-agent/ — no crash
-# The session workspace is always assembled from team-level coding-agent/ only
-# (no project or member overrides). Verify no crash occurred and .claude/ exists.
-if [ -n "$WS_A" ] && [ -d "$WS_A/.claude" ]; then
+# Start a fresh session so the workspace is always present (earlier sessions may have
+# been cleaned up by D20/D21 bulk cleanup before D41 runs).
+START_D41=$(TUWUNEL_PORT="$TUWUNEL_PORT" bm start "$MEMBER_A" -t "$TEAM" 2>&1)
+EC_D41=$?
+WS_D41=$(extract_ws "$START_D41")
+if [ $EC_D41 -eq 0 ] && [ -n "$WS_D41" ] && [ -d "$WS_D41/.claude" ]; then
     pass "D41" ".claude/ assembly with team-level coding-agent/ — no crash (workspace created successfully)"
+    bm stop --force "$MEMBER_A" -t "$TEAM" 2>/dev/null || true
+elif [ $EC_D41 -eq 0 ] && [ -n "$WS_D41" ]; then
+    fail "D41" ".claude/ assembly" "session started but .claude/ not found at $WS_D41"
+    bm stop --force "$MEMBER_A" -t "$TEAM" 2>/dev/null || true
 else
-    note "D41" ".claude/ assembly" "WS_A=$WS_A — .claude/ not found (session may have been cleaned up)"
+    fail "D41" ".claude/ assembly" "session start failed: exit $EC_D41"
 fi
 
 # D42: Lock parallel contention — exactly one session acquires (race-free check)
