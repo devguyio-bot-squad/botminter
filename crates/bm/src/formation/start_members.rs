@@ -189,6 +189,7 @@ pub fn start_local_members(
                 operator_user_id: bridge_creds.operator_user_id.as_deref(),
                 team_repo: Some(team_repo),
                 gh_config_dir: gh_config_dir.as_deref(),
+                member_state_dir: None,
             };
             formation::launch_brain(&brain_config)
         } else {

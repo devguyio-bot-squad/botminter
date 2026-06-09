@@ -211,6 +211,8 @@ const ENV_VAR_ALLOWLIST: &[&str] = &[
     "BM_BRAIN_OPERATOR_USER_ID",
     // Team repo path (for gh commands and board awareness)
     "BM_TEAM_REPO",
+    // Durable member-state directory for cross-session persistence (dm-room.json, etc.)
+    "BM_MEMBER_STATE_DIR",
 ];
 
 /// Collect relevant environment variables for the ACP process.

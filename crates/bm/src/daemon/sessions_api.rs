@@ -721,6 +721,11 @@ pub async fn start_session_handler(
         .as_ref()
         .and_then(|ops| ops.gh_config_dir_for_member(&req.member_name));
 
+    let member_state_dir: Option<PathBuf> = state
+        .workspace_ops
+        .as_ref()
+        .map(|ops| ops.member_state_dir_for_member(&req.member_name));
+
     // Gather info needed to render brain-prompt.md into the session workspace.
     // surface_brain_prompt() reads the template from team_repo/brain/system-prompt.md
     // and writes the rendered result to session_workspace/brain-prompt.md, which
@@ -796,6 +801,7 @@ pub async fn start_session_handler(
                         operator_user_id: brain_operator_user_id.as_deref(),
                         team_repo: None,
                         gh_config_dir: gh_config_dir.as_deref(),
+                        member_state_dir: member_state_dir.as_deref(),
                     };
                     crate::formation::launch_brain(&brain_cfg).ok()
                 }

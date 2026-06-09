@@ -191,6 +191,16 @@ pub struct AssemblyConfig {
     pub skill_dirs: Vec<PathBuf>,
     /// Root directory under which per-member credential directories live.
     pub credential_base: PathBuf,
+    /// Team workspace root (e.g. `~/.botminter/workspaces/my-team`). Durable
+    /// member state lives at `<workspace_base>/member-state/<member>/`.
+    pub workspace_base: PathBuf,
+}
+
+impl AssemblyConfig {
+    /// Path to the durable member-state directory: `<workspace_base>/member-state/<member>`.
+    pub fn member_state_dir(&self) -> PathBuf {
+        self.workspace_base.join("member-state").join(&self.member_name)
+    }
 }
 
 // ── ConfigAssembler ─────────────────────────────────────────────────────────
@@ -266,6 +276,14 @@ impl ConfigAssembler {
                     format!("Failed to copy brain-prompt.md from {}", brain_src.display())
                 })?;
             }
+        }
+
+        // dm-room.json — durable member state; persists discovered Matrix DM room across restarts
+        let dm_room_src = config.member_state_dir().join("dm-room.json");
+        if dm_room_src.exists() {
+            fs::copy(&dm_room_src, workspace.join("dm-room.json")).with_context(|| {
+                format!("Failed to copy dm-room.json from {}", dm_room_src.display())
+            })?;
         }
 
         // Write .botminter.workspace marker (idempotent: always overwrite).
@@ -632,6 +650,11 @@ impl HydrationWorkspaceOps {
         &self.team_repo_url
     }
 
+    /// Return the durable member-state directory: `<workspace_base>/member-state/<member>`.
+    pub fn member_state_dir_for_member(&self, member_name: &str) -> PathBuf {
+        self.workspace_base.join("member-state").join(member_name)
+    }
+
     /// Return the GitHub App credential directory for `member_name` if it exists.
     ///
     /// The path is `<workspace_base>/<member>/.config/gh` — set as `GH_CONFIG_DIR`
@@ -660,6 +683,7 @@ impl crate::session::manager::WorkspaceOps for HydrationWorkspaceOps {
             project_number: self.project_number,
             skill_dirs: self.skill_dirs.clone(),
             credential_base: self.hydrator.credential_relay.credentials_base.clone(),
+            workspace_base: self.workspace_base.clone(),
         };
 
         let refs: Vec<(&str, &str)> = self
@@ -747,6 +771,7 @@ mod tests {
             project_number: Some(42),
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            workspace_base: tmp.path().to_path_buf(),
         }
     }
 
@@ -912,6 +937,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![nonexistent.clone()],
             credential_base: tmp.path().join("credentials"),
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         let warnings = assembler.assemble(&workspace, &config).unwrap();
@@ -996,6 +1022,7 @@ mod tests {
             project_number: Some(42),
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         let warnings_first = assembler.assemble(&workspace, &config).unwrap();
@@ -1025,6 +1052,7 @@ mod tests {
             project_number: Some(42),
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1059,6 +1087,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1089,6 +1118,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1097,6 +1127,44 @@ mod tests {
             !workspace.join("brain-prompt.md").exists(),
             "brain-prompt.md must not appear in session workspace when absent from team member dir"
         );
+    }
+
+    // ── dm-room.json assembly ────────────────────────────────────────────────
+
+    #[test]
+    fn dm_room_json_copied_from_member_state_into_session_workspace() {
+        let tmp = TempDir::new().unwrap();
+        let member_state_dir = tmp.path().join("member-state/alice");
+        fs::create_dir_all(&member_state_dir).unwrap();
+        fs::write(
+            member_state_dir.join("dm-room.json"),
+            r#"{"room_id":"!abc123:example.com"}"#,
+        )
+        .unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(tmp.path().join("team"), "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            workspace_base: tmp.path().to_path_buf(),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join("dm-room.json").exists(),
+            "dm-room.json must be copied to session workspace when present at member state path"
+        );
+        let content = fs::read_to_string(workspace.join("dm-room.json")).unwrap();
+        assert_eq!(content, r#"{"room_id":"!abc123:example.com"}"#);
     }
 
     // ── AC-08: .claude/ assembly ─────────────────────────────────────────────
@@ -1121,6 +1189,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1159,6 +1228,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1194,6 +1264,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1222,6 +1293,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         let result = assembler.assemble(&workspace, &config);
