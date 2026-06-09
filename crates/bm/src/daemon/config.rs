@@ -69,7 +69,17 @@ impl DaemonPaths {
             .join(format!("daemon-{}-poll.json", self.team_name))
     }
 
+    /// Logs directory: `~/.botminter/logs/`
+    pub fn log_dir(&self) -> Result<PathBuf> {
+        let logs_dir = self.config_dir.join("logs");
+        fs::create_dir_all(&logs_dir)?;
+        Ok(logs_dir)
+    }
+
     /// Log file path: `~/.botminter/logs/daemon-<team>.log`
+    ///
+    /// Used by lifecycle.rs to redirect stderr for crash diagnostics
+    /// before tracing initializes.
     pub fn log(&self) -> Result<PathBuf> {
         let logs_dir = self.config_dir.join("logs");
         fs::create_dir_all(&logs_dir)?;

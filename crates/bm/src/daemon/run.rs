@@ -18,7 +18,6 @@ use super::event::{
     is_relevant_event, load_webhook_secret, poll_github_events, resolve_github_repo,
     validate_webhook_signature,
 };
-use super::log::daemon_log;
 use super::process::handle_member_launch;
 use super::sessions_api::{sessions_router, BridgeContext, SessionsApiState};
 use crate::bridge;
@@ -32,7 +31,6 @@ use crate::web::web_router;
 #[derive(Clone)]
 pub(super) struct DaemonState {
     pub(super) team_name: String,
-    pub(super) paths: Arc<DaemonPaths>,
     pub(super) webhook_secret: Option<String>,
     pub(super) shutdown: Arc<AtomicBool>,
     pub(super) mode: String,
@@ -59,6 +57,7 @@ pub fn run_daemon(
     port: u16,
     interval: u64,
     bind: &str,
+    log_level: &str,
 ) -> Result<()> {
     // Resolve the isolated keyring D-Bus address BEFORE creating the tokio
     // runtime. `with_keyring_dbus` in credential.rs swaps DBUS_SESSION_BUS_ADDRESS
@@ -72,7 +71,7 @@ pub fn run_daemon(
     }
 
     let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
-    rt.block_on(run_daemon_async(team_name, mode, port, interval, bind))
+    rt.block_on(run_daemon_async(team_name, mode, port, interval, bind, log_level))
 }
 
 async fn run_daemon_async(
@@ -81,6 +80,7 @@ async fn run_daemon_async(
     port: u16,
     interval: u64,
     bind: &str,
+    log_level: &str,
 ) -> Result<()> {
     // NOTE: Do NOT set SIGCHLD=SIG_IGN here. While it prevents zombie children,
     // it also breaks Command::output() (used by gh api in poll mode) because
@@ -91,7 +91,18 @@ async fn run_daemon_async(
     let paths = Arc::new(DaemonPaths::new(team_name)?);
     let shutdown = Arc::new(AtomicBool::new(false));
 
-    daemon_log(&paths, "INFO", &format!("Daemon starting in {} mode", mode));
+    // Initialize tracing with daily-rotating file appender.
+    // The _guard must live for the daemon's lifetime to flush buffered writes.
+    let log_dir = paths.log_dir()?;
+    let file_appender = tracing_appender::rolling::daily(&log_dir, format!("daemon-{}", team_name));
+    let (non_blocking, _guard) = tracing_appender::non_blocking(file_appender);
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::new(log_level))
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .init();
+
+    tracing::info!(mode = %mode, "Daemon starting");
 
     // Load config once at startup and cache it. API handlers use these
     // cached values instead of re-reading config from disk on every request.
@@ -133,7 +144,6 @@ async fn run_daemon_async(
 
     let state = DaemonState {
         team_name: team_name.to_string(),
-        paths: Arc::clone(&paths),
         webhook_secret: load_webhook_secret(team_name),
         shutdown: Arc::clone(&shutdown),
         mode: mode.to_string(),
@@ -171,17 +181,12 @@ async fn run_daemon_async(
     // Startup recovery: mark Active/Finalizing sessions with dead PIDs as Failed
     let recovered = sessions_state.recover_stale_sessions();
     if !recovered.is_empty() {
-        daemon_log(
-            &paths,
-            "INFO",
-            &format!("Recovery: {} stale sessions marked Failed", recovered.len()),
-        );
+        tracing::info!(count = recovered.len(), "Recovery: stale sessions marked Failed");
     }
 
     // Retention GC: periodically clean up expired/over-budget retained sessions
     {
         let gc_state = sessions_state.clone();
-        let gc_paths = Arc::clone(&paths);
         let gc_shutdown = Arc::clone(&shutdown);
         tokio::spawn(async move {
             let scan_interval = crate::session::retention::RetentionPolicy::default().scan_interval;
@@ -192,11 +197,7 @@ async fn run_daemon_async(
                 }
                 let cleaned = gc_state.run_retention_cycle();
                 if !cleaned.is_empty() {
-                    daemon_log(
-                        &gc_paths,
-                        "INFO",
-                        &format!("GC: cleaned {} expired sessions", cleaned.len()),
-                    );
+                    tracing::info!(count = cleaned.len(), "GC: cleaned expired sessions");
                 }
             }
         });
@@ -221,11 +222,11 @@ async fn run_daemon_async(
     // In poll mode, spawn the background poll loop
     if mode == "poll" {
         let poll_team = team_name.to_string();
-        let poll_paths = Arc::clone(&paths);
         let poll_shutdown = Arc::clone(&shutdown);
         let poll_sessions = sessions_state.clone();
+        let poll_state_file = paths.poll_state();
         tokio::spawn(async move {
-            run_poll_loop(&poll_team, &poll_paths, interval, &poll_shutdown, poll_sessions).await;
+            run_poll_loop(&poll_team, poll_state_file, interval, &poll_shutdown, poll_sessions).await;
         });
     }
 
@@ -233,24 +234,8 @@ async fn run_daemon_async(
         .parse()
         .with_context(|| format!("Invalid bind address: {}:{}", bind, port))?;
 
-    daemon_log(
-        &paths,
-        "INFO",
-        &format!(
-            "{} server listening on {}",
-            match mode {
-                "webhook" => "Webhook",
-                "poll" => "Poll",
-                _ => mode,
-            },
-            addr
-        ),
-    );
-    daemon_log(
-        &paths,
-        "INFO",
-        &format!("Console available at http://{}:{}", bind, port),
-    );
+    tracing::info!(addr = %addr, mode = %mode, "Server listening");
+    tracing::info!(url = %format!("http://{}:{}", bind, port), "Console available");
 
     let listener = tokio::net::TcpListener::bind(addr)
         .await
@@ -274,11 +259,7 @@ async fn run_daemon_async(
     std::fs::write(paths.config(), &cfg_contents)
         .with_context(|| format!("Failed to write daemon config to {}", paths.config().display()))?;
 
-    daemon_log(
-        &paths,
-        "INFO",
-        &format!("Daemon config written (port={})", actual_addr.port()),
-    );
+    tracing::info!(port = actual_addr.port(), "Daemon config written");
 
     let shutdown_flag = Arc::clone(&shutdown);
     axum::serve(listener, app)
@@ -288,7 +269,7 @@ async fn run_daemon_async(
 
     // Clean up: stop all active sessions before exiting.
     // Send SIGTERM, wait up to 5 seconds, then SIGKILL any survivors.
-    daemon_log(&paths, "INFO", "Stopping sessions before exit...");
+    tracing::info!("Stopping sessions before exit");
     state.sessions_state.stop_autonomous_sessions_gracefully();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
@@ -299,7 +280,7 @@ async fn run_daemon_async(
     }
     state.sessions_state.force_stop_autonomous_sessions();
 
-    daemon_log(&paths, "INFO", "Daemon stopped");
+    tracing::info!("Daemon stopped");
     Ok(())
 }
 
@@ -389,7 +370,7 @@ async fn webhook_handler(
     let body_str = match std::str::from_utf8(&body) {
         Ok(s) => s.to_string(),
         Err(_) => {
-            daemon_log(&state.paths, "ERROR", "Failed to read request body as UTF-8");
+            tracing::error!("Failed to read request body as UTF-8");
             return StatusCode::BAD_REQUEST;
         }
     };
@@ -402,7 +383,7 @@ async fn webhook_handler(
             .map(|s| s.to_string());
 
         if !validate_webhook_signature(secret, &body_str, sig_header.as_deref()) {
-            daemon_log(&state.paths, "WARN", "Webhook signature validation failed");
+            tracing::warn!("Webhook signature validation failed");
             return StatusCode::FORBIDDEN;
         }
     }
@@ -415,24 +396,15 @@ async fn webhook_handler(
 
     if let Some(event_type) = event_type {
         if is_relevant_event(&event_type) {
-            daemon_log(
-                &state.paths,
-                "INFO",
-                &format!("Received relevant event: {}", event_type),
-            );
+            tracing::info!(event = %event_type, "Received relevant event");
             let team = state.team_name.clone();
-            let paths = Arc::clone(&state.paths);
             let shutdown = Arc::clone(&state.shutdown);
             let sessions = state.sessions_state.clone();
             tokio::task::spawn_blocking(move || {
-                handle_member_launch(&team, &paths, &shutdown, Some(sessions));
+                handle_member_launch(&team, &shutdown, Some(sessions));
             });
         } else {
-            daemon_log(
-                &state.paths,
-                "DEBUG",
-                &format!("Ignoring irrelevant event: {}", event_type),
-            );
+            tracing::debug!(event = %event_type, "Ignoring irrelevant event");
         }
     }
 
@@ -449,18 +421,13 @@ async fn health_handler() -> impl IntoResponse {
 /// Runs the poll loop as a background async task.
 async fn run_poll_loop(
     team_name: &str,
-    paths: &DaemonPaths,
+    poll_state_file: std::path::PathBuf,
     interval: u64,
     shutdown: &Arc<AtomicBool>,
     sessions_state: SessionsApiState,
 ) {
-    daemon_log(
-        paths,
-        "INFO",
-        &format!("Poll mode started, interval: {}s", interval),
-    );
+    tracing::info!(interval_secs = interval, "Poll mode started");
 
-    let poll_state_file = paths.poll_state();
     let mut poll_state = load_poll_state(&poll_state_file);
 
     let mut ticker = tokio::time::interval(tokio::time::Duration::from_secs(interval));
@@ -472,11 +439,7 @@ async fn run_poll_loop(
         ticker.tick().await;
 
         if shutdown.load(Ordering::SeqCst) {
-            daemon_log(
-                paths,
-                "INFO",
-                "Received shutdown signal, stopping poll loop",
-            );
+            tracing::info!("Received shutdown signal, stopping poll loop");
             break;
         }
 
@@ -486,7 +449,6 @@ async fn run_poll_loop(
         // the async runtime's worker threads.
         let poll_team = team_name.to_string();
         let poll_state_clone = poll_state.clone();
-        let poll_paths = paths.clone();
         let poll_shutdown = Arc::clone(shutdown);
         let poll_sessions = sessions_state.clone();
 
@@ -499,12 +461,8 @@ async fn run_poll_loop(
                 .count();
 
             if relevant_count > 0 {
-                daemon_log(
-                    &poll_paths,
-                    "INFO",
-                    &format!("Found {} relevant event(s)", relevant_count),
-                );
-                handle_member_launch(&poll_team, &poll_paths, &poll_shutdown, Some(poll_sessions));
+                tracing::info!(count = relevant_count, "Found relevant event(s)");
+                handle_member_launch(&poll_team, &poll_shutdown, Some(poll_sessions));
             }
 
             Ok::<_, anyhow::Error>(events)
@@ -520,21 +478,13 @@ async fn run_poll_loop(
                 save_poll_state(&poll_state_file, &poll_state);
             }
             Ok(Err(e)) => {
-                daemon_log(
-                    paths,
-                    "ERROR",
-                    &format!("Poll cycle failed: {:#}", e),
-                );
+                tracing::error!(error = %format!("{:#}", e), "Poll cycle failed");
             }
             Err(e) => {
-                daemon_log(
-                    paths,
-                    "ERROR",
-                    &format!("Poll task panicked: {}", e),
-                );
+                tracing::error!(error = %e, "Poll task panicked");
             }
         }
     }
 
-    daemon_log(paths, "INFO", "Poll loop stopped");
+    tracing::info!("Poll loop stopped");
 }

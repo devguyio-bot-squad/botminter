@@ -9,7 +9,6 @@ use serde::{Deserialize, Serialize};
 
 use anyhow::Context;
 
-use super::log::daemon_log;
 use super::run::DaemonState;
 use crate::formation::{self, CredentialDomain};
 use crate::git::app_auth;
@@ -141,15 +140,9 @@ pub(super) async fn start_members_handler(
     State(state): State<DaemonState>,
     Json(req): Json<StartMembersRequest>,
 ) -> impl IntoResponse {
-    let paths = Arc::clone(&state.paths);
-
-    daemon_log(
-        &paths,
-        "INFO",
-        &format!(
-            "API: start members (filter: {:?})",
-            req.member.as_deref().unwrap_or("all")
-        ),
+    tracing::info!(
+        member = req.member.as_deref().unwrap_or("all"),
+        "API: start members"
     );
 
     let cfg = Arc::clone(&state.config);
@@ -176,7 +169,6 @@ pub(super) async fn start_members_handler(
             let team_name_for_cache = state.team_name.clone();
             let app_creds = Arc::clone(&state.app_credentials);
             let shutdown_for_refresh = Arc::clone(&state.shutdown);
-            let paths_for_refresh = Arc::clone(&state.paths);
 
             for member in &start_result.launched {
                 if let Ok(cached) = cache_app_credentials(
@@ -190,22 +182,16 @@ pub(super) async fn start_members_handler(
                         .unwrap()
                         .insert(member_name.clone(), cached.clone());
 
-                    daemon_log(
-                        &paths,
-                        "INFO",
-                        &format!("Cached App credentials for member '{}'", member_name),
-                    );
+                    tracing::info!(member = %member_name, "Cached App credentials");
 
                     // Spawn background refresh task (50-minute interval — Req 11)
                     let refresh_creds = cached;
                     let refresh_shutdown = Arc::clone(&shutdown_for_refresh);
-                    let refresh_paths = Arc::clone(&paths_for_refresh);
                     let refresh_team = team_name_for_cache.clone();
                     tokio::spawn(async move {
                         run_token_refresh_loop(
                             refresh_creds,
                             &refresh_team,
-                            &refresh_paths,
                             &refresh_shutdown,
                         )
                         .await;
@@ -245,7 +231,7 @@ pub(super) async fn start_members_handler(
             (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response()
         }
         Ok(Err(e)) => {
-            daemon_log(&paths, "ERROR", &format!("API start failed: {}", e));
+            tracing::error!(error = %e, "API start failed");
             let resp = ErrorResponse {
                 ok: false,
                 error: e.to_string(),
@@ -257,7 +243,7 @@ pub(super) async fn start_members_handler(
                 .into_response()
         }
         Err(e) => {
-            daemon_log(&paths, "ERROR", &format!("API start panicked: {}", e));
+            tracing::error!(error = %e, "API start panicked");
             let resp = ErrorResponse {
                 ok: false,
                 error: "internal error".to_string(),
@@ -322,11 +308,8 @@ fn cache_app_credentials(
 async fn run_token_refresh_loop(
     creds: formation::AppCredentialsCached,
     team_name: &str,
-    paths: &super::config::DaemonPaths,
     shutdown: &std::sync::atomic::AtomicBool,
 ) {
-    use super::log::daemon_log;
-
     // 50 minutes = 3000 seconds
     const REFRESH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(50 * 60);
     const MAX_BACKOFF: std::time::Duration = std::time::Duration::from_secs(300); // 5 min
@@ -337,25 +320,14 @@ async fn run_token_refresh_loop(
         tokio::time::sleep(REFRESH_INTERVAL).await;
 
         if shutdown.load(Ordering::SeqCst) {
-            daemon_log(
-                paths,
-                "INFO",
-                &format!("Token refresh loop stopping for member '{}'", creds.member_name),
-            );
+            tracing::info!(member = %creds.member_name, "Token refresh loop stopping");
             break;
         }
 
         // Check if the member process is still alive
         let state_key = format!("{}/{}", team_name, creds.member_name);
         if !is_member_alive(&state_key) {
-            daemon_log(
-                paths,
-                "INFO",
-                &format!(
-                    "Member '{}' no longer running, stopping refresh loop",
-                    creds.member_name
-                ),
-            );
+            tracing::info!(member = %creds.member_name, "Member no longer running, stopping refresh loop");
             break;
         }
 
@@ -367,47 +339,28 @@ async fn run_token_refresh_loop(
 
             match refresh_result {
                 Ok(Ok(())) => {
-                    daemon_log(
-                        paths,
-                        "INFO",
-                        &format!("Refreshed token for member '{}'", creds.member_name),
-                    );
+                    tracing::info!(member = %creds.member_name, "Refreshed token");
                     backoff = std::time::Duration::from_secs(10);
                     break; // Success — resume outer 50-min cycle
                 }
                 Ok(Err(e)) => {
-                    daemon_log(
-                        paths,
-                        "ERROR",
-                        &format!(
-                            "Token refresh failed for '{}': {}. Retrying in {}s. Existing token valid until expiry.",
-                            creds.member_name,
-                            e,
-                            backoff.as_secs()
-                        ),
+                    tracing::error!(
+                        member = %creds.member_name,
+                        error = %e,
+                        retry_in_secs = backoff.as_secs(),
+                        "Token refresh failed, retrying"
                     );
                     tokio::time::sleep(backoff).await;
                     backoff = std::cmp::min(backoff * 2, MAX_BACKOFF);
 
                     // Before retrying, check shutdown and member liveness
                     if shutdown.load(Ordering::SeqCst) || !is_member_alive(&state_key) {
-                        daemon_log(
-                            paths,
-                            "INFO",
-                            &format!(
-                                "Stopping retry loop for '{}' (shutdown or member exited)",
-                                creds.member_name
-                            ),
-                        );
+                        tracing::info!(member = %creds.member_name, "Stopping retry loop (shutdown or member exited)");
                         return; // Exit the entire refresh function
                     }
                 }
                 Err(e) => {
-                    daemon_log(
-                        paths,
-                        "ERROR",
-                        &format!("Token refresh task panicked for '{}': {}", creds.member_name, e),
-                    );
+                    tracing::error!(member = %creds.member_name, error = %e, "Token refresh task panicked");
                     return; // Unrecoverable — exit
                 }
             }
@@ -454,16 +407,10 @@ pub(super) async fn stop_members_handler(
     State(state): State<DaemonState>,
     Json(req): Json<StopMembersRequest>,
 ) -> impl IntoResponse {
-    let paths = Arc::clone(&state.paths);
-
-    daemon_log(
-        &paths,
-        "INFO",
-        &format!(
-            "API: stop members (filter: {:?}, force: {})",
-            req.member.as_deref().unwrap_or("all"),
-            req.force
-        ),
+    tracing::info!(
+        filter = req.member.as_deref().unwrap_or("all"),
+        force = req.force,
+        "API: stop members"
     );
 
     let cfg = Arc::clone(&state.config);
@@ -506,7 +453,7 @@ pub(super) async fn stop_members_handler(
             (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response()
         }
         Ok(Err(e)) => {
-            daemon_log(&paths, "ERROR", &format!("API stop failed: {}", e));
+            tracing::error!(error = %e, "API stop failed");
             let resp = ErrorResponse {
                 ok: false,
                 error: e.to_string(),
@@ -518,7 +465,7 @@ pub(super) async fn stop_members_handler(
                 .into_response()
         }
         Err(e) => {
-            daemon_log(&paths, "ERROR", &format!("API stop panicked: {}", e));
+            tracing::error!(error = %e, "API stop panicked");
             let resp = ErrorResponse {
                 ok: false,
                 error: "internal error".to_string(),
@@ -652,16 +599,10 @@ pub(super) async fn start_loop_handler(
     State(state): State<DaemonState>,
     Json(req): Json<StartLoopRequest>,
 ) -> impl IntoResponse {
-    let paths = Arc::clone(&state.paths);
-
-    daemon_log(
-        &paths,
-        "INFO",
-        &format!(
-            "API: start loop (member: {:?}, prompt length: {})",
-            req.member.as_deref().unwrap_or("default"),
-            req.prompt.len()
-        ),
+    tracing::info!(
+        member = req.member.as_deref().unwrap_or("default"),
+        prompt_len = req.prompt.len(),
+        "API: start loop"
     );
 
     let cfg = Arc::clone(&state.config);
@@ -678,7 +619,7 @@ pub(super) async fn start_loop_handler(
             (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response()
         }
         Ok(Err(e)) => {
-            daemon_log(&paths, "ERROR", &format!("API start loop failed: {}", e));
+            tracing::error!(error = %e, "API start loop failed");
             let resp = StartLoopResponse {
                 ok: false,
                 loop_id: None,
@@ -692,7 +633,7 @@ pub(super) async fn start_loop_handler(
                 .into_response()
         }
         Err(e) => {
-            daemon_log(&paths, "ERROR", &format!("API start loop panicked: {}", e));
+            tracing::error!(error = %e, "API start loop panicked");
             let resp = StartLoopResponse {
                 ok: false,
                 loop_id: None,

@@ -3,7 +3,6 @@ mod client;
 mod config;
 mod event;
 mod lifecycle;
-mod log;
 mod process;
 mod run;
 pub mod sessions_api;

@@ -219,6 +219,7 @@ impl Formation for LinuxLocalFormation {
                     0, // OS-assigned port — avoids collisions between tests/teams
                     params.team.daemon.interval,
                     "127.0.0.1",
+                    "info",
                 )?;
                 // Connect to the newly started daemon
                 DaemonClient::connect(&self.team_name)?
