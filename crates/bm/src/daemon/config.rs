@@ -113,11 +113,23 @@ impl DaemonPaths {
 /// Loads poll state from disk. Returns default if file is missing or corrupt.
 pub fn load_poll_state(path: &Path) -> PollState {
     if !path.exists() {
+        tracing::debug!(path = %path.display(), "Poll state file missing, using default");
         return PollState::default();
     }
     match fs::read_to_string(path) {
-        Ok(contents) => serde_json::from_str(&contents).unwrap_or_default(),
-        Err(_) => PollState::default(),
+        Ok(contents) => {
+            let state: PollState = serde_json::from_str(&contents).unwrap_or_default();
+            tracing::debug!(
+                path = %path.display(),
+                last_event_id = state.last_event_id.as_deref().unwrap_or("none"),
+                "Poll state loaded"
+            );
+            state
+        }
+        Err(_) => {
+            tracing::debug!(path = %path.display(), "Poll state file unreadable, using default");
+            PollState::default()
+        }
     }
 }
 
@@ -125,6 +137,7 @@ pub fn load_poll_state(path: &Path) -> PollState {
 pub fn save_poll_state(path: &Path, state: &PollState) {
     if let Ok(contents) = serde_json::to_string_pretty(state) {
         let _ = fs::write(path, contents);
+        tracing::trace!(path = %path.display(), "Poll state saved");
     }
 }
 
@@ -141,10 +154,12 @@ pub fn read_team_schema(team_repo: &Path) -> Result<String> {
         fs::read_to_string(&manifest_path).context("Failed to read team botminter.yml")?;
     let val: serde_yml::Value =
         serde_yml::from_str(&contents).context("Failed to parse team botminter.yml")?;
-    Ok(val["schema_version"]
+    let version = val["schema_version"]
         .as_str()
         .unwrap_or("")
-        .to_string())
+        .to_string();
+    tracing::debug!(path = %manifest_path.display(), version = %version, "Team schema read");
+    Ok(version)
 }
 
 #[cfg(test)]

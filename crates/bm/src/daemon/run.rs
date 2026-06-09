@@ -104,6 +104,10 @@ async fn run_daemon_async(
 
     tracing::info!(mode = %mode, "Daemon starting");
 
+    if std::env::var("DBUS_SESSION_BUS_ADDRESS").is_ok() {
+        tracing::debug!("D-Bus session bus configured for keyring access");
+    }
+
     // Load config once at startup and cache it. API handlers use these
     // cached values instead of re-reading config from disk on every request.
     let cfg = app_config::load()
@@ -111,6 +115,7 @@ async fn run_daemon_async(
     let team_entry = app_config::resolve_team(&cfg, Some(team_name))
         .context("Daemon failed to resolve team at startup")?
         .clone();
+    tracing::debug!(team = %team_name, path = %team_entry.path.display(), "Config loaded");
 
     // Build sessions_state first so it can be embedded in DaemonState and
     // shared with the poll loop and webhook handler.
@@ -274,9 +279,13 @@ async fn run_daemon_async(
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     while std::time::Instant::now() < deadline {
         if !state.sessions_state.has_alive_autonomous_sessions() {
+            tracing::debug!("All autonomous sessions exited gracefully");
             break;
         }
         std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+    if state.sessions_state.has_alive_autonomous_sessions() {
+        tracing::info!("Autonomous sessions still alive after grace period, sending SIGKILL");
     }
     state.sessions_state.force_stop_autonomous_sessions();
 
@@ -291,13 +300,19 @@ fn read_project_repos(team_repo_path: &std::path::Path) -> Vec<(String, String)>
     let manifest_path = team_repo_path.join("botminter.yml");
     let contents = match std::fs::read_to_string(&manifest_path) {
         Ok(c) => c,
-        Err(_) => return Vec::new(),
+        Err(_) => {
+            tracing::debug!(path = %manifest_path.display(), "Project manifest not found");
+            return Vec::new();
+        }
     };
     let manifest: serde_yml::Value = match serde_yml::from_str(&contents) {
         Ok(v) => v,
-        Err(_) => return Vec::new(),
+        Err(e) => {
+            tracing::warn!(path = %manifest_path.display(), error = %e, "Project manifest parse failed");
+            return Vec::new();
+        }
     };
-    manifest["projects"]
+    let repos: Vec<(String, String)> = manifest["projects"]
         .as_sequence()
         .map(|ps| {
             ps.iter()
@@ -308,7 +323,9 @@ fn read_project_repos(team_repo_path: &std::path::Path) -> Vec<(String, String)>
                 })
                 .collect()
         })
-        .unwrap_or_default()
+        .unwrap_or_default();
+    tracing::debug!(count = repos.len(), "Project repos loaded");
+    repos
 }
 
 /// Resolve bridge credentials for per-member env injection when launching ralph.
@@ -318,11 +335,30 @@ fn resolve_bridge_context(
     team_entry: &app_config::TeamEntry,
     cfg: &app_config::BotminterConfig,
 ) -> Option<BridgeContext> {
-    let bridge_dir = bridge::discover(team_repo_path, &team_entry.name).ok().flatten()?;
-    let bridge_manifest = bridge::load_manifest(&bridge_dir).ok()?;
+    tracing::debug!(team = %team_entry.name, "Resolving bridge context");
+    let bridge_dir = match bridge::discover(team_repo_path, &team_entry.name) {
+        Ok(Some(dir)) => dir,
+        Ok(None) => {
+            tracing::debug!("No bridge directory found");
+            return None;
+        }
+        Err(e) => {
+            tracing::debug!(error = %e, "Bridge discovery failed");
+            return None;
+        }
+    };
+    let bridge_manifest = match bridge::load_manifest(&bridge_dir) {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::debug!(error = %e, "Bridge manifest load failed");
+            return None;
+        }
+    };
     // metadata.name is the plugin identifier (e.g. "tuwunel", "rocketchat", "telegram").
     // launch_ralph() uses this name to select the correct env var (RALPH_MATRIX_ACCESS_TOKEN, etc.).
     let bridge_name = bridge_manifest.metadata.name.clone();
+    tracing::debug!(bridge_type = %bridge_name, "Bridge resolved");
+
     let bstate_path = bridge::state_path(&cfg.workzone, &team_entry.name);
     let credential_store = bridge::LocalCredentialStore::new(
         &team_entry.name,
@@ -354,8 +390,12 @@ async fn shutdown_signal(shutdown: Arc<AtomicBool>) {
     let terminate = std::future::pending::<()>();
 
     tokio::select! {
-        _ = ctrl_c => {},
-        _ = terminate => {},
+        _ = ctrl_c => {
+            tracing::info!("Received SIGINT");
+        },
+        _ = terminate => {
+            tracing::info!("Received SIGTERM");
+        },
     }
 
     shutdown.store(true, Ordering::SeqCst);
@@ -443,6 +483,8 @@ async fn run_poll_loop(
             break;
         }
 
+        tracing::debug!("Poll tick");
+
         // All poll operations (resolve_github_repo, poll_github_events,
         // handle_member_launch) are blocking sync calls that spawn subprocesses
         // or do file I/O. Run them on the blocking thread pool to avoid starving
@@ -463,6 +505,8 @@ async fn run_poll_loop(
             if relevant_count > 0 {
                 tracing::info!(count = relevant_count, "Found relevant event(s)");
                 handle_member_launch(&poll_team, &poll_shutdown, Some(poll_sessions));
+            } else {
+                tracing::debug!(total = events.len(), "No relevant events this cycle");
             }
 
             Ok::<_, anyhow::Error>(events)
@@ -476,6 +520,7 @@ async fn run_poll_loop(
                 }
                 poll_state.last_poll_at = Some(chrono::Utc::now().to_rfc3339());
                 save_poll_state(&poll_state_file, &poll_state);
+                tracing::debug!(last_event_id = poll_state.last_event_id.as_deref().unwrap_or("none"), "Poll state updated");
             }
             Ok(Err(e)) => {
                 tracing::error!(error = %format!("{:#}", e), "Poll cycle failed");

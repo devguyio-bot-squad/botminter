@@ -23,6 +23,11 @@ pub fn launch_members_oneshot(
     _shutdown: &Arc<AtomicBool>,
     sessions: Option<&SessionsApiState>,
 ) -> Result<u32> {
+    tracing::debug!(
+        team = %team_name,
+        sessions_api = sessions.is_some(),
+        "Launching members one-shot"
+    );
     let cfg = config::load()?;
     let team = config::resolve_team(&cfg, Some(team_name))?;
     let team_repo = team.path.join("team");
@@ -45,6 +50,7 @@ pub fn launch_members_oneshot(
         tracing::debug!("No enabled members match discovered members");
         return Ok(0);
     }
+    tracing::debug!(count = enabled_members.len(), members = ?enabled_members, "Eligible members resolved");
 
     let mut total_launched = 0u32;
 

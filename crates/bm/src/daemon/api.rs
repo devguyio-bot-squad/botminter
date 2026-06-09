@@ -265,6 +265,7 @@ fn cache_app_credentials(
     member_name: &str,
     _pid: &u32,
 ) -> anyhow::Result<formation::AppCredentialsCached> {
+    tracing::debug!(team = %team_name, member = %member_name, "Caching App credentials");
     let formation = formation::local::create_local_formation(team_name)?;
     let store = formation.credential_store(CredentialDomain::GitHubApp {
         team_name: team_name.to_string(),
@@ -283,6 +284,13 @@ fn cache_app_credentials(
     let installation_id: u64 = installation_id_str
         .parse()
         .context("Invalid installation ID")?;
+    tracing::debug!(
+        member = %member_name,
+        client_id_found = true,
+        private_key_found = true,
+        installation_id = installation_id,
+        "App credentials resolved from keyring"
+    );
 
     // Resolve workspace from state.json
     let runtime_state = state::load()?;
@@ -292,6 +300,7 @@ fn cache_app_credentials(
         .get(&state_key)
         .map(|rt| rt.workspace.clone())
         .ok_or_else(|| anyhow::anyhow!("Member not in state.json"))?;
+    tracing::debug!(member = %member_name, workspace = %workspace.display(), "Workspace resolved from state");
 
     Ok(formation::AppCredentialsCached {
         member_name: member_name.to_string(),
@@ -524,6 +533,7 @@ pub(super) async fn list_members_handler(
 
     match result {
         Ok(Ok(members)) => {
+            tracing::debug!(count = members.len(), "API: list members");
             let resp = MembersStatusResponse { members };
             (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response()
         }
@@ -663,23 +673,28 @@ fn start_loop_blocking(
 
     // Resolve which member's workspace to use
     let member_name = if let Some(ref name) = req.member {
+        tracing::debug!(member = %name, "Using explicit member for loop");
         name.clone()
     } else {
         // Default to the first member found
         let dirs = workspace::list_member_dirs(&members_dir)?;
-        dirs.into_iter()
+        let name = dirs.into_iter()
             .next()
-            .ok_or_else(|| anyhow::anyhow!("No members found in team"))?
+            .ok_or_else(|| anyhow::anyhow!("No members found in team"))?;
+        tracing::debug!(member = %name, "Defaulting to first member for loop");
+        name
     };
 
     let team_ws_base = cfg.workzone.join(team_name);
     let ws = workspace::find_workspace(&team_ws_base, &member_name)
         .ok_or_else(|| anyhow::anyhow!("No workspace found for member '{}'", member_name))?;
+    tracing::debug!(member = %member_name, workspace = %ws.display(), "Workspace resolved for loop");
 
     // Write prompt to a temp file in the workspace
     let prompt_file = ws.join(".ralph-loop-prompt.md");
     std::fs::write(&prompt_file, &req.prompt)
         .with_context(|| format!("Failed to write loop prompt to {}", prompt_file.display()))?;
+    tracing::debug!(path = %prompt_file.display(), len = req.prompt.len(), "Loop prompt written");
 
     // Resolve App credentials for the member (same path as member start)
     let local_formation = crate::formation::local::create_local_formation(team_name)?;
@@ -724,6 +739,8 @@ fn start_loop_blocking(
 
     let pid = child.id();
     crate::formation::reap_child(child);
+
+    tracing::info!(member = %member_name, pid = pid, workspace = %ws.display(), "Ralph loop spawned");
 
     Ok(StartLoopResponse {
         ok: true,

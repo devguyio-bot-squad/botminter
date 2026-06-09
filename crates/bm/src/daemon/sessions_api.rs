@@ -172,6 +172,7 @@ impl SessionsApiState {
         &self,
         member_name: &str,
     ) -> Result<SessionId, String> {
+        tracing::debug!(member = %member_name, "Loop session blocking start");
         // Dedup: skip if member already has a live autonomous session.
         {
             let inner = self.inner.lock().unwrap();
@@ -186,6 +187,7 @@ impl SessionsApiState {
                     && r.agent_pid.is_some_and(|pid| checker.is_pid_alive(pid))
             });
             if already_running {
+                tracing::debug!(member = %member_name, "Dedup: already has live autonomous session");
                 return Err(format!(
                     "member {} already has a live autonomous session",
                     member_name
@@ -199,8 +201,12 @@ impl SessionsApiState {
         let workspace_path: Option<std::path::PathBuf> =
             if let Some(ref ops) = self.workspace_ops {
                 match ops.hydrate_workspace(&session_id, member_name) {
-                    Ok(path) => Some(path),
+                    Ok(path) => {
+                        tracing::debug!(session_id = %session_id, path = %path.display(), "Workspace hydrated (blocking)");
+                        Some(path)
+                    }
                     Err(e) => {
+                        tracing::warn!(session_id = %session_id, member = %member_name, error = %e, "Workspace hydration failed (blocking)");
                         return Err(format!("workspace hydration failed: {e}"));
                     }
                 }
@@ -259,8 +265,11 @@ impl SessionsApiState {
 
         // Step 4: Persist agent PID (under Mutex).
         if let Some(pid) = agent_pid {
+            tracing::info!(session_id = %session_id, pid = pid, "Agent launched (blocking)");
             let mut inner = self.inner.lock().unwrap();
             let _ = inner.registry.set_agent_pid(&session_id, pid);
+        } else {
+            tracing::warn!(session_id = %session_id, member = %member_name, "Agent launch returned no PID (blocking)");
         }
 
         Ok(session_id)
@@ -508,7 +517,9 @@ pub async fn list_session_history_handler(
         since,
     };
 
-    let sessions = history::query_history(&refs, &query)
+    let history_entries = history::query_history(&refs, &query);
+    tracing::debug!(count = history_entries.len(), "Session history queried");
+    let sessions = history_entries
         .into_iter()
         .map(|e| {
             let finalization_status =
@@ -557,6 +568,13 @@ pub async fn start_session_handler(
     };
 
     let session_id = SessionId::new();
+    tracing::info!(
+        session_id = %session_id,
+        member = %req.member_name,
+        session_type = %req.session_type,
+        work_item = req.work_item_id.as_deref().unwrap_or("none"),
+        "Session create requested"
+    );
 
     // Step 1: Acquire work_item_lock (under Mutex) then release the lock before I/O.
     if let Some(ref work_item_id) = req.work_item_id {
@@ -586,8 +604,12 @@ pub async fn start_session_handler(
         .await;
 
         match result {
-            Ok(Ok(path)) => Some(path),
+            Ok(Ok(path)) => {
+                tracing::debug!(session_id = %session_id, path = %path.display(), "Workspace hydrated");
+                Some(path)
+            }
             Ok(Err(e)) => {
+                tracing::warn!(session_id = %session_id, error = %e, "Workspace hydration failed");
                 if let Some(ref work_item_id) = req.work_item_id {
                     let inner = state.inner.lock().unwrap();
                     inner.work_item_lock.release(work_item_id, &session_id);
@@ -603,6 +625,7 @@ pub async fn start_session_handler(
                 );
             }
             Err(e) => {
+                tracing::warn!(session_id = %session_id, error = %e, "Workspace hydration task panicked");
                 if let Some(ref work_item_id) = req.work_item_id {
                     let inner = state.inner.lock().unwrap();
                     inner.work_item_lock.release(work_item_id, &session_id);
@@ -638,6 +661,7 @@ pub async fn start_session_handler(
     } else {
         session_type
     };
+    tracing::debug!(session_id = %session_id, resolved_type = %session_type, "Session type resolved");
 
     // Step 3: Register session with workspace_path and transition to Active (under Mutex).
     {
@@ -689,6 +713,7 @@ pub async fn start_session_handler(
             );
         }
     }
+    tracing::debug!(session_id = %session_id, "Session registered and active");
     // Mutex released. Agent launch runs without holding the lock.
 
     // Step 4: Launch agent process (blocking, no Mutex held).
@@ -817,8 +842,11 @@ pub async fn start_session_handler(
 
     // Step 5: Persist agent PID (under Mutex).
     if let Some(pid) = agent_pid {
+        tracing::info!(session_id = %session_id, pid = pid, session_type = %session_type, "Agent launched");
         let mut inner = state.inner.lock().unwrap();
         let _ = inner.registry.set_agent_pid(&session_id, pid);
+    } else if session_type != SessionType::Interactive {
+        tracing::warn!(session_id = %session_id, session_type = %session_type, "Agent launch returned no PID");
     }
 
     let workspace_path_str = workspace_path.map(|p| p.display().to_string());
@@ -854,6 +882,9 @@ pub async fn list_sessions_handler(
         })
         .map(|r| r.session_id.clone())
         .collect();
+    if !crashed_ids.is_empty() {
+        tracing::debug!(count = crashed_ids.len(), ids = ?crashed_ids, "Crash-detected sessions marked Failed");
+    }
     for id in &crashed_ids {
         let _ = inner.registry.update_state(id, SessionState::Failed);
     }
@@ -890,6 +921,7 @@ fn spawn_deactivation_watcher(
     workspace_ops: Option<Arc<HydrationWorkspaceOps>>,
 ) {
     use std::time::Duration;
+    tracing::debug!(session_id = session_id.as_str(), agent_pid = ?agent_pid, "Deactivation watcher spawned");
     tokio::spawn(async move {
         // Wait up to 10s for the agent process to exit after SIGTERM, then SIGKILL.
         // A 60s grace period left zero margin for the 120s finalization subagent within
@@ -938,8 +970,7 @@ fn spawn_deactivation_watcher(
         };
 
         if !still_finalizing {
-            // Session was moved out of Finalizing (e.g., force-stopped → Retained). Do not
-            // override the new state.
+            tracing::debug!(session_id = session_id.as_str(), "No longer Finalizing — skipping deactivation");
             return;
         }
 
@@ -1103,6 +1134,7 @@ fn spawn_deactivation_watcher(
                 }
             }
         } else {
+            tracing::debug!(session_id = session_id.as_str(), "Workspace clean — skipping finalization");
             // Clean workspace — transition to Completed only if still Finalizing.
             if let Ok(mut guard) = arc_inner.lock() {
                 if guard
@@ -1131,6 +1163,7 @@ pub async fn stop_session_handler(
     let session_id = SessionId::from_raw(&session_id_str);
 
     if inner.registry.get(&session_id).is_none() {
+        tracing::debug!(session_id = %session_id_str, "Stop requested for unknown session");
         return (
             StatusCode::NOT_FOUND,
             Json(StopSessionResponse {
@@ -1141,6 +1174,7 @@ pub async fn stop_session_handler(
     }
 
     let force = body.is_some_and(|b| b.force);
+    tracing::info!(session_id = %session_id_str, force = force, "Session stop requested");
     let options = StopOptions {
         mode: StopMode::SpecificSession(session_id.clone()),
         force,
@@ -1159,6 +1193,7 @@ pub async fn stop_session_handler(
     }
 
     inner.work_item_lock.release_all(&session_id);
+    tracing::info!(session_id = %session_id_str, "Session stopped");
 
     (
         StatusCode::OK,
@@ -1175,6 +1210,7 @@ pub async fn stop_bulk_handler(
     Json(req): Json<StopBulkRequest>,
 ) -> (StatusCode, Json<StopBulkResponse>) {
     let mut inner = state.inner.lock().unwrap();
+    tracing::info!(mode = %req.mode, member = req.member.as_deref().unwrap_or("all"), force = req.force, "Bulk stop requested");
 
     let mode = match req.mode.as_str() {
         "member" => match req.member {
@@ -1257,6 +1293,14 @@ pub async fn stop_bulk_handler(
     // Spawn deactivation watchers after releasing the mutex.
     drop(inner);
 
+    tracing::info!(
+        deactivated = summary.deactivated,
+        killed = summary.killed,
+        skipped_interactive = summary.skipped_interactive,
+        newly_finalizing = newly_finalizing.len(),
+        "Bulk stop complete"
+    );
+
     for (session_id, workspace_path, agent_pid) in newly_finalizing {
         spawn_deactivation_watcher(
             session_id,
@@ -1286,6 +1330,7 @@ pub async fn retrigger_finalization_handler(
     Path(session_id_str): Path<String>,
 ) -> (StatusCode, Json<RetriggerResponse>) {
     let session_id = SessionId::from_raw(&session_id_str);
+    tracing::info!(session_id = %session_id_str, "Finalization retrigger requested");
 
     // Acquire lock only long enough to transition state and get the child handle.
     let retrigger_result = {
@@ -1336,6 +1381,7 @@ pub async fn session_detail_handler(
 ) -> (StatusCode, Json<SessionDetailResponse>) {
     let inner = state.inner.lock().unwrap();
     let session_id = SessionId::from_raw(&session_id_str);
+    tracing::debug!(session_id = %session_id_str, "Session detail requested");
 
     match inner.registry.get(&session_id) {
         Some(r) => (
@@ -1363,6 +1409,7 @@ pub async fn inspect_session_handler(
     Path(session_id_str): Path<String>,
 ) -> (StatusCode, Json<InspectSessionResponse>) {
     let session_id = SessionId::from_raw(&session_id_str);
+    tracing::debug!(session_id = %session_id_str, "Session inspect requested");
 
     // Clone data out of the Mutex before doing blocking I/O (git commands).
     let record_snapshot = {
@@ -1428,18 +1475,27 @@ pub async fn cleanup_session_handler(
 ) -> (StatusCode, Json<CleanupSessionResponse>) {
     let mut inner = state.inner.lock().unwrap();
     let session_id = SessionId::from_raw(&session_id_str);
+    tracing::info!(session_id = %session_id_str, "Session cleanup requested");
 
     match cleanup::cleanup_session(&mut inner.registry, &session_id) {
-        Ok(report) => (
-            StatusCode::OK,
-            Json(CleanupSessionResponse {
-                ok: true,
-                session_id: Some(session_id_str),
-                workspace_removed: report.workspace_removed,
-                registry_removed: report.registry_removed,
-                error: None,
-            }),
-        ),
+        Ok(report) => {
+            tracing::info!(
+                session_id = %session_id_str,
+                workspace_removed = report.workspace_removed,
+                registry_removed = report.registry_removed,
+                "Session cleaned up"
+            );
+            (
+                StatusCode::OK,
+                Json(CleanupSessionResponse {
+                    ok: true,
+                    session_id: Some(session_id_str),
+                    workspace_removed: report.workspace_removed,
+                    registry_removed: report.registry_removed,
+                    error: None,
+                }),
+            )
+        }
         Err(e) => (
             StatusCode::NOT_FOUND,
             Json(CleanupSessionResponse {
@@ -1459,6 +1515,7 @@ pub async fn bulk_cleanup_handler(
     Json(req): Json<BulkCleanupRequest>,
 ) -> (StatusCode, Json<BulkCleanupResponse>) {
     let mut inner = state.inner.lock().unwrap();
+    tracing::info!(filter = %req.filter, value = req.value.as_deref().unwrap_or("none"), "Bulk cleanup requested");
 
     let filter = match req.filter.as_str() {
         "all" => cleanup::CleanupFilter::AllRetained,
@@ -1519,6 +1576,7 @@ pub async fn bulk_cleanup_handler(
     match cleanup::bulk_cleanup(&mut inner.registry, filter) {
         Ok(reports) => {
             let cleaned = reports.len() as u32;
+            tracing::info!(cleaned = cleaned, "Bulk cleanup complete");
             let report_infos = reports
                 .into_iter()
                 .map(|r| CleanupReportInfo {
