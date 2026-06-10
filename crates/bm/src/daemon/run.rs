@@ -19,7 +19,10 @@ use super::event::{
 };
 use super::log::daemon_log;
 use super::process::handle_member_launch;
-use super::sessions_api::{sessions_router, BridgeContext, SessionsApiState};
+use super::sessions_api::{
+    run_credential_refresh_loop, sessions_router, BridgeContext, CredentialRefreshable,
+    SessionsApiState,
+};
 use crate::bridge;
 use crate::config as app_config;
 use crate::workspace::HydrationWorkspaceConfig;
@@ -211,6 +214,23 @@ async fn run_daemon_async(
                     );
                 }
             }
+        });
+    }
+
+    // Credential refresh: periodically renew GitHub App tokens for active-session members
+    {
+        let cred_state = sessions_state.clone();
+        let cred_refresher: Arc<dyn CredentialRefreshable> =
+            Arc::new(sessions_state.clone());
+        let cred_shutdown = Arc::clone(&shutdown);
+        tokio::spawn(async move {
+            run_credential_refresh_loop(
+                cred_state,
+                cred_refresher,
+                std::time::Duration::from_secs(300),
+                cred_shutdown,
+            )
+            .await;
         });
     }
 

@@ -1456,12 +1456,19 @@ pub fn sessions_router(state: SessionsApiState) -> Router {
 
 /// Refreshes GitHub App credentials for a single team member.
 /// Abstracted for test injection — production impl delegates to [`CredentialRelay`].
-#[allow(dead_code)]
 pub(crate) trait CredentialRefreshable: Send + Sync {
     fn ensure_credentials(&self, member_name: &str) -> anyhow::Result<()>;
 }
 
-#[allow(dead_code)]
+impl CredentialRefreshable for SessionsApiState {
+    fn ensure_credentials(&self, member_name: &str) -> anyhow::Result<()> {
+        match &self.workspace_ops {
+            Some(ops) => ops.ensure_credentials(member_name),
+            None => Ok(()),
+        }
+    }
+}
+
 impl SessionsApiState {
     /// Return unique member names that have at least one session in the Active state.
     pub(crate) fn active_member_names(&self) -> Vec<String> {
@@ -1504,7 +1511,6 @@ impl SessionsApiState {
 
 /// Background loop: refreshes credentials for active-session members every `interval`.
 /// Stops when `shutdown` is set to `true`.
-#[allow(dead_code)]
 pub(crate) async fn run_credential_refresh_loop(
     sessions_state: SessionsApiState,
     refresher: std::sync::Arc<dyn CredentialRefreshable>,

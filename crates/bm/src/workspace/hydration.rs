@@ -809,6 +809,11 @@ impl HydrationWorkspaceOps {
     pub fn gh_config_dir_for_member(&self, member_name: &str) -> Option<PathBuf> {
         self.hydrator.credential_relay.gh_dir_for(member_name)
     }
+
+    /// Refresh credentials for `member_name` by re-writing the credential directory.
+    pub fn ensure_credentials(&self, member_name: &str) -> anyhow::Result<()> {
+        self.hydrator.credential_relay.ensure_credentials(member_name)
+    }
 }
 
 impl crate::session::manager::WorkspaceOps for HydrationWorkspaceOps {
