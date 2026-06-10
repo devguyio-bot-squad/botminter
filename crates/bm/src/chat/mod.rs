@@ -563,27 +563,18 @@ pub fn resolve_member_by_role(team_repo: &Path, role: &str) -> Result<String> {
     }
 }
 
-/// Prepares a meeting session. Unlike `prepare_chat_session()`, this does
-/// NOT build a meta-prompt from ralph.yml/hats/skills/guardrails. The
-/// meeting's `instructions` field IS the system prompt.
-pub fn prepare_meeting_session(
-    team_path: &Path,
-    member: &str,
+/// Prepares a meeting session from an ephemeral workspace path provided by the daemon.
+/// The meeting's `instructions` field IS the system prompt — no meta-prompt assembly.
+pub fn prepare_meeting_session_from_path(
+    workspace_path: &Path,
     instructions: &str,
 ) -> Result<AgentSession> {
     if instructions.trim().is_empty() {
         bail!("Meeting instructions must not be empty");
     }
-    let ws_path = team_path.join(member);
-    if !ws_path.join(".botminter.workspace").exists() {
-        bail!(
-            "No workspace found for member '{}'. Run `bm teams sync` first.",
-            member
-        );
-    }
     Ok(AgentSession {
         meta_prompt: instructions.to_string(),
-        ws_path,
+        ws_path: workspace_path.to_path_buf(),
     })
 }
 
@@ -1100,38 +1091,20 @@ mod tests {
     }
 
     #[test]
-    fn prepare_meeting_session_empty_instructions_fails() {
+    fn prepare_meeting_session_from_path_empty_instructions_fails() {
         let tmp = tempfile::tempdir().unwrap();
-        let result = prepare_meeting_session(tmp.path(), "engineer-01", "   ");
+        let result = prepare_meeting_session_from_path(tmp.path(), "   ");
         let err = result.err().expect("should fail for empty instructions");
-        assert!(
-            err.to_string().contains("must not be empty")
-        );
+        assert!(err.to_string().contains("must not be empty"));
     }
 
     #[test]
-    fn prepare_meeting_session_missing_workspace_fails() {
+    fn prepare_meeting_session_from_path_returns_valid_session() {
         let tmp = tempfile::tempdir().unwrap();
-        let result =
-            prepare_meeting_session(tmp.path(), "engineer-01", "You are an engineer.");
-        let err = result.err().expect("should fail for missing workspace");
-        assert!(
-            err.to_string().contains("No workspace found")
-        );
-    }
-
-    #[test]
-    fn prepare_meeting_session_returns_valid_session() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("engineer-01");
-        std::fs::create_dir_all(&ws).unwrap();
-        std::fs::write(ws.join(".botminter.workspace"), "").unwrap();
-
-        let session =
-            prepare_meeting_session(tmp.path(), "engineer-01", "You are an engineer.")
-                .expect("should succeed with valid workspace");
+        let session = prepare_meeting_session_from_path(tmp.path(), "You are an engineer.")
+            .expect("should succeed with any path");
         assert_eq!(session.meta_prompt, "You are an engineer.");
-        assert_eq!(session.ws_path, ws);
+        assert_eq!(session.ws_path, tmp.path());
     }
 
     // inject_app_credentials tests — serialized via mutex because they
