@@ -328,6 +328,12 @@ impl ConfigAssembler {
 
 // ── CredentialRelay ─────────────────────────────────────────────────────────
 
+/// Resolves a GitHub App installation token for a member.
+/// Injected into [`HydrationWorkspaceConfig`] so tests can mock keyring access.
+pub trait AppTokenProvider: Send + Sync + std::fmt::Debug {
+    fn resolve_token(&self, member_name: &str) -> Result<Option<String>>;
+}
+
 /// Writes credential files (hosts.yml) into a member's shared credential directory.
 pub trait CredentialWriter: Send + Sync {
     fn write_credentials(&self, member_dir: &Path) -> Result<()>;
@@ -338,6 +344,43 @@ pub struct NoOpCredentialWriter;
 
 impl CredentialWriter for NoOpCredentialWriter {
     fn write_credentials(&self, _member_dir: &Path) -> Result<()> {
+        Ok(())
+    }
+}
+
+fn hosts_yml_content(token: &str) -> String {
+    format!("github.com:\n    oauth_token: {token}\n    git_protocol: https\n")
+}
+
+/// Resolves a GitHub App token via an [`AppTokenProvider`] and writes `hosts.yml`
+/// to the member credential directory.
+pub struct AppCredentialWriter {
+    pub provider: std::sync::Arc<dyn AppTokenProvider>,
+}
+
+impl CredentialWriter for AppCredentialWriter {
+    fn write_credentials(&self, member_dir: &Path) -> Result<()> {
+        // member_dir is <credentials_base>/<member_name>; last component is the member name.
+        let member_name = member_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| anyhow::anyhow!("Cannot derive member name from path {:?}", member_dir))?;
+
+        match self.provider.resolve_token(member_name)? {
+            Some(token) => {
+                fs::create_dir_all(member_dir).with_context(|| {
+                    format!("Failed to create credential dir {:?}", member_dir)
+                })?;
+                fs::write(member_dir.join("hosts.yml"), hosts_yml_content(&token))
+                    .with_context(|| format!("Failed to write hosts.yml to {:?}", member_dir))?;
+            }
+            None => {
+                tracing::warn!(
+                    "No token resolved for member '{}' — skipping hosts.yml write",
+                    member_name
+                );
+            }
+        }
         Ok(())
     }
 }
@@ -586,6 +629,9 @@ pub struct HydrationWorkspaceConfig {
     pub workspace_base: PathBuf,
     pub project_number: Option<u64>,
     pub skill_dirs: Vec<PathBuf>,
+    /// Optional token provider — when set, `HydrationWorkspaceOps` MUST use it to resolve
+    /// a GitHub App token and write `hosts.yml` to `<credential_base>/<member>/`.
+    pub credential_resolver: Option<std::sync::Arc<dyn AppTokenProvider>>,
 }
 
 /// Production implementation of [`crate::session::manager::WorkspaceOps`]
@@ -606,7 +652,14 @@ impl HydrationWorkspaceOps {
     pub fn new(config: HydrationWorkspaceConfig) -> Self {
         let source = GitWorktreeSource::new(config.clones_dir, config.freshness_threshold);
         let assembler = ConfigAssembler::new(config.team_repo_path, String::new());
-        let relay = CredentialRelay::new(config.credential_base);
+        let relay = if let Some(provider) = config.credential_resolver {
+            CredentialRelay::with_writer(
+                config.credential_base,
+                Box::new(AppCredentialWriter { provider }),
+            )
+        } else {
+            CredentialRelay::new(config.credential_base)
+        };
         let hydrator = WorkspaceHydrator::new(source, assembler, relay, config.sessions_base);
 
         Self {
@@ -677,6 +730,7 @@ impl crate::session::manager::WorkspaceOps for HydrationWorkspaceOps {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::session::manager::WorkspaceOps;
     use std::fs;
     use std::process::Command;
     use tempfile::TempDir;
@@ -1246,11 +1300,7 @@ mod tests {
     impl CredentialWriter for TestCredentialWriter {
         fn write_credentials(&self, member_dir: &Path) -> Result<()> {
             fs::create_dir_all(member_dir)?;
-            let hosts_content = format!(
-                "github.com:\n    oauth_token: {}\n    git_protocol: https\n",
-                self.token
-            );
-            fs::write(member_dir.join("hosts.yml"), &hosts_content)?;
+            fs::write(member_dir.join("hosts.yml"), super::hosts_yml_content(&self.token))?;
             Ok(())
         }
     }
@@ -1356,6 +1406,60 @@ mod tests {
         assert!(
             result.is_ok(),
             "hydrate() must succeed even when no credential writer is configured (non-fatal)"
+        );
+    }
+
+    // ── AC-09: Production wiring — HydrationWorkspaceOps ────────────────────
+
+    #[derive(Debug)]
+    struct MockTokenProvider {
+        token: String,
+    }
+
+    impl AppTokenProvider for MockTokenProvider {
+        fn resolve_token(&self, _member_name: &str) -> Result<Option<String>> {
+            Ok(Some(self.token.clone()))
+        }
+    }
+
+    #[test]
+    fn workspace_ops_writes_hosts_yml_when_token_provider_resolves_token() {
+        let tmp = TempDir::new().unwrap();
+        let repo = init_bare_repo(&tmp, "project");
+        let creds_base = tmp.path().join("credentials");
+
+        let config = HydrationWorkspaceConfig {
+            clones_dir: tmp.path().join("clones"),
+            sessions_base: tmp.path().join("sessions"),
+            team_repo_path: tmp.path().join("team"),
+            credential_base: creds_base.clone(),
+            freshness_threshold: Duration::from_secs(300),
+            repo_urls: vec![(
+                repo.to_str().unwrap().to_string(),
+                "project".to_string(),
+            )],
+            team_repo_url: repo.to_str().unwrap().to_string(),
+            team_repo_branch: "main".to_string(),
+            workspace_base: tmp.path().join("workspace"),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_resolver: Some(std::sync::Arc::new(MockTokenProvider {
+                token: "ghs_test_token_abc123".to_string(),
+            })),
+        };
+
+        let ops = HydrationWorkspaceOps::new(config);
+        let session_id = SessionId::new();
+        ops.hydrate_workspace(&session_id, "alice").unwrap();
+
+        // When a token provider resolves a token, the production HydrationWorkspaceOps
+        // MUST write hosts.yml to <credential_base>/<member>/hosts.yml.
+        let hosts_yml = creds_base.join("alice").join("hosts.yml");
+        assert!(
+            hosts_yml.exists(),
+            "hosts.yml must exist at <credential_base>/alice/hosts.yml after \
+             hydrate_workspace() when the token provider resolves a token — \
+             NoOpCredentialWriter was used instead of AppCredentialWriter"
         );
     }
 

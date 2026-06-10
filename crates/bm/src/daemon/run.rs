@@ -119,6 +119,7 @@ async fn run_daemon_async(
             workspace_base: team_entry.path.clone(),
             project_number: team_entry.project_number,
             skill_dirs: vec![],
+            credential_resolver: None,
         };
 
         // Resolve bridge credentials for injecting env vars when launching ralph.
