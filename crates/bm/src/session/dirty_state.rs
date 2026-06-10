@@ -41,27 +41,47 @@ pub fn inspect_dirty_state(workspace_path: &Path) -> Result<Vec<RepoDirtyState>>
         return Ok(results);
     }
 
-    let mut entries: Vec<_> = std::fs::read_dir(&projects_dir)?
+    // Projects may be provisioned as nested paths (e.g. org/repo) so we must recurse.
+    collect_project_repos(&projects_dir, &projects_dir, &mut results)?;
+
+    Ok(results)
+}
+
+/// Recursively collect git repos under `dir`, computing `repo_name` relative to `projects_root`.
+///
+/// Projects can be nested (e.g. `projects/org/repo`) when the project name includes the org
+/// prefix (common with GitHub-style `owner/repo` project names). A flat layout
+/// (e.g. `projects/repo`) also works — the repo_name is just `repo` in that case.
+fn collect_project_repos(
+    dir: &Path,
+    projects_root: &Path,
+    results: &mut Vec<RepoDirtyState>,
+) -> Result<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?
         .filter_map(|e| e.ok())
-        .filter(|e| e.path().is_dir() && e.path().join(".git").exists())
+        .filter(|e| e.path().is_dir())
         .collect();
     entries.sort_by_key(|e| e.file_name());
 
     for entry in entries {
-        let repo_path = entry.path();
-        let repo_name = entry.file_name().to_string_lossy().to_string();
-
-        let uncommitted = inspect_uncommitted(&repo_path)?;
-        let unpushed = inspect_unpushed(&repo_path)?;
-
-        results.push(RepoDirtyState {
-            repo_name,
-            uncommitted_files: uncommitted,
-            unpushed_branches: unpushed,
-        });
+        let path = entry.path();
+        if path.join(".git").exists() {
+            let repo_name = path
+                .strip_prefix(projects_root)
+                .map(|p| p.to_string_lossy().to_string())
+                .unwrap_or_else(|_| entry.file_name().to_string_lossy().to_string());
+            let uncommitted = inspect_uncommitted(&path)?;
+            let unpushed = inspect_unpushed(&path)?;
+            results.push(RepoDirtyState {
+                repo_name,
+                uncommitted_files: uncommitted,
+                unpushed_branches: unpushed,
+            });
+        } else {
+            collect_project_repos(&path, projects_root, results)?;
+        }
     }
-
-    Ok(results)
+    Ok(())
 }
 
 fn inspect_uncommitted(repo_path: &Path) -> Result<Vec<String>> {
@@ -270,5 +290,53 @@ mod tests {
         let clean_count = report.iter().filter(|r| r.is_clean()).count();
         assert_eq!(dirty_count, 1, "exactly one repo should be dirty");
         assert_eq!(clean_count, 1, "exactly one repo should be clean");
+    }
+
+    #[test]
+    fn nested_project_repo_detected_with_relative_name() {
+        // Projects provisioned as org/repo (GitHub-style) live two levels deep under projects/.
+        let tmp = TempDir::new().unwrap();
+        let ws = setup_workspace(&tmp);
+
+        // Simulate projects/my-org/my-repo/
+        let repo = ws.join("projects").join("my-org").join("my-repo");
+        init_repo(&repo);
+        fs::write(repo.join("dirty.txt"), "uncommitted").unwrap();
+
+        let report = inspect_dirty_state(&ws).unwrap();
+
+        assert_eq!(report.len(), 1, "nested project repo must be detected");
+        assert_eq!(
+            report[0].repo_name, "my-org/my-repo",
+            "repo_name must be relative to projects/ root (org/repo format)"
+        );
+        assert!(
+            !report[0].uncommitted_files.is_empty(),
+            "uncommitted file in nested repo must be detected"
+        );
+    }
+
+    #[test]
+    fn flat_and_nested_repos_both_detected() {
+        let tmp = TempDir::new().unwrap();
+        let ws = setup_workspace(&tmp);
+
+        // Flat: projects/flat-repo/
+        let flat_repo = ws.join("projects").join("flat-repo");
+        init_repo(&flat_repo);
+
+        // Nested: projects/my-org/nested-repo/
+        let nested_repo = ws.join("projects").join("my-org").join("nested-repo");
+        init_repo(&nested_repo);
+        fs::write(nested_repo.join("work.txt"), "change").unwrap();
+
+        let mut report = inspect_dirty_state(&ws).unwrap();
+        report.sort_by(|a, b| a.repo_name.cmp(&b.repo_name));
+
+        assert_eq!(report.len(), 2, "both flat and nested repos must be detected");
+        assert_eq!(report[0].repo_name, "flat-repo");
+        assert_eq!(report[1].repo_name, "my-org/nested-repo");
+        assert!(report[0].is_clean(), "flat-repo must be clean");
+        assert!(!report[1].is_clean(), "nested-repo must have uncommitted files");
     }
 }

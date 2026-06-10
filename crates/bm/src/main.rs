@@ -224,8 +224,9 @@ fn main() -> Result<()> {
                 port,
                 interval,
                 bind,
+                log_level,
             } => {
-                commands::daemon::start(team.as_deref(), &mode, port, interval, &bind)?;
+                commands::daemon::start(team.as_deref(), &mode, port, interval, &bind, &log_level)?;
             }
             DaemonCommand::Stop { team } => {
                 commands::daemon::stop(team.as_deref())?;
@@ -241,8 +242,9 @@ fn main() -> Result<()> {
             port,
             interval,
             bind,
+            log_level,
         } => {
-            commands::daemon::run_daemon(&team, &mode, port, interval, &bind)?;
+            commands::daemon::run_daemon(&team, &mode, port, interval, &bind, &log_level)?;
         }
 
         Command::Chat {

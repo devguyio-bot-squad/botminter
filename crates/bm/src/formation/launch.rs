@@ -93,6 +93,9 @@ pub struct BrainLaunchConfig<'a> {
     pub team_repo: Option<&'a std::path::Path>,
     /// When set, uses GH_CONFIG_DIR instead of GH_TOKEN (App credential path).
     pub gh_config_dir: Option<&'a std::path::Path>,
+    /// Durable member-state directory for cross-session persistence (e.g., dm-room.json).
+    /// Forwarded to brain process as BM_MEMBER_STATE_DIR.
+    pub member_state_dir: Option<&'a std::path::Path>,
 }
 
 /// Launches the brain multiplexer for a chat-first member.
@@ -157,6 +160,10 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
     // Team repo path for gh commands and board awareness
     if let Some(repo) = config.team_repo {
         cmd.env("BM_TEAM_REPO", repo);
+    }
+    // Durable member-state directory for cross-session persistence (dm-room.json, etc.)
+    if let Some(dir) = config.member_state_dir {
+        cmd.env("BM_MEMBER_STATE_DIR", dir);
     }
 
     // Detach from current process group — redirect stderr to log file for diagnostics.

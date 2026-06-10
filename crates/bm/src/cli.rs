@@ -339,6 +339,10 @@ pub enum Command {
         /// Bind address for the HTTP server
         #[arg(long, default_value = "0.0.0.0")]
         bind: String,
+
+        /// Log level filter (e.g. info, debug, warn, error, or tracing filter syntax)
+        #[arg(long, default_value = "info")]
+        log_level: String,
     },
 
     /// Internal: run the brain multiplexer event loop (not user-facing)
@@ -683,6 +687,10 @@ pub enum DaemonCommand {
         /// Bind address for the HTTP server
         #[arg(long, default_value = "0.0.0.0")]
         bind: String,
+
+        /// Log level filter (e.g. info, debug, warn, error, or tracing filter syntax)
+        #[arg(long, default_value = "info")]
+        log_level: String,
     },
 
     /// Stop the running daemon

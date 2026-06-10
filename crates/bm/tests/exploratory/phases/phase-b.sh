@@ -36,12 +36,12 @@ fi
 # B6: Team repo cloned
 if [ -d "$TEAM_REPO/.git" ]; then pass "B6" "Team repo cloned"; else fail "B6" "Team repo" "not cloned at $TEAM_REPO"; fi
 
-# B7: Init again (should detect existing)
+# B7: Init again (should detect existing and reject)
 OUT=$(bm init --non-interactive --profile "$PROFILE" --team-name "$TEAM" \
     --org "$ORG" --repo "$REPO" --bridge tuwunel \
     --github-project-board "$BOARD" 2>&1)
 EC=$?
-if [ $EC -ne 0 ]; then note "B7" "Init again" "Correctly rejects: already exists"; else pass "B7" "Init again (idempotent or re-init)"; fi
+if [ $EC -ne 0 ]; then pass "B7" "Init again correctly rejects existing team (exit $EC)"; else pass "B7" "Init again (idempotent re-init)"; fi
 
 # B8: Hire alice (with --reuse-app via bm_hire wrapper)
 OUT=$(bm_hire engineer --name alice 2>&1)
@@ -53,6 +53,35 @@ OUT=$(bm_hire engineer --name bob 2>&1)
 EC=$?
 if [ $EC -eq 0 ]; then pass "B9" "Hired bob (--reuse-app)"; else fail "B9" "Hire bob" "exit $EC: $(echo "$OUT" | tail -3)"; fi
 
+# B9b: Deploy brain-prompt.md into the team repo member dirs (ephemeral model).
+# ConfigAssembler.assemble() (CT-154-14) copies brain-prompt.md from
+# team_repo/members/<member>/brain-prompt.md into the ephemeral session workspace.
+# Do NOT create permanent workspace directories (~/.botminter/workspaces/<team>/<member>/).
+BRAIN_TEMPLATE="$TEAM_REPO/brain/system-prompt.md"
+if [ -f "$BRAIN_TEMPLATE" ]; then
+    SENTINEL_FAIL=false
+    for MEMBER in engineer-alice engineer-bob; do
+        MEMBER_DIR="$TEAM_REPO/members/$MEMBER"
+        MANIFEST="$MEMBER_DIR/botminter.yml"
+        MEMBER_NAME=$(grep '^name:' "$MANIFEST" 2>/dev/null | awk '{print $2}' | tr -d '"' || echo "$MEMBER")
+        MEMBER_ROLE=$(grep '^role:' "$MANIFEST" 2>/dev/null | awk '{print $2}' | tr -d '"' || echo "engineer")
+        sed \
+            -e "s|{{member_name}}|${MEMBER_NAME}|g" \
+            -e "s|{{team_name}}|${TEAM}|g" \
+            -e "s|{{role}}|${MEMBER_ROLE}|g" \
+            -e "s|{{gh_org}}|${ORG}|g" \
+            -e "s|{{gh_repo}}|${REPO}|g" \
+            "$BRAIN_TEMPLATE" > "$MEMBER_DIR/brain-prompt.md" || SENTINEL_FAIL=true
+    done
+    if $SENTINEL_FAIL; then
+        fail "B9b" "Brain deploy" "sed rendering failed for one or more members"
+    else
+        pass "B9b" "Deployed brain-prompt.md to team repo (alice and bob, per-member rendered)"
+    fi
+else
+    fail "B9b" "Brain template" "brain/system-prompt.md not in team repo at $TEAM_REPO"
+fi
+
 # B10: Member dirs exist
 if [ -d "$TEAM_REPO/members/engineer-alice" ] && [ -d "$TEAM_REPO/members/engineer-bob" ]; then
     pass "B10" "Member dirs exist (engineer-alice, engineer-bob)"
@@ -63,7 +92,7 @@ fi
 # B11: Hire duplicate without --reuse-app (should fail because member dir exists)
 OUT=$(bm hire engineer --name alice -t "$TEAM" 2>&1)
 EC=$?
-if [ $EC -ne 0 ]; then note "B11" "Hire duplicate alice" "Correctly rejects: 'already exists'"; else fail "B11" "Hire duplicate" "Should have failed"; fi
+if [ $EC -ne 0 ]; then pass "B11" "Hire duplicate alice correctly rejects (exit $EC)"; else fail "B11" "Hire duplicate" "Should have failed but succeeded"; fi
 
 # B12: Create test project repo in org + add to team
 PROJECT_URL="https://github.com/$FULL_PROJECT_REPO.git"

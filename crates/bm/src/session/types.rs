@@ -149,6 +149,19 @@ pub struct FinalizationResult {
     pub github_issue_urls: Vec<String>,
 }
 
+impl FinalizationResult {
+    /// Minimal result record for a given exit status, with no repo details.
+    pub fn for_state(exit_status: FinalizationExitStatus) -> Self {
+        Self {
+            exit_status,
+            committed_repos: vec![],
+            pushed_branches: vec![],
+            recovery_branches: vec![],
+            github_issue_urls: vec![],
+        }
+    }
+}
+
 /// Git state of a single repo within a workspace.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RepoGitState {
@@ -177,6 +190,13 @@ pub struct SessionRecord {
     pub workspace_path: Option<PathBuf>,
     #[serde(default)]
     pub finalization_result: Option<FinalizationResult>,
+    /// PID of the finalization subagent process spawned during deactivation.
+    /// Cleared when the session leaves Finalizing state.
+    /// Used by force-stop to SIGKILL the finalization agent even after the brain PID
+    /// has been recycled (sending SIGKILL to the stale brain PID was a no-op that left
+    /// abandoned finalization agents consuming memory until their timeout fired).
+    #[serde(default)]
+    pub finalization_agent_pid: Option<u32>,
 }
 
 #[cfg(test)]
@@ -194,6 +214,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         }
     }
 
