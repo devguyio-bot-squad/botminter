@@ -39,6 +39,10 @@ pub struct AgentSession {
     pub meta_prompt: String,
     /// Path to the member's workspace.
     pub ws_path: std::path::PathBuf,
+    /// D-02 shared credential directory for ephemeral sessions.
+    /// `sessions_base/credentials/<member>` (no `/gh` suffix — appended internally).
+    /// `None` for legacy permanent workspace sessions (deprecated).
+    pub credential_dir: Option<std::path::PathBuf>,
 }
 
 /// Prepares a chat session from a pre-existing session workspace path.
@@ -139,6 +143,7 @@ pub fn prepare_chat_session_from_path(
     Ok(AgentSession {
         meta_prompt,
         ws_path: workspace_path.to_path_buf(),
+        credential_dir: None,
     })
 }
 
@@ -245,7 +250,7 @@ pub fn prepare_chat_session(
     };
     let meta_prompt = build_meta_prompt(&params);
 
-    Ok(AgentSession { meta_prompt, ws_path })
+    Ok(AgentSession { meta_prompt, ws_path, credential_dir: None })
 }
 
 /// Builds a meta-prompt for an interactive `bm chat` session.
@@ -483,6 +488,18 @@ fn refresh_token_from_keyring(ws_path: &Path, team_name: &str, member_name: &str
     }
 }
 
+/// Resolves and injects GitHub App credentials for a session launch.
+///
+/// Uses `session.credential_dir` (D-02 shared path) when present;
+/// falls back to the legacy workspace `.config/gh` lookup when absent.
+pub(crate) fn setup_launch_credentials(
+    session: &AgentSession,
+    team_name: &str,
+    member_name: &str,
+) -> bool {
+    prepare_launch_credentials(&session.ws_path, session.credential_dir.as_deref(), team_name, member_name)
+}
+
 /// Launches a chat session by writing the meta-prompt to a temp file,
 /// resolving the coding agent, and spawning it as a child process.
 ///
@@ -503,7 +520,7 @@ pub fn launch_session(
     let manifest = crate::profile::read_team_repo_manifest(team_repo)?;
     let coding_agent = crate::profile::resolve_coding_agent(team, &manifest)?;
 
-    prepare_launch_credentials(&session.ws_path, None, &team.name, member_name);
+    setup_launch_credentials(session, &team.name, member_name);
 
     let mut tmp_file = tempfile::Builder::new()
         .prefix("bm-session-")
@@ -601,6 +618,7 @@ pub fn prepare_meeting_session_from_path(
     Ok(AgentSession {
         meta_prompt: instructions.to_string(),
         ws_path: workspace_path.to_path_buf(),
+        credential_dir: None,
     })
 }
 
@@ -1348,6 +1366,99 @@ mod tests {
             config_dir,
             shared_gh_dir.to_str().unwrap(),
             "GH_CONFIG_DIR must point to shared credential dir/gh, not ws_path/.config/gh"
+        );
+
+        std::env::remove_var("GH_CONFIG_DIR");
+    }
+
+    #[test]
+    fn setup_launch_credentials_uses_credential_dir_not_workspace_path() {
+        let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+
+        // D-02 shared path: sessions_base/credentials/<member> (no /gh suffix)
+        let credential_dir = tmp.path().join("credentials").join("alice");
+        let credential_gh_dir = credential_dir.join("gh");
+        std::fs::create_dir_all(&credential_gh_dir).unwrap();
+        std::fs::write(
+            credential_gh_dir.join("hosts.yml"),
+            "github.com:\n    oauth_token: shared_token\n",
+        )
+        .unwrap();
+
+        // ws_path has NO .config/gh/hosts.yml — only the shared credential dir has it
+        let ws_path = tmp.path().join("ws");
+        std::fs::create_dir_all(&ws_path).unwrap();
+
+        let session = AgentSession {
+            meta_prompt: "test".to_string(),
+            ws_path,
+            credential_dir: Some(credential_dir.clone()),
+        };
+
+        std::env::remove_var("GH_CONFIG_DIR");
+
+        let injected = setup_launch_credentials(&session, "team", "alice");
+
+        assert!(
+            injected,
+            "setup_launch_credentials must return true when credential_dir/gh/hosts.yml exists \
+             (session.credential_dir = Some), even when ws_path/.config/gh does not"
+        );
+        let config_dir = std::env::var("GH_CONFIG_DIR").expect(
+            "GH_CONFIG_DIR must be set to D-02 shared credential path when \
+             session.credential_dir is Some",
+        );
+        assert_eq!(
+            config_dir,
+            credential_gh_dir.to_str().unwrap(),
+            "GH_CONFIG_DIR must point to credential_dir/gh (D-02 shared path), \
+             not ws_path/.config/gh (deprecated permanent workspace path)"
+        );
+
+        std::env::remove_var("GH_CONFIG_DIR");
+    }
+
+    #[test]
+    fn setup_launch_credentials_credential_dir_excludes_gh_suffix_gh_appended_internally() {
+        let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+
+        // credential_dir = sessions_base/credentials/<member> — NO /gh suffix
+        // The /gh suffix is appended internally by inject_app_credentials_from_shared_dir
+        let credential_dir = tmp.path().join("sessions").join("credentials").join("bob");
+        let credential_gh_dir = credential_dir.join("gh");
+        std::fs::create_dir_all(&credential_gh_dir).unwrap();
+        std::fs::write(
+            credential_gh_dir.join("hosts.yml"),
+            "github.com:\n    oauth_token: bob_token\n",
+        )
+        .unwrap();
+
+        let ws_path = tmp.path().join("ws");
+        std::fs::create_dir_all(&ws_path).unwrap();
+
+        let session = AgentSession {
+            meta_prompt: "test".to_string(),
+            ws_path,
+            credential_dir: Some(credential_dir.clone()),
+        };
+
+        std::env::remove_var("GH_CONFIG_DIR");
+
+        let injected = setup_launch_credentials(&session, "team", "bob");
+        assert!(
+            injected,
+            "setup_launch_credentials must return true when credential_dir is \
+             sessions_base/credentials/bob and credential_dir/gh/hosts.yml exists"
+        );
+
+        let config_dir = std::env::var("GH_CONFIG_DIR").expect("GH_CONFIG_DIR must be set");
+        assert_eq!(
+            config_dir,
+            credential_gh_dir.to_str().unwrap(),
+            "GH_CONFIG_DIR must equal credential_dir/gh — /gh is appended internally, \
+             credential_dir itself must not contain /gh"
         );
 
         std::env::remove_var("GH_CONFIG_DIR");
