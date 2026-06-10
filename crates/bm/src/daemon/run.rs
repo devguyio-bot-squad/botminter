@@ -1,7 +1,6 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::body::Bytes;
@@ -24,7 +23,6 @@ use super::sessions_api::{sessions_router, BridgeContext, SessionsApiState};
 use crate::bridge;
 use crate::config as app_config;
 use crate::workspace::HydrationWorkspaceConfig;
-use crate::formation::AppCredentialsCached;
 use crate::web::state::WebState;
 use crate::web::web_router;
 
@@ -42,9 +40,6 @@ pub(super) struct DaemonState {
     /// when the HOME directory changes (e.g., in E2E tests).
     pub(super) config: Arc<app_config::BotminterConfig>,
     pub(super) team_entry: Arc<app_config::TeamEntry>,
-    /// In-memory cache of App credentials for members that have been started.
-    /// Used by the background refresh loop to re-sign JWTs without re-reading keyring.
-    pub(super) app_credentials: Arc<Mutex<HashMap<String, AppCredentialsCached>>>,
     /// Sessions API state — shared with the poll loop and webhook handler so
     /// event-driven member launches go through the sessions API (not the legacy
     /// formation path), creating ephemeral session workspaces on disk.
@@ -158,7 +153,6 @@ async fn run_daemon_async(
         started_at: Some(std::time::Instant::now()),
         config: Arc::new(cfg),
         team_entry: Arc::new(team_entry),
-        app_credentials: Arc::new(Mutex::new(HashMap::new())),
         sessions_state: sessions_state.clone(),
     };
 
@@ -224,12 +218,9 @@ async fn run_daemon_async(
         .route("/webhook", post(webhook_handler))
         .route("/health", get(health_handler))
         // Member lifecycle API
-        .route("/api/members/start", post(api::start_members_handler))
         .route("/api/members/stop", post(api::stop_members_handler))
         .route("/api/members", get(api::list_members_handler))
         .route("/api/health", get(api::health_check_handler))
-        // Loop management API
-        .route("/api/loops/start", post(api::start_loop_handler))
         .with_state(state.clone())
         // Session management API
         .merge(sessions_router(sessions_state.clone()))
