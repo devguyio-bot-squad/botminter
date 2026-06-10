@@ -404,6 +404,21 @@ pub(crate) fn inject_app_credentials_from_shared_dir(credential_dir: &Path) -> b
     true
 }
 
+/// Injects App credentials for an agent launch session.
+///
+/// When `shared_credential_dir` is `Some`, uses the D-02 shared credential path.
+/// Falls back to the legacy `ws_path/.config/gh` path when `None`.
+///
+/// Returns `true` if credentials were found and injected into the process environment.
+pub(crate) fn prepare_launch_credentials(
+    ws_path: &Path,
+    shared_credential_dir: Option<&Path>,
+    team_name: &str,
+    member_name: &str,
+) -> bool {
+    inject_app_credentials(ws_path, shared_credential_dir, team_name, member_name)
+}
+
 /// One-shot token refresh: reads App credentials from the keyring, generates
 /// a fresh JWT, exchanges it for an installation token, and writes it to
 /// hosts.yml. Failures are logged as warnings — the caller continues with
@@ -488,7 +503,7 @@ pub fn launch_session(
     let manifest = crate::profile::read_team_repo_manifest(team_repo)?;
     let coding_agent = crate::profile::resolve_coding_agent(team, &manifest)?;
 
-    inject_app_credentials(&session.ws_path, None, &team.name, member_name);
+    prepare_launch_credentials(&session.ws_path, None, &team.name, member_name);
 
     let mut tmp_file = tempfile::Builder::new()
         .prefix("bm-session-")
@@ -1293,6 +1308,46 @@ mod tests {
             shared_gh_dir.to_str().unwrap(),
             "GH_CONFIG_DIR must point to D-02 shared path <credential_dir>/gh, \
              not workspace/.config/gh"
+        );
+
+        std::env::remove_var("GH_CONFIG_DIR");
+    }
+
+    #[test]
+    fn prepare_launch_credentials_uses_shared_credential_dir_when_provided() {
+        let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+
+        let ws_path = tmp.path().join("workspace");
+        std::fs::create_dir_all(&ws_path).unwrap();
+        // hosts.yml only at the D-02 shared path — NOT at ws_path/.config/gh
+        let shared_cred_dir = tmp.path().join("credentials").join("alice");
+        let shared_gh_dir = shared_cred_dir.join("gh");
+        std::fs::create_dir_all(&shared_gh_dir).unwrap();
+        std::fs::write(
+            shared_gh_dir.join("hosts.yml"),
+            "github.com:\n    oauth_token: shared_token\n",
+        )
+        .unwrap();
+
+        std::env::remove_var("GH_CONFIG_DIR");
+
+        let injected =
+            prepare_launch_credentials(&ws_path, Some(&shared_cred_dir), "team", "alice");
+
+        assert!(
+            injected,
+            "prepare_launch_credentials must return true when shared_credential_dir/gh/hosts.yml \
+             exists, even when ws_path/.config/gh does not"
+        );
+        let config_dir = std::env::var("GH_CONFIG_DIR").expect(
+            "GH_CONFIG_DIR must be set to shared credential path after prepare_launch_credentials \
+             with Some(shared_credential_dir)",
+        );
+        assert_eq!(
+            config_dir,
+            shared_gh_dir.to_str().unwrap(),
+            "GH_CONFIG_DIR must point to shared credential dir/gh, not ws_path/.config/gh"
         );
 
         std::env::remove_var("GH_CONFIG_DIR");

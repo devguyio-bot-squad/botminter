@@ -436,6 +436,68 @@ impl CredentialWriter for AppCredentialWriter {
     }
 }
 
+/// Production AppTokenProvider backed by a KeyValueCredentialStore.
+/// Reads client_id, private_key, and installation_id from the store and
+/// exchanges them for a GitHub App installation token.
+pub struct KeyringAppTokenProvider {
+    store: std::sync::Arc<dyn crate::formation::KeyValueCredentialStore + Send + Sync>,
+}
+
+impl std::fmt::Debug for KeyringAppTokenProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyringAppTokenProvider").finish()
+    }
+}
+
+impl KeyringAppTokenProvider {
+    pub fn new(
+        store: std::sync::Arc<dyn crate::formation::KeyValueCredentialStore + Send + Sync>,
+    ) -> Self {
+        Self { store }
+    }
+}
+
+impl AppTokenProvider for KeyringAppTokenProvider {
+    fn resolve_token(&self, member_name: &str) -> Result<Option<String>> {
+        use crate::git::manifest_flow::credential_keys;
+
+        let client_id = match self.store.retrieve(&credential_keys::client_id(member_name))? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let private_key = match self.store.retrieve(&credential_keys::private_key(member_name))? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let installation_id_str =
+            match self.store.retrieve(&credential_keys::installation_id(member_name))? {
+                Some(v) => v,
+                None => return Ok(None),
+            };
+        let installation_id: u64 = installation_id_str
+            .parse()
+            .context("Invalid installation ID in credential store")?;
+
+        let token = exchange_token(&client_id, &private_key, installation_id)?;
+        Ok(Some(token))
+    }
+}
+
+#[cfg(not(test))]
+fn exchange_token(client_id: &str, private_key: &str, installation_id: u64) -> Result<String> {
+    use crate::git::app_auth;
+    let jwt = app_auth::generate_jwt(client_id, private_key)
+        .context("Failed to generate JWT for App authentication")?;
+    let inst_token = app_auth::exchange_for_installation_token(&jwt, installation_id)
+        .context("Failed to exchange JWT for installation token")?;
+    Ok(inst_token.token)
+}
+
+#[cfg(test)]
+fn exchange_token(_client_id: &str, _private_key: &str, _installation_id: u64) -> Result<String> {
+    Ok("ghs_test_token_for_unit_tests".to_string())
+}
+
 /// Manages per-member credential directories: writes credential files during
 /// session creation and provides the directory path for runtime use.
 /// Credentials are never copied into session workspaces — only referenced.
@@ -785,6 +847,7 @@ impl crate::session::manager::WorkspaceOps for HydrationWorkspaceOps {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::formation::KeyValueCredentialStore;
     use crate::session::manager::WorkspaceOps;
     use std::fs;
     use std::process::Command;
@@ -1888,6 +1951,71 @@ mod tests {
             result.is_ok(),
             "write_credentials must succeed even when existing hosts.yml is read-only; \
              use atomic write (write to temp file + fs::rename) instead of fs::write"
+        );
+    }
+
+    #[test]
+    fn keyring_token_provider_resolves_token_when_credentials_are_wired() {
+        use crate::formation::InMemoryKeyValueCredentialStore;
+        use crate::git::manifest_flow::credential_keys;
+
+        let store = std::sync::Arc::new(InMemoryKeyValueCredentialStore::new());
+        store.store(&credential_keys::client_id("alice"), "fake-client-id").unwrap();
+        store.store(&credential_keys::private_key("alice"), "fake-private-key").unwrap();
+        store.store(&credential_keys::installation_id("alice"), "12345").unwrap();
+
+        let provider = KeyringAppTokenProvider::new(store);
+        let token = provider.resolve_token("alice").unwrap();
+
+        assert!(
+            token.is_some(),
+            "KeyringAppTokenProvider::resolve_token must return Some(token) when the credential \
+             store has client_id, private_key, and installation_id for the member — got None"
+        );
+    }
+
+    #[test]
+    fn hydration_with_keyring_provider_writes_hosts_yml_at_d02_path() {
+        use crate::formation::InMemoryKeyValueCredentialStore;
+        use crate::git::manifest_flow::credential_keys;
+
+        let tmp = TempDir::new().unwrap();
+        let repo = init_bare_repo(&tmp, "project");
+        let creds_base = tmp.path().join("credentials");
+
+        let store = std::sync::Arc::new(InMemoryKeyValueCredentialStore::new());
+        store.store(&credential_keys::client_id("alice"), "fake-client-id").unwrap();
+        store.store(&credential_keys::private_key("alice"), "fake-private-key").unwrap();
+        store.store(&credential_keys::installation_id("alice"), "12345").unwrap();
+
+        let config = HydrationWorkspaceConfig {
+            clones_dir: tmp.path().join("clones"),
+            sessions_base: tmp.path().join("sessions"),
+            team_repo_path: tmp.path().join("team"),
+            credential_base: creds_base.clone(),
+            freshness_threshold: Duration::from_secs(300),
+            repo_urls: vec![(
+                repo.to_str().unwrap().to_string(),
+                "project".to_string(),
+            )],
+            team_repo_url: repo.to_str().unwrap().to_string(),
+            team_repo_branch: "main".to_string(),
+            workspace_base: tmp.path().join("workspace"),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_resolver: Some(std::sync::Arc::new(KeyringAppTokenProvider::new(store))),
+            project_names: vec![],
+        };
+
+        let ops = HydrationWorkspaceOps::new(config);
+        let session_id = SessionId::new();
+        ops.hydrate_workspace(&session_id, "alice").unwrap();
+
+        let hosts_yml = creds_base.join("alice").join("gh").join("hosts.yml");
+        assert!(
+            hosts_yml.exists(),
+            "hosts.yml must be written to <credential_base>/alice/gh/hosts.yml when \
+             KeyringAppTokenProvider is used as credential_resolver and store has credentials"
         );
     }
 }

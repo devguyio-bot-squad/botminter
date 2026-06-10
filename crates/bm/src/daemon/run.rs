@@ -107,6 +107,22 @@ async fn run_daemon_async(
         let team_repo_path = team_entry.path.join("team");
         let repo_urls = read_project_repos(&team_repo_path);
         let team_repo_url = format!("https://github.com/{}.git", team_entry.github_repo);
+        let credential_resolver = crate::formation::create_local_formation(team_name)
+            .ok()
+            .and_then(|f| {
+                f.credential_store(crate::formation::CredentialDomain::GitHubApp {
+                    team_name: team_name.to_string(),
+                    member_name: String::new(),
+                })
+                .ok()
+            })
+            .map(|store| {
+                let store: std::sync::Arc<dyn crate::formation::KeyValueCredentialStore> =
+                    std::sync::Arc::from(store);
+                let provider = crate::workspace::KeyringAppTokenProvider::new(store);
+                std::sync::Arc::new(provider) as std::sync::Arc<dyn crate::workspace::AppTokenProvider>
+            });
+
         let hydration_config = HydrationWorkspaceConfig {
             clones_dir: paths.sessions_base().join("clones"),
             sessions_base: paths.sessions_base(),
@@ -119,7 +135,7 @@ async fn run_daemon_async(
             workspace_base: team_entry.path.clone(),
             project_number: team_entry.project_number,
             skill_dirs: vec![],
-            credential_resolver: None,
+            credential_resolver,
             project_names: vec![],
         };
 

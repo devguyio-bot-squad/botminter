@@ -7,9 +7,9 @@ mod team_sync;
 mod util;
 
 pub use hydration::{
-    AssemblyConfig, ConfigAssembler, CredentialRelay, GitWorktreeSource, HydrationResult,
-    HydrationTiming, HydrationWorkspaceConfig, HydrationWorkspaceOps, RepoSource,
-    WorkspaceHydrator,
+    AppTokenProvider, AssemblyConfig, ConfigAssembler, CredentialRelay, GitWorktreeSource,
+    HydrationResult, HydrationTiming, HydrationWorkspaceConfig, HydrationWorkspaceOps,
+    KeyringAppTokenProvider, RepoSource, WorkspaceHydrator,
 };
 pub use repo::{
     assemble_workspace_repo_context, create_workspace_repo, GhRemoteOps, RemoteRepoOps,

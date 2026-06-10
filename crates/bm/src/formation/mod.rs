@@ -120,7 +120,7 @@ pub trait Formation {
 /// Key conventions are composed by each credential domain:
 /// - Bridge: `{member}` → bridge token
 /// - GitHubApp: `{member}/github-app-id`, `{member}/github-app-private-key`, etc.
-pub trait KeyValueCredentialStore {
+pub trait KeyValueCredentialStore: Send + Sync {
     /// Store a secret value under the given key.
     fn store(&self, key: &str, value: &str) -> Result<()>;
 
