@@ -299,11 +299,21 @@ impl ConfigAssembler {
             super::util::symlink_md_files(&agents_src, &agents_dst)?;
         }
 
-        let skills_src = coding_agent.join("skills");
-        if skills_src.is_dir() {
-            let skills_dst = claude_dir.join("skills");
-            fs::create_dir_all(&skills_dst).context("Failed to create .claude/skills/")?;
-            super::util::symlink_subdirs(&skills_src, &skills_dst)?;
+        // Merge team-level and member-level skills into .claude/skills/.
+        let skills_dst = claude_dir.join("skills");
+        let skill_sources = [
+            coding_agent.join("skills"),
+            self.team_repo_path
+                .join("members")
+                .join(&self.member_name)
+                .join("coding-agent")
+                .join("skills"),
+        ];
+        for src in &skill_sources {
+            if src.is_dir() {
+                fs::create_dir_all(&skills_dst).context("Failed to create .claude/skills/")?;
+                super::util::symlink_subdirs(src, &skills_dst)?;
+            }
         }
 
         let settings_src = coding_agent.join("settings.json");
@@ -1153,6 +1163,77 @@ mod tests {
         assert!(
             workspace.join(".claude").is_dir(),
             ".claude/ must be created by assemble() even when team has no coding-agent dir"
+        );
+    }
+
+    // ── AC-08: Member-level .claude/ assembly ───────────────────────────────
+
+    #[test]
+    fn assemble_includes_member_level_skill_in_claude_skills_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        let member_skill_src = team.join("members/alice/coding-agent/skills/story-mgmt");
+        fs::create_dir_all(&member_skill_src).unwrap();
+        fs::write(member_skill_src.join("SKILL.md"), "# Story Mgmt").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/skills/story-mgmt").exists(),
+            ".claude/skills/story-mgmt must be present — member-level skill must be assembled \
+             from team/members/alice/coding-agent/skills/"
+        );
+    }
+
+    #[test]
+    fn assemble_merges_team_and_member_skills_in_claude_skills_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        let team_skill_src = team.join("coding-agent/skills/ro-loop");
+        fs::create_dir_all(&team_skill_src).unwrap();
+        fs::write(team_skill_src.join("SKILL.md"), "# ro-loop").unwrap();
+        let member_skill_src = team.join("members/alice/coding-agent/skills/story-mgmt");
+        fs::create_dir_all(&member_skill_src).unwrap();
+        fs::write(member_skill_src.join("SKILL.md"), "# story-mgmt").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/skills/ro-loop").exists(),
+            ".claude/skills/ro-loop must be present — team-level skill"
+        );
+        assert!(
+            workspace.join(".claude/skills/story-mgmt").exists(),
+            ".claude/skills/story-mgmt must be present — member-level skill must be assembled \
+             alongside team-level skills"
         );
     }
 
