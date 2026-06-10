@@ -191,9 +191,29 @@ pub struct AssemblyConfig {
     pub skill_dirs: Vec<PathBuf>,
     /// Root directory under which per-member credential directories live.
     pub credential_base: PathBuf,
+    /// Project names within the team repo (e.g. "botminter") whose coding-agent
+    /// assets (agents, skills) are merged into the assembled .claude/ directory.
+    pub project_names: Vec<String>,
 }
 
 // ── ConfigAssembler ─────────────────────────────────────────────────────────
+
+/// Merge each source directory (if it exists) into `dst` using `merge`.
+/// Creates `dst` lazily — only if at least one source is a directory.
+fn merge_sources_into(
+    sources: impl IntoIterator<Item = PathBuf>,
+    dst: &Path,
+    merge: fn(&Path, &Path) -> Result<()>,
+) -> Result<()> {
+    for src in sources {
+        if src.is_dir() {
+            fs::create_dir_all(dst)
+                .with_context(|| format!("Failed to create {}", dst.display()))?;
+            merge(&src, dst)?;
+        }
+    }
+    Ok(())
+}
 
 /// Populates a session workspace with CLAUDE.md, PROMPT.md, ralph.yml,
 /// .claude/agents/ references, .botminter.workspace marker, and skill directory
@@ -277,7 +297,7 @@ impl ConfigAssembler {
         }
 
         // Assemble .claude/ directory from team coding-agent assets (non-fatal).
-        if let Err(e) = self.assemble_claude_dir(workspace) {
+        if let Err(e) = self.assemble_claude_dir(workspace, config) {
             warnings.push(format!(
                 ".claude/ assembly failed: {e} — coding-agent assets (agents, skills, settings) may be missing"
             ));
@@ -286,40 +306,66 @@ impl ConfigAssembler {
         Ok(warnings)
     }
 
-    fn assemble_claude_dir(&self, workspace: &Path) -> Result<()> {
+    /// Build `<team-repo>/projects/<p>/coding-agent/<subdir>` for each project name.
+    fn project_ca_dirs(&self, project_names: &[String], subdir: &str) -> Vec<PathBuf> {
+        project_names
+            .iter()
+            .map(|p| {
+                self.team_repo_path
+                    .join("projects")
+                    .join(p)
+                    .join("coding-agent")
+                    .join(subdir)
+            })
+            .collect()
+    }
+
+    fn assemble_claude_dir(&self, workspace: &Path, config: &AssemblyConfig) -> Result<()> {
         let claude_dir = workspace.join(".claude");
         fs::create_dir_all(&claude_dir).context("Failed to create .claude/")?;
 
-        let coding_agent = self.team_repo_path.join("coding-agent");
+        let team_ca = self.team_repo_path.join("coding-agent");
+        let member_ca = self
+            .team_repo_path
+            .join("members")
+            .join(&self.member_name)
+            .join("coding-agent");
 
-        let agents_src = coding_agent.join("agents");
-        if agents_src.is_dir() {
-            let agents_dst = claude_dir.join("agents");
-            fs::create_dir_all(&agents_dst).context("Failed to create .claude/agents/")?;
-            super::util::symlink_md_files(&agents_src, &agents_dst)?;
-        }
+        // Agents: team + project-level.
+        merge_sources_into(
+            std::iter::once(team_ca.join("agents"))
+                .chain(self.project_ca_dirs(&config.project_names, "agents")),
+            &claude_dir.join("agents"),
+            super::util::symlink_md_files,
+        )?;
 
-        // Merge team-level and member-level skills into .claude/skills/.
-        let skills_dst = claude_dir.join("skills");
-        let skill_sources = [
-            coding_agent.join("skills"),
-            self.team_repo_path
-                .join("members")
-                .join(&self.member_name)
-                .join("coding-agent")
-                .join("skills"),
-        ];
-        for src in &skill_sources {
-            if src.is_dir() {
-                fs::create_dir_all(&skills_dst).context("Failed to create .claude/skills/")?;
-                super::util::symlink_subdirs(src, &skills_dst)?;
-            }
-        }
+        // Skills: team + member + project-level.
+        merge_sources_into(
+            [team_ca.join("skills"), member_ca.join("skills")]
+                .into_iter()
+                .chain(self.project_ca_dirs(&config.project_names, "skills")),
+            &claude_dir.join("skills"),
+            super::util::symlink_subdirs,
+        )?;
 
-        let settings_src = coding_agent.join("settings.json");
+        // Commands: member-level only.
+        merge_sources_into(
+            std::iter::once(member_ca.join("commands")),
+            &claude_dir.join("commands"),
+            super::util::symlink_md_files,
+        )?;
+
+        // Settings: team-level settings.json, member-level settings.local.json.
+        let settings_src = team_ca.join("settings.json");
         if settings_src.exists() {
             fs::copy(&settings_src, claude_dir.join("settings.json"))
                 .context("Failed to copy settings.json")?;
+        }
+
+        let settings_local_src = member_ca.join("settings.local.json");
+        if settings_local_src.exists() {
+            fs::copy(&settings_local_src, claude_dir.join("settings.local.json"))
+                .context("Failed to copy settings.local.json")?;
         }
 
         Ok(())
@@ -704,6 +750,7 @@ impl crate::session::manager::WorkspaceOps for HydrationWorkspaceOps {
             project_number: self.project_number,
             skill_dirs: self.skill_dirs.clone(),
             credential_base: self.hydrator.credential_relay.credentials_base.clone(),
+            project_names: vec![],
         };
 
         let refs: Vec<(&str, &str)> = self
@@ -792,6 +839,7 @@ mod tests {
             project_number: Some(42),
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
         }
     }
 
@@ -957,6 +1005,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![nonexistent.clone()],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
         };
 
         let warnings = assembler.assemble(&workspace, &config).unwrap();
@@ -1041,6 +1090,7 @@ mod tests {
             project_number: Some(42),
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
         };
 
         let warnings_first = assembler.assemble(&workspace, &config).unwrap();
@@ -1070,6 +1120,7 @@ mod tests {
             project_number: Some(42),
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1105,6 +1156,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1143,6 +1195,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1178,6 +1231,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1206,6 +1260,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
         };
 
         let result = assembler.assemble(&workspace, &config);
@@ -1241,6 +1296,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1275,6 +1331,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1565,6 +1622,144 @@ mod tests {
             "hosts.yml MUST be written to <credential_base>/alice/gh/hosts.yml \
              (D-02 shared path with gh/ subdir), not <credential_base>/alice/hosts.yml; \
              AppCredentialWriter must create the gh/ subdirectory"
+        );
+    }
+
+    // ── AC-08: Project-level .claude/ assembly ───────────────────────────────
+
+    #[test]
+    fn assemble_merges_project_level_agents_into_claude_agents_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        // Project-level agent at team/projects/botminter/coding-agent/agents/pr-review.md
+        let project_agent_src = team.join("projects/botminter/coding-agent/agents");
+        fs::create_dir_all(&project_agent_src).unwrap();
+        fs::write(project_agent_src.join("pr-review.md"), "# PR Review").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec!["botminter".to_string()],
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/agents/pr-review.md").exists(),
+            ".claude/agents/pr-review.md must exist — project-level agent from \
+             team/projects/botminter/coding-agent/agents/ must be merged into .claude/agents/"
+        );
+    }
+
+    #[test]
+    fn assemble_merges_project_level_skills_into_claude_skills_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        // Project-level skill at team/projects/botminter/coding-agent/skills/code-review/
+        let project_skill_src = team.join("projects/botminter/coding-agent/skills/code-review");
+        fs::create_dir_all(&project_skill_src).unwrap();
+        fs::write(project_skill_src.join("SKILL.md"), "# Code Review").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec!["botminter".to_string()],
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/skills/code-review").exists(),
+            ".claude/skills/code-review must exist — project-level skill from \
+             team/projects/botminter/coding-agent/skills/ must be merged into .claude/skills/"
+        );
+    }
+
+    #[test]
+    fn assemble_creates_claude_commands_from_member_coding_agent() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        // Member-level command at team/members/alice/coding-agent/commands/my-cmd.md
+        let member_cmds_src = team.join("members/alice/coding-agent/commands");
+        fs::create_dir_all(&member_cmds_src).unwrap();
+        fs::write(member_cmds_src.join("my-cmd.md"), "# My Command").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/commands/my-cmd.md").exists(),
+            ".claude/commands/my-cmd.md must exist — member-level command from \
+             team/members/alice/coding-agent/commands/ must be assembled into .claude/commands/"
+        );
+    }
+
+    #[test]
+    fn assemble_copies_member_settings_local_json_into_claude_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        // Member-level settings.local.json at team/members/alice/coding-agent/settings.local.json
+        let member_coding_agent = team.join("members/alice/coding-agent");
+        fs::create_dir_all(&member_coding_agent).unwrap();
+        fs::write(
+            member_coding_agent.join("settings.local.json"),
+            r#"{"permissions": {"allow": ["Bash"]}}"#,
+        )
+        .unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/settings.local.json").exists(),
+            ".claude/settings.local.json must exist — member-level settings.local.json from \
+             team/members/alice/coding-agent/settings.local.json must be copied into .claude/"
         );
     }
 
