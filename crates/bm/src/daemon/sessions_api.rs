@@ -1452,6 +1452,77 @@ pub fn sessions_router(state: SessionsApiState) -> Router {
         .with_state(state)
 }
 
+// ── Credential Refresh Loop ──────────────────────────────────────────────────
+
+/// Refreshes GitHub App credentials for a single team member.
+/// Abstracted for test injection — production impl delegates to [`CredentialRelay`].
+#[allow(dead_code)]
+pub(crate) trait CredentialRefreshable: Send + Sync {
+    fn ensure_credentials(&self, member_name: &str) -> anyhow::Result<()>;
+}
+
+#[allow(dead_code)]
+impl SessionsApiState {
+    /// Return unique member names that have at least one session in the Active state.
+    pub(crate) fn active_member_names(&self) -> Vec<String> {
+        let inner = self.inner.lock().unwrap();
+        let mut seen = std::collections::HashSet::new();
+        inner
+            .registry
+            .list()
+            .into_iter()
+            .filter(|r| r.current_state == SessionState::Active)
+            .filter_map(|r| {
+                if seen.insert(r.member_name.clone()) {
+                    Some(r.member_name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Refresh credentials for all members with Active sessions.
+    ///
+    /// Non-fatal: each member is attempted regardless of whether earlier members fail.
+    /// Returns `(member_name, error_message)` pairs for any member that fails.
+    pub(crate) fn refresh_active_session_credentials(
+        &self,
+        refresher: &dyn CredentialRefreshable,
+    ) -> Vec<(String, String)> {
+        self.active_member_names()
+            .into_iter()
+            .filter_map(|member| {
+                refresher
+                    .ensure_credentials(&member)
+                    .err()
+                    .map(|e| (member, e.to_string()))
+            })
+            .collect()
+    }
+}
+
+/// Background loop: refreshes credentials for active-session members every `interval`.
+/// Stops when `shutdown` is set to `true`.
+#[allow(dead_code)]
+pub(crate) async fn run_credential_refresh_loop(
+    sessions_state: SessionsApiState,
+    refresher: std::sync::Arc<dyn CredentialRefreshable>,
+    interval: std::time::Duration,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    loop {
+        sessions_state.refresh_active_session_credentials(refresher.as_ref());
+        if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        tokio::time::sleep(interval).await;
+        if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+    }
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -2716,6 +2787,178 @@ mod tests {
             session.finalization_status, "n/a",
             "Session with no finalization_result must have 'n/a' status, got '{}'",
             session.finalization_status
+        );
+    }
+
+    fn make_active_session_for_member(state: &SessionsApiState, session_id: &str, member: &str) {
+        let mut inner = state.inner.lock().unwrap();
+        let now = chrono::Utc::now();
+        let id = SessionId::from_raw(session_id);
+        let record = SessionRecord {
+            session_id: id.clone(),
+            member_name: member.to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Creating,
+            created_at: now,
+            state_transitioned_at: now,
+            agent_pid: None,
+            workspace_path: None,
+            finalization_result: None,
+        };
+        inner.registry.register(record).unwrap();
+        inner.registry.update_state(&id, SessionState::Active).unwrap();
+    }
+
+    #[test]
+    fn credential_refresh_covers_all_active_members() {
+        use std::sync::Mutex;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+
+        make_active_session_for_member(&state, "sess-cr-a", "alice");
+        make_active_session_for_member(&state, "sess-cr-b", "bob");
+
+        // carol: create as Active then transition to Completed (terminal)
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let carol_id = SessionId::from_raw("sess-cr-c");
+            let record = SessionRecord {
+                session_id: carol_id.clone(),
+                member_name: "carol".to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: None,
+            };
+            inner.registry.register(record).unwrap();
+            inner.registry.update_state(&carol_id, SessionState::Active).unwrap();
+            inner.registry.update_state(&carol_id, SessionState::Completed).unwrap();
+        }
+
+        let refreshed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        struct TrackingRefresher {
+            log: Arc<Mutex<Vec<String>>>,
+        }
+        impl CredentialRefreshable for TrackingRefresher {
+            fn ensure_credentials(&self, member_name: &str) -> anyhow::Result<()> {
+                self.log.lock().unwrap().push(member_name.to_string());
+                Ok(())
+            }
+        }
+
+        state.refresh_active_session_credentials(&TrackingRefresher { log: refreshed.clone() });
+
+        let called = refreshed.lock().unwrap();
+        assert!(
+            called.contains(&"alice".to_string()),
+            "alice must be refreshed (Active session), got: {:?}",
+            *called
+        );
+        assert!(
+            called.contains(&"bob".to_string()),
+            "bob must be refreshed (Active session), got: {:?}",
+            *called
+        );
+        assert!(
+            !called.contains(&"carol".to_string()),
+            "carol must not be refreshed (Completed session)"
+        );
+    }
+
+    #[test]
+    fn credential_refresh_failure_is_non_fatal() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+
+        make_active_session_for_member(&state, "sess-nf-a", "alice");
+        make_active_session_for_member(&state, "sess-nf-b", "bob");
+
+        let bob_refreshed = Arc::new(AtomicBool::new(false));
+        struct SelectiveRefresher {
+            bob_flag: Arc<AtomicBool>,
+        }
+        impl CredentialRefreshable for SelectiveRefresher {
+            fn ensure_credentials(&self, member_name: &str) -> anyhow::Result<()> {
+                if member_name == "alice" {
+                    anyhow::bail!("simulated alice credential failure");
+                }
+                self.bob_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let failures = state.refresh_active_session_credentials(&SelectiveRefresher {
+            bob_flag: bob_refreshed.clone(),
+        });
+
+        assert!(
+            bob_refreshed.load(Ordering::SeqCst),
+            "bob must still be refreshed even when alice fails"
+        );
+        assert_eq!(
+            failures.len(),
+            1,
+            "exactly one failure (alice) must be reported, got: {:?}",
+            failures
+        );
+        assert_eq!(
+            failures[0].0, "alice",
+            "alice must be identified as the failing member"
+        );
+    }
+
+    #[tokio::test]
+    async fn credential_refresh_loop_stops_on_shutdown() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        make_active_session_for_member(&state, "sess-sd-a", "alice");
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        struct CountingRefresher {
+            count: Arc<AtomicUsize>,
+        }
+        impl CredentialRefreshable for CountingRefresher {
+            fn ensure_credentials(&self, _member_name: &str) -> anyhow::Result<()> {
+                self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let shutdown_clone = shutdown.clone();
+        let count_clone = call_count.clone();
+
+        // Signal shutdown after a short delay so the loop gets at least one pass
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            shutdown_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        tokio::time::timeout(
+            Duration::from_millis(500),
+            run_credential_refresh_loop(
+                state,
+                Arc::new(CountingRefresher { count: count_clone }),
+                Duration::from_millis(1),
+                shutdown,
+            ),
+        )
+        .await
+        .expect("credential refresh loop must exit within 500ms when shutdown is signaled");
+
+        assert!(
+            call_count.load(Ordering::SeqCst) >= 1,
+            "refresh loop must execute at least one pass before shutdown"
         );
     }
 }
