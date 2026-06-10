@@ -376,6 +376,23 @@ pub fn inject_app_credentials(ws_path: &Path, team_name: &str, member_name: &str
     }
 }
 
+/// Injects GitHub App credentials from an explicit shared credential directory.
+///
+/// `credential_dir` is the member-specific credential directory; the function
+/// looks for `hosts.yml` at `<credential_dir>/gh/hosts.yml` and sets
+/// `GH_CONFIG_DIR` to `<credential_dir>/gh`.
+///
+/// Returns `true` if credentials were found and injected, `false` otherwise.
+#[allow(dead_code)]
+pub(crate) fn inject_app_credentials_from_shared_dir(credential_dir: &Path) -> bool {
+    let gh_dir = credential_dir.join("gh");
+    if !gh_dir.join("hosts.yml").exists() {
+        return false;
+    }
+    std::env::set_var("GH_CONFIG_DIR", &gh_dir);
+    true
+}
+
 /// One-shot token refresh: reads App credentials from the keyring, generates
 /// a fresh JWT, exchanges it for an installation token, and writes it to
 /// hosts.yml. Failures are logged as warnings — the caller continues with
@@ -1123,7 +1140,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_sets_gh_config_dir_when_hosts_yml_present() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
@@ -1147,7 +1164,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_removes_conflicting_tokens() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
@@ -1175,7 +1192,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_noop_when_no_config_dir() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
 
         std::env::set_var("GH_TOKEN", "preserved");
@@ -1206,7 +1223,7 @@ mod tests {
 
     #[test]
     fn inject_app_credentials_noop_when_hosts_yml_missing() {
-        let _lock = ENV_MUTEX.lock().unwrap();
+        let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
         let gh_dir = tmp.path().join(".config/gh");
         std::fs::create_dir_all(&gh_dir).unwrap();
@@ -1219,6 +1236,40 @@ mod tests {
         assert!(
             std::env::var("GH_CONFIG_DIR").is_err(),
             "GH_CONFIG_DIR should not be set when hosts.yml is missing"
+        );
+
+        std::env::remove_var("GH_CONFIG_DIR");
+    }
+
+    #[test]
+    fn inject_app_credentials_sets_gh_config_dir_to_shared_credential_dir() {
+        let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        // hosts.yml lives at <credential_dir>/gh/hosts.yml (D-02 shared path)
+        let shared_gh_dir = tmp.path().join("gh");
+        std::fs::create_dir_all(&shared_gh_dir).unwrap();
+        std::fs::write(
+            shared_gh_dir.join("hosts.yml"),
+            "github.com:\n  oauth_token: shared_token\n",
+        )
+        .unwrap();
+
+        std::env::remove_var("GH_CONFIG_DIR");
+
+        let result = inject_app_credentials_from_shared_dir(tmp.path());
+
+        assert!(
+            result,
+            "inject_app_credentials_from_shared_dir must return true when \
+             hosts.yml exists at <credential_dir>/gh/hosts.yml"
+        );
+        let config_dir =
+            std::env::var("GH_CONFIG_DIR").expect("GH_CONFIG_DIR must be set after injection");
+        assert_eq!(
+            config_dir,
+            shared_gh_dir.to_str().unwrap(),
+            "GH_CONFIG_DIR must point to the shared credential gh/ subdir, \
+             not workspace/.config/gh/"
         );
 
         std::env::remove_var("GH_CONFIG_DIR");

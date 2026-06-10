@@ -368,11 +368,12 @@ impl CredentialWriter for AppCredentialWriter {
 
         match self.provider.resolve_token(member_name)? {
             Some(token) => {
-                fs::create_dir_all(member_dir).with_context(|| {
-                    format!("Failed to create credential dir {:?}", member_dir)
+                let gh_dir = member_dir.join("gh");
+                fs::create_dir_all(&gh_dir).with_context(|| {
+                    format!("Failed to create credential gh dir {:?}", gh_dir)
                 })?;
-                fs::write(member_dir.join("hosts.yml"), hosts_yml_content(&token))
-                    .with_context(|| format!("Failed to write hosts.yml to {:?}", member_dir))?;
+                fs::write(gh_dir.join("hosts.yml"), hosts_yml_content(&token))
+                    .with_context(|| format!("Failed to write hosts.yml to {:?}", gh_dir))?;
             }
             None => {
                 tracing::warn!(
@@ -431,6 +432,16 @@ impl CredentialRelay {
     /// Write credentials (hosts.yml) to the shared credential directory for `member_name`.
     pub fn ensure_credentials(&self, member_name: &str) -> Result<()> {
         self.writer.write_credentials(&self.member_dir(member_name))
+    }
+
+    /// Return `<credentials_base>/<member>/gh` if a valid `hosts.yml` exists there.
+    pub fn gh_dir_for(&self, member_name: &str) -> Option<PathBuf> {
+        let gh_dir = self.member_dir(member_name).join("gh");
+        if gh_dir.join("hosts.yml").exists() {
+            Some(gh_dir)
+        } else {
+            None
+        }
     }
 }
 
@@ -644,8 +655,6 @@ pub struct HydrationWorkspaceOps {
     team_repo_branch: String,
     project_number: Option<u64>,
     skill_dirs: Vec<PathBuf>,
-    /// Team workspace root for resolving per-member App credential paths.
-    workspace_base: PathBuf,
 }
 
 impl HydrationWorkspaceOps {
@@ -669,7 +678,6 @@ impl HydrationWorkspaceOps {
             team_repo_branch: config.team_repo_branch,
             project_number: config.project_number,
             skill_dirs: config.skill_dirs,
-            workspace_base: config.workspace_base,
         }
     }
 
@@ -679,19 +687,10 @@ impl HydrationWorkspaceOps {
 
     /// Return the GitHub App credential directory for `member_name` if it exists.
     ///
-    /// The path is `<workspace_base>/<member>/.config/gh` — set as `GH_CONFIG_DIR`
-    /// when launching ralph so it uses the member's App installation token.
+    /// The path is `<credential_base>/<member>/gh` (D-02 shared credential path) —
+    /// set as `GH_CONFIG_DIR` when launching ralph so it uses the member's App token.
     pub fn gh_config_dir_for_member(&self, member_name: &str) -> Option<PathBuf> {
-        let gh_dir = self
-            .workspace_base
-            .join(member_name)
-            .join(".config")
-            .join("gh");
-        if gh_dir.join("hosts.yml").exists() {
-            Some(gh_dir)
-        } else {
-            None
-        }
+        self.hydrator.credential_relay.gh_dir_for(member_name)
     }
 }
 
@@ -1453,11 +1452,11 @@ mod tests {
         ops.hydrate_workspace(&session_id, "alice").unwrap();
 
         // When a token provider resolves a token, the production HydrationWorkspaceOps
-        // MUST write hosts.yml to <credential_base>/<member>/hosts.yml.
-        let hosts_yml = creds_base.join("alice").join("hosts.yml");
+        // MUST write hosts.yml to <credential_base>/<member>/gh/hosts.yml (D-02 shared path).
+        let hosts_yml = creds_base.join("alice").join("gh").join("hosts.yml");
         assert!(
             hosts_yml.exists(),
-            "hosts.yml must exist at <credential_base>/alice/hosts.yml after \
+            "hosts.yml must exist at <credential_base>/alice/gh/hosts.yml after \
              hydrate_workspace() when the token provider resolves a token — \
              NoOpCredentialWriter was used instead of AppCredentialWriter"
         );
@@ -1485,6 +1484,87 @@ mod tests {
         assert!(
             !target.exists(),
             "workspace directory must be removed after deprovision"
+        );
+    }
+
+    // ── AC-09: Shared credential path (D-02) ────────────────────────────────
+
+    #[test]
+    fn gh_config_dir_for_member_returns_shared_credential_path() {
+        let tmp = TempDir::new().unwrap();
+        let creds_base = tmp.path().join("credentials");
+
+        // Place hosts.yml at the D-02 shared path: <creds_base>/alice/gh/hosts.yml
+        let shared_gh_dir = creds_base.join("alice").join("gh");
+        fs::create_dir_all(&shared_gh_dir).unwrap();
+        fs::write(
+            shared_gh_dir.join("hosts.yml"),
+            "github.com:\n  oauth_token: test\n",
+        )
+        .unwrap();
+
+        let config = HydrationWorkspaceConfig {
+            clones_dir: tmp.path().join("clones"),
+            sessions_base: tmp.path().join("sessions"),
+            team_repo_path: tmp.path().join("team"),
+            credential_base: creds_base.clone(),
+            freshness_threshold: Duration::from_secs(300),
+            repo_urls: vec![],
+            team_repo_url: String::new(),
+            team_repo_branch: "main".to_string(),
+            workspace_base: tmp.path().join("workspace"),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_resolver: None,
+        };
+        let ops = HydrationWorkspaceOps::new(config);
+
+        let result = ops.gh_config_dir_for_member("alice");
+
+        assert_eq!(
+            result,
+            Some(shared_gh_dir),
+            "gh_config_dir_for_member must return the D-02 shared path \
+             <credential_base>/alice/gh, not workspace_base/alice/.config/gh"
+        );
+    }
+
+    #[test]
+    fn hydrate_session_writes_hosts_yml_to_gh_subdir_of_shared_credential_path() {
+        let tmp = TempDir::new().unwrap();
+        let repo = init_bare_repo(&tmp, "project");
+        let creds_base = tmp.path().join("credentials");
+
+        let config = HydrationWorkspaceConfig {
+            clones_dir: tmp.path().join("clones"),
+            sessions_base: tmp.path().join("sessions"),
+            team_repo_path: tmp.path().join("team"),
+            credential_base: creds_base.clone(),
+            freshness_threshold: Duration::from_secs(300),
+            repo_urls: vec![(
+                repo.to_str().unwrap().to_string(),
+                "project".to_string(),
+            )],
+            team_repo_url: repo.to_str().unwrap().to_string(),
+            team_repo_branch: "main".to_string(),
+            workspace_base: tmp.path().join("workspace"),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_resolver: Some(std::sync::Arc::new(MockTokenProvider {
+                token: "ghs_test_token".to_string(),
+            })),
+        };
+        let ops = HydrationWorkspaceOps::new(config);
+        let session_id = SessionId::new();
+        ops.hydrate_workspace(&session_id, "alice").unwrap();
+
+        // D-02 path requires a gh/ subdirectory: <credential_base>/alice/gh/hosts.yml
+        let expected = creds_base.join("alice").join("gh").join("hosts.yml");
+        assert!(
+            expected.exists(),
+            "hosts.yml MUST be written to <credential_base>/alice/gh/hosts.yml \
+             (D-02 shared path with gh/ subdir), not <credential_base>/alice/hosts.yml; \
+             AppCredentialWriter must create the gh/ subdirectory"
         );
     }
 
