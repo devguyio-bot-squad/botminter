@@ -689,6 +689,9 @@ pub struct HydrationWorkspaceConfig {
     /// Optional token provider — when set, `HydrationWorkspaceOps` MUST use it to resolve
     /// a GitHub App token and write `hosts.yml` to `<credential_base>/<member>/`.
     pub credential_resolver: Option<std::sync::Arc<dyn AppTokenProvider>>,
+    /// Project names within the team repo (e.g. "botminter") whose coding-agent
+    /// assets (agents, skills) are merged into the assembled .claude/ directory.
+    pub project_names: Vec<String>,
 }
 
 /// Production implementation of [`crate::session::manager::WorkspaceOps`]
@@ -701,6 +704,7 @@ pub struct HydrationWorkspaceOps {
     team_repo_branch: String,
     project_number: Option<u64>,
     skill_dirs: Vec<PathBuf>,
+    project_names: Vec<String>,
 }
 
 impl HydrationWorkspaceOps {
@@ -724,6 +728,7 @@ impl HydrationWorkspaceOps {
             team_repo_branch: config.team_repo_branch,
             project_number: config.project_number,
             skill_dirs: config.skill_dirs,
+            project_names: config.project_names,
         }
     }
 
@@ -750,7 +755,7 @@ impl crate::session::manager::WorkspaceOps for HydrationWorkspaceOps {
             project_number: self.project_number,
             skill_dirs: self.skill_dirs.clone(),
             credential_base: self.hydrator.credential_relay.credentials_base.clone(),
-            project_names: vec![],
+            project_names: self.project_names.clone(),
         };
 
         let refs: Vec<(&str, &str)> = self
@@ -1502,6 +1507,7 @@ mod tests {
             credential_resolver: Some(std::sync::Arc::new(MockTokenProvider {
                 token: "ghs_test_token_abc123".to_string(),
             })),
+            project_names: vec![],
         };
 
         let ops = HydrationWorkspaceOps::new(config);
@@ -1573,6 +1579,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_resolver: None,
+            project_names: vec![],
         };
         let ops = HydrationWorkspaceOps::new(config);
 
@@ -1610,6 +1617,7 @@ mod tests {
             credential_resolver: Some(std::sync::Arc::new(MockTokenProvider {
                 token: "ghs_test_token".to_string(),
             })),
+            project_names: vec![],
         };
         let ops = HydrationWorkspaceOps::new(config);
         let session_id = SessionId::new();
@@ -1760,6 +1768,52 @@ mod tests {
             workspace.join(".claude/settings.local.json").exists(),
             ".claude/settings.local.json must exist — member-level settings.local.json from \
              team/members/alice/coding-agent/settings.local.json must be copied into .claude/"
+        );
+    }
+
+    // ── AC-08: Production wiring — project_names flows through HydrationWorkspaceOps ──
+
+    #[test]
+    fn hydrate_workspace_includes_project_level_agents_when_project_names_configured() {
+        let tmp = TempDir::new().unwrap();
+        let repo = init_bare_repo(&tmp, "project");
+
+        // Set up team repo with a project-level coding-agent agent.
+        let team = tmp.path().join("team");
+        let project_agent_src = team.join("projects/botminter/coding-agent/agents");
+        fs::create_dir_all(&project_agent_src).unwrap();
+        fs::write(project_agent_src.join("pr-review.md"), "# PR Review").unwrap();
+
+        let config = HydrationWorkspaceConfig {
+            clones_dir: tmp.path().join("clones"),
+            sessions_base: tmp.path().join("sessions"),
+            team_repo_path: team,
+            credential_base: tmp.path().join("credentials"),
+            freshness_threshold: Duration::from_secs(300),
+            repo_urls: vec![(repo.to_str().unwrap().to_string(), "project".to_string())],
+            team_repo_url: repo.to_str().unwrap().to_string(),
+            team_repo_branch: "main".to_string(),
+            workspace_base: tmp.path().join("workspace"),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_resolver: None,
+            project_names: vec!["botminter".to_string()],
+        };
+
+        let ops = HydrationWorkspaceOps::new(config);
+        let session_id = SessionId::new();
+        ops.hydrate_workspace(&session_id, "alice").unwrap();
+
+        // The assembled workspace must include the project-level agent.
+        // FAILS: hydrate_workspace() hardcodes project_names: vec![] in AssemblyConfig,
+        // ignoring the project_names stored in HydrationWorkspaceOps.
+        let ws = tmp.path().join("sessions").join("alice").join(session_id.as_str());
+        assert!(
+            ws.join(".claude/agents/pr-review.md").exists(),
+            ".claude/agents/pr-review.md must exist — project_names in \
+             HydrationWorkspaceConfig must be passed through hydrate_workspace() \
+             to AssemblyConfig; currently hydrate_workspace() hardcodes \
+             project_names: vec![] so project-level agents are never assembled"
         );
     }
 
