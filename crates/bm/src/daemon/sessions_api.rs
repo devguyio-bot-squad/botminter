@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -923,6 +924,42 @@ fn spawn_deactivation_watcher(
     });
 }
 
+/// Collect sessions that just transitioned to Finalizing during a stop call.
+fn collect_newly_finalizing(
+    registry: &SessionRegistry,
+    pre_finalizing: &HashSet<SessionId>,
+) -> Vec<(SessionId, Option<PathBuf>, Option<u32>)> {
+    registry
+        .list()
+        .iter()
+        .filter(|r| {
+            r.current_state == SessionState::Finalizing
+                && !pre_finalizing.contains(&r.session_id)
+        })
+        .map(|r| (r.session_id.clone(), r.workspace_path.clone(), r.agent_pid))
+        .collect()
+}
+
+/// Spawn deactivation watchers for sessions that just entered Finalizing.
+fn spawn_deactivation_watchers(
+    newly_finalizing: Vec<(SessionId, Option<PathBuf>, Option<u32>)>,
+    state: &SessionsApiState,
+) {
+    tracing::debug!(
+        newly_finalizing = newly_finalizing.len(),
+        "spawning deactivation watchers"
+    );
+    for (session_id, workspace_path, agent_pid) in newly_finalizing {
+        spawn_deactivation_watcher(
+            session_id,
+            workspace_path,
+            agent_pid,
+            Arc::clone(&state.inner),
+            state.workspace_ops.clone(),
+        );
+    }
+}
+
 pub async fn stop_session_handler(
     State(state): State<SessionsApiState>,
     Path(session_id_str): Path<String>,
@@ -947,6 +984,15 @@ pub async fn stop_session_handler(
         force,
     };
 
+    // Snapshot sessions already in Finalizing so we don't double-watch them.
+    let pre_finalizing: HashSet<SessionId> = inner
+        .registry
+        .list()
+        .iter()
+        .filter(|r| r.current_state == SessionState::Finalizing)
+        .map(|r| r.session_id.clone())
+        .collect();
+
     let summary = stop::stop_sessions(&mut inner.registry, &options);
 
     if !summary.errors.is_empty() {
@@ -959,7 +1005,14 @@ pub async fn stop_session_handler(
         );
     }
 
+    let newly_finalizing = collect_newly_finalizing(&inner.registry, &pre_finalizing);
+
     inner.work_item_lock.release_all(&session_id);
+
+    // Spawn deactivation watchers after releasing the mutex.
+    drop(inner);
+
+    spawn_deactivation_watchers(newly_finalizing, &state);
 
     (
         StatusCode::OK,
@@ -1016,7 +1069,7 @@ pub async fn stop_bulk_handler(
     };
 
     // Snapshot sessions already in Finalizing so we don't double-watch them.
-    let pre_finalizing: std::collections::HashSet<SessionId> = inner
+    let pre_finalizing: HashSet<SessionId> = inner
         .registry
         .list()
         .iter()
@@ -1026,17 +1079,7 @@ pub async fn stop_bulk_handler(
 
     let summary = stop::stop_sessions(&mut inner.registry, &options);
 
-    // Collect sessions that just transitioned to Finalizing in this call.
-    let newly_finalizing: Vec<(SessionId, Option<PathBuf>, Option<u32>)> = inner
-        .registry
-        .list()
-        .iter()
-        .filter(|r| {
-            r.current_state == SessionState::Finalizing
-                && !pre_finalizing.contains(&r.session_id)
-        })
-        .map(|r| (r.session_id.clone(), r.workspace_path.clone(), r.agent_pid))
-        .collect();
+    let newly_finalizing = collect_newly_finalizing(&inner.registry, &pre_finalizing);
 
     let stopped_ids: Vec<SessionId> = inner
         .registry
@@ -1058,15 +1101,7 @@ pub async fn stop_bulk_handler(
     // Spawn deactivation watchers after releasing the mutex.
     drop(inner);
 
-    for (session_id, workspace_path, agent_pid) in newly_finalizing {
-        spawn_deactivation_watcher(
-            session_id,
-            workspace_path,
-            agent_pid,
-            Arc::clone(&state.inner),
-            state.workspace_ops.clone(),
-        );
-    }
+    spawn_deactivation_watchers(newly_finalizing, &state);
 
     (
         StatusCode::OK,
@@ -2052,6 +2087,57 @@ mod tests {
             record.current_state,
             SessionState::Killed,
             "force stop must transition to Killed"
+        );
+    }
+
+    // --- CT-154-01-fix: stop_session_handler must spawn deactivation watcher ---
+
+    #[tokio::test]
+    async fn stop_session_handler_spawns_deactivation_watcher() {
+        // Session with no workspace and no agent_pid: the watcher (when spawned) transitions
+        // immediately to Completed. This exercises the missing watcher call in stop_session_handler.
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let session_id = SessionId::from_raw("watcher-test-session");
+            let record = SessionRecord {
+                session_id: session_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Interactive,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: None,
+            };
+            inner.registry.register(record).unwrap();
+            inner.registry.update_state(&session_id, SessionState::Active).unwrap();
+        }
+
+        let app = sessions_router(state.clone());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/watcher-test-session/stop")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Give the deactivation watcher time to run and transition Finalizing → Completed.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // The watcher (no pid, no workspace) must drive the session to Completed.
+        // Bug: stop_session_handler does not spawn the watcher, so session stays Finalizing.
+        let inner = state.inner.lock().unwrap();
+        let session_id = SessionId::from_raw("watcher-test-session");
+        let record = inner.registry.get(&session_id).unwrap();
+        assert_eq!(
+            record.current_state,
+            SessionState::Completed,
+            "stop_session_handler must spawn a deactivation watcher — session must transition from Finalizing to Completed, not stay stuck in Finalizing"
         );
     }
 
