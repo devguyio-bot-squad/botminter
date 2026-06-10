@@ -7,6 +7,8 @@ use super::subagent;
 use crate::session::dirty_state::RepoDirtyState;
 use crate::session::types::SessionId;
 
+pub const DEFAULT_MAX_RETRIES: usize = 3;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FinalizationOutcome {
     Completed,
@@ -143,6 +145,76 @@ pub fn push_unpushed_repos(workspace_path: &Path, dirty_state: &[RepoDirtyState]
             ));
         }
     }
+    Ok(())
+}
+
+/// Push the current branch with fetch+rebase retry on non-fast-forward failures.
+///
+/// On each attempt: push → if NFF, fetch origin + rebase onto the remote tracking
+/// branch → retry push.  Gives up after `max_retries` consecutive failures.
+/// Returns `Ok(())` on success or the last push error on exhaustion.
+pub fn push_with_rebase_retry(repo_path: &Path, max_retries: usize) -> Result<()> {
+    let head_output = std::process::Command::new("git")
+        .args(["rev-parse", "--abbrev-ref", "HEAD"])
+        .current_dir(repo_path)
+        .output()?;
+    let branch = String::from_utf8_lossy(&head_output.stdout)
+        .trim()
+        .to_string();
+    if branch.is_empty() || branch == "HEAD" {
+        return Ok(());
+    }
+
+    for attempt in 0..=max_retries {
+        let push = std::process::Command::new("git")
+            .args(["push", "origin", &branch])
+            .current_dir(repo_path)
+            .output()?;
+
+        if push.status.success() {
+            return Ok(());
+        }
+
+        let stderr = String::from_utf8_lossy(&push.stderr);
+        let is_nff = stderr.contains("non-fast-forward")
+            || stderr.contains("fetch first")
+            || stderr.contains("rejected");
+
+        if !is_nff || attempt == max_retries {
+            return Err(anyhow::anyhow!(
+                "git push failed for branch {}: {}",
+                branch,
+                stderr.trim()
+            ));
+        }
+
+        let fetch = std::process::Command::new("git")
+            .args(["fetch", "origin", &branch])
+            .current_dir(repo_path)
+            .output()?;
+        if !fetch.status.success() {
+            return Err(anyhow::anyhow!(
+                "git fetch failed: {}",
+                String::from_utf8_lossy(&fetch.stderr).trim()
+            ));
+        }
+
+        let rebase = std::process::Command::new("git")
+            .args(["rebase", &format!("origin/{branch}")])
+            .current_dir(repo_path)
+            .output()?;
+        if !rebase.status.success() {
+            let _ = std::process::Command::new("git")
+                .args(["rebase", "--abort"])
+                .current_dir(repo_path)
+                .output();
+            return Err(anyhow::anyhow!(
+                "git rebase failed: {}",
+                String::from_utf8_lossy(&rebase.stderr).trim()
+            ));
+        }
+    }
+
     Ok(())
 }
 

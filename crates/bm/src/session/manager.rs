@@ -2,7 +2,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::dirty_state::RepoDirtyState;
+use super::dirty_state::{self, RepoDirtyState};
+use super::finalization::deactivation::{self, DEFAULT_MAX_RETRIES};
 use super::registry::SessionRegistry;
 use super::types::{SessionId, SessionRecord, SessionState, SessionType};
 use super::work_item_lock::WorkItemLock;
@@ -12,6 +13,13 @@ use super::work_item_lock::WorkItemLock;
 pub trait WorkspaceOps: Send + Sync {
     fn hydrate_workspace(&self, session_id: &SessionId, member: &str) -> Result<PathBuf>;
     fn inspect_dirty_state(&self, workspace_path: &Path) -> Result<Vec<RepoDirtyState>>;
+}
+
+/// Result returned by `deactivate_session` — contains the updated session record
+/// and the dirty state snapshot taken after push attempts.
+pub struct DeactivationResult {
+    pub session_record: SessionRecord,
+    pub dirty_state: Vec<RepoDirtyState>,
 }
 
 /// Parameters for creating a new session.
@@ -90,6 +98,49 @@ impl<W: WorkspaceOps> SessionManager<W> {
             .filter(|r| r.current_state.is_terminal())
             .cloned()
             .collect()
+    }
+
+    /// Deactivate a session: inspect dirty state, push unpushed repos with
+    /// rebase-retry, re-inspect, transition state, and release locks.
+    ///
+    /// Push failures are non-fatal — the session still transitions to
+    /// Completed and the dirty state is returned so the caller can decide
+    /// whether to launch the finalization subagent.
+    pub fn deactivate_session(&mut self, session_id: &SessionId) -> Result<DeactivationResult> {
+        let record = self.registry.get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("session {session_id} not found"))?;
+        let workspace_path = record.workspace_path.clone()
+            .ok_or_else(|| anyhow::anyhow!("session {session_id} has no workspace path"))?;
+
+        // Push unpushed repos with rebase-retry (non-fatal on failure).
+        let initial_dirty = self.workspace_ops.inspect_dirty_state(&workspace_path)?;
+        for repo in &initial_dirty {
+            if repo.unpushed_branches.is_empty() {
+                continue;
+            }
+            let repo_path = if repo.repo_name == "team" {
+                workspace_path.join("team")
+            } else {
+                workspace_path.join("projects").join(&repo.repo_name)
+            };
+            let _ = deactivation::push_with_rebase_retry(&repo_path, DEFAULT_MAX_RETRIES);
+        }
+
+        // Re-inspect dirty state after push attempts.
+        let dirty_state = self.workspace_ops.inspect_dirty_state(&workspace_path)?;
+
+        // Release work-item locks held by this session.
+        self.work_item_lock.release_all(session_id);
+
+        // Transition to Completed — the caller (daemon deactivation watcher)
+        // examines dirty_state to decide whether to launch finalization.
+        self.registry.update_state(session_id, SessionState::Completed)?;
+
+        let updated = self.registry.get(session_id).unwrap().clone();
+        Ok(DeactivationResult {
+            session_record: updated,
+            dirty_state,
+        })
     }
 }
 

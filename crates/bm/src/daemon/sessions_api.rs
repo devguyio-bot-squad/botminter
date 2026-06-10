@@ -2492,6 +2492,7 @@ mod tests {
                 agent_pid: None,
                 workspace_path: None,
                 finalization_result: None,
+                finalization_agent_pid: None,
             };
             inner.registry.register(record).unwrap();
             inner.registry.update_state(&session_id, SessionState::Active).unwrap();

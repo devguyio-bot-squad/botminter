@@ -1280,6 +1280,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
             workspace_base: tmp.path().to_path_buf(),
         };
 
@@ -1311,6 +1312,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
             workspace_base: tmp.path().to_path_buf(),
         };
 
@@ -1347,6 +1349,7 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
             workspace_base: tmp.path().to_path_buf(),
         };
 
@@ -1527,6 +1530,7 @@ mod tests {
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
             project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1562,6 +1566,7 @@ mod tests {
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
             project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1882,6 +1887,7 @@ mod tests {
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
             project_names: vec!["botminter".to_string()],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1915,6 +1921,7 @@ mod tests {
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
             project_names: vec!["botminter".to_string()],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1948,6 +1955,7 @@ mod tests {
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
             project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1985,6 +1993,7 @@ mod tests {
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
             project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
