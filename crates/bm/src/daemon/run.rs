@@ -434,7 +434,7 @@ async fn webhook_handler(
             let shutdown = Arc::clone(&state.shutdown);
             let sessions = state.sessions_state.clone();
             tokio::task::spawn_blocking(move || {
-                handle_member_launch(&team, &paths, &shutdown, Some(sessions));
+                handle_member_launch(&team, &paths, &shutdown, &sessions);
             });
         } else {
             daemon_log(
@@ -513,7 +513,7 @@ async fn run_poll_loop(
                     "INFO",
                     &format!("Found {} relevant event(s)", relevant_count),
                 );
-                handle_member_launch(&poll_team, &poll_paths, &poll_shutdown, Some(poll_sessions));
+                handle_member_launch(&poll_team, &poll_paths, &poll_shutdown, &poll_sessions);
             }
 
             Ok::<_, anyhow::Error>(events)

@@ -19,9 +19,9 @@ use crate::state;
 
 /// Linux local formation — runs members as local processes on the operator's machine.
 ///
-/// Delegates to existing free functions (`start_local_members`, `stop_local_members`,
-/// `write_local_topology`) without moving any logic. This is a thin wrapper that
-/// satisfies the `Formation` trait interface.
+/// Delegates to `stop_local_members` and `write_local_topology` for member lifecycle.
+/// Member launch is handled exclusively via the daemon sessions API — `start_members`
+/// bails immediately to enforce the ephemeral session model.
 pub struct LinuxLocalFormation {
     team_name: String,
 }

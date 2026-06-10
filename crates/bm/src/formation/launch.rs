@@ -183,6 +183,7 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
 
 /// Returns true if the workspace has a `brain-prompt.md` file,
 /// indicating this member should run in brain (chat-first) mode.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn is_brain_member(workspace: &std::path::Path) -> bool {
     workspace.join("brain-prompt.md").exists()
 }
@@ -191,6 +192,7 @@ pub fn is_brain_member(workspace: &std::path::Path) -> bool {
 ///
 /// Returns `true` if there is a mismatch (credential present but RObot disabled),
 /// meaning the workspace needs to be re-provisioned to update RObot configuration.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn check_robot_enabled_mismatch(
     ralph_yml_path: &std::path::Path,
     has_credential: bool,
