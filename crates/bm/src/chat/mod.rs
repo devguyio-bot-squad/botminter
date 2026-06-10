@@ -140,10 +140,16 @@ pub fn prepare_chat_session_from_path(
     };
     let meta_prompt = build_meta_prompt(&params);
 
+    let daemon_paths = crate::daemon::DaemonPaths::new(team_name)?;
+    let credential_dir = daemon_paths
+        .sessions_base()
+        .join("credentials")
+        .join(member);
+
     Ok(AgentSession {
         meta_prompt,
         ws_path: workspace_path.to_path_buf(),
-        credential_dir: None,
+        credential_dir: Some(credential_dir),
     })
 }
 
@@ -1149,6 +1155,45 @@ mod tests {
             .expect("should succeed with any path");
         assert_eq!(session.meta_prompt, "You are an engineer.");
         assert_eq!(session.ws_path, tmp.path());
+    }
+
+    #[test]
+    fn prepare_chat_session_from_path_sets_credential_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+
+        // Team repo: members/<member> dir + botminter.yml for manifest
+        let team_repo = tmp.path().join("team");
+        let member_dir = team_repo.join("members").join("engineer-alice");
+        std::fs::create_dir_all(&member_dir).unwrap();
+        std::fs::write(
+            team_repo.join("botminter.yml"),
+            "name: test\ndisplay_name: Test\ndescription: d\nversion: 1.0.0\nschema_version: \"1\"\nroles: []\n",
+        )
+        .unwrap();
+
+        // Workspace: minimal ralph.yml + PROMPT.md
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::write(workspace.join("ralph.yml"), "hats: {}\n").unwrap();
+        std::fs::write(workspace.join("PROMPT.md"), "# Objective\n").unwrap();
+
+        let session = prepare_chat_session_from_path(
+            &team_repo,
+            "test-team",
+            "engineer-alice",
+            &workspace,
+            None,
+        )
+        .expect("session should be created");
+
+        let cred_dir = session
+            .credential_dir
+            .expect("credential_dir must be Some, not None");
+        let cred_str = cred_dir.to_str().unwrap();
+        assert!(
+            cred_str.ends_with("sessions/test-team/credentials/engineer-alice"),
+            "credential_dir must be sessions_base/credentials/<member>, got: {cred_str}"
+        );
     }
 
     // inject_app_credentials tests — serialized via mutex because they
