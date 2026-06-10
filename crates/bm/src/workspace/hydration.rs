@@ -797,6 +797,7 @@ pub struct HydrationWorkspaceOps {
     project_number: Option<u64>,
     skill_dirs: Vec<PathBuf>,
     project_names: Vec<String>,
+    workspace_base: PathBuf,
 }
 
 impl HydrationWorkspaceOps {
@@ -821,6 +822,7 @@ impl HydrationWorkspaceOps {
             project_number: config.project_number,
             skill_dirs: config.skill_dirs,
             project_names: config.project_names,
+            workspace_base: config.workspace_base,
         }
     }
 

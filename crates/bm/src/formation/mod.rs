@@ -12,8 +12,9 @@ pub use self::local::create_local_formation;
 // Low-level process spawners — internal to the formation module.
 pub(crate) use self::launch::{launch_brain, launch_ralph, BrainLaunchConfig};
 // Test-only diagnostic helpers (permanent workspace path removed — tests still assert behavior).
+pub(crate) use self::launch::is_brain_member;
 #[cfg(test)]
-pub(crate) use self::launch::{check_robot_enabled_mismatch, is_brain_member};
+pub(crate) use self::launch::check_robot_enabled_mismatch;
 pub use self::local_topology::write_local_topology;
 pub use self::manager::{run_formation_manager, FormationManagerResult};
 pub use self::start_members::{

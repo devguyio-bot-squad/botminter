@@ -117,6 +117,7 @@ pub fn run_meeting(meeting: &Meeting, matches: &clap::ArgMatches) -> Result<()> 
                 0,
                 team.daemon.interval,
                 "127.0.0.1",
+                "info",
             )?;
             DaemonClient::connect(&team.name)?
         }

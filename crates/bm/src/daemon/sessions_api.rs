@@ -3406,7 +3406,7 @@ mod tests {
             record.current_state,
             SessionState::Finalizing,
             "Finalizing session with dead PID must stay Finalizing — \
-             spawn_deactivation_watcher owns the Finalizing \u2192 Completed/Failed transition"
+             spawn_deactivation_watcher owns the Finalizing -> Completed/Failed transition"
         );
     }
 }

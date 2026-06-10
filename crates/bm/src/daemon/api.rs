@@ -7,7 +7,6 @@ use axum::response::IntoResponse;
 use axum::Json;
 use serde::{Deserialize, Serialize};
 
-use super::log::daemon_log;
 use super::run::DaemonState;
 use crate::formation;
 use crate::state;
@@ -90,16 +89,10 @@ pub(super) async fn stop_members_handler(
     State(state): State<DaemonState>,
     Json(req): Json<StopMembersRequest>,
 ) -> impl IntoResponse {
-    let paths = Arc::clone(&state.paths);
-
-    daemon_log(
-        &paths,
-        "INFO",
-        &format!(
-            "API: stop members (filter: {:?}, force: {})",
-            req.member.as_deref().unwrap_or("all"),
-            req.force
-        ),
+    tracing::info!(
+        filter = req.member.as_deref().unwrap_or("all"),
+        force = req.force,
+        "API: stop members"
     );
 
     let cfg = Arc::clone(&state.config);
@@ -142,7 +135,7 @@ pub(super) async fn stop_members_handler(
             (StatusCode::OK, Json(serde_json::to_value(resp).unwrap())).into_response()
         }
         Ok(Err(e)) => {
-            daemon_log(&paths, "ERROR", &format!("API stop failed: {}", e));
+            tracing::error!(error = %e, "API stop failed");
             let resp = ErrorResponse {
                 ok: false,
                 error: e.to_string(),
@@ -154,7 +147,7 @@ pub(super) async fn stop_members_handler(
                 .into_response()
         }
         Err(e) => {
-            daemon_log(&paths, "ERROR", &format!("API stop panicked: {}", e));
+            tracing::error!(error = %e, "API stop panicked");
             let resp = ErrorResponse {
                 ok: false,
                 error: "internal error".to_string(),
