@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -416,6 +417,17 @@ pub struct BulkCleanupResponse {
     pub cleaned: u32,
     pub reports: Vec<CleanupReportInfo>,
     pub error: Option<String>,
+}
+
+/// Session summary for the web console operator API (`GET /api/teams/:team/sessions`).
+#[derive(Debug, Serialize)]
+pub struct ConsoleSessionSummary {
+    pub session_id: String,
+    pub member_name: String,
+    pub state: String,
+    pub session_type: String,
+    pub created_at: String,
+    pub finalization_status: String,
 }
 
 // ── Work-item lock ───────────────────────────────────────────────────────
@@ -923,6 +935,42 @@ fn spawn_deactivation_watcher(
     });
 }
 
+/// Collect sessions that just transitioned to Finalizing during a stop call.
+fn collect_newly_finalizing(
+    registry: &SessionRegistry,
+    pre_finalizing: &HashSet<SessionId>,
+) -> Vec<(SessionId, Option<PathBuf>, Option<u32>)> {
+    registry
+        .list()
+        .iter()
+        .filter(|r| {
+            r.current_state == SessionState::Finalizing
+                && !pre_finalizing.contains(&r.session_id)
+        })
+        .map(|r| (r.session_id.clone(), r.workspace_path.clone(), r.agent_pid))
+        .collect()
+}
+
+/// Spawn deactivation watchers for sessions that just entered Finalizing.
+fn spawn_deactivation_watchers(
+    newly_finalizing: Vec<(SessionId, Option<PathBuf>, Option<u32>)>,
+    state: &SessionsApiState,
+) {
+    tracing::debug!(
+        newly_finalizing = newly_finalizing.len(),
+        "spawning deactivation watchers"
+    );
+    for (session_id, workspace_path, agent_pid) in newly_finalizing {
+        spawn_deactivation_watcher(
+            session_id,
+            workspace_path,
+            agent_pid,
+            Arc::clone(&state.inner),
+            state.workspace_ops.clone(),
+        );
+    }
+}
+
 pub async fn stop_session_handler(
     State(state): State<SessionsApiState>,
     Path(session_id_str): Path<String>,
@@ -947,6 +995,15 @@ pub async fn stop_session_handler(
         force,
     };
 
+    // Snapshot sessions already in Finalizing so we don't double-watch them.
+    let pre_finalizing: HashSet<SessionId> = inner
+        .registry
+        .list()
+        .iter()
+        .filter(|r| r.current_state == SessionState::Finalizing)
+        .map(|r| r.session_id.clone())
+        .collect();
+
     let summary = stop::stop_sessions(&mut inner.registry, &options);
 
     if !summary.errors.is_empty() {
@@ -959,7 +1016,14 @@ pub async fn stop_session_handler(
         );
     }
 
+    let newly_finalizing = collect_newly_finalizing(&inner.registry, &pre_finalizing);
+
     inner.work_item_lock.release_all(&session_id);
+
+    // Spawn deactivation watchers after releasing the mutex.
+    drop(inner);
+
+    spawn_deactivation_watchers(newly_finalizing, &state);
 
     (
         StatusCode::OK,
@@ -1016,7 +1080,7 @@ pub async fn stop_bulk_handler(
     };
 
     // Snapshot sessions already in Finalizing so we don't double-watch them.
-    let pre_finalizing: std::collections::HashSet<SessionId> = inner
+    let pre_finalizing: HashSet<SessionId> = inner
         .registry
         .list()
         .iter()
@@ -1026,17 +1090,7 @@ pub async fn stop_bulk_handler(
 
     let summary = stop::stop_sessions(&mut inner.registry, &options);
 
-    // Collect sessions that just transitioned to Finalizing in this call.
-    let newly_finalizing: Vec<(SessionId, Option<PathBuf>, Option<u32>)> = inner
-        .registry
-        .list()
-        .iter()
-        .filter(|r| {
-            r.current_state == SessionState::Finalizing
-                && !pre_finalizing.contains(&r.session_id)
-        })
-        .map(|r| (r.session_id.clone(), r.workspace_path.clone(), r.agent_pid))
-        .collect();
+    let newly_finalizing = collect_newly_finalizing(&inner.registry, &pre_finalizing);
 
     let stopped_ids: Vec<SessionId> = inner
         .registry
@@ -1058,15 +1112,7 @@ pub async fn stop_bulk_handler(
     // Spawn deactivation watchers after releasing the mutex.
     drop(inner);
 
-    for (session_id, workspace_path, agent_pid) in newly_finalizing {
-        spawn_deactivation_watcher(
-            session_id,
-            workspace_path,
-            agent_pid,
-            Arc::clone(&state.inner),
-            state.workspace_ops.clone(),
-        );
-    }
+    spawn_deactivation_watchers(newly_finalizing, &state);
 
     (
         StatusCode::OK,
@@ -1415,6 +1461,116 @@ pub fn sessions_router(state: SessionsApiState) -> Router {
         )
         .route("/api/sessions/{id}", get(session_detail_handler).delete(cleanup_session_handler))
         .with_state(state)
+}
+
+// ── Credential Refresh Loop ──────────────────────────────────────────────────
+
+/// Refreshes GitHub App credentials for a single team member.
+/// Abstracted for test injection — production impl delegates to [`CredentialRelay`].
+pub(crate) trait CredentialRefreshable: Send + Sync {
+    fn ensure_credentials(&self, member_name: &str) -> anyhow::Result<()>;
+}
+
+impl CredentialRefreshable for SessionsApiState {
+    fn ensure_credentials(&self, member_name: &str) -> anyhow::Result<()> {
+        match &self.workspace_ops {
+            Some(ops) => ops.ensure_credentials(member_name),
+            None => Ok(()),
+        }
+    }
+}
+
+impl SessionsApiState {
+    /// Return unique member names that have at least one session in the Active state.
+    pub(crate) fn active_member_names(&self) -> Vec<String> {
+        let inner = self.inner.lock().unwrap();
+        let mut seen = std::collections::HashSet::new();
+        inner
+            .registry
+            .list()
+            .into_iter()
+            .filter(|r| r.current_state == SessionState::Active)
+            .filter_map(|r| {
+                if seen.insert(r.member_name.clone()) {
+                    Some(r.member_name.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    /// Refresh credentials for all members with Active sessions.
+    ///
+    /// Non-fatal: each member is attempted regardless of whether earlier members fail.
+    /// Returns `(member_name, error_message)` pairs for any member that fails.
+    pub(crate) fn refresh_active_session_credentials(
+        &self,
+        refresher: &dyn CredentialRefreshable,
+    ) -> Vec<(String, String)> {
+        self.active_member_names()
+            .into_iter()
+            .filter_map(|member| {
+                refresher
+                    .ensure_credentials(&member)
+                    .err()
+                    .map(|e| (member, e.to_string()))
+            })
+            .collect()
+    }
+}
+
+/// Background loop: refreshes credentials for active-session members every `interval`.
+/// Stops when `shutdown` is set to `true`.
+pub(crate) async fn run_credential_refresh_loop(
+    sessions_state: SessionsApiState,
+    refresher: std::sync::Arc<dyn CredentialRefreshable>,
+    interval: std::time::Duration,
+    shutdown: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    loop {
+        sessions_state.refresh_active_session_credentials(refresher.as_ref());
+        if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+        tokio::time::sleep(interval).await;
+        if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
+            break;
+        }
+    }
+}
+
+// ── Console view ────────────────────────────────────────────────────────
+
+impl SessionsApiState {
+    /// Returns all session records for the web console operator view.
+    pub fn list_for_console(&self) -> Vec<ConsoleSessionSummary> {
+        use crate::session::types::FinalizationExitStatus;
+        let inner = self.inner.lock().unwrap();
+        inner
+            .registry
+            .list()
+            .into_iter()
+            .map(|r| {
+                let finalization_status = match r.finalization_result.as_ref().map(|f| &f.exit_status) {
+                    Some(
+                        FinalizationExitStatus::Completed | FinalizationExitStatus::CompletedDegraded,
+                    ) => "completed",
+                    Some(FinalizationExitStatus::Failed) => "failed",
+                    Some(FinalizationExitStatus::Skipped) => "skipped",
+                    None => "n/a",
+                };
+                ConsoleSessionSummary {
+                    session_id: r.session_id.to_string(),
+                    member_name: r.member_name.clone(),
+                    state: r.current_state.to_string(),
+                    session_type: r.session_type.to_string(),
+                    created_at: r.created_at.to_rfc3339(),
+                    finalization_status: finalization_status.to_string(),
+                }
+            })
+            .collect()
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────
@@ -2055,6 +2211,57 @@ mod tests {
         );
     }
 
+    // --- CT-154-01-fix: stop_session_handler must spawn deactivation watcher ---
+
+    #[tokio::test]
+    async fn stop_session_handler_spawns_deactivation_watcher() {
+        // Session with no workspace and no agent_pid: the watcher (when spawned) transitions
+        // immediately to Completed. This exercises the missing watcher call in stop_session_handler.
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let session_id = SessionId::from_raw("watcher-test-session");
+            let record = SessionRecord {
+                session_id: session_id.clone(),
+                member_name: "alice".to_string(),
+                session_type: SessionType::Interactive,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: None,
+            };
+            inner.registry.register(record).unwrap();
+            inner.registry.update_state(&session_id, SessionState::Active).unwrap();
+        }
+
+        let app = sessions_router(state.clone());
+        let request = Request::builder()
+            .method("POST")
+            .uri("/api/sessions/watcher-test-session/stop")
+            .body(Body::empty())
+            .unwrap();
+        let response = app.oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        // Give the deactivation watcher time to run and transition Finalizing → Completed.
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // The watcher (no pid, no workspace) must drive the session to Completed.
+        // Bug: stop_session_handler does not spawn the watcher, so session stays Finalizing.
+        let inner = state.inner.lock().unwrap();
+        let session_id = SessionId::from_raw("watcher-test-session");
+        let record = inner.registry.get(&session_id).unwrap();
+        assert_eq!(
+            record.current_state,
+            SessionState::Completed,
+            "stop_session_handler must spawn a deactivation watcher — session must transition from Finalizing to Completed, not stay stuck in Finalizing"
+        );
+    }
+
     // --- CT-88-03: Bulk stop by member ---
 
     #[tokio::test]
@@ -2630,6 +2837,178 @@ mod tests {
             session.finalization_status, "n/a",
             "Session with no finalization_result must have 'n/a' status, got '{}'",
             session.finalization_status
+        );
+    }
+
+    fn make_active_session_for_member(state: &SessionsApiState, session_id: &str, member: &str) {
+        let mut inner = state.inner.lock().unwrap();
+        let now = chrono::Utc::now();
+        let id = SessionId::from_raw(session_id);
+        let record = SessionRecord {
+            session_id: id.clone(),
+            member_name: member.to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Creating,
+            created_at: now,
+            state_transitioned_at: now,
+            agent_pid: None,
+            workspace_path: None,
+            finalization_result: None,
+        };
+        inner.registry.register(record).unwrap();
+        inner.registry.update_state(&id, SessionState::Active).unwrap();
+    }
+
+    #[test]
+    fn credential_refresh_covers_all_active_members() {
+        use std::sync::Mutex;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+
+        make_active_session_for_member(&state, "sess-cr-a", "alice");
+        make_active_session_for_member(&state, "sess-cr-b", "bob");
+
+        // carol: create as Active then transition to Completed (terminal)
+        {
+            let mut inner = state.inner.lock().unwrap();
+            let now = chrono::Utc::now();
+            let carol_id = SessionId::from_raw("sess-cr-c");
+            let record = SessionRecord {
+                session_id: carol_id.clone(),
+                member_name: "carol".to_string(),
+                session_type: SessionType::Loop,
+                current_state: SessionState::Creating,
+                created_at: now,
+                state_transitioned_at: now,
+                agent_pid: None,
+                workspace_path: None,
+                finalization_result: None,
+            };
+            inner.registry.register(record).unwrap();
+            inner.registry.update_state(&carol_id, SessionState::Active).unwrap();
+            inner.registry.update_state(&carol_id, SessionState::Completed).unwrap();
+        }
+
+        let refreshed: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+        struct TrackingRefresher {
+            log: Arc<Mutex<Vec<String>>>,
+        }
+        impl CredentialRefreshable for TrackingRefresher {
+            fn ensure_credentials(&self, member_name: &str) -> anyhow::Result<()> {
+                self.log.lock().unwrap().push(member_name.to_string());
+                Ok(())
+            }
+        }
+
+        state.refresh_active_session_credentials(&TrackingRefresher { log: refreshed.clone() });
+
+        let called = refreshed.lock().unwrap();
+        assert!(
+            called.contains(&"alice".to_string()),
+            "alice must be refreshed (Active session), got: {:?}",
+            *called
+        );
+        assert!(
+            called.contains(&"bob".to_string()),
+            "bob must be refreshed (Active session), got: {:?}",
+            *called
+        );
+        assert!(
+            !called.contains(&"carol".to_string()),
+            "carol must not be refreshed (Completed session)"
+        );
+    }
+
+    #[test]
+    fn credential_refresh_failure_is_non_fatal() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+
+        make_active_session_for_member(&state, "sess-nf-a", "alice");
+        make_active_session_for_member(&state, "sess-nf-b", "bob");
+
+        let bob_refreshed = Arc::new(AtomicBool::new(false));
+        struct SelectiveRefresher {
+            bob_flag: Arc<AtomicBool>,
+        }
+        impl CredentialRefreshable for SelectiveRefresher {
+            fn ensure_credentials(&self, member_name: &str) -> anyhow::Result<()> {
+                if member_name == "alice" {
+                    anyhow::bail!("simulated alice credential failure");
+                }
+                self.bob_flag.store(true, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let failures = state.refresh_active_session_credentials(&SelectiveRefresher {
+            bob_flag: bob_refreshed.clone(),
+        });
+
+        assert!(
+            bob_refreshed.load(Ordering::SeqCst),
+            "bob must still be refreshed even when alice fails"
+        );
+        assert_eq!(
+            failures.len(),
+            1,
+            "exactly one failure (alice) must be reported, got: {:?}",
+            failures
+        );
+        assert_eq!(
+            failures[0].0, "alice",
+            "alice must be identified as the failing member"
+        );
+    }
+
+    #[tokio::test]
+    async fn credential_refresh_loop_stops_on_shutdown() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::time::Duration;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let state = SessionsApiState::new(tmp.path().join("registry.json"));
+        make_active_session_for_member(&state, "sess-sd-a", "alice");
+
+        let call_count = Arc::new(AtomicUsize::new(0));
+        struct CountingRefresher {
+            count: Arc<AtomicUsize>,
+        }
+        impl CredentialRefreshable for CountingRefresher {
+            fn ensure_credentials(&self, _member_name: &str) -> anyhow::Result<()> {
+                self.count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let shutdown = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let shutdown_clone = shutdown.clone();
+        let count_clone = call_count.clone();
+
+        // Signal shutdown after a short delay so the loop gets at least one pass
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+            shutdown_clone.store(true, std::sync::atomic::Ordering::SeqCst);
+        });
+
+        tokio::time::timeout(
+            Duration::from_millis(500),
+            run_credential_refresh_loop(
+                state,
+                Arc::new(CountingRefresher { count: count_clone }),
+                Duration::from_millis(1),
+                shutdown,
+            ),
+        )
+        .await
+        .expect("credential refresh loop must exit within 500ms when shutdown is signaled");
+
+        assert!(
+            call_count.load(Ordering::SeqCst) >= 1,
+            "refresh loop must execute at least one pass before shutdown"
         );
     }
 }

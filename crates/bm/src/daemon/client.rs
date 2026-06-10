@@ -4,8 +4,7 @@ use std::time::Duration;
 use anyhow::{bail, Context, Result};
 
 use super::api::{
-    HealthResponse, MembersStatusResponse, StartLoopRequest, StartLoopResponse,
-    StartMembersRequest, StartMembersResponse, StopMembersRequest, StopMembersResponse,
+    HealthResponse, MembersStatusResponse, StopMembersRequest, StopMembersResponse,
 };
 use super::sessions_api::{
     AcquireLockRequest, AcquireLockResponse, BulkCleanupRequest, BulkCleanupResponse,
@@ -60,26 +59,6 @@ impl DaemonClient {
         &self.base_url
     }
 
-    /// POST /api/members/start — launch team members.
-    pub fn start_members(&self, req: &StartMembersRequest) -> Result<StartMembersResponse> {
-        let url = format!("{}/api/members/start", self.base_url);
-        let resp = self
-            .client
-            .post(&url)
-            .json(req)
-            .send()
-            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().unwrap_or_default();
-            bail!("Daemon returned {} for start: {}", status, body);
-        }
-
-        resp.json::<StartMembersResponse>()
-            .context("Failed to parse start response")
-    }
-
     /// POST /api/members/stop — stop team members.
     pub fn stop_members(&self, req: &StopMembersRequest) -> Result<StopMembersResponse> {
         let url = format!("{}/api/members/stop", self.base_url);
@@ -117,26 +96,6 @@ impl DaemonClient {
 
         resp.json::<MembersStatusResponse>()
             .context("Failed to parse members response")
-    }
-
-    /// POST /api/loops/start — start a Ralph loop in a member's workspace.
-    pub fn start_loop(&self, req: &StartLoopRequest) -> Result<StartLoopResponse> {
-        let url = format!("{}/api/loops/start", self.base_url);
-        let resp = self
-            .client
-            .post(&url)
-            .json(req)
-            .send()
-            .with_context(|| format!("Failed to connect to daemon at {}", url))?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let body = resp.text().unwrap_or_default();
-            bail!("Daemon returned {} for start loop: {}", status, body);
-        }
-
-        resp.json::<StartLoopResponse>()
-            .context("Failed to parse start loop response")
     }
 
     /// POST /api/sessions/start — create a new ephemeral session.
@@ -506,21 +465,6 @@ mod tests {
     }
 
     #[test]
-    fn start_request_serializes_for_client() {
-        let req = StartMembersRequest {
-            member: Some("alice".to_string()),
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        assert!(json.contains("alice"));
-
-        let req_all = StartMembersRequest { member: None };
-        let json = serde_json::to_string(&req_all).unwrap();
-        // member: null should be present or absent depending on serde behavior
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert!(parsed["member"].is_null());
-    }
-
-    #[test]
     fn stop_request_serializes_for_client() {
         let req = StopMembersRequest {
             member: Some("bob".to_string()),
@@ -530,23 +474,6 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed["member"], "bob");
         assert_eq!(parsed["force"], true);
-    }
-
-    #[test]
-    fn start_response_deserializes_for_client() {
-        let json = serde_json::json!({
-            "ok": true,
-            "launched": [{"name": "alice", "pid": 1234, "brain_mode": false}],
-            "skipped": [{"name": "bob", "pid": 5678}],
-            "errors": []
-        });
-        let resp: StartMembersResponse = serde_json::from_value(json).unwrap();
-        assert!(resp.ok);
-        assert_eq!(resp.launched.len(), 1);
-        assert_eq!(resp.launched[0].name, "alice");
-        assert_eq!(resp.launched[0].pid, 1234);
-        assert_eq!(resp.skipped.len(), 1);
-        assert!(resp.errors.is_empty());
     }
 
     #[test]
@@ -595,48 +522,6 @@ mod tests {
         assert_eq!(resp.team, "my-team");
         assert_eq!(resp.member_count, 2);
         assert_eq!(resp.uptime_secs, Some(300));
-    }
-
-    #[test]
-    fn start_loop_request_serializes_for_client() {
-        let req = StartLoopRequest {
-            prompt: "Implement issue #5: add caching".to_string(),
-            member: Some("superman".to_string()),
-        };
-        let json = serde_json::to_string(&req).unwrap();
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["prompt"], "Implement issue #5: add caching");
-        assert_eq!(parsed["member"], "superman");
-    }
-
-    #[test]
-    fn start_loop_response_deserializes_for_client() {
-        let json = serde_json::json!({
-            "ok": true,
-            "loop_id": "loop-9999",
-            "pid": 9999,
-            "error": null
-        });
-        let resp: StartLoopResponse = serde_json::from_value(json).unwrap();
-        assert!(resp.ok);
-        assert_eq!(resp.loop_id, Some("loop-9999".to_string()));
-        assert_eq!(resp.pid, Some(9999));
-        assert!(resp.error.is_none());
-    }
-
-    #[test]
-    fn start_loop_response_deserializes_error_for_client() {
-        let json = serde_json::json!({
-            "ok": false,
-            "loop_id": null,
-            "pid": null,
-            "error": "no workspace found"
-        });
-        let resp: StartLoopResponse = serde_json::from_value(json).unwrap();
-        assert!(!resp.ok);
-        assert!(resp.loop_id.is_none());
-        assert!(resp.pid.is_none());
-        assert_eq!(resp.error, Some("no workspace found".to_string()));
     }
 
     // ── CT-04: Session Client Tests ──────────────────────────────────

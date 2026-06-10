@@ -49,34 +49,6 @@ pub fn has_committable_files(workspace_path: &Path, dirty_state: &[RepoDirtyStat
     false
 }
 
-/// Finalize a session by launching the finalization subagent if dirty state
-/// contains files that need committing.
-///
-/// Returns `Skipped` if no finalization is needed, `Completed` if the
-/// subagent was successfully launched (fire-and-forget), or `Failed` if
-/// the subagent could not be spawned.
-pub fn finalize_session(
-    session_id: &SessionId,
-    workspace_path: &Path,
-    dirty_state: &[RepoDirtyState],
-) -> FinalizationResult {
-    let has_dirty = dirty_state.iter().any(|r| !r.is_clean());
-    if !has_dirty {
-        return FinalizationResult::new(FinalizationOutcome::Skipped);
-    }
-
-    if !has_committable_files(workspace_path, dirty_state) {
-        return FinalizationResult::new(FinalizationOutcome::Skipped);
-    }
-
-    match subagent::retrigger_finalization(workspace_path, session_id) {
-        Ok(_child) => FinalizationResult::new(FinalizationOutcome::Completed),
-        Err(e) => FinalizationResult::new(FinalizationOutcome::Failed(
-            format!("Failed to launch finalization subagent: {e}"),
-        )),
-    }
-}
-
 /// Re-trigger finalization for a retained session by launching the finalization subagent.
 ///
 /// Returns the spawned child so callers can attach a watcher (e.g., `wait_and_transition`).
@@ -85,14 +57,6 @@ pub fn retrigger_finalization(
     workspace_path: &Path,
 ) -> Result<std::process::Child> {
     subagent::retrigger_finalization(workspace_path, session_id)
-}
-
-pub fn push_to_recovery_branch(
-    _repo_path: &Path,
-    session_id: &SessionId,
-    original_branch: &str,
-) -> Result<String> {
-    Ok(format!("recovery/{}/{}", session_id, original_branch))
 }
 
 fn build_repo_context(workspace_path: &Path, repo: &RepoDirtyState) -> RepoContext {
@@ -169,34 +133,7 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::session::dirty_state::RepoDirtyState;
-    use crate::session::manager::{CreateSessionParams, SessionManager, WorkspaceOps};
-    use crate::session::registry::SessionRegistry;
-    use crate::session::types::{SessionId, SessionRecord, SessionState, SessionType};
-    use crate::session::work_item_lock::WorkItemLock;
-
-    struct FakeWorkspaceOps {
-        workspace_path: PathBuf,
-    }
-
-    impl WorkspaceOps for FakeWorkspaceOps {
-        fn hydrate_workspace(&self, _session_id: &SessionId, _member: &str) -> Result<PathBuf> {
-            Ok(self.workspace_path.clone())
-        }
-
-        fn inspect_dirty_state(&self, _workspace_path: &Path) -> Result<Vec<RepoDirtyState>> {
-            Ok(vec![])
-        }
-    }
-
-    fn make_test_manager() -> SessionManager<FakeWorkspaceOps> {
-        let tmp = tempfile::tempdir().unwrap();
-        let registry = SessionRegistry::new(tmp.path().join("registry.json"));
-        let lock = WorkItemLock::new();
-        let ops = FakeWorkspaceOps {
-            workspace_path: tmp.path().join("workspace"),
-        };
-        SessionManager::new(registry, lock, ops)
-    }
+    use crate::session::types::SessionId;
 
     fn dirty_repo(name: &str, uncommitted: &[&str], unpushed: &[&str]) -> RepoDirtyState {
         RepoDirtyState {
@@ -353,145 +290,6 @@ mod tests {
     }
 
     // ---
-    // finalize_session
-    // ---
-
-    #[test]
-    fn dirty_session_on_feature_branch_triggers_finalization() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = setup_project_workspace(tmp.path(), "myproject", "feature/story-88");
-        let session_id = SessionId::from_raw("abc12345");
-        let dirty = vec![dirty_repo("myproject", &["src/lib.rs"], &[])];
-
-        let result = finalize_session(&session_id, &ws, &dirty);
-
-        assert_ne!(
-            result.outcome,
-            FinalizationOutcome::Skipped,
-            "dirty session with committable files must not skip finalization"
-        );
-    }
-
-    #[test]
-    fn clean_session_finalization_returns_skipped() {
-        let session_id = SessionId::from_raw("abc12345");
-        let tmp = tempfile::tempdir().unwrap();
-        let dirty = vec![clean_repo("myproject")];
-
-        let result = finalize_session(&session_id, tmp.path(), &dirty);
-
-        assert_eq!(
-            result.outcome,
-            FinalizationOutcome::Skipped,
-            "clean session must skip finalization"
-        );
-    }
-
-    #[test]
-    fn empty_dirty_state_finalization_returns_skipped() {
-        let session_id = SessionId::from_raw("abc12345");
-        let tmp = tempfile::tempdir().unwrap();
-
-        let result = finalize_session(&session_id, tmp.path(), &[]);
-
-        assert_eq!(
-            result.outcome,
-            FinalizationOutcome::Skipped,
-            "empty dirty state must skip finalization"
-        );
-    }
-
-    #[test]
-    fn unpushed_only_session_finalization_skipped() {
-        let session_id = SessionId::from_raw("abc12345");
-        let tmp = tempfile::tempdir().unwrap();
-        let dirty = vec![dirty_repo("myproject", &[], &["feature/story-88"])];
-
-        let result = finalize_session(&session_id, tmp.path(), &dirty);
-
-        assert_eq!(
-            result.outcome,
-            FinalizationOutcome::Skipped,
-            "session with only unpushed branches must skip finalization \
-             — pushes are handled separately by push_and_refresh_dirty"
-        );
-    }
-
-    #[test]
-    fn team_repo_memories_trigger_finalization() {
-        let session_id = SessionId::from_raw("abc12345");
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = tmp.path().join("workspace");
-        std::fs::create_dir_all(&ws).unwrap();
-        let dirty = vec![dirty_repo(
-            "team",
-            &[
-                "specs/epic-85/design.md",
-                "knowledge/patterns.md",
-                "members/bob/knowledge/notes.md",
-            ],
-            &[],
-        )];
-
-        let result = finalize_session(&session_id, &ws, &dirty);
-
-        assert_ne!(
-            result.outcome,
-            FinalizationOutcome::Skipped,
-            "team repo with uncommitted memories must trigger finalization"
-        );
-    }
-
-    #[test]
-    fn project_on_default_branch_skips_finalization() {
-        let tmp = tempfile::tempdir().unwrap();
-        let ws = setup_project_workspace(tmp.path(), "myproject", "main");
-        let session_id = SessionId::from_raw("abc12345");
-        let dirty = vec![dirty_repo("myproject", &["src/lib.rs"], &[])];
-
-        let result = finalize_session(&session_id, &ws, &dirty);
-
-        assert_eq!(
-            result.outcome,
-            FinalizationOutcome::Skipped,
-            "project on default branch must skip finalization \
-             — uncommitted files are left in place"
-        );
-    }
-
-    // ---
-    // push_to_recovery_branch
-    // ---
-
-    #[test]
-    fn push_to_recovery_branch_succeeds() {
-        let session_id = SessionId::from_raw("abc12345");
-        let tmp = tempfile::tempdir().unwrap();
-
-        let result = push_to_recovery_branch(tmp.path(), &session_id, "feature/story-88");
-
-        assert!(
-            result.is_ok(),
-            "push_to_recovery_branch must succeed, got: {:?}",
-            result.err()
-        );
-    }
-
-    #[test]
-    fn recovery_branch_name_follows_convention() {
-        let session_id = SessionId::from_raw("abc12345");
-        let tmp = tempfile::tempdir().unwrap();
-
-        let branch = push_to_recovery_branch(tmp.path(), &session_id, "main")
-            .expect("push_to_recovery_branch must succeed");
-
-        assert_eq!(
-            branch, "recovery/abc12345/main",
-            "recovery branch must follow recovery/<session-id>/<branch> convention"
-        );
-    }
-
-    // ---
     // retrigger_finalization
     // ---
 
@@ -506,92 +304,6 @@ mod tests {
             result.is_err(),
             "retrigger_finalization with non-existent workspace must fail — \
              confirms delegation to subagent (not a stub)"
-        );
-    }
-
-    // ---
-    // State transition tests
-    // ---
-
-    #[test]
-    fn retained_to_finalizing_is_valid_transition() {
-        assert!(
-            SessionState::Retained.can_transition_to(&SessionState::Finalizing),
-            "Retained -> Finalizing must be valid to support re-trigger finalization"
-        );
-    }
-
-    #[test]
-    fn new_session_while_old_is_finalizing() {
-        let mut mgr = make_test_manager();
-
-        let session_id = SessionId::new();
-        let record = SessionRecord {
-            session_id: session_id.clone(),
-            member_name: "alice".to_string(),
-            session_type: SessionType::Interactive,
-            current_state: SessionState::Creating,
-            created_at: chrono::Utc::now(),
-            state_transitioned_at: chrono::Utc::now(),
-            agent_pid: None,
-            workspace_path: Some(PathBuf::from("/tmp/ws1")),
-            finalization_result: None,
-        };
-        mgr.registry.register(record).unwrap();
-        mgr.registry
-            .update_state(&session_id, SessionState::Active)
-            .unwrap();
-        mgr.registry
-            .update_state(&session_id, SessionState::Finalizing)
-            .unwrap();
-
-        let params = CreateSessionParams {
-            member_name: "alice".to_string(),
-            session_type: SessionType::Interactive,
-            work_item_id: None,
-        };
-        let result = mgr.create_session(params);
-
-        assert!(
-            result.is_ok(),
-            "new session must succeed when old session is Finalizing"
-        );
-    }
-
-    #[test]
-    fn new_session_while_old_is_failed() {
-        let mut mgr = make_test_manager();
-
-        let session_id = SessionId::new();
-        let record = SessionRecord {
-            session_id: session_id.clone(),
-            member_name: "alice".to_string(),
-            session_type: SessionType::Loop,
-            current_state: SessionState::Creating,
-            created_at: chrono::Utc::now(),
-            state_transitioned_at: chrono::Utc::now(),
-            agent_pid: None,
-            workspace_path: Some(PathBuf::from("/tmp/ws1")),
-            finalization_result: None,
-        };
-        mgr.registry.register(record).unwrap();
-        mgr.registry
-            .update_state(&session_id, SessionState::Active)
-            .unwrap();
-        mgr.registry
-            .update_state(&session_id, SessionState::Failed)
-            .unwrap();
-
-        let params = CreateSessionParams {
-            member_name: "alice".to_string(),
-            session_type: SessionType::Interactive,
-            work_item_id: None,
-        };
-        let result = mgr.create_session(params);
-
-        assert!(
-            result.is_ok(),
-            "new session must succeed when old session is Failed"
         );
     }
 

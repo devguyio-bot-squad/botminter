@@ -1,7 +1,6 @@
-use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use anyhow::{Context, Result};
 use axum::body::Bytes;
@@ -20,11 +19,13 @@ use super::event::{
 };
 use super::log::daemon_log;
 use super::process::handle_member_launch;
-use super::sessions_api::{sessions_router, BridgeContext, SessionsApiState};
+use super::sessions_api::{
+    run_credential_refresh_loop, sessions_router, BridgeContext, CredentialRefreshable,
+    SessionsApiState,
+};
 use crate::bridge;
 use crate::config as app_config;
 use crate::workspace::HydrationWorkspaceConfig;
-use crate::formation::AppCredentialsCached;
 use crate::web::state::WebState;
 use crate::web::web_router;
 
@@ -42,9 +43,6 @@ pub(super) struct DaemonState {
     /// when the HOME directory changes (e.g., in E2E tests).
     pub(super) config: Arc<app_config::BotminterConfig>,
     pub(super) team_entry: Arc<app_config::TeamEntry>,
-    /// In-memory cache of App credentials for members that have been started.
-    /// Used by the background refresh loop to re-sign JWTs without re-reading keyring.
-    pub(super) app_credentials: Arc<Mutex<HashMap<String, AppCredentialsCached>>>,
     /// Sessions API state — shared with the poll loop and webhook handler so
     /// event-driven member launches go through the sessions API (not the legacy
     /// formation path), creating ephemeral session workspaces on disk.
@@ -107,6 +105,22 @@ async fn run_daemon_async(
         let team_repo_path = team_entry.path.join("team");
         let repo_urls = read_project_repos(&team_repo_path);
         let team_repo_url = format!("https://github.com/{}.git", team_entry.github_repo);
+        let credential_resolver = crate::formation::create_local_formation(team_name)
+            .ok()
+            .and_then(|f| {
+                f.credential_store(crate::formation::CredentialDomain::GitHubApp {
+                    team_name: team_name.to_string(),
+                    member_name: String::new(),
+                })
+                .ok()
+            })
+            .map(|store| {
+                let store: std::sync::Arc<dyn crate::formation::KeyValueCredentialStore> =
+                    std::sync::Arc::from(store);
+                let provider = crate::workspace::KeyringAppTokenProvider::new(store);
+                std::sync::Arc::new(provider) as std::sync::Arc<dyn crate::workspace::AppTokenProvider>
+            });
+
         let hydration_config = HydrationWorkspaceConfig {
             clones_dir: paths.sessions_base().join("clones"),
             sessions_base: paths.sessions_base(),
@@ -119,6 +133,8 @@ async fn run_daemon_async(
             workspace_base: team_entry.path.clone(),
             project_number: team_entry.project_number,
             skill_dirs: vec![],
+            credential_resolver,
+            project_names: vec![],
         };
 
         // Resolve bridge credentials for injecting env vars when launching ralph.
@@ -140,7 +156,6 @@ async fn run_daemon_async(
         started_at: Some(std::time::Instant::now()),
         config: Arc::new(cfg),
         team_entry: Arc::new(team_entry),
-        app_credentials: Arc::new(Mutex::new(HashMap::new())),
         sessions_state: sessions_state.clone(),
     };
 
@@ -149,6 +164,7 @@ async fn run_daemon_async(
         .unwrap_or_else(|_| std::path::PathBuf::from("~/.botminter/config.yml"));
     let web_state = WebState {
         config_path: Arc::new(config_path),
+        sessions_state: Some(sessions_state.clone()),
     };
 
     // CORS: allow requests from localhost dev servers (Vite on :5173, etc.)
@@ -202,16 +218,30 @@ async fn run_daemon_async(
         });
     }
 
+    // Credential refresh: periodically renew GitHub App tokens for active-session members
+    {
+        let cred_state = sessions_state.clone();
+        let cred_refresher: Arc<dyn CredentialRefreshable> =
+            Arc::new(sessions_state.clone());
+        let cred_shutdown = Arc::clone(&shutdown);
+        tokio::spawn(async move {
+            run_credential_refresh_loop(
+                cred_state,
+                cred_refresher,
+                std::time::Duration::from_secs(300),
+                cred_shutdown,
+            )
+            .await;
+        });
+    }
+
     let app = Router::new()
         .route("/webhook", post(webhook_handler))
         .route("/health", get(health_handler))
         // Member lifecycle API
-        .route("/api/members/start", post(api::start_members_handler))
         .route("/api/members/stop", post(api::stop_members_handler))
         .route("/api/members", get(api::list_members_handler))
         .route("/api/health", get(api::health_check_handler))
-        // Loop management API
-        .route("/api/loops/start", post(api::start_loop_handler))
         .with_state(state.clone())
         // Session management API
         .merge(sessions_router(sessions_state.clone()))
@@ -425,7 +455,7 @@ async fn webhook_handler(
             let shutdown = Arc::clone(&state.shutdown);
             let sessions = state.sessions_state.clone();
             tokio::task::spawn_blocking(move || {
-                handle_member_launch(&team, &paths, &shutdown, Some(sessions));
+                handle_member_launch(&team, &paths, &shutdown, &sessions);
             });
         } else {
             daemon_log(
@@ -504,7 +534,7 @@ async fn run_poll_loop(
                     "INFO",
                     &format!("Found {} relevant event(s)", relevant_count),
                 );
-                handle_member_launch(&poll_team, &poll_paths, &poll_shutdown, Some(poll_sessions));
+                handle_member_launch(&poll_team, &poll_paths, &poll_shutdown, &poll_sessions);
             }
 
             Ok::<_, anyhow::Error>(events)
