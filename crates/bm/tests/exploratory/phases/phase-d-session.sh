@@ -168,26 +168,18 @@ else
     fail "D09" "Skill dirs" "workspace not found"
 fi
 
-# AC-09: GH credentials — verify gh api user works with session's GH_CONFIG_DIR
+# AC-09: GH credentials — verify gh api user works with D-02 shared GH_CONFIG_DIR
+# D-02 path: <sessions_base>/credentials/<member>/gh/hosts.yml (written by AppCredentialWriter)
 if [ -n "$WS_A" ]; then
-    MEMBER_BASE="$SESSIONS_BASE/$MEMBER_A"
-    GH_FOUND=false
-    GH_WORKDIR=""
-    for ghdir in "$MEMBER_BASE/.config/gh" "$WS_A/.config/gh"; do
-        if [ -f "$ghdir/hosts.yml" ]; then
-            GH_FOUND=true
-            GH_WORKDIR="$ghdir"
-            break
-        fi
-    done
-    if [ "$GH_FOUND" = "true" ]; then
-        if GH_CONFIG_DIR="$GH_WORKDIR" gh api user >/dev/null 2>&1; then
-            pass "D10" "gh api user succeeds with session GH_CONFIG_DIR (AC-09)"
+    GH_SHARED_DIR="$SESSIONS_BASE/credentials/$MEMBER_A/gh"
+    if [ -f "$GH_SHARED_DIR/hosts.yml" ]; then
+        if GH_CONFIG_DIR="$GH_SHARED_DIR" gh api user >/dev/null 2>&1; then
+            pass "D10" "gh api user succeeds with D-02 shared GH_CONFIG_DIR (AC-09)"
         else
-            note "D10" "GH credentials (AC-09)" "hosts.yml found at $GH_WORKDIR but gh api user failed"
+            note "D10" "GH credentials (AC-09)" "hosts.yml found at $GH_SHARED_DIR but gh api user failed"
         fi
     else
-        note "D10" "GH credentials (AC-09)" "hosts.yml not found in session dirs — may be inherited from system gh auth"
+        note "D10" "GH credentials (AC-09)" "D-02 credential path absent at $GH_SHARED_DIR — App token provider not wired in run.rs (credential_resolver: None)"
     fi
 else
     fail "D10" "GH credentials" "workspace not found"
