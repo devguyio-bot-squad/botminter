@@ -164,6 +164,7 @@ async fn run_daemon_async(
         .unwrap_or_else(|_| std::path::PathBuf::from("~/.botminter/config.yml"));
     let web_state = WebState {
         config_path: Arc::new(config_path),
+        sessions_state: Some(sessions_state.clone()),
     };
 
     // CORS: allow requests from localhost dev servers (Vite on :5173, etc.)

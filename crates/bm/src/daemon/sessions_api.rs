@@ -419,6 +419,17 @@ pub struct BulkCleanupResponse {
     pub error: Option<String>,
 }
 
+/// Session summary for the web console operator API (`GET /api/teams/:team/sessions`).
+#[derive(Debug, Serialize)]
+pub struct ConsoleSessionSummary {
+    pub session_id: String,
+    pub member_name: String,
+    pub state: String,
+    pub session_type: String,
+    pub created_at: String,
+    pub finalization_status: String,
+}
+
 // ── Work-item lock ───────────────────────────────────────────────────────
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -1526,6 +1537,39 @@ pub(crate) async fn run_credential_refresh_loop(
         if shutdown.load(std::sync::atomic::Ordering::SeqCst) {
             break;
         }
+    }
+}
+
+// ── Console view ────────────────────────────────────────────────────────
+
+impl SessionsApiState {
+    /// Returns all session records for the web console operator view.
+    pub fn list_for_console(&self) -> Vec<ConsoleSessionSummary> {
+        use crate::session::types::FinalizationExitStatus;
+        let inner = self.inner.lock().unwrap();
+        inner
+            .registry
+            .list()
+            .into_iter()
+            .map(|r| {
+                let finalization_status = match r.finalization_result.as_ref().map(|f| &f.exit_status) {
+                    Some(
+                        FinalizationExitStatus::Completed | FinalizationExitStatus::CompletedDegraded,
+                    ) => "completed",
+                    Some(FinalizationExitStatus::Failed) => "failed",
+                    Some(FinalizationExitStatus::Skipped) => "skipped",
+                    None => "n/a",
+                };
+                ConsoleSessionSummary {
+                    session_id: r.session_id.to_string(),
+                    member_name: r.member_name.clone(),
+                    state: r.current_state.to_string(),
+                    session_type: r.session_type.to_string(),
+                    created_at: r.created_at.to_rfc3339(),
+                    finalization_status: finalization_status.to_string(),
+                }
+            })
+            .collect()
     }
 }
 
