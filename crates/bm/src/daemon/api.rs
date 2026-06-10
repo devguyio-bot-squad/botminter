@@ -748,11 +748,15 @@ fn start_loop_blocking(
             member_name: String::new(),
         },
     )?;
+    // Placeholder: credential_base should be DaemonPaths::sessions_base()/credentials once
+    // start_loop_blocking migrates to the ephemeral session daemon path.
+    let credential_base = ws.clone();
     let gh_config_dir = match crate::formation::start_members::resolve_app_credentials_and_deliver(
         app_cred_store.as_ref(),
         local_formation.as_ref(),
         &member_name,
         &ws,
+        &credential_base,
     ) {
         Ok(dir) => dir,
         Err(e) => {

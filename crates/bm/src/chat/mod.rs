@@ -351,12 +351,24 @@ pub fn build_meta_prompt(params: &MetaPromptParams) -> String {
 
 /// Injects GitHub App credentials into the current process environment.
 ///
-/// When a `hosts.yml` exists, attempts a one-shot token refresh from the
-/// keyring before setting `GH_CONFIG_DIR`. This ensures `bm chat` and
-/// `bm meetings` work even when the daemon isn't running to keep tokens fresh.
+/// When `credential_dir` is provided, looks for `hosts.yml` at
+/// `<credential_dir>/gh/hosts.yml` (D-02 shared credential path) and sets
+/// `GH_CONFIG_DIR` to `<credential_dir>/gh`.
+///
+/// Falls back to the legacy workspace path `<ws_path>/.config/gh/hosts.yml`
+/// when `credential_dir` is `None` (deprecated — will be removed).
 ///
 /// Returns `true` if credentials were found and injected, `false` otherwise.
-pub fn inject_app_credentials(ws_path: &Path, team_name: &str, member_name: &str) -> bool {
+pub fn inject_app_credentials(
+    ws_path: &Path,
+    credential_dir: Option<&Path>,
+    team_name: &str,
+    member_name: &str,
+) -> bool {
+    if let Some(cred_dir) = credential_dir {
+        return inject_app_credentials_from_shared_dir(cred_dir);
+    }
+
     let gh_dir = ws_path.join(".config/gh");
     let hosts_yml = gh_dir.join("hosts.yml");
 
@@ -383,7 +395,6 @@ pub fn inject_app_credentials(ws_path: &Path, team_name: &str, member_name: &str
 /// `GH_CONFIG_DIR` to `<credential_dir>/gh`.
 ///
 /// Returns `true` if credentials were found and injected, `false` otherwise.
-#[allow(dead_code)]
 pub(crate) fn inject_app_credentials_from_shared_dir(credential_dir: &Path) -> bool {
     let gh_dir = credential_dir.join("gh");
     if !gh_dir.join("hosts.yml").exists() {
@@ -477,7 +488,7 @@ pub fn launch_session(
     let manifest = crate::profile::read_team_repo_manifest(team_repo)?;
     let coding_agent = crate::profile::resolve_coding_agent(team, &manifest)?;
 
-    inject_app_credentials(&session.ws_path, &team.name, member_name);
+    inject_app_credentials(&session.ws_path, None, &team.name, member_name);
 
     let mut tmp_file = tempfile::Builder::new()
         .prefix("bm-session-")
@@ -1121,7 +1132,7 @@ mod tests {
 
         std::env::remove_var("GH_CONFIG_DIR");
 
-        let result = inject_app_credentials(tmp.path(), "test-team", "test-member");
+        let result = inject_app_credentials(tmp.path(), None, "test-team", "test-member");
 
         assert!(result, "Should return true when credentials are available");
         let config_dir =
@@ -1146,7 +1157,7 @@ mod tests {
         std::env::set_var("GH_TOKEN", "should-be-removed");
         std::env::set_var("GITHUB_TOKEN", "should-be-removed");
 
-        let result = inject_app_credentials(tmp.path(), "test-team", "test-member");
+        let result = inject_app_credentials(tmp.path(), None, "test-team", "test-member");
 
         assert!(result, "Should return true when credentials are available");
         assert!(
@@ -1172,7 +1183,7 @@ mod tests {
         std::env::set_var("GITHUB_TOKEN", "preserved");
         std::env::remove_var("GH_CONFIG_DIR");
 
-        let result = inject_app_credentials(tmp.path(), "test-team", "test-member");
+        let result = inject_app_credentials(tmp.path(), None, "test-team", "test-member");
 
         assert!(!result, "Should return false when no credentials directory");
         assert!(
@@ -1203,7 +1214,7 @@ mod tests {
 
         std::env::remove_var("GH_CONFIG_DIR");
 
-        let result = inject_app_credentials(tmp.path(), "test-team", "test-member");
+        let result = inject_app_credentials(tmp.path(), None, "test-team", "test-member");
 
         assert!(!result, "Should return false when hosts.yml is missing");
         assert!(
@@ -1243,6 +1254,45 @@ mod tests {
             shared_gh_dir.to_str().unwrap(),
             "GH_CONFIG_DIR must point to the shared credential gh/ subdir, \
              not workspace/.config/gh/"
+        );
+
+        std::env::remove_var("GH_CONFIG_DIR");
+    }
+
+    // ── CT-154-03: inject_app_credentials must use D-02 shared path ─────────
+
+    #[test]
+    fn inject_app_credentials_uses_d02_credential_dir_over_workspace_config_gh() {
+        let _lock = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+
+        // hosts.yml exists ONLY at the D-02 shared path, NOT at ws/.config/gh
+        let credential_dir = tmp.path().join("credentials").join("alice");
+        let shared_gh_dir = credential_dir.join("gh");
+        std::fs::create_dir_all(&shared_gh_dir).unwrap();
+        std::fs::write(
+            shared_gh_dir.join("hosts.yml"),
+            "github.com:\n    oauth_token: shared_token\n",
+        )
+        .unwrap();
+
+        std::env::remove_var("GH_CONFIG_DIR");
+
+        // credential_dir is provided; ws_path has no .config/gh/hosts.yml
+        let result = inject_app_credentials(tmp.path(), Some(&credential_dir), "team", "alice");
+
+        assert!(
+            result,
+            "inject_app_credentials must return true when credential_dir/gh/hosts.yml exists, \
+             even when ws_path/.config/gh/hosts.yml does not"
+        );
+        let config_dir =
+            std::env::var("GH_CONFIG_DIR").expect("GH_CONFIG_DIR must be set after injection");
+        assert_eq!(
+            config_dir,
+            shared_gh_dir.to_str().unwrap(),
+            "GH_CONFIG_DIR must point to D-02 shared path <credential_dir>/gh, \
+             not workspace/.config/gh"
         );
 
         std::env::remove_var("GH_CONFIG_DIR");

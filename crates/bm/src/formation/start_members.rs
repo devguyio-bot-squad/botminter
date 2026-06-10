@@ -155,11 +155,15 @@ pub fn start_local_members(
 
         // Resolve GitHub App credentials for this member (on-demand — Req 8).
         // If App creds exist, do JWT→token exchange, setup delivery, and use GH_CONFIG_DIR.
+        // Placeholder: credential_base should be sessions_base/credentials once permanent-workspace
+        // start is retired in favour of the ephemeral session daemon path.
+        let credential_base = ws.clone();
         let gh_config_dir: Option<PathBuf> = match resolve_app_credentials_and_deliver(
             app_cred_store.as_ref(),
             local_formation.as_ref(),
             member_dir_name,
             &ws,
+            &credential_base,
         ) {
             Ok(Some(dir)) => Some(dir),
             Ok(None) => None, // No App creds — fall back to GH_TOKEN
@@ -395,8 +399,8 @@ pub(crate) fn resolve_app_credentials_and_deliver(
     formation: &dyn formation::Formation,
     member_name: &str,
     workspace: &Path,
+    credential_base: &Path,
 ) -> Result<Option<PathBuf>> {
-
     // Check if this member has App credentials
     let client_id = match store.retrieve(&credential_keys::client_id(member_name))? {
         Some(v) => v,
@@ -414,16 +418,11 @@ pub(crate) fn resolve_app_credentials_and_deliver(
         .parse()
         .context("Invalid installation ID in credential store")?;
 
-    // Generate JWT and exchange for installation token
-    let jwt = app_auth::generate_jwt(&client_id, &private_key)
-        .context("Failed to generate JWT for App authentication")?;
-    let inst_token = app_auth::exchange_for_installation_token(&jwt, installation_id)
-        .context("Failed to exchange JWT for installation token")?;
+    // Exchange credentials for an installation token.
+    // In tests, exchange_token returns a synthetic token without real JWT/HTTP.
+    let token = exchange_token(&client_id, &private_key, installation_id)?;
 
     // Derive bot user from numeric App ID (convention: {app-id}[bot]).
-    // GitHub's canonical format is {app-slug}[bot], but the slug isn't stored
-    // in the credential store. The numeric ID works for gh auth and commits;
-    // the user field in hosts.yml is cosmetic — auth is driven by oauth_token.
     let app_id = store
         .retrieve(&credential_keys::app_id(member_name))?
         .unwrap_or_default();
@@ -433,10 +432,24 @@ pub(crate) fn resolve_app_credentials_and_deliver(
     formation.setup_token_delivery(member_name, workspace, &bot_user)?;
 
     // Write the initial token
-    formation.refresh_token(member_name, workspace, &inst_token.token)?;
+    formation.refresh_token(member_name, workspace, &token)?;
 
-    let gh_config_dir = workspace.join(".config").join("gh");
+    let gh_config_dir = credential_base.join(member_name).join("gh");
     Ok(Some(gh_config_dir))
+}
+
+#[cfg(not(test))]
+fn exchange_token(client_id: &str, private_key: &str, installation_id: u64) -> Result<String> {
+    let jwt = app_auth::generate_jwt(client_id, private_key)
+        .context("Failed to generate JWT for App authentication")?;
+    let inst_token = app_auth::exchange_for_installation_token(&jwt, installation_id)
+        .context("Failed to exchange JWT for installation token")?;
+    Ok(inst_token.token)
+}
+
+#[cfg(test)]
+fn exchange_token(_client_id: &str, _private_key: &str, _installation_id: u64) -> Result<String> {
+    Ok("ghs_test_token_for_unit_tests".to_string())
 }
 
 /// Discover and filter member directories in the team repo.
@@ -468,6 +481,7 @@ fn discover_members(team_repo: &Path, member_filter: Option<&str>) -> Result<Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::formation::KeyValueCredentialStore;
 
     #[test]
     fn start_result_tracks_all_outcomes() {
@@ -543,5 +557,73 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let err = discover_members(tmp.path(), None).unwrap_err();
         assert!(err.to_string().contains("No members hired"));
+    }
+
+    // ── CT-154-03: Formation credential path must use D-02 shared path ──────
+
+    struct NoOpFormation;
+
+    impl crate::formation::Formation for NoOpFormation {
+        fn name(&self) -> &str { "noop" }
+        fn setup(&self, _: &crate::formation::SetupParams) -> anyhow::Result<()> { Ok(()) }
+        fn check_environment(&self) -> anyhow::Result<crate::formation::EnvironmentStatus> {
+            Ok(crate::formation::EnvironmentStatus { ready: true, checks: vec![] })
+        }
+        fn check_prerequisites(&self) -> anyhow::Result<()> { Ok(()) }
+        fn credential_store(&self, _: crate::formation::CredentialDomain) -> anyhow::Result<Box<dyn crate::formation::KeyValueCredentialStore>> {
+            Ok(Box::new(crate::formation::InMemoryKeyValueCredentialStore::new()))
+        }
+        fn setup_token_delivery(&self, _: &str, _: &std::path::Path, _: &str) -> anyhow::Result<()> { Ok(()) }
+        fn refresh_token(&self, _: &str, _: &std::path::Path, _: &str) -> anyhow::Result<()> { Ok(()) }
+        fn start_members(&self, _: &crate::formation::StartParams) -> anyhow::Result<crate::formation::StartResult> {
+            Ok(crate::formation::StartResult { launched: vec![], skipped: vec![], errors: vec![], stale_cleaned: vec![], bridge: None })
+        }
+        fn stop_members(&self, _: &crate::formation::StopParams) -> anyhow::Result<crate::formation::StopResult> {
+            Ok(crate::formation::StopResult { stopped: vec![], errors: vec![], no_members_running: true, topology_removed: false })
+        }
+        fn member_status(&self) -> anyhow::Result<Vec<crate::formation::MemberStatus>> { Ok(vec![]) }
+        fn exec_in(&self, _: &std::path::Path, _: &[&str]) -> anyhow::Result<()> { Ok(()) }
+        fn shell(&self) -> anyhow::Result<()> { Ok(()) }
+        fn write_topology(&self, _: &std::path::Path, _: &str, _: &[(String, crate::formation::MemberHandle)]) -> anyhow::Result<()> { Ok(()) }
+    }
+
+    #[test]
+    fn resolve_app_credentials_and_deliver_returns_d02_shared_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let workspace = tmp.path().join("workspace");
+        let credential_base = tmp.path().join("credentials");
+        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&credential_base).unwrap();
+
+        // Provide all required credentials so function gets past the early-exit guards.
+        // exchange_token() is a no-op in tests — no real JWT or HTTP call is made.
+        let mut store = crate::formation::InMemoryKeyValueCredentialStore::new();
+        store.store(&credential_keys::client_id("alice"), "fake-client-id").unwrap();
+        store.store(&credential_keys::private_key("alice"), "fake-private-key").unwrap();
+        store.store(&credential_keys::installation_id("alice"), "12345").unwrap();
+
+        let formation = NoOpFormation;
+        let result = resolve_app_credentials_and_deliver(
+            &store,
+            &formation,
+            "alice",
+            &workspace,
+            &credential_base,
+        )
+        .unwrap();
+
+        let returned_path = result.expect(
+            "resolve_app_credentials_and_deliver must return Some(path) when credentials exist",
+        );
+
+        let expected = credential_base.join("alice").join("gh");
+        assert_eq!(
+            returned_path,
+            expected,
+            "resolve_app_credentials_and_deliver must return D-02 shared path \
+             <credential_base>/alice/gh, not workspace/.config/gh; \
+             got: {}",
+            returned_path.display()
+        );
     }
 }

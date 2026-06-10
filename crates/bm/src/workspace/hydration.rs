@@ -418,8 +418,12 @@ impl CredentialWriter for AppCredentialWriter {
                 fs::create_dir_all(&gh_dir).with_context(|| {
                     format!("Failed to create credential gh dir {:?}", gh_dir)
                 })?;
-                fs::write(gh_dir.join("hosts.yml"), hosts_yml_content(&token))
-                    .with_context(|| format!("Failed to write hosts.yml to {:?}", gh_dir))?;
+                let hosts_yml = gh_dir.join("hosts.yml");
+                let tmp_path = gh_dir.join(".hosts.yml.tmp");
+                fs::write(&tmp_path, hosts_yml_content(&token))
+                    .with_context(|| format!("Failed to write temp hosts.yml to {:?}", tmp_path))?;
+                fs::rename(&tmp_path, &hosts_yml)
+                    .with_context(|| format!("Failed to atomically replace hosts.yml at {:?}", hosts_yml))?;
             }
             None => {
                 tracing::warn!(
@@ -1844,6 +1848,46 @@ mod tests {
         assert!(
             result.workspace_path.join(".botminter.workspace").exists(),
             ".botminter.workspace marker must exist in the hydrated workspace"
+        );
+    }
+
+    // ── CT-154-03: AppCredentialWriter must use atomic write ─────────────────
+
+    #[test]
+    fn app_credential_writer_overwrites_readonly_hosts_yml_atomically() {
+        let tmp = TempDir::new().unwrap();
+        let member_dir = tmp.path().join("alice");
+        let gh_dir = member_dir.join("gh");
+        fs::create_dir_all(&gh_dir).unwrap();
+
+        // Create an existing read-only hosts.yml in a writable directory.
+        // Atomic rename can replace a read-only file when the parent dir is writable.
+        // Non-atomic fs::write opens the file directly → EACCES on read-only.
+        let hosts_yml = gh_dir.join("hosts.yml");
+        fs::write(&hosts_yml, "github.com:\n    oauth_token: old_token\n").unwrap();
+        let mut perms = fs::metadata(&hosts_yml).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&hosts_yml, perms).unwrap();
+
+        let writer = AppCredentialWriter {
+            provider: std::sync::Arc::new(MockTokenProvider {
+                token: "new_token".to_string(),
+            }),
+        };
+
+        let result = writer.write_credentials(&member_dir);
+
+        // Restore write permission so TempDir cleanup can remove the file.
+        if let Ok(meta) = fs::metadata(&hosts_yml) {
+            let mut p = meta.permissions();
+            p.set_readonly(false);
+            let _ = fs::set_permissions(&hosts_yml, p);
+        }
+
+        assert!(
+            result.is_ok(),
+            "write_credentials must succeed even when existing hosts.yml is read-only; \
+             use atomic write (write to temp file + fs::rename) instead of fs::write"
         );
     }
 }
