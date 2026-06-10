@@ -343,6 +343,18 @@ fn credential_relay_fn(
             "hosts.yml must exist at {gh_config_dir} (credential relay must have written it, GAP-03)"
         );
 
+        let gh_api_out = std::process::Command::new("gh")
+            .args(["api", "user", "--jq", ".login"])
+            .env("GH_CONFIG_DIR", &gh_config_dir)
+            .output()
+            .expect("gh binary must be available in E2E test environment");
+        assert!(
+            gh_api_out.status.success(),
+            "gh api user must succeed using GH_CONFIG_DIR={gh_config_dir} \
+             (credential relay must write a valid App token, GAP-03 AC-09), stderr: {}",
+            String::from_utf8_lossy(&gh_api_out.stderr)
+        );
+
         env.command("bm").args(["stop", "-t", TEAM_NAME]).run();
     }
 }
