@@ -252,6 +252,7 @@ mod tests {
             agent_pid: Some(pid),
             workspace_path: Some(PathBuf::from("/tmp/workspace")),
             finalization_result: None,
+                finalization_agent_pid: None,
         };
         let id = record.session_id.clone();
         registry.register(record).unwrap();
@@ -579,6 +580,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/workspace")),
             finalization_result: None,
+                finalization_agent_pid: None,
         };
         let id = record.session_id.clone();
         registry.register(record).unwrap();
@@ -624,6 +626,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(ws.clone()),
             finalization_result: None,
+                finalization_agent_pid: None,
         };
         let id = record.session_id.clone();
         registry.register(record).unwrap();

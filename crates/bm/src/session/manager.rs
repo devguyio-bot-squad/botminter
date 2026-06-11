@@ -2,9 +2,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::dirty_state::{self, RepoDirtyState};
-use super::finalization::deactivation::{self, FinalizationOutcome};
-use crate::workspace::{push_with_rebase_retry, DEFAULT_MAX_RETRIES};
+use super::dirty_state::RepoDirtyState;
+use super::finalization::deactivation::{self, DEFAULT_MAX_RETRIES};
 use super::registry::SessionRegistry;
 use super::types::{SessionId, SessionRecord, SessionState, SessionType};
 use super::work_item_lock::WorkItemLock;
@@ -16,19 +15,19 @@ pub trait WorkspaceOps: Send + Sync {
     fn inspect_dirty_state(&self, workspace_path: &Path) -> Result<Vec<RepoDirtyState>>;
 }
 
+/// Result returned by `deactivate_session` — contains the updated session record
+/// and the dirty state snapshot taken after push attempts.
+pub struct DeactivationResult {
+    pub session_record: SessionRecord,
+    pub dirty_state: Vec<RepoDirtyState>,
+}
+
 /// Parameters for creating a new session.
 #[derive(Debug)]
 pub struct CreateSessionParams {
     pub member_name: String,
     pub session_type: SessionType,
     pub work_item_id: Option<String>,
-}
-
-/// Result of deactivating a session.
-#[derive(Debug)]
-pub struct DeactivateResult {
-    pub session_record: SessionRecord,
-    pub dirty_state: Vec<RepoDirtyState>,
 }
 
 /// Coordinates session lifecycle across the registry, workspace hydrator, and work-item lock.
@@ -81,6 +80,7 @@ impl<W: WorkspaceOps> SessionManager<W> {
             agent_pid: None,
             workspace_path: Some(workspace_path),
             finalization_result: None,
+            finalization_agent_pid: None,
         };
 
         self.registry.register(record)?;
@@ -100,92 +100,47 @@ impl<W: WorkspaceOps> SessionManager<W> {
             .collect()
     }
 
-    /// Deactivate a session: inspect dirty state, attempt finalization for
-    /// committable files, transition to Finalizing or Completed, and release
-    /// all work-item locks held by the session.
-    pub fn deactivate_session(&mut self, session_id: &SessionId) -> Result<DeactivateResult> {
-        let record = self
-            .registry
-            .get(session_id)
-            .ok_or_else(|| anyhow::anyhow!("Session {} not found", session_id))?;
+    /// Deactivate a session: inspect dirty state, push unpushed repos with
+    /// rebase-retry, re-inspect, transition state, and release locks.
+    ///
+    /// Push failures are non-fatal — the session still transitions to
+    /// Completed and the dirty state is returned so the caller can decide
+    /// whether to launch the finalization subagent.
+    pub fn deactivate_session(&mut self, session_id: &SessionId) -> Result<DeactivationResult> {
+        let record = self.registry.get(session_id)
+            .ok_or_else(|| anyhow::anyhow!("session {session_id} not found"))?;
+        let workspace_path = record.workspace_path.clone()
+            .ok_or_else(|| anyhow::anyhow!("session {session_id} has no workspace path"))?;
 
-        let workspace_path = record
-            .workspace_path
-            .clone()
-            .unwrap_or_default();
-
-        let dirty_state = self
-            .workspace_ops
-            .inspect_dirty_state(&workspace_path)
-            .unwrap_or_default();
-
-        let dirty_state = push_and_refresh_dirty(&workspace_path, &dirty_state);
-
-        let finalization =
-            deactivation::finalize_session(session_id, &workspace_path, &dirty_state);
-
-        let target_state = if matches!(finalization.outcome, FinalizationOutcome::Completed) {
-            SessionState::Finalizing
-        } else {
-            SessionState::Completed
-        };
-
-        self.registry
-            .update_state(session_id, target_state)?;
-
-        self.work_item_lock.release_all(session_id);
-
-        let session_record = self.registry.get(session_id).unwrap().clone();
-
-        Ok(DeactivateResult {
-            session_record,
-            dirty_state,
-        })
-    }
-}
-
-/// Pushes unpushed project repos and returns refreshed dirty state.
-///
-/// For each repo with unpushed branches, attempts `push_with_rebase_retry`.
-/// Push failures are non-fatal — the repo remains in the dirty list.
-/// After all push attempts, re-inspects workspace and returns updated state.
-fn push_and_refresh_dirty(
-    workspace_path: &Path,
-    dirty: &[RepoDirtyState],
-) -> Vec<RepoDirtyState> {
-    let projects_dir = workspace_path.join("projects");
-    let mut pushed = false;
-
-    for repo in dirty {
-        if repo.unpushed_branches.is_empty() {
-            continue;
+        // Push unpushed repos with rebase-retry (non-fatal on failure).
+        let initial_dirty = self.workspace_ops.inspect_dirty_state(&workspace_path)?;
+        for repo in &initial_dirty {
+            if repo.unpushed_branches.is_empty() {
+                continue;
+            }
+            let repo_path = if repo.repo_name == "team" {
+                workspace_path.join("team")
+            } else {
+                workspace_path.join("projects").join(&repo.repo_name)
+            };
+            let _ = deactivation::push_with_rebase_retry(&repo_path, DEFAULT_MAX_RETRIES);
         }
 
-        let repo_path = projects_dir.join(&repo.repo_name);
+        // Re-inspect dirty state after push attempts.
+        let dirty_state = self.workspace_ops.inspect_dirty_state(&workspace_path)?;
 
-        let branch = match std::process::Command::new("git")
-            .args(["rev-parse", "--abbrev-ref", "HEAD"])
-            .current_dir(&repo_path)
-            .output()
-        {
-            Ok(output) if output.status.success() => {
-                let b = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if b == "HEAD" {
-                    continue;
-                }
-                b
-            }
-            _ => continue,
-        };
+        // Release work-item locks held by this session.
+        self.work_item_lock.release_all(session_id);
 
-        let _ = push_with_rebase_retry(&repo_path, &branch, DEFAULT_MAX_RETRIES);
-        pushed = true;
-    }
+        // Transition to Completed — the caller (daemon deactivation watcher)
+        // examines dirty_state to decide whether to launch finalization.
+        self.registry.update_state(session_id, SessionState::Completed)?;
 
-    if pushed {
-        dirty_state::inspect_dirty_state(workspace_path).unwrap_or_default()
-    } else {
-        dirty.to_vec()
+        let updated = self.registry.get(session_id).unwrap().clone();
+        Ok(DeactivationResult {
+            session_record: updated,
+            dirty_state,
+        })
     }
 }
 
@@ -287,6 +242,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws")),
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
@@ -326,6 +282,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws")),
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
@@ -356,6 +313,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(active).unwrap();
         mgr.registry
@@ -374,6 +332,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(completed).unwrap();
         mgr.registry
@@ -395,6 +354,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(failed).unwrap();
         mgr.registry
@@ -416,6 +376,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(killed).unwrap();
         mgr.registry
@@ -437,6 +398,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(finalizing).unwrap();
         mgr.registry
@@ -458,6 +420,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(retained).unwrap();
         mgr.registry
@@ -493,6 +456,56 @@ mod tests {
         );
     }
 
+    // ---
+    // State transition invariants
+    // ---
+
+    #[test]
+    fn retained_to_finalizing_is_valid_transition() {
+        assert!(
+            SessionState::Retained.can_transition_to(&SessionState::Finalizing),
+            "Retained -> Finalizing must be valid to support re-trigger finalization"
+        );
+    }
+
+    #[test]
+    fn new_session_while_old_is_finalizing() {
+        let mut mgr = make_manager(vec![]);
+
+        let session_id = SessionId::new();
+        let record = SessionRecord {
+            session_id: session_id.clone(),
+            member_name: "alice".to_string(),
+            session_type: SessionType::Interactive,
+            current_state: SessionState::Creating,
+            created_at: chrono::Utc::now(),
+            state_transitioned_at: chrono::Utc::now(),
+            agent_pid: None,
+            workspace_path: Some(PathBuf::from("/tmp/ws1")),
+            finalization_result: None,
+            finalization_agent_pid: None,
+        };
+        mgr.registry.register(record).unwrap();
+        mgr.registry
+            .update_state(&session_id, SessionState::Active)
+            .unwrap();
+        mgr.registry
+            .update_state(&session_id, SessionState::Finalizing)
+            .unwrap();
+
+        let params = CreateSessionParams {
+            member_name: "alice".to_string(),
+            session_type: SessionType::Interactive,
+            work_item_id: None,
+        };
+        let result = mgr.create_session(params);
+
+        assert!(
+            result.is_ok(),
+            "new session must succeed when old session is Finalizing"
+        );
+    }
+
     #[test]
     fn deactivate_session_releases_work_item_locks() {
         let mut mgr = make_manager(vec![]);
@@ -508,6 +521,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws")),
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry
@@ -526,6 +540,44 @@ mod tests {
         mgr.work_item_lock
             .acquire("ISSUE-99", &other)
             .expect("work item lock must be released after session deactivation");
+    }
+
+    #[test]
+    fn new_session_while_old_is_failed() {
+        let mut mgr = make_manager(vec![]);
+
+        let session_id = SessionId::new();
+        let record = SessionRecord {
+            session_id: session_id.clone(),
+            member_name: "alice".to_string(),
+            session_type: SessionType::Loop,
+            current_state: SessionState::Creating,
+            created_at: chrono::Utc::now(),
+            state_transitioned_at: chrono::Utc::now(),
+            agent_pid: None,
+            workspace_path: Some(PathBuf::from("/tmp/ws1")),
+            finalization_result: None,
+            finalization_agent_pid: None,
+        };
+        mgr.registry.register(record).unwrap();
+        mgr.registry
+            .update_state(&session_id, SessionState::Active)
+            .unwrap();
+        mgr.registry
+            .update_state(&session_id, SessionState::Failed)
+            .unwrap();
+
+        let params = CreateSessionParams {
+            member_name: "alice".to_string(),
+            session_type: SessionType::Interactive,
+            work_item_id: None,
+        };
+        let result = mgr.create_session(params);
+
+        assert!(
+            result.is_ok(),
+            "new session must succeed when old session is Failed"
+        );
     }
 }
 
@@ -653,6 +705,7 @@ exit 1
             agent_pid: None,
             workspace_path: Some(mgr.workspace_ops.workspace_path.clone()),
             finalization_result: None,
+            finalization_agent_pid: None,
         };
         mgr.registry.register(record).unwrap();
         mgr.registry

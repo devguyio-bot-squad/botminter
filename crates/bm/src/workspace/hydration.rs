@@ -191,9 +191,39 @@ pub struct AssemblyConfig {
     pub skill_dirs: Vec<PathBuf>,
     /// Root directory under which per-member credential directories live.
     pub credential_base: PathBuf,
+    /// Project names within the team repo (e.g. "botminter") whose coding-agent
+    /// assets (agents, skills) are merged into the assembled .claude/ directory.
+    pub project_names: Vec<String>,
+    /// Team workspace root (e.g. `~/.botminter/workspaces/my-team`). Durable
+    /// member state lives at `<workspace_base>/member-state/<member>/`.
+    pub workspace_base: PathBuf,
+}
+
+impl AssemblyConfig {
+    /// Path to the durable member-state directory: `<workspace_base>/member-state/<member>`.
+    pub fn member_state_dir(&self) -> PathBuf {
+        self.workspace_base.join("member-state").join(&self.member_name)
+    }
 }
 
 // ── ConfigAssembler ─────────────────────────────────────────────────────────
+
+/// Merge each source directory (if it exists) into `dst` using `merge`.
+/// Creates `dst` lazily — only if at least one source is a directory.
+fn merge_sources_into(
+    sources: impl IntoIterator<Item = PathBuf>,
+    dst: &Path,
+    merge: fn(&Path, &Path) -> Result<()>,
+) -> Result<()> {
+    for src in sources {
+        if src.is_dir() {
+            fs::create_dir_all(dst)
+                .with_context(|| format!("Failed to create {}", dst.display()))?;
+            merge(&src, dst)?;
+        }
+    }
+    Ok(())
+}
 
 /// Populates a session workspace with CLAUDE.md, PROMPT.md, ralph.yml,
 /// .claude/agents/ references, .botminter.workspace marker, and skill directory
@@ -258,6 +288,22 @@ impl ConfigAssembler {
                     format!("Failed to copy ralph.yml from {}", ralph_src.display())
                 })?;
             }
+
+            // brain-prompt.md — optional; presence marks member as brain in ephemeral model
+            let brain_src = member_dir.join("brain-prompt.md");
+            if brain_src.exists() {
+                fs::copy(&brain_src, workspace.join("brain-prompt.md")).with_context(|| {
+                    format!("Failed to copy brain-prompt.md from {}", brain_src.display())
+                })?;
+            }
+        }
+
+        // dm-room.json — durable member state; persists discovered Matrix DM room across restarts
+        let dm_room_src = config.member_state_dir().join("dm-room.json");
+        if dm_room_src.exists() {
+            fs::copy(&dm_room_src, workspace.join("dm-room.json")).with_context(|| {
+                format!("Failed to copy dm-room.json from {}", dm_room_src.display())
+            })?;
         }
 
         // Write .botminter.workspace marker (idempotent: always overwrite).
@@ -277,7 +323,7 @@ impl ConfigAssembler {
         }
 
         // Assemble .claude/ directory from team coding-agent assets (non-fatal).
-        if let Err(e) = self.assemble_claude_dir(workspace) {
+        if let Err(e) = self.assemble_claude_dir(workspace, config) {
             warnings.push(format!(
                 ".claude/ assembly failed: {e} — coding-agent assets (agents, skills, settings) may be missing"
             ));
@@ -286,30 +332,66 @@ impl ConfigAssembler {
         Ok(warnings)
     }
 
-    fn assemble_claude_dir(&self, workspace: &Path) -> Result<()> {
+    /// Build `<team-repo>/projects/<p>/coding-agent/<subdir>` for each project name.
+    fn project_ca_dirs(&self, project_names: &[String], subdir: &str) -> Vec<PathBuf> {
+        project_names
+            .iter()
+            .map(|p| {
+                self.team_repo_path
+                    .join("projects")
+                    .join(p)
+                    .join("coding-agent")
+                    .join(subdir)
+            })
+            .collect()
+    }
+
+    fn assemble_claude_dir(&self, workspace: &Path, config: &AssemblyConfig) -> Result<()> {
         let claude_dir = workspace.join(".claude");
         fs::create_dir_all(&claude_dir).context("Failed to create .claude/")?;
 
-        let coding_agent = self.team_repo_path.join("coding-agent");
+        let team_ca = self.team_repo_path.join("coding-agent");
+        let member_ca = self
+            .team_repo_path
+            .join("members")
+            .join(&self.member_name)
+            .join("coding-agent");
 
-        let agents_src = coding_agent.join("agents");
-        if agents_src.is_dir() {
-            let agents_dst = claude_dir.join("agents");
-            fs::create_dir_all(&agents_dst).context("Failed to create .claude/agents/")?;
-            super::util::symlink_md_files(&agents_src, &agents_dst)?;
-        }
+        // Agents: team + project-level.
+        merge_sources_into(
+            std::iter::once(team_ca.join("agents"))
+                .chain(self.project_ca_dirs(&config.project_names, "agents")),
+            &claude_dir.join("agents"),
+            super::util::symlink_md_files,
+        )?;
 
-        let skills_src = coding_agent.join("skills");
-        if skills_src.is_dir() {
-            let skills_dst = claude_dir.join("skills");
-            fs::create_dir_all(&skills_dst).context("Failed to create .claude/skills/")?;
-            super::util::symlink_subdirs(&skills_src, &skills_dst)?;
-        }
+        // Skills: team + member + project-level.
+        merge_sources_into(
+            [team_ca.join("skills"), member_ca.join("skills")]
+                .into_iter()
+                .chain(self.project_ca_dirs(&config.project_names, "skills")),
+            &claude_dir.join("skills"),
+            super::util::symlink_subdirs,
+        )?;
 
-        let settings_src = coding_agent.join("settings.json");
+        // Commands: member-level only.
+        merge_sources_into(
+            std::iter::once(member_ca.join("commands")),
+            &claude_dir.join("commands"),
+            super::util::symlink_md_files,
+        )?;
+
+        // Settings: team-level settings.json, member-level settings.local.json.
+        let settings_src = team_ca.join("settings.json");
         if settings_src.exists() {
             fs::copy(&settings_src, claude_dir.join("settings.json"))
                 .context("Failed to copy settings.json")?;
+        }
+
+        let settings_local_src = member_ca.join("settings.local.json");
+        if settings_local_src.exists() {
+            fs::copy(&settings_local_src, claude_dir.join("settings.local.json"))
+                .context("Failed to copy settings.local.json")?;
         }
 
         Ok(())
@@ -317,6 +399,12 @@ impl ConfigAssembler {
 }
 
 // ── CredentialRelay ─────────────────────────────────────────────────────────
+
+/// Resolves a GitHub App installation token for a member.
+/// Injected into [`HydrationWorkspaceConfig`] so tests can mock keyring access.
+pub trait AppTokenProvider: Send + Sync + std::fmt::Debug {
+    fn resolve_token(&self, member_name: &str) -> Result<Option<String>>;
+}
 
 /// Writes credential files (hosts.yml) into a member's shared credential directory.
 pub trait CredentialWriter: Send + Sync {
@@ -330,6 +418,110 @@ impl CredentialWriter for NoOpCredentialWriter {
     fn write_credentials(&self, _member_dir: &Path) -> Result<()> {
         Ok(())
     }
+}
+
+fn hosts_yml_content(token: &str) -> String {
+    format!("github.com:\n    oauth_token: {token}\n    git_protocol: https\n")
+}
+
+/// Resolves a GitHub App token via an [`AppTokenProvider`] and writes `hosts.yml`
+/// to the member credential directory.
+pub struct AppCredentialWriter {
+    pub provider: std::sync::Arc<dyn AppTokenProvider>,
+}
+
+impl CredentialWriter for AppCredentialWriter {
+    fn write_credentials(&self, member_dir: &Path) -> Result<()> {
+        // member_dir is <credentials_base>/<member_name>; last component is the member name.
+        let member_name = member_dir
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| anyhow::anyhow!("Cannot derive member name from path {:?}", member_dir))?;
+
+        match self.provider.resolve_token(member_name)? {
+            Some(token) => {
+                let gh_dir = member_dir.join("gh");
+                fs::create_dir_all(&gh_dir).with_context(|| {
+                    format!("Failed to create credential gh dir {:?}", gh_dir)
+                })?;
+                let hosts_yml = gh_dir.join("hosts.yml");
+                let tmp_path = gh_dir.join(".hosts.yml.tmp");
+                fs::write(&tmp_path, hosts_yml_content(&token))
+                    .with_context(|| format!("Failed to write temp hosts.yml to {:?}", tmp_path))?;
+                fs::rename(&tmp_path, &hosts_yml)
+                    .with_context(|| format!("Failed to atomically replace hosts.yml at {:?}", hosts_yml))?;
+            }
+            None => {
+                tracing::warn!(
+                    "No token resolved for member '{}' — skipping hosts.yml write",
+                    member_name
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Production AppTokenProvider backed by a KeyValueCredentialStore.
+/// Reads client_id, private_key, and installation_id from the store and
+/// exchanges them for a GitHub App installation token.
+pub struct KeyringAppTokenProvider {
+    store: std::sync::Arc<dyn crate::formation::KeyValueCredentialStore + Send + Sync>,
+}
+
+impl std::fmt::Debug for KeyringAppTokenProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("KeyringAppTokenProvider").finish()
+    }
+}
+
+impl KeyringAppTokenProvider {
+    pub fn new(
+        store: std::sync::Arc<dyn crate::formation::KeyValueCredentialStore + Send + Sync>,
+    ) -> Self {
+        Self { store }
+    }
+}
+
+impl AppTokenProvider for KeyringAppTokenProvider {
+    fn resolve_token(&self, member_name: &str) -> Result<Option<String>> {
+        use crate::git::manifest_flow::credential_keys;
+
+        let client_id = match self.store.retrieve(&credential_keys::client_id(member_name))? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let private_key = match self.store.retrieve(&credential_keys::private_key(member_name))? {
+            Some(v) => v,
+            None => return Ok(None),
+        };
+        let installation_id_str =
+            match self.store.retrieve(&credential_keys::installation_id(member_name))? {
+                Some(v) => v,
+                None => return Ok(None),
+            };
+        let installation_id: u64 = installation_id_str
+            .parse()
+            .context("Invalid installation ID in credential store")?;
+
+        let token = exchange_token(&client_id, &private_key, installation_id)?;
+        Ok(Some(token))
+    }
+}
+
+#[cfg(not(test))]
+fn exchange_token(client_id: &str, private_key: &str, installation_id: u64) -> Result<String> {
+    use crate::git::app_auth;
+    let jwt = app_auth::generate_jwt(client_id, private_key)
+        .context("Failed to generate JWT for App authentication")?;
+    let inst_token = app_auth::exchange_for_installation_token(&jwt, installation_id)
+        .context("Failed to exchange JWT for installation token")?;
+    Ok(inst_token.token)
+}
+
+#[cfg(test)]
+fn exchange_token(_client_id: &str, _private_key: &str, _installation_id: u64) -> Result<String> {
+    Ok("ghs_test_token_for_unit_tests".to_string())
 }
 
 /// Manages per-member credential directories: writes credential files during
@@ -378,6 +570,16 @@ impl CredentialRelay {
     /// Write credentials (hosts.yml) to the shared credential directory for `member_name`.
     pub fn ensure_credentials(&self, member_name: &str) -> Result<()> {
         self.writer.write_credentials(&self.member_dir(member_name))
+    }
+
+    /// Return `<credentials_base>/<member>/gh` if a valid `hosts.yml` exists there.
+    pub fn gh_dir_for(&self, member_name: &str) -> Option<PathBuf> {
+        let gh_dir = self.member_dir(member_name).join("gh");
+        if gh_dir.join("hosts.yml").exists() {
+            Some(gh_dir)
+        } else {
+            None
+        }
     }
 }
 
@@ -576,6 +778,12 @@ pub struct HydrationWorkspaceConfig {
     pub workspace_base: PathBuf,
     pub project_number: Option<u64>,
     pub skill_dirs: Vec<PathBuf>,
+    /// Optional token provider — when set, `HydrationWorkspaceOps` MUST use it to resolve
+    /// a GitHub App token and write `hosts.yml` to `<credential_base>/<member>/`.
+    pub credential_resolver: Option<std::sync::Arc<dyn AppTokenProvider>>,
+    /// Project names within the team repo (e.g. "botminter") whose coding-agent
+    /// assets (agents, skills) are merged into the assembled .claude/ directory.
+    pub project_names: Vec<String>,
 }
 
 /// Production implementation of [`crate::session::manager::WorkspaceOps`]
@@ -588,7 +796,7 @@ pub struct HydrationWorkspaceOps {
     team_repo_branch: String,
     project_number: Option<u64>,
     skill_dirs: Vec<PathBuf>,
-    /// Team workspace root for resolving per-member App credential paths.
+    project_names: Vec<String>,
     workspace_base: PathBuf,
 }
 
@@ -596,7 +804,14 @@ impl HydrationWorkspaceOps {
     pub fn new(config: HydrationWorkspaceConfig) -> Self {
         let source = GitWorktreeSource::new(config.clones_dir, config.freshness_threshold);
         let assembler = ConfigAssembler::new(config.team_repo_path, String::new());
-        let relay = CredentialRelay::new(config.credential_base);
+        let relay = if let Some(provider) = config.credential_resolver {
+            CredentialRelay::with_writer(
+                config.credential_base,
+                Box::new(AppCredentialWriter { provider }),
+            )
+        } else {
+            CredentialRelay::new(config.credential_base)
+        };
         let hydrator = WorkspaceHydrator::new(source, assembler, relay, config.sessions_base);
 
         Self {
@@ -606,6 +821,7 @@ impl HydrationWorkspaceOps {
             team_repo_branch: config.team_repo_branch,
             project_number: config.project_number,
             skill_dirs: config.skill_dirs,
+            project_names: config.project_names,
             workspace_base: config.workspace_base,
         }
     }
@@ -614,21 +830,32 @@ impl HydrationWorkspaceOps {
         self.hydrator.teardown(session_id, member)
     }
 
+    /// Return the team repo path: `<workspace_base>/team`.
+    pub fn team_repo_path(&self) -> PathBuf {
+        self.workspace_base.join("team")
+    }
+
+    /// Return the team repo URL (remote URL, e.g. `https://github.com/org/repo.git`).
+    pub fn team_repo_url(&self) -> &str {
+        &self.team_repo_url
+    }
+
+    /// Return the durable member-state directory: `<workspace_base>/member-state/<member>`.
+    pub fn member_state_dir_for_member(&self, member_name: &str) -> PathBuf {
+        self.workspace_base.join("member-state").join(member_name)
+    }
+
     /// Return the GitHub App credential directory for `member_name` if it exists.
     ///
-    /// The path is `<workspace_base>/<member>/.config/gh` — set as `GH_CONFIG_DIR`
-    /// when launching ralph so it uses the member's App installation token.
+    /// The path is `<credential_base>/<member>/gh` (D-02 shared credential path) —
+    /// set as `GH_CONFIG_DIR` when launching ralph so it uses the member's App token.
     pub fn gh_config_dir_for_member(&self, member_name: &str) -> Option<PathBuf> {
-        let gh_dir = self
-            .workspace_base
-            .join(member_name)
-            .join(".config")
-            .join("gh");
-        if gh_dir.join("hosts.yml").exists() {
-            Some(gh_dir)
-        } else {
-            None
-        }
+        self.hydrator.credential_relay.gh_dir_for(member_name)
+    }
+
+    /// Refresh credentials for `member_name` by re-writing the credential directory.
+    pub fn ensure_credentials(&self, member_name: &str) -> anyhow::Result<()> {
+        self.hydrator.credential_relay.ensure_credentials(member_name)
     }
 }
 
@@ -642,6 +869,8 @@ impl crate::session::manager::WorkspaceOps for HydrationWorkspaceOps {
             project_number: self.project_number,
             skill_dirs: self.skill_dirs.clone(),
             credential_base: self.hydrator.credential_relay.credentials_base.clone(),
+            project_names: self.project_names.clone(),
+            workspace_base: self.workspace_base.clone(),
         };
 
         let refs: Vec<(&str, &str)> = self
@@ -667,6 +896,8 @@ impl crate::session::manager::WorkspaceOps for HydrationWorkspaceOps {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::formation::KeyValueCredentialStore;
+    use crate::session::manager::WorkspaceOps;
     use std::fs;
     use std::process::Command;
     use tempfile::TempDir;
@@ -729,6 +960,8 @@ mod tests {
             project_number: Some(42),
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         }
     }
 
@@ -894,6 +1127,8 @@ mod tests {
             project_number: None,
             skill_dirs: vec![nonexistent.clone()],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         let warnings = assembler.assemble(&workspace, &config).unwrap();
@@ -978,6 +1213,8 @@ mod tests {
             project_number: Some(42),
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         let warnings_first = assembler.assemble(&workspace, &config).unwrap();
@@ -1007,6 +1244,8 @@ mod tests {
             project_number: Some(42),
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1018,6 +1257,110 @@ mod tests {
             session_id,
             marker
         );
+    }
+
+    // ── brain-prompt.md assembly ─────────────────────────────────────────────
+
+    #[test]
+    fn assemble_copies_brain_prompt_when_present_in_team_member_dir() {
+        let tmp = TempDir::new().unwrap();
+        let member_dir = tmp.path().join("team/members/alice");
+        fs::create_dir_all(&member_dir).unwrap();
+        fs::write(member_dir.join("brain-prompt.md"), "# Brain Prompt").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(tmp.path().join("team"), "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join("brain-prompt.md").exists(),
+            "brain-prompt.md must be copied to session workspace when present in team member dir"
+        );
+        let content = fs::read_to_string(workspace.join("brain-prompt.md")).unwrap();
+        assert_eq!(content, "# Brain Prompt");
+    }
+
+    #[test]
+    fn assemble_skips_brain_prompt_when_absent_from_team_member_dir() {
+        let tmp = TempDir::new().unwrap();
+        let member_dir = tmp.path().join("team/members/alice");
+        fs::create_dir_all(&member_dir).unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(tmp.path().join("team"), "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            !workspace.join("brain-prompt.md").exists(),
+            "brain-prompt.md must not appear in session workspace when absent from team member dir"
+        );
+    }
+
+    // ── dm-room.json assembly ────────────────────────────────────────────────
+
+    #[test]
+    fn dm_room_json_copied_from_member_state_into_session_workspace() {
+        let tmp = TempDir::new().unwrap();
+        let member_state_dir = tmp.path().join("member-state/alice");
+        fs::create_dir_all(&member_state_dir).unwrap();
+        fs::write(
+            member_state_dir.join("dm-room.json"),
+            r#"{"room_id":"!abc123:example.com"}"#,
+        )
+        .unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(tmp.path().join("team"), "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join("dm-room.json").exists(),
+            "dm-room.json must be copied to session workspace when present at member state path"
+        );
+        let content = fs::read_to_string(workspace.join("dm-room.json")).unwrap();
+        assert_eq!(content, r#"{"room_id":"!abc123:example.com"}"#);
     }
 
     // ── AC-08: .claude/ assembly ─────────────────────────────────────────────
@@ -1042,6 +1385,8 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1080,6 +1425,8 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1115,6 +1462,8 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         assembler.assemble(&workspace, &config).unwrap();
@@ -1143,6 +1492,8 @@ mod tests {
             project_number: None,
             skill_dirs: vec![],
             credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
         };
 
         let result = assembler.assemble(&workspace, &config);
@@ -1156,6 +1507,81 @@ mod tests {
         );
     }
 
+    // ── AC-08: Member-level .claude/ assembly ───────────────────────────────
+
+    #[test]
+    fn assemble_includes_member_level_skill_in_claude_skills_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        let member_skill_src = team.join("members/alice/coding-agent/skills/story-mgmt");
+        fs::create_dir_all(&member_skill_src).unwrap();
+        fs::write(member_skill_src.join("SKILL.md"), "# Story Mgmt").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/skills/story-mgmt").exists(),
+            ".claude/skills/story-mgmt must be present — member-level skill must be assembled \
+             from team/members/alice/coding-agent/skills/"
+        );
+    }
+
+    #[test]
+    fn assemble_merges_team_and_member_skills_in_claude_skills_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        let team_skill_src = team.join("coding-agent/skills/ro-loop");
+        fs::create_dir_all(&team_skill_src).unwrap();
+        fs::write(team_skill_src.join("SKILL.md"), "# ro-loop").unwrap();
+        let member_skill_src = team.join("members/alice/coding-agent/skills/story-mgmt");
+        fs::create_dir_all(&member_skill_src).unwrap();
+        fs::write(member_skill_src.join("SKILL.md"), "# story-mgmt").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/skills/ro-loop").exists(),
+            ".claude/skills/ro-loop must be present — team-level skill"
+        );
+        assert!(
+            workspace.join(".claude/skills/story-mgmt").exists(),
+            ".claude/skills/story-mgmt must be present — member-level skill must be assembled \
+             alongside team-level skills"
+        );
+    }
+
     // ── AC-09: Credential write-path ─────────────────────────────────────────
 
     struct TestCredentialWriter {
@@ -1165,11 +1591,7 @@ mod tests {
     impl CredentialWriter for TestCredentialWriter {
         fn write_credentials(&self, member_dir: &Path) -> Result<()> {
             fs::create_dir_all(member_dir)?;
-            let hosts_content = format!(
-                "github.com:\n    oauth_token: {}\n    git_protocol: https\n",
-                self.token
-            );
-            fs::write(member_dir.join("hosts.yml"), &hosts_content)?;
+            fs::write(member_dir.join("hosts.yml"), super::hosts_yml_content(&self.token))?;
             Ok(())
         }
     }
@@ -1278,6 +1700,61 @@ mod tests {
         );
     }
 
+    // ── AC-09: Production wiring — HydrationWorkspaceOps ────────────────────
+
+    #[derive(Debug)]
+    struct MockTokenProvider {
+        token: String,
+    }
+
+    impl AppTokenProvider for MockTokenProvider {
+        fn resolve_token(&self, _member_name: &str) -> Result<Option<String>> {
+            Ok(Some(self.token.clone()))
+        }
+    }
+
+    #[test]
+    fn workspace_ops_writes_hosts_yml_when_token_provider_resolves_token() {
+        let tmp = TempDir::new().unwrap();
+        let repo = init_bare_repo(&tmp, "project");
+        let creds_base = tmp.path().join("credentials");
+
+        let config = HydrationWorkspaceConfig {
+            clones_dir: tmp.path().join("clones"),
+            sessions_base: tmp.path().join("sessions"),
+            team_repo_path: tmp.path().join("team"),
+            credential_base: creds_base.clone(),
+            freshness_threshold: Duration::from_secs(300),
+            repo_urls: vec![(
+                repo.to_str().unwrap().to_string(),
+                "project".to_string(),
+            )],
+            team_repo_url: repo.to_str().unwrap().to_string(),
+            team_repo_branch: "main".to_string(),
+            workspace_base: tmp.path().join("workspace"),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_resolver: Some(std::sync::Arc::new(MockTokenProvider {
+                token: "ghs_test_token_abc123".to_string(),
+            })),
+            project_names: vec![],
+        };
+
+        let ops = HydrationWorkspaceOps::new(config);
+        let session_id = SessionId::new();
+        ops.hydrate_workspace(&session_id, "alice").unwrap();
+
+        // When a token provider resolves a token, the production HydrationWorkspaceOps
+        // MUST write hosts.yml to <credential_base>/<member>/gh/hosts.yml (D-02 shared path).
+        let hosts_yml = creds_base.join("alice").join("gh").join("hosts.yml");
+        assert!(
+            hosts_yml.exists(),
+            "hosts.yml must exist at <credential_base>/alice/gh/hosts.yml after \
+             hydrate_workspace() when the token provider resolves a token — \
+             NoOpCredentialWriter was used instead of AppCredentialWriter"
+        );
+    }
+
     // ── Deprovision removes directory ────────────────────────────────────────
 
     #[test]
@@ -1300,6 +1777,277 @@ mod tests {
         assert!(
             !target.exists(),
             "workspace directory must be removed after deprovision"
+        );
+    }
+
+    // ── AC-09: Shared credential path (D-02) ────────────────────────────────
+
+    #[test]
+    fn gh_config_dir_for_member_returns_shared_credential_path() {
+        let tmp = TempDir::new().unwrap();
+        let creds_base = tmp.path().join("credentials");
+
+        // Place hosts.yml at the D-02 shared path: <creds_base>/alice/gh/hosts.yml
+        let shared_gh_dir = creds_base.join("alice").join("gh");
+        fs::create_dir_all(&shared_gh_dir).unwrap();
+        fs::write(
+            shared_gh_dir.join("hosts.yml"),
+            "github.com:\n  oauth_token: test\n",
+        )
+        .unwrap();
+
+        let config = HydrationWorkspaceConfig {
+            clones_dir: tmp.path().join("clones"),
+            sessions_base: tmp.path().join("sessions"),
+            team_repo_path: tmp.path().join("team"),
+            credential_base: creds_base.clone(),
+            freshness_threshold: Duration::from_secs(300),
+            repo_urls: vec![],
+            team_repo_url: String::new(),
+            team_repo_branch: "main".to_string(),
+            workspace_base: tmp.path().join("workspace"),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_resolver: None,
+            project_names: vec![],
+        };
+        let ops = HydrationWorkspaceOps::new(config);
+
+        let result = ops.gh_config_dir_for_member("alice");
+
+        assert_eq!(
+            result,
+            Some(shared_gh_dir),
+            "gh_config_dir_for_member must return the D-02 shared path \
+             <credential_base>/alice/gh, not workspace_base/alice/.config/gh"
+        );
+    }
+
+    #[test]
+    fn hydrate_session_writes_hosts_yml_to_gh_subdir_of_shared_credential_path() {
+        let tmp = TempDir::new().unwrap();
+        let repo = init_bare_repo(&tmp, "project");
+        let creds_base = tmp.path().join("credentials");
+
+        let config = HydrationWorkspaceConfig {
+            clones_dir: tmp.path().join("clones"),
+            sessions_base: tmp.path().join("sessions"),
+            team_repo_path: tmp.path().join("team"),
+            credential_base: creds_base.clone(),
+            freshness_threshold: Duration::from_secs(300),
+            repo_urls: vec![(
+                repo.to_str().unwrap().to_string(),
+                "project".to_string(),
+            )],
+            team_repo_url: repo.to_str().unwrap().to_string(),
+            team_repo_branch: "main".to_string(),
+            workspace_base: tmp.path().join("workspace"),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_resolver: Some(std::sync::Arc::new(MockTokenProvider {
+                token: "ghs_test_token".to_string(),
+            })),
+            project_names: vec![],
+        };
+        let ops = HydrationWorkspaceOps::new(config);
+        let session_id = SessionId::new();
+        ops.hydrate_workspace(&session_id, "alice").unwrap();
+
+        // D-02 path requires a gh/ subdirectory: <credential_base>/alice/gh/hosts.yml
+        let expected = creds_base.join("alice").join("gh").join("hosts.yml");
+        assert!(
+            expected.exists(),
+            "hosts.yml MUST be written to <credential_base>/alice/gh/hosts.yml \
+             (D-02 shared path with gh/ subdir), not <credential_base>/alice/hosts.yml; \
+             AppCredentialWriter must create the gh/ subdirectory"
+        );
+    }
+
+    // ── AC-08: Project-level .claude/ assembly ───────────────────────────────
+
+    #[test]
+    fn assemble_merges_project_level_agents_into_claude_agents_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        // Project-level agent at team/projects/botminter/coding-agent/agents/pr-review.md
+        let project_agent_src = team.join("projects/botminter/coding-agent/agents");
+        fs::create_dir_all(&project_agent_src).unwrap();
+        fs::write(project_agent_src.join("pr-review.md"), "# PR Review").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec!["botminter".to_string()],
+            workspace_base: tmp.path().to_path_buf(),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/agents/pr-review.md").exists(),
+            ".claude/agents/pr-review.md must exist — project-level agent from \
+             team/projects/botminter/coding-agent/agents/ must be merged into .claude/agents/"
+        );
+    }
+
+    #[test]
+    fn assemble_merges_project_level_skills_into_claude_skills_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        // Project-level skill at team/projects/botminter/coding-agent/skills/code-review/
+        let project_skill_src = team.join("projects/botminter/coding-agent/skills/code-review");
+        fs::create_dir_all(&project_skill_src).unwrap();
+        fs::write(project_skill_src.join("SKILL.md"), "# Code Review").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec!["botminter".to_string()],
+            workspace_base: tmp.path().to_path_buf(),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/skills/code-review").exists(),
+            ".claude/skills/code-review must exist — project-level skill from \
+             team/projects/botminter/coding-agent/skills/ must be merged into .claude/skills/"
+        );
+    }
+
+    #[test]
+    fn assemble_creates_claude_commands_from_member_coding_agent() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        // Member-level command at team/members/alice/coding-agent/commands/my-cmd.md
+        let member_cmds_src = team.join("members/alice/coding-agent/commands");
+        fs::create_dir_all(&member_cmds_src).unwrap();
+        fs::write(member_cmds_src.join("my-cmd.md"), "# My Command").unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/commands/my-cmd.md").exists(),
+            ".claude/commands/my-cmd.md must exist — member-level command from \
+             team/members/alice/coding-agent/commands/ must be assembled into .claude/commands/"
+        );
+    }
+
+    #[test]
+    fn assemble_copies_member_settings_local_json_into_claude_dir() {
+        let tmp = TempDir::new().unwrap();
+        let team = tmp.path().join("team");
+        // Member-level settings.local.json at team/members/alice/coding-agent/settings.local.json
+        let member_coding_agent = team.join("members/alice/coding-agent");
+        fs::create_dir_all(&member_coding_agent).unwrap();
+        fs::write(
+            member_coding_agent.join("settings.local.json"),
+            r#"{"permissions": {"allow": ["Bash"]}}"#,
+        )
+        .unwrap();
+
+        let workspace = tmp.path().join("ws");
+        fs::create_dir_all(&workspace).unwrap();
+        let assembler = ConfigAssembler::new(team, "alice".to_string());
+        let session_id = SessionId::new();
+        let config = AssemblyConfig {
+            session_id,
+            member_name: "alice".to_string(),
+            team_repo_url: "https://example.com/team.git".to_string(),
+            team_repo_branch: "main".to_string(),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_base: tmp.path().join("credentials"),
+            project_names: vec![],
+            workspace_base: tmp.path().to_path_buf(),
+        };
+
+        assembler.assemble(&workspace, &config).unwrap();
+
+        assert!(
+            workspace.join(".claude/settings.local.json").exists(),
+            ".claude/settings.local.json must exist — member-level settings.local.json from \
+             team/members/alice/coding-agent/settings.local.json must be copied into .claude/"
+        );
+    }
+
+    // ── AC-08: Production wiring — project_names flows through HydrationWorkspaceOps ──
+
+    #[test]
+    fn hydrate_workspace_includes_project_level_agents_when_project_names_configured() {
+        let tmp = TempDir::new().unwrap();
+        let repo = init_bare_repo(&tmp, "project");
+
+        // Set up team repo with a project-level coding-agent agent.
+        let team = tmp.path().join("team");
+        let project_agent_src = team.join("projects/botminter/coding-agent/agents");
+        fs::create_dir_all(&project_agent_src).unwrap();
+        fs::write(project_agent_src.join("pr-review.md"), "# PR Review").unwrap();
+
+        let config = HydrationWorkspaceConfig {
+            clones_dir: tmp.path().join("clones"),
+            sessions_base: tmp.path().join("sessions"),
+            team_repo_path: team,
+            credential_base: tmp.path().join("credentials"),
+            freshness_threshold: Duration::from_secs(300),
+            repo_urls: vec![(repo.to_str().unwrap().to_string(), "project".to_string())],
+            team_repo_url: repo.to_str().unwrap().to_string(),
+            team_repo_branch: "main".to_string(),
+            workspace_base: tmp.path().join("workspace"),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_resolver: None,
+            project_names: vec!["botminter".to_string()],
+        };
+
+        let ops = HydrationWorkspaceOps::new(config);
+        let session_id = SessionId::new();
+        ops.hydrate_workspace(&session_id, "alice").unwrap();
+
+        // The assembled workspace must include the project-level agent.
+        // FAILS: hydrate_workspace() hardcodes project_names: vec![] in AssemblyConfig,
+        // ignoring the project_names stored in HydrationWorkspaceOps.
+        let ws = tmp.path().join("sessions").join("alice").join(session_id.as_str());
+        assert!(
+            ws.join(".claude/agents/pr-review.md").exists(),
+            ".claude/agents/pr-review.md must exist — project_names in \
+             HydrationWorkspaceConfig must be passed through hydrate_workspace() \
+             to AssemblyConfig; currently hydrate_workspace() hardcodes \
+             project_names: vec![] so project-level agents are never assembled"
         );
     }
 
@@ -1330,6 +2078,111 @@ mod tests {
         assert!(
             result.workspace_path.join(".botminter.workspace").exists(),
             ".botminter.workspace marker must exist in the hydrated workspace"
+        );
+    }
+
+    // ── CT-154-03: AppCredentialWriter must use atomic write ─────────────────
+
+    #[test]
+    fn app_credential_writer_overwrites_readonly_hosts_yml_atomically() {
+        let tmp = TempDir::new().unwrap();
+        let member_dir = tmp.path().join("alice");
+        let gh_dir = member_dir.join("gh");
+        fs::create_dir_all(&gh_dir).unwrap();
+
+        // Create an existing read-only hosts.yml in a writable directory.
+        // Atomic rename can replace a read-only file when the parent dir is writable.
+        // Non-atomic fs::write opens the file directly → EACCES on read-only.
+        let hosts_yml = gh_dir.join("hosts.yml");
+        fs::write(&hosts_yml, "github.com:\n    oauth_token: old_token\n").unwrap();
+        let mut perms = fs::metadata(&hosts_yml).unwrap().permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(&hosts_yml, perms).unwrap();
+
+        let writer = AppCredentialWriter {
+            provider: std::sync::Arc::new(MockTokenProvider {
+                token: "new_token".to_string(),
+            }),
+        };
+
+        let result = writer.write_credentials(&member_dir);
+
+        // Restore write permission so TempDir cleanup can remove the file.
+        if let Ok(meta) = fs::metadata(&hosts_yml) {
+            let mut p = meta.permissions();
+            p.set_readonly(false);
+            let _ = fs::set_permissions(&hosts_yml, p);
+        }
+
+        assert!(
+            result.is_ok(),
+            "write_credentials must succeed even when existing hosts.yml is read-only; \
+             use atomic write (write to temp file + fs::rename) instead of fs::write"
+        );
+    }
+
+    #[test]
+    fn keyring_token_provider_resolves_token_when_credentials_are_wired() {
+        use crate::formation::InMemoryKeyValueCredentialStore;
+        use crate::git::manifest_flow::credential_keys;
+
+        let store = std::sync::Arc::new(InMemoryKeyValueCredentialStore::new());
+        store.store(&credential_keys::client_id("alice"), "fake-client-id").unwrap();
+        store.store(&credential_keys::private_key("alice"), "fake-private-key").unwrap();
+        store.store(&credential_keys::installation_id("alice"), "12345").unwrap();
+
+        let provider = KeyringAppTokenProvider::new(store);
+        let token = provider.resolve_token("alice").unwrap();
+
+        assert!(
+            token.is_some(),
+            "KeyringAppTokenProvider::resolve_token must return Some(token) when the credential \
+             store has client_id, private_key, and installation_id for the member — got None"
+        );
+    }
+
+    #[test]
+    fn hydration_with_keyring_provider_writes_hosts_yml_at_d02_path() {
+        use crate::formation::InMemoryKeyValueCredentialStore;
+        use crate::git::manifest_flow::credential_keys;
+
+        let tmp = TempDir::new().unwrap();
+        let repo = init_bare_repo(&tmp, "project");
+        let creds_base = tmp.path().join("credentials");
+
+        let store = std::sync::Arc::new(InMemoryKeyValueCredentialStore::new());
+        store.store(&credential_keys::client_id("alice"), "fake-client-id").unwrap();
+        store.store(&credential_keys::private_key("alice"), "fake-private-key").unwrap();
+        store.store(&credential_keys::installation_id("alice"), "12345").unwrap();
+
+        let config = HydrationWorkspaceConfig {
+            clones_dir: tmp.path().join("clones"),
+            sessions_base: tmp.path().join("sessions"),
+            team_repo_path: tmp.path().join("team"),
+            credential_base: creds_base.clone(),
+            freshness_threshold: Duration::from_secs(300),
+            repo_urls: vec![(
+                repo.to_str().unwrap().to_string(),
+                "project".to_string(),
+            )],
+            team_repo_url: repo.to_str().unwrap().to_string(),
+            team_repo_branch: "main".to_string(),
+            workspace_base: tmp.path().join("workspace"),
+            project_number: None,
+            skill_dirs: vec![],
+            credential_resolver: Some(std::sync::Arc::new(KeyringAppTokenProvider::new(store))),
+            project_names: vec![],
+        };
+
+        let ops = HydrationWorkspaceOps::new(config);
+        let session_id = SessionId::new();
+        ops.hydrate_workspace(&session_id, "alice").unwrap();
+
+        let hosts_yml = creds_base.join("alice").join("gh").join("hosts.yml");
+        assert!(
+            hosts_yml.exists(),
+            "hosts.yml must be written to <credential_base>/alice/gh/hosts.yml when \
+             KeyringAppTokenProvider is used as credential_resolver and store has credentials"
         );
     }
 }

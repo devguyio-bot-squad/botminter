@@ -7,7 +7,8 @@ use clap::Parser;
 use bm::agent_cli::{AgentCli, AgentCommand, ClaudeCommand, ClaudeHookCommand, InboxCommand, InboxFormat, LockCommand, LoopCommand};
 use bm::daemon::sessions_api::{AcquireLockResponse, ReleaseLockResponse};
 use bm::brain::inbox;
-use bm::daemon::{DaemonClient, StartLoopRequest};
+use bm::daemon::DaemonClient;
+use bm::daemon::sessions_api::StartSessionRequest;
 
 fn main() {
     let cli = AgentCli::parse();
@@ -73,21 +74,25 @@ fn connect_daemon() -> anyhow::Result<DaemonClient> {
 
 fn run_loop(command: LoopCommand) -> anyhow::Result<()> {
     match command {
-        LoopCommand::Start { prompt, member } => {
+        LoopCommand::Start { prompt: _, member } => {
             let client = connect_daemon()?;
-            let req = StartLoopRequest { prompt, member };
-            let resp = client.start_loop(&req)?;
+            let member_name = member.ok_or_else(|| {
+                anyhow::anyhow!("--member is required in the ephemeral sessions model")
+            })?;
+            let req = StartSessionRequest {
+                member_name,
+                session_type: "Loop".to_string(),
+                work_item_id: None,
+            };
+            let resp = client.start_session(&req)?;
 
             if resp.ok {
-                if let Some(pid) = resp.pid {
-                    eprintln!("Loop started (PID {})", pid);
-                }
-                if let Some(ref loop_id) = resp.loop_id {
-                    println!("{}", loop_id);
-                }
+                let session_id = resp.session_id.as_deref().unwrap_or("unknown");
+                eprintln!("Loop session started (ID {})", session_id);
+                println!("{}", session_id);
             } else {
                 let err = resp.error.unwrap_or_else(|| "unknown error".to_string());
-                anyhow::bail!("Failed to start loop: {}", err);
+                anyhow::bail!("Failed to start loop session: {}", err);
             }
 
             Ok(())

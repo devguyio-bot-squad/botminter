@@ -6,8 +6,13 @@ use libc;
 
 use crate::session::types::{SessionId, SessionState};
 
-/// Production timeout ceiling for finalization subagent watcher (120 seconds).
-pub const FINALIZATION_TIMEOUT_SECS: u64 = 120;
+/// Production timeout ceiling for finalization subagent watcher (160 seconds).
+///
+/// The finalization agent makes 2-3 LLM API turns (inspect repos, push branches).
+/// With Vertex AI latency up to 36s/turn, 3 turns = 108s + 10s startup = 118s.
+/// 160s gives 42s of margin, while still leaving 18s before D22's 180s polling window closes
+/// (accounting for 10s SIGKILL grace + 2s inspect/spawn overhead).
+pub const FINALIZATION_TIMEOUT_SECS: u64 = 160;
 
 /// Wait for a spawned finalization child to exit, then call `on_state_change` with the result.
 ///
@@ -233,6 +238,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+                finalization_agent_pid: None,
         };
         registry.register(record).unwrap();
         registry.update_state(&session_id, SessionState::Active).unwrap();
@@ -318,11 +324,13 @@ mod tests {
     }
 
     #[test]
-    fn production_finalization_timeout_is_120s() {
+    fn production_finalization_timeout_is_160s() {
         assert_eq!(
             FINALIZATION_TIMEOUT_SECS,
-            120,
-            "production finalization timeout ceiling must be 120s"
+            160,
+            "production finalization timeout must be 160s — enough for 3 LLM turns at \
+             36s each (Vertex AI worst case) plus startup and git push overhead, \
+             while still fitting within D22's 180s polling window"
         );
     }
 }

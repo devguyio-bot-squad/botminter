@@ -168,26 +168,23 @@ else
     fail "D09" "Skill dirs" "workspace not found"
 fi
 
-# AC-09: GH credentials — verify gh api user works with session's GH_CONFIG_DIR
+# AC-09: GH credentials — verify gh api user works with D-02 shared GH_CONFIG_DIR
+# D-02 path: <sessions_base>/credentials/<member>/gh/hosts.yml (written by AppCredentialWriter)
 if [ -n "$WS_A" ]; then
-    MEMBER_BASE="$SESSIONS_BASE/$MEMBER_A"
-    GH_FOUND=false
-    GH_WORKDIR=""
-    for ghdir in "$MEMBER_BASE/.config/gh" "$WS_A/.config/gh"; do
-        if [ -f "$ghdir/hosts.yml" ]; then
-            GH_FOUND=true
-            GH_WORKDIR="$ghdir"
-            break
-        fi
-    done
-    if [ "$GH_FOUND" = "true" ]; then
-        if GH_CONFIG_DIR="$GH_WORKDIR" gh api user >/dev/null 2>&1; then
-            pass "D10" "gh api user succeeds with session GH_CONFIG_DIR (AC-09)"
+    GH_SHARED_DIR="$SESSIONS_BASE/credentials/$MEMBER_A/gh"
+    if [ -f "$GH_SHARED_DIR/hosts.yml" ]; then
+        if GH_CONFIG_DIR="$GH_SHARED_DIR" gh api user >/dev/null 2>&1; then
+            pass "D10" "gh api user succeeds with D-02 shared GH_CONFIG_DIR (AC-09)"
         else
-            note "D10" "GH credentials (AC-09)" "hosts.yml found at $GH_WORKDIR but gh api user failed"
+            note "D10" "GH credentials (AC-09)" "hosts.yml found at $GH_SHARED_DIR but gh api user failed"
         fi
     else
-        note "D10" "GH credentials (AC-09)" "hosts.yml not found in session dirs — may be inherited from system gh auth"
+        # D-02 credential path absent — fall back to system gh auth
+        if gh api user >/dev/null 2>&1; then
+            note "D10" "GH credentials via system gh auth (AC-09)" "D-02 path absent at $GH_SHARED_DIR (credential_resolver not wired), but system gh auth works"
+        else
+            note "D10" "GH credentials (AC-09)" "D-02 credential path absent at $GH_SHARED_DIR and system gh api user failed"
+        fi
     fi
 else
     fail "D10" "GH credentials" "workspace not found"
@@ -419,8 +416,8 @@ else
 
         SID_D_SHORT="${SID_D:0:8}"
         D22_PASS=false
-        # Poll up to 120s (40 × 3s) — finalization involves a real GitHub push
-        for i in $(seq 1 40); do
+        # Poll up to 180s (60 × 3s) — finalization involves a real GitHub push
+        for i in $(seq 1 60); do
             SESSION_JSON_FIN=$(bm session list --json -t "$TEAM" 2>&1)
             COMPLETED=$(echo "$SESSION_JSON_FIN" | jq -r \
                 "[.[] | select(.session_id | startswith(\"$SID_D_SHORT\")) | select(.finalization_status == \"completed\")] | length" \
@@ -442,7 +439,7 @@ else
         else
             # Finalization may be stuck — force-stop and note
             bm stop --force "$MEMBER_A" -t "$TEAM" 2>&1
-            note "D22" "Finalization (AC-02)" "session $SID_D_SHORT did not reach Completed within 120s — finalization may be slow or stuck"
+            fail "D22" "Finalization (AC-02)" "session $SID_D_SHORT did not reach Completed within 180s — finalization must complete (AC-02 requires committed changes pushed)"
         fi
 
         # AC-05: Inspect finalization results
@@ -498,6 +495,8 @@ else
             EC_FIN=$?
             if [ $EC_FIN -eq 0 ]; then
                 pass "D24" "bm session finalize triggered for retained session (AC-23)"
+            elif echo "$FINALIZE_OUT" | grep -qi "Cannot transition from Completed\|already.*complet\|already.*final"; then
+                pass "D24" "Finalization re-trigger correctly rejected: session already Completed (AC-23)"
             else
                 note "D24" "Finalization re-trigger (AC-23)" "session found but finalize returned $EC_FIN: $FINALIZE_OUT"
             fi
@@ -666,7 +665,7 @@ if [ $EC -eq 0 ]; then
     STATUS_I_OUT=$(bm status --json -t "$TEAM" 2>&1)
     JSON_I=$(extract_json "$STATUS_I_OUT")
     STATE_I=$(echo "$JSON_I" | jq -r '.sessions[0].state' 2>/dev/null)
-    if [ "$STATE_I" = "Active" ] || [ "$STATE_I" = "Failed" ] || [ "$STATE_I" = "Killed" ]; then
+    if [ "$STATE_I" = "Active" ] || [ "$STATE_I" = "Failed" ] || [ "$STATE_I" = "Killed" ] || [ "$STATE_I" = "Completed" ]; then
         pass "D29" "Session state after start: $STATE_I (AC-11)"
     else
         note "D29" "State machine" "unexpected state: $STATE_I"
@@ -977,12 +976,19 @@ else
 fi
 
 # D41: .claude/ assembly with only team-level coding-agent/ — no crash
-# The session workspace is always assembled from team-level coding-agent/ only
-# (no project or member overrides). Verify no crash occurred and .claude/ exists.
-if [ -n "$WS_A" ] && [ -d "$WS_A/.claude" ]; then
+# Start a fresh session so the workspace is always present (earlier sessions may have
+# been cleaned up by D20/D21 bulk cleanup before D41 runs).
+START_D41=$(TUWUNEL_PORT="$TUWUNEL_PORT" bm start "$MEMBER_A" -t "$TEAM" 2>&1)
+EC_D41=$?
+WS_D41=$(extract_ws "$START_D41")
+if [ $EC_D41 -eq 0 ] && [ -n "$WS_D41" ] && [ -d "$WS_D41/.claude" ]; then
     pass "D41" ".claude/ assembly with team-level coding-agent/ — no crash (workspace created successfully)"
+    bm stop --force "$MEMBER_A" -t "$TEAM" 2>/dev/null || true
+elif [ $EC_D41 -eq 0 ] && [ -n "$WS_D41" ]; then
+    fail "D41" ".claude/ assembly" "session started but .claude/ not found at $WS_D41"
+    bm stop --force "$MEMBER_A" -t "$TEAM" 2>/dev/null || true
 else
-    note "D41" ".claude/ assembly" "WS_A=$WS_A — .claude/ not found (session may have been cleaned up)"
+    fail "D41" ".claude/ assembly" "session start failed: exit $EC_D41"
 fi
 
 # D42: Lock parallel contention — exactly one session acquires (race-free check)

@@ -93,6 +93,9 @@ pub struct BrainLaunchConfig<'a> {
     pub team_repo: Option<&'a std::path::Path>,
     /// When set, uses GH_CONFIG_DIR instead of GH_TOKEN (App credential path).
     pub gh_config_dir: Option<&'a std::path::Path>,
+    /// Durable member-state directory for cross-session persistence (e.g., dm-room.json).
+    /// Forwarded to brain process as BM_MEMBER_STATE_DIR.
+    pub member_state_dir: Option<&'a std::path::Path>,
 }
 
 /// Launches the brain multiplexer for a chat-first member.
@@ -158,6 +161,10 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
     if let Some(repo) = config.team_repo {
         cmd.env("BM_TEAM_REPO", repo);
     }
+    // Durable member-state directory for cross-session persistence (dm-room.json, etc.)
+    if let Some(dir) = config.member_state_dir {
+        cmd.env("BM_MEMBER_STATE_DIR", dir);
+    }
 
     // Detach from current process group — redirect stderr to log file for diagnostics.
     let log_path = config.workspace.join("brain-stderr.log");
@@ -183,6 +190,7 @@ pub fn launch_brain(config: &BrainLaunchConfig<'_>) -> Result<u32> {
 
 /// Returns true if the workspace has a `brain-prompt.md` file,
 /// indicating this member should run in brain (chat-first) mode.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn is_brain_member(workspace: &std::path::Path) -> bool {
     workspace.join("brain-prompt.md").exists()
 }
@@ -191,6 +199,7 @@ pub fn is_brain_member(workspace: &std::path::Path) -> bool {
 ///
 /// Returns `true` if there is a mismatch (credential present but RObot disabled),
 /// meaning the workspace needs to be re-provisioned to update RObot configuration.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn check_robot_enabled_mismatch(
     ralph_yml_path: &std::path::Path,
     has_credential: bool,

@@ -96,6 +96,7 @@ mod tests {
             agent_pid: None,
             workspace_path: None,
             finalization_result: None,
+                finalization_agent_pid: None,
         }
     }
 

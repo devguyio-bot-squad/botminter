@@ -77,6 +77,7 @@ pub fn run(
                 0,
                 team.daemon.interval,
                 "127.0.0.1",
+                "info",
             )?;
             DaemonClient::connect(&team.name)?
         }

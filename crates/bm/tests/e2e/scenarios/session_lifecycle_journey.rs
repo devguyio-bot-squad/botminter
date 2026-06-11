@@ -32,7 +32,25 @@ const MEMBER_DIR: &str = "engineer-carol";
 const STUB_FINALIZATION_SCRIPT: &str =
     concat!(env!("CARGO_MANIFEST_DIR"), "/tests/e2e/stub-finalization.sh");
 
+const MEETING_NAME: &str = "e2e-planning";
+const MEETING_MEMBER_ROLE: &str = "engineer";
+
 // ── Helpers ───────────────────────────────────────────────────────────
+
+/// Appends a test meeting definition to the team repo's botminter.yml.
+/// Required because agentic-sdlc-minimal has no meetings in its profile.
+fn inject_meeting_into_manifest(team_repo: &Path, meeting_name: &str, member_role: &str) {
+    let manifest_path = team_repo.join("botminter.yml");
+    let existing = fs::read_to_string(&manifest_path)
+        .expect("botminter.yml must be readable for meeting injection");
+    let meeting_yaml = format!(
+        "\nmeetings:\n  - name: \"{name}\"\n    description: \"E2E test meeting\"\n    member: \"{role}\"\n    instructions: \"You are in a test meeting. Exit when done.\"\n",
+        name = meeting_name,
+        role = member_role,
+    );
+    fs::write(&manifest_path, format!("{}\n{}", existing.trim_end(), meeting_yaml))
+        .expect("botminter.yml must be writable for meeting injection");
+}
 
 fn read_daemon_port(home: &Path, team_name: &str) -> u16 {
     let cfg_path = home.join(format!(".botminter/daemon-{}.json", team_name));
@@ -323,6 +341,18 @@ fn credential_relay_fn(
         assert!(
             hosts_yml.exists(),
             "hosts.yml must exist at {gh_config_dir} (credential relay must have written it, GAP-03)"
+        );
+
+        let gh_api_out = std::process::Command::new("gh")
+            .args(["api", "user", "--jq", ".login"])
+            .env("GH_CONFIG_DIR", &gh_config_dir)
+            .output()
+            .expect("gh binary must be available in E2E test environment");
+        assert!(
+            gh_api_out.status.success(),
+            "gh api user must succeed using GH_CONFIG_DIR={gh_config_dir} \
+             (credential relay must write a valid App token, GAP-03 AC-09), stderr: {}",
+            String::from_utf8_lossy(&gh_api_out.stderr)
         );
 
         env.command("bm").args(["stop", "-t", TEAM_NAME]).run();
@@ -806,6 +836,62 @@ fn failed_finalization_fn(
     }
 }
 
+// ── Case 8: Meetings ephemeral session lifecycle (CT-154-01-MEETINGS) ─────
+
+/// Verifies that `bm meetings` wires to the ephemeral session lifecycle:
+/// start_session → ephemeral workspace → launch meeting → stop_session → finalization.
+///
+/// FAILS against current code: `bm meetings` uses the old permanent workspace
+/// path and never calls start_session, so no ephemeral session workspace is created.
+fn meetings_finalization_fn(
+) -> impl Fn(&mut TestEnv) + Send + std::panic::UnwindSafe + std::panic::RefUnwindSafe + 'static {
+    |env| {
+        let team_dir = env.home.join("workspaces").join(TEAM_NAME);
+        let team_repo = team_dir.join("team");
+
+        // Inject a meeting into the team manifest (profile has none by default).
+        inject_meeting_into_manifest(&team_repo, MEETING_NAME, MEETING_MEMBER_ROLE);
+
+        // Record pre-existing session workspaces (expected: 0 — no daemon sessions yet).
+        let pre_existing: HashSet<PathBuf> =
+            list_session_workspaces(&env.home, TEAM_NAME, MEMBER_DIR)
+                .into_iter()
+                .collect();
+
+        // Install stub-claude (exits 0 quickly — simulates the meeting participant).
+        install_stub_claude(&env.home);
+
+        // Run bm meetings. It must call start_session on the daemon to create an ephemeral
+        // session workspace, launch the meeting participant, then call stop_session on exit.
+        // Run from the test home so detect_meetings_from_workspace() doesn't walk up and
+        // find an outer .botminter.workspace marker from the test-runner's working directory.
+        let meetings_out = env
+            .command("bm")
+            .current_dir(&env.home)
+            .args(["meetings", MEETING_NAME, "-t", TEAM_NAME, "-a"])
+            .output();
+        let meetings_stdout = String::from_utf8_lossy(&meetings_out.stdout).to_string();
+        let meetings_stderr = String::from_utf8_lossy(&meetings_out.stderr).to_string();
+
+        // Wait for a new ephemeral session workspace to appear.
+        let new_ws = wait_for_new_session_workspace(
+            &env.home,
+            TEAM_NAME,
+            MEMBER_DIR,
+            &pre_existing,
+            Duration::from_secs(10),
+        );
+        assert!(
+            new_ws.is_some(),
+            "bm meetings must create an ephemeral session workspace via the daemon \
+             (CT-154-01-MEETINGS). exit={}, stdout={:?}, stderr={:?}",
+            meetings_out.status.code().unwrap_or(-1),
+            meetings_stdout,
+            meetings_stderr,
+        );
+    }
+}
+
 // ── Suite builders ─────────────────────────────────────────────────────
 
 fn build_suite(config: &E2eConfig, repo_full_name: &str) -> GithubSuite {
@@ -825,6 +911,7 @@ fn build_suite(config: &E2eConfig, repo_full_name: &str) -> GithubSuite {
         .case("session_list_e2e", session_list_fn())
         .case("session_finalize_e2e", session_finalize_fn())
         .case("failed_finalization_e2e", failed_finalization_fn())
+        .case("meetings_finalization_e2e", meetings_finalization_fn())
 }
 
 pub fn scenario(config: &E2eConfig) -> Trial {

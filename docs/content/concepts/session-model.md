@@ -42,7 +42,7 @@ Creating → Active → Finalizing → Completed ─┐
 | **Killed** | Force-stopped; finalization was skipped; entering retention |
 | **Retained** | Workspace is kept on disk for inspection; subject to retention policy |
 
-From **Retained**, an operator can re-trigger finalization (`bm session cleanup` or the finalize API) to recover work from a failed or killed session.
+From **Retained**, an operator can re-trigger finalization (`bm session finalize` or the finalize API) to recover work from a failed or killed session.
 
 ## The Session Daemon
 
@@ -83,23 +83,31 @@ When an agent exits and its workspace has uncommitted or unpushed work, the fina
 
 Finalization that cannot push to the remote creates a recovery branch and opens a GitHub issue. The session transitions to **Completed** (degraded) rather than **Failed** — state is always preserved remotely.
 
-If finalization fails entirely (remote unreachable), the session enters **Failed** and remains **Retained** for manual recovery. Re-triggering finalization is supported: `bm session cleanup <session-id>` transitions a Retained session back to Finalizing.
+If finalization fails entirely (remote unreachable), the session enters **Failed** and remains **Retained** for manual recovery. Re-triggering finalization is supported: `bm session finalize <session-id>` transitions a Retained session back to Finalizing.
 
 ## Viewing Sessions
 
 ```bash
 bm status              # Active members with current session IDs
-bm status --history    # Completed/terminal sessions from session history
+bm session list        # Active and terminal sessions
 bm session inspect <session-id>   # Full details for a specific session
 ```
 
 ## Cleaning Up Sessions
 
+To re-trigger finalization for a session that failed to finalize automatically:
+
 ```bash
-bm session cleanup <session-id>     # Clean up (or re-trigger finalization on) a specific retained session
-bm session cleanup --all            # Clean up all retained sessions
-bm session cleanup --member <name>  # Clean up all retained sessions for a member
-bm session cleanup --older-than 48h # Clean up sessions older than a duration
+bm session finalize <session-id>    # Re-trigger finalization for a retained session
+```
+
+To remove retained session workspaces from disk:
+
+```bash
+bm session cleanup <session-id>     # Remove a specific retained session workspace
+bm session cleanup --all            # Remove all retained session workspaces
+bm session cleanup --member <name>  # Remove retained sessions for a specific member
+bm session cleanup --older-than 48h # Remove sessions older than a duration
 ```
 
 ## Related Topics

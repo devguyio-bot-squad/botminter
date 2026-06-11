@@ -51,11 +51,12 @@ pub fn stop_sessions(
                 r.session_type.clone(),
                 r.current_state.clone(),
                 r.agent_pid,
+                r.finalization_agent_pid,
             )
         })
         .collect();
 
-    for (id, member_name, session_type, current_state, agent_pid) in &snapshot {
+    for (id, member_name, session_type, current_state, agent_pid, finalization_agent_pid) in &snapshot {
         let should_process = match &options.mode {
             StopMode::AllForMember(member) => member_name == member,
             StopMode::SpecificSession(target_id) => id == target_id,
@@ -97,6 +98,12 @@ pub fn stop_sessions(
                     if let Some(pid) = agent_pid {
                         #[cfg(unix)]
                         send_signal(*pid, true);
+                    }
+                    // Kill the finalization subagent. The brain PID above is typically already
+                    // dead and may be recycled; this is the live process consuming resources.
+                    if let Some(fin_pid) = finalization_agent_pid {
+                        #[cfg(unix)]
+                        send_signal(*fin_pid, true);
                     }
                 }
                 _ => {}
@@ -176,6 +183,7 @@ mod tests {
             agent_pid: None,
             workspace_path: Some(PathBuf::from("/tmp/ws")),
             finalization_result: None,
+                finalization_agent_pid: None,
         };
         registry.register(record).unwrap();
         registry
@@ -626,6 +634,40 @@ mod tests {
             reg.get(&id).unwrap().current_state,
             SessionState::Retained,
             "force stop on Finalizing must result in Retained state (Killed is terminal, prevents retrigger)"
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn force_stop_finalizing_kills_finalization_agent_process() {
+        let mut reg = new_registry();
+        let id = register_finalizing(&mut reg, "alice", SessionType::Loop);
+
+        // Spawn a real process as the simulated finalization agent.
+        let mut child = std::process::Command::new("sleep")
+            .arg("9999")
+            .spawn()
+            .expect("failed to spawn sleep");
+        let fin_pid = child.id();
+
+        // Record the finalization agent PID — this is what force-stop must kill.
+        reg.set_finalization_agent_pid(&id, fin_pid).unwrap();
+
+        stop_sessions(
+            &mut reg,
+            &StopOptions {
+                mode: StopMode::AllForMember("alice".to_string()),
+                force: true,
+            },
+        );
+
+        // Give the OS a moment to deliver SIGKILL.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+
+        let status = child.try_wait().expect("try_wait failed");
+        assert!(
+            status.is_some(),
+            "finalization agent (PID {fin_pid}) must be dead after force-stop on Finalizing"
         );
     }
 }
