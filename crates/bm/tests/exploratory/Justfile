@@ -347,4 +347,4 @@ phase-h: ensure-keyring (run-phase "phase-h.sh" "1200")
 all: clean deploy preflight init-report phase-b phase-c phase-d-session phase-e phase-f phase-h phase-g fetch-report clean
 
 # Run only bridge + workspace phases (skip init, assume team exists)
-bridge-and-workspace: ensure-keyring phase-c phase-d phase-e
+bridge-and-workspace: ensure-keyring phase-c phase-d-session phase-e

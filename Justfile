@@ -34,6 +34,7 @@ e2e:
     test -n "${TESTS_APP_CLIENT_ID:-}" || { echo "Error: TESTS_APP_CLIENT_ID env var must be set"; exit 1; }
     test -n "${TESTS_APP_INSTALLATION_ID:-}" || { echo "Error: TESTS_APP_INSTALLATION_ID env var must be set"; exit 1; }
     test -n "${TESTS_APP_PRIVATE_KEY_FILE:-}" || { echo "Error: TESTS_APP_PRIVATE_KEY_FILE env var must be set"; exit 1; }
+    export GH_TOKEN="$TESTS_GH_TOKEN"
     cargo test -p bm --features e2e --test e2e -- --gh-token "$TESTS_GH_TOKEN" --gh-org "$TESTS_GH_ORG" --app-id "$TESTS_APP_ID" --app-client-id "$TESTS_APP_CLIENT_ID" --app-installation-id "$TESTS_APP_INSTALLATION_ID" --app-private-key-file "$TESTS_APP_PRIVATE_KEY_FILE" --test-threads=1
 
 # Step through one E2E case at a time (progressive mode). SUITE is optional (e.g., scenario_fresh_start).
@@ -47,6 +48,7 @@ e2e-step SUITE="":
     test -n "${TESTS_APP_CLIENT_ID:-}" || { echo "Error: TESTS_APP_CLIENT_ID env var must be set"; exit 1; }
     test -n "${TESTS_APP_INSTALLATION_ID:-}" || { echo "Error: TESTS_APP_INSTALLATION_ID env var must be set"; exit 1; }
     test -n "${TESTS_APP_PRIVATE_KEY_FILE:-}" || { echo "Error: TESTS_APP_PRIVATE_KEY_FILE env var must be set"; exit 1; }
+    export GH_TOKEN="$TESTS_GH_TOKEN"
     cargo test -p bm --features e2e --test e2e -- --gh-token "$TESTS_GH_TOKEN" --gh-org "$TESTS_GH_ORG" --app-id "$TESTS_APP_ID" --app-client-id "$TESTS_APP_CLIENT_ID" --app-installation-id "$TESTS_APP_INSTALLATION_ID" --app-private-key-file "$TESTS_APP_PRIVATE_KEY_FILE" --progressive {{ SUITE }} --test-threads=1
 
 # Reset progressive E2E state (clean up repos, containers, state files). SUITE is optional.
@@ -64,6 +66,7 @@ e2e-verbose:
     test -n "${TESTS_APP_CLIENT_ID:-}" || { echo "Error: TESTS_APP_CLIENT_ID env var must be set"; exit 1; }
     test -n "${TESTS_APP_INSTALLATION_ID:-}" || { echo "Error: TESTS_APP_INSTALLATION_ID env var must be set"; exit 1; }
     test -n "${TESTS_APP_PRIVATE_KEY_FILE:-}" || { echo "Error: TESTS_APP_PRIVATE_KEY_FILE env var must be set"; exit 1; }
+    export GH_TOKEN="$TESTS_GH_TOKEN"
     cargo test -p bm --features e2e --test e2e -- --gh-token "$TESTS_GH_TOKEN" --gh-org "$TESTS_GH_ORG" --app-id "$TESTS_APP_ID" --app-client-id "$TESTS_APP_CLIENT_ID" --app-installation-id "$TESTS_APP_INSTALLATION_ID" --app-private-key-file "$TESTS_APP_PRIVATE_KEY_FILE" --test-threads=1
 
 # Run exploratory tests on bm-test-user@localhost via SSH. Requires SSH access to test user, podman, gh auth.

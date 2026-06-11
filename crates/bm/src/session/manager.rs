@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
-use super::dirty_state::{self, RepoDirtyState};
+use super::dirty_state::RepoDirtyState;
 use super::finalization::deactivation::{self, DEFAULT_MAX_RETRIES};
 use super::registry::SessionRegistry;
 use super::types::{SessionId, SessionRecord, SessionState, SessionType};
